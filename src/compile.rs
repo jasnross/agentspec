@@ -1,4 +1,6 @@
-use crate::adapters::{adapt_claude, adapt_codex, adapt_cursor, adapt_opencode};
+use crate::adapters::{
+    adapt_claude, adapt_codex, adapt_cursor, adapt_opencode, build_opencode_instructions,
+};
 use crate::types::{
     CompileResult, CompileWarning, GeneratedFile, NormalizedSpec, PresetsMap, Provider, SpecKind,
 };
@@ -48,6 +50,11 @@ pub fn compile_specs(
         }
     }
 
+    // Aggregate OpenCode rule paths into instructions.json
+    if let Some(instructions_file) = build_opencode_instructions(&files) {
+        files.push(instructions_file);
+    }
+
     // Sort output files by path for deterministic ordering
     files.sort_by(|a, b| a.path.cmp(&b.path));
 
@@ -57,10 +64,12 @@ pub fn compile_specs(
 /// Check if a provider supports the given spec kind.
 ///
 /// These are static facts about each provider's capabilities:
-/// - `Claude` and `OpenCode` support both agents and skills
+/// - All four providers support rules
+/// - `Claude` and `OpenCode` support agents and skills
 /// - Codex and Cursor support skills only (no agents)
 fn provider_supports_kind(provider: Provider, kind: SpecKind) -> bool {
     match (provider, kind) {
+        (_, SpecKind::Rule) => true,
         (Provider::Claude, _) => true,
         (Provider::OpenCode, _) => true,
         (Provider::Codex, SpecKind::Skill) => true,
@@ -82,6 +91,7 @@ mod tests {
             source_path: format!("/test/{id}.md").into(),
             id: id.to_string(),
             kind,
+            paths: None,
             name: id.to_string(),
             description: format!("Test {id}"),
             version: 1,

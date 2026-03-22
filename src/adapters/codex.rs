@@ -5,13 +5,27 @@ use serde_json::Value;
 
 use crate::format::render_markdown_with_frontmatter;
 use crate::model::resolve_provider_model_config;
-use crate::types::{CompileWarning, GeneratedFile, NormalizedSpec, PresetsMap, Provider};
+use crate::types::{CompileWarning, GeneratedFile, NormalizedSpec, PresetsMap, Provider, SpecKind};
 
 pub fn adapt_codex(
     spec: &NormalizedSpec,
     profiles: &PresetsMap,
 ) -> (Vec<GeneratedFile>, Vec<CompileWarning>) {
     let warnings = Vec::new();
+
+    if spec.kind == SpecKind::Rule {
+        // Codex has no path-scoping mechanism for rules, so `paths:` is intentionally dropped.
+        // Rules are emitted as flat `.md` files; users control placement and activation.
+        let content = format!("{}\n", spec.body.trim());
+        let path = Path::new("generated")
+            .join("codex")
+            .join("rules")
+            .join(format!("{}.md", spec.id));
+        return (
+            vec![GeneratedFile::text(Provider::Codex, path, content)],
+            warnings,
+        );
+    }
 
     let resolved_model = spec
         .execution
@@ -73,6 +87,7 @@ mod tests {
             source_path: "/test/spec.md".into(),
             id: "commit".to_string(),
             kind: SpecKind::Skill,
+            paths: None,
             name: "commit".to_string(),
             description: "Create commits".to_string(),
             version: 1,
@@ -114,6 +129,45 @@ mod tests {
         let (files, _) = adapt_codex(&test_spec(), &test_profiles());
         let content = String::from_utf8(files[0].content.clone()).expect("expected value");
         assert!(content.contains("name: commit"));
+    }
+
+    fn test_rule() -> NormalizedSpec {
+        NormalizedSpec {
+            source_path: "/test/rule.md".into(),
+            id: "api-design".to_string(),
+            kind: SpecKind::Rule,
+            paths: Some(vec!["src/api/**".to_string()]),
+            name: "api-design".to_string(),
+            description: "API design rules".to_string(),
+            version: 1,
+            user_invocable: false,
+            agent_invocable: false,
+            body: "# API Design\n\nValidate inputs.".to_string(),
+            execution: Execution::default(),
+            tools: vec![],
+            skill: None,
+            supporting_files: vec![],
+            targets: vec![Provider::Codex],
+            provider_overrides: HashMap::new(),
+            routing: None,
+        }
+    }
+
+    #[test]
+    fn test_codex_rule_no_frontmatter() {
+        let (files, warnings) = adapt_codex(&test_rule(), &PresetsMap::new());
+        assert!(warnings.is_empty());
+        assert_eq!(files.len(), 1);
+        assert_eq!(
+            files[0].path.to_str().expect("expected value"),
+            "generated/codex/rules/api-design.md"
+        );
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
+        assert!(
+            !content.contains("---"),
+            "codex rule should have no frontmatter"
+        );
+        assert!(content.contains("# API Design"));
     }
 
     #[test]

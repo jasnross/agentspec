@@ -17,8 +17,16 @@
       "type": "string",
       "enum": [
         "agent",
-        "skill"
+        "skill",
+        "rule"
       ]
+    },
+    "paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Glob patterns that scope when this rule is applied. Absent means unconditional."
     },
     "name": {
       "type": "string",

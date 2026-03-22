@@ -207,19 +207,56 @@ pub fn load_skill_specs(skills_dir: &Path) -> Result<Vec<CanonicalSpec>> {
     Ok(specs)
 }
 
-/// Load all canonical specs (agents + skills) from the config paths.
+/// Load rule specs from a directory. Walks recursively for `*.md` files,
+/// following the same flat-file pattern as `load_agent_specs`.
+pub fn load_rule_specs(rules_dir: &Path) -> Result<Vec<CanonicalSpec>> {
+    if !rules_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let mut specs = Vec::new();
+
+    let mut md_paths: Vec<_> = WalkDir::new(rules_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file() && e.path().extension().is_some_and(|ext| ext == "md"))
+        .map(|e| e.into_path())
+        .collect();
+    md_paths.sort();
+
+    for path in md_paths {
+        let content = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        let (yaml_block, body) = split_frontmatter(&content)
+            .with_context(|| format!("failed to parse frontmatter in {}", path.display()))?;
+        let fm = parse_yaml_to_json(&yaml_block)
+            .with_context(|| format!("invalid YAML in {}", path.display()))?;
+
+        specs.push(CanonicalSpec {
+            path,
+            fm,
+            body,
+            kind: SpecKind::Rule,
+            supporting_files: Vec::new(),
+        });
+    }
+
+    Ok(specs)
+}
+
+/// Load all canonical specs (agents + skills + rules) from the config paths.
 pub fn load_canonical_specs(config: &AgentspecConfig) -> Result<Vec<CanonicalSpec>> {
     let agents_dir = config.resolve(&config.spec.agents_dir);
     let skills_dir = config.resolve(&config.spec.skills_dir);
+    let rules_dir = config.resolve(&config.spec.rules_dir);
 
-    let mut agents = load_agent_specs(&agents_dir).context("failed to load agent specs")?;
+    let mut specs = load_agent_specs(&agents_dir).context("failed to load agent specs")?;
     let skills = load_skill_specs(&skills_dir).context("failed to load skill specs")?;
+    let rules = load_rule_specs(&rules_dir).context("failed to load rule specs")?;
 
-    // Agents sorted by path (already sorted in load_agent_specs)
-    // Skills sorted by directory name (already sorted in load_skill_specs)
-    // Combine: agents first, then skills
-    agents.extend(skills);
-    Ok(agents)
+    specs.extend(skills);
+    specs.extend(rules);
+    Ok(specs)
 }
 
 #[cfg(test)]

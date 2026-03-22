@@ -43,6 +43,31 @@ pub fn adapt_claude(
 ) -> (Vec<GeneratedFile>, Vec<CompileWarning>) {
     let mut warnings = Vec::new();
 
+    if spec.kind == SpecKind::Rule {
+        let content = if let Some(paths) = &spec.paths {
+            let mut fm = IndexMap::new();
+            fm.insert(
+                "description".to_string(),
+                Value::String(spec.description.clone()),
+            );
+            fm.insert(
+                "paths".to_string(),
+                Value::Array(paths.iter().map(|p| Value::String(p.clone())).collect()),
+            );
+            render_markdown_with_frontmatter(&fm, &spec.body)
+        } else {
+            format!("{}\n", spec.body.trim())
+        };
+        let path = Path::new("generated")
+            .join("claude")
+            .join("rules")
+            .join(format!("{}.md", spec.id));
+        return (
+            vec![GeneratedFile::text(Provider::Claude, path, content)],
+            warnings,
+        );
+    }
+
     if spec.kind == SpecKind::Skill {
         let mapped_tools = map_tools(spec, &mut warnings);
 
@@ -142,6 +167,7 @@ mod tests {
             source_path: "/test/spec.md".into(),
             id: "commit".to_string(),
             kind: SpecKind::Skill,
+            paths: None,
             name: "commit".to_string(),
             description: "Create commits".to_string(),
             version: 1,
@@ -214,6 +240,60 @@ mod tests {
         assert!(warnings.is_empty());
         let content = String::from_utf8(files[0].content.clone()).expect("expected value");
         assert!(!content.contains("allowed-tools"));
+    }
+
+    fn test_rule() -> NormalizedSpec {
+        NormalizedSpec {
+            source_path: "/test/rule.md".into(),
+            id: "api-design".to_string(),
+            kind: SpecKind::Rule,
+            paths: None,
+            name: "api-design".to_string(),
+            description: "API design rules".to_string(),
+            version: 1,
+            user_invocable: false,
+            agent_invocable: false,
+            body: "# API Design\n\nValidate inputs.".to_string(),
+            execution: Execution::default(),
+            tools: vec![],
+            skill: None,
+            supporting_files: vec![],
+            targets: vec![Provider::Claude],
+            provider_overrides: HashMap::new(),
+            routing: None,
+        }
+    }
+
+    #[test]
+    fn test_rule_without_paths_no_frontmatter() {
+        let (files, warnings) = adapt_claude(&test_rule(), &PresetsMap::new());
+        assert!(warnings.is_empty());
+        assert_eq!(files.len(), 1);
+        assert_eq!(
+            files[0].path.to_str().expect("expected value"),
+            "generated/claude/rules/api-design.md"
+        );
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
+        assert!(
+            !content.contains("---"),
+            "unconditional rule should have no frontmatter"
+        );
+        assert!(content.contains("# API Design"));
+    }
+
+    #[test]
+    fn test_rule_with_paths_has_frontmatter() {
+        let mut spec = test_rule();
+        spec.paths = Some(vec!["src/api/**".to_string()]);
+        let (files, _) = adapt_claude(&spec, &PresetsMap::new());
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
+        assert!(
+            content.contains("---"),
+            "path-scoped rule should have frontmatter"
+        );
+        assert!(content.contains("paths:"));
+        assert!(content.contains("src/api/**"));
+        assert!(content.contains("description: API design rules"));
     }
 
     #[test]

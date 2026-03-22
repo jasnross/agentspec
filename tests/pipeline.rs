@@ -69,7 +69,7 @@ fn test_validate_fixture() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "validate failed:\n{stderr}");
-    assert!(stderr.contains("loaded 3 specs"), "stderr: {stderr}");
+    assert!(stderr.contains("loaded 5 specs"), "stderr: {stderr}");
     assert!(
         stderr.contains("schema validation passed"),
         "stderr: {stderr}"
@@ -174,6 +174,111 @@ fn test_compile_generates_expected_files() {
     assert!(
         content.contains("shared via fragment"),
         "fragment not resolved in basic-skill body"
+    );
+
+    // --- Rules ---
+
+    // Claude: unconditional rule has no frontmatter; path-scoped rule has paths: in frontmatter
+    let claude_general = dir.join("generated/claude/rules/general-guidance.md");
+    assert!(
+        claude_general.exists(),
+        "missing claude general-guidance rule"
+    );
+    let claude_general_content =
+        std::fs::read_to_string(&claude_general).expect("failed to read claude general rule");
+    assert!(
+        !claude_general_content.starts_with("---"),
+        "unconditional claude rule should have no frontmatter"
+    );
+
+    let claude_api = dir.join("generated/claude/rules/api-design.md");
+    assert!(claude_api.exists(), "missing claude api-design rule");
+    let claude_api_content =
+        std::fs::read_to_string(&claude_api).expect("failed to read claude api rule");
+    assert!(
+        claude_api_content.contains("paths:"),
+        "path-scoped claude rule should have paths in frontmatter"
+    );
+    assert!(
+        claude_api_content.contains("src/api/**"),
+        "claude api rule should contain the glob pattern"
+    );
+
+    // Cursor: .mdc extension; alwaysApply vs globs
+    let cursor_general = dir.join("generated/cursor/rules/general-guidance.mdc");
+    assert!(
+        cursor_general.exists(),
+        "missing cursor general-guidance rule"
+    );
+    let cursor_general_content =
+        std::fs::read_to_string(&cursor_general).expect("failed to read cursor general rule");
+    assert!(
+        cursor_general_content.contains("alwaysApply: true"),
+        "unconditional cursor rule should have alwaysApply"
+    );
+
+    let cursor_api = dir.join("generated/cursor/rules/api-design.mdc");
+    assert!(cursor_api.exists(), "missing cursor api-design rule");
+    let cursor_api_content =
+        std::fs::read_to_string(&cursor_api).expect("failed to read cursor api rule");
+    assert!(
+        cursor_api_content.contains("globs:"),
+        "path-scoped cursor rule should have globs"
+    );
+    assert!(
+        !cursor_api_content.contains("alwaysApply"),
+        "path-scoped cursor rule should not have alwaysApply"
+    );
+
+    // Codex: plain body, no frontmatter
+    let codex_general = dir.join("generated/codex/rules/general-guidance.md");
+    assert!(
+        codex_general.exists(),
+        "missing codex general-guidance rule"
+    );
+    let codex_general_content =
+        std::fs::read_to_string(&codex_general).expect("failed to read codex general rule");
+    assert!(
+        !codex_general_content.starts_with("---"),
+        "codex rule should have no frontmatter"
+    );
+
+    let codex_api = dir.join("generated/codex/rules/api-design.md");
+    assert!(codex_api.exists(), "missing codex api-design rule");
+    let codex_api_content =
+        std::fs::read_to_string(&codex_api).expect("failed to read codex api rule");
+    assert!(
+        !codex_api_content.starts_with("---"),
+        "codex rule should have no frontmatter"
+    );
+
+    // OpenCode: rules in subdirectories with AGENTS.md
+    assert!(
+        dir.join("generated/opencode/rules/general-guidance/AGENTS.md")
+            .exists(),
+        "missing opencode general-guidance rule"
+    );
+    assert!(
+        dir.join("generated/opencode/rules/api-design/AGENTS.md")
+            .exists(),
+        "missing opencode api-design rule"
+    );
+
+    // OpenCode: instructions.json with both rule paths
+    let instructions_path = dir.join("generated/opencode/instructions.json");
+    assert!(
+        instructions_path.exists(),
+        "missing opencode instructions.json"
+    );
+    let instructions_content =
+        std::fs::read_to_string(&instructions_path).expect("failed to read instructions.json");
+    assert!(
+        instructions_content.contains("general-guidance"),
+        "instructions.json should reference general-guidance"
+    );
+    assert!(
+        instructions_content.contains("api-design"),
+        "instructions.json should reference api-design"
     );
 }
 

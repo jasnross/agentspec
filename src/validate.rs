@@ -237,10 +237,21 @@ pub fn normalize_specs(specs: Vec<CanonicalSpec>) -> Result<Vec<NormalizedSpec>>
             .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
             .unwrap_or_default();
 
+        // Paths: only used by rules to scope activation by glob pattern
+        let paths: Option<Vec<String>> = fm
+            .get("paths")
+            .map(|v| {
+                serde_json::from_value(v.clone()).with_context(|| {
+                    format!("{}: failed to parse 'paths' field", spec.path.display())
+                })
+            })
+            .transpose()?;
+
         normalized.push(NormalizedSpec {
             source_path: spec.path,
             id,
             kind,
+            paths,
             name,
             description,
             version,
@@ -287,6 +298,16 @@ pub fn validate_semantics(specs: &[NormalizedSpec], profiles: &PresetsMap) -> Ve
             errors.push(SemanticError {
                 path: spec.source_path.clone(),
                 message: "instruction body cannot be empty".to_string(),
+            });
+        }
+
+        // paths: is only meaningful for rules — warn if used on agents or skills
+        if spec.paths.is_some() && spec.kind != SpecKind::Rule {
+            errors.push(SemanticError {
+                path: spec.source_path.clone(),
+                message:
+                    "'paths' field is only valid on rule specs and is ignored for agents and skills"
+                        .to_string(),
             });
         }
 
@@ -560,6 +581,7 @@ mod tests {
             source_path: PathBuf::from(format!("{id}.md")),
             id: id.to_string(),
             kind,
+            paths: None,
             name: id.to_string(),
             description: "test".to_string(),
             version: 1,

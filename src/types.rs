@@ -40,6 +40,7 @@ impl Provider {
 pub enum SpecKind {
     Agent,
     Skill,
+    Rule,
 }
 
 #[derive(Debug, Clone)]
@@ -51,7 +52,7 @@ pub struct CanonicalSpec {
     pub fm: serde_json::Value,
     /// Spec body (Markdown content after frontmatter)
     pub body: String,
-    /// Whether this is an agent or skill spec
+    /// Whether this is an agent, skill, or rule spec
     pub kind: SpecKind,
     /// Non-Markdown files bundled with a skill (empty for agents)
     pub supporting_files: Vec<SupportingFile>,
@@ -76,8 +77,10 @@ pub struct NormalizedSpec {
     pub source_path: PathBuf,
     /// Spec identifier (kebab-case)
     pub id: String,
-    /// Agent or Skill
+    /// Agent, Skill, or Rule
     pub kind: SpecKind,
+    /// Glob patterns that scope when a rule is applied (rules only; `None` = unconditional)
+    pub paths: Option<Vec<String>>,
     /// Display name (defaults to `id` if absent in frontmatter)
     pub name: String,
     /// One-line description

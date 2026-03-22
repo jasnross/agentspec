@@ -39,6 +39,7 @@ pub struct AgentspecConfig {
 pub struct SpecConfig {
     pub agents_dir: PathBuf,
     pub skills_dir: PathBuf,
+    pub rules_dir: PathBuf,
     pub fragments_dir: PathBuf,
 }
 
@@ -66,6 +67,7 @@ impl Default for SpecConfig {
         Self {
             agents_dir: PathBuf::from("spec/agents"),
             skills_dir: PathBuf::from("spec/skills"),
+            rules_dir: PathBuf::from("spec/rules"),
             fragments_dir: PathBuf::from("spec/fragments"),
         }
     }
