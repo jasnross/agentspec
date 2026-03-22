@@ -1,2 +1,3 @@
-## Test ergonomics: `expect(...)` in tests keeps assertion failures readable.
+## Test ergonomics:
 allow-expect-in-tests = true
+allow-panic-in-tests = true

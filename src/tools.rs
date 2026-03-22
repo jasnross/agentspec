@@ -3,56 +3,63 @@ use crate::types::Provider;
 /// Returns the provider-specific name for a canonical tool.
 ///
 /// Three-way result:
-/// - `None` — unknown canonical tool; caller should emit `MissingMapping`
-/// - `Some(None)` — intentionally unsupported on this provider; silently drop
-/// - `Some(Some(name))` — use this provider-specific tool name
-pub fn tool_name(canonical: &str, provider: Provider) -> Option<Option<&'static str>> {
+/// - `Unknown` — unknown canonical tool; caller should emit `MissingMapping`
+/// - `Unsupported` — intentionally unsupported on this provider; silently drop
+/// - `Mapped(name)` — use this provider-specific tool name
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolMapping {
+    Unknown,
+    Unsupported,
+    Mapped(&'static str),
+}
+
+pub fn tool_name(canonical: &str, provider: Provider) -> ToolMapping {
     match (canonical, provider) {
-        ("read", Provider::Claude) => Some(Some("Read")),
-        ("read", Provider::OpenCode) => Some(Some("read")),
-        ("read", Provider::Codex) => Some(Some("read")),
-        ("read", Provider::Cursor) => Some(None),
-        ("write", Provider::Claude) => Some(Some("Write")),
-        ("write", Provider::OpenCode) => Some(Some("write")),
-        ("write", Provider::Codex) => Some(Some("write")),
-        ("write", Provider::Cursor) => Some(None),
-        ("edit", Provider::Claude) => Some(Some("Edit")),
-        ("edit", Provider::OpenCode) => Some(Some("edit")),
-        ("edit", Provider::Codex) => Some(Some("edit")),
-        ("edit", Provider::Cursor) => Some(None),
-        ("grep", Provider::Claude) => Some(Some("Grep")),
-        ("grep", Provider::OpenCode) => Some(Some("grep")),
-        ("grep", Provider::Codex) => Some(Some("grep")),
-        ("grep", Provider::Cursor) => Some(None),
-        ("glob", Provider::Claude) => Some(Some("Glob")),
-        ("glob", Provider::OpenCode) => Some(Some("glob")),
-        ("glob", Provider::Codex) => Some(Some("glob")),
-        ("glob", Provider::Cursor) => Some(None),
-        ("bash", Provider::Claude) => Some(Some("Bash")),
-        ("bash", Provider::OpenCode) => Some(Some("bash")),
-        ("bash", Provider::Codex) => Some(Some("bash")),
-        ("bash", Provider::Cursor) => Some(None),
-        ("webfetch", Provider::Claude) => Some(Some("WebFetch")),
-        ("webfetch", Provider::OpenCode) => Some(Some("webfetch")),
-        ("webfetch", Provider::Codex) => Some(Some("webfetch")),
-        ("webfetch", Provider::Cursor) => Some(None),
-        ("websearch", Provider::Claude) => Some(Some("WebSearch")),
-        ("websearch", Provider::OpenCode) => Some(Some("websearch")),
-        ("websearch", Provider::Codex) => Some(Some("websearch")),
-        ("websearch", Provider::Cursor) => Some(None),
-        ("task", Provider::Claude) => Some(Some("Task")),
-        ("task", Provider::OpenCode) => Some(Some("task")),
-        ("task", Provider::Codex) => Some(Some("task")),
-        ("task", Provider::Cursor) => Some(None),
-        ("todowrite", Provider::Claude) => Some(Some("TodoWrite")),
-        ("todowrite", Provider::OpenCode) => Some(Some("todowrite")),
-        ("todowrite", Provider::Codex) => Some(Some("todowrite")),
-        ("todowrite", Provider::Cursor) => Some(None),
+        ("read", Provider::Claude) => ToolMapping::Mapped("Read"),
+        ("read", Provider::OpenCode) => ToolMapping::Mapped("read"),
+        ("read", Provider::Codex) => ToolMapping::Mapped("read"),
+        ("read", Provider::Cursor) => ToolMapping::Unsupported,
+        ("write", Provider::Claude) => ToolMapping::Mapped("Write"),
+        ("write", Provider::OpenCode) => ToolMapping::Mapped("write"),
+        ("write", Provider::Codex) => ToolMapping::Mapped("write"),
+        ("write", Provider::Cursor) => ToolMapping::Unsupported,
+        ("edit", Provider::Claude) => ToolMapping::Mapped("Edit"),
+        ("edit", Provider::OpenCode) => ToolMapping::Mapped("edit"),
+        ("edit", Provider::Codex) => ToolMapping::Mapped("edit"),
+        ("edit", Provider::Cursor) => ToolMapping::Unsupported,
+        ("grep", Provider::Claude) => ToolMapping::Mapped("Grep"),
+        ("grep", Provider::OpenCode) => ToolMapping::Mapped("grep"),
+        ("grep", Provider::Codex) => ToolMapping::Mapped("grep"),
+        ("grep", Provider::Cursor) => ToolMapping::Unsupported,
+        ("glob", Provider::Claude) => ToolMapping::Mapped("Glob"),
+        ("glob", Provider::OpenCode) => ToolMapping::Mapped("glob"),
+        ("glob", Provider::Codex) => ToolMapping::Mapped("glob"),
+        ("glob", Provider::Cursor) => ToolMapping::Unsupported,
+        ("bash", Provider::Claude) => ToolMapping::Mapped("Bash"),
+        ("bash", Provider::OpenCode) => ToolMapping::Mapped("bash"),
+        ("bash", Provider::Codex) => ToolMapping::Mapped("bash"),
+        ("bash", Provider::Cursor) => ToolMapping::Unsupported,
+        ("webfetch", Provider::Claude) => ToolMapping::Mapped("WebFetch"),
+        ("webfetch", Provider::OpenCode) => ToolMapping::Mapped("webfetch"),
+        ("webfetch", Provider::Codex) => ToolMapping::Mapped("webfetch"),
+        ("webfetch", Provider::Cursor) => ToolMapping::Unsupported,
+        ("websearch", Provider::Claude) => ToolMapping::Mapped("WebSearch"),
+        ("websearch", Provider::OpenCode) => ToolMapping::Mapped("websearch"),
+        ("websearch", Provider::Codex) => ToolMapping::Mapped("websearch"),
+        ("websearch", Provider::Cursor) => ToolMapping::Unsupported,
+        ("task", Provider::Claude) => ToolMapping::Mapped("Task"),
+        ("task", Provider::OpenCode) => ToolMapping::Mapped("task"),
+        ("task", Provider::Codex) => ToolMapping::Mapped("task"),
+        ("task", Provider::Cursor) => ToolMapping::Unsupported,
+        ("todowrite", Provider::Claude) => ToolMapping::Mapped("TodoWrite"),
+        ("todowrite", Provider::OpenCode) => ToolMapping::Mapped("todowrite"),
+        ("todowrite", Provider::Codex) => ToolMapping::Mapped("todowrite"),
+        ("todowrite", Provider::Cursor) => ToolMapping::Unsupported,
         // ls is Claude-only; all other providers silently drop it
-        ("ls", Provider::Claude) => Some(Some("LS")),
-        ("ls", _) => Some(None),
+        ("ls", Provider::Claude) => ToolMapping::Mapped("LS"),
+        ("ls", _) => ToolMapping::Unsupported,
         // Unknown canonical tool name
-        _ => None,
+        _ => ToolMapping::Unknown,
     }
 }
 
@@ -75,7 +82,10 @@ pub fn all_tool_names(provider: Provider) -> Vec<&'static str> {
     ];
     let mut names: Vec<&'static str> = CANONICAL
         .iter()
-        .filter_map(|&t| tool_name(t, provider).flatten())
+        .filter_map(|&t| match tool_name(t, provider) {
+            ToolMapping::Mapped(name) => Some(name),
+            ToolMapping::Unsupported | ToolMapping::Unknown => None,
+        })
         .collect();
     names.sort_unstable();
     names.dedup();
@@ -88,29 +98,53 @@ mod tests {
 
     #[test]
     fn test_known_tools_mapped() {
-        assert_eq!(tool_name("read", Provider::Claude), Some(Some("Read")));
-        assert_eq!(tool_name("bash", Provider::OpenCode), Some(Some("bash")));
-        assert_eq!(tool_name("grep", Provider::Codex), Some(Some("grep")));
+        assert_eq!(
+            tool_name("read", Provider::Claude),
+            ToolMapping::Mapped("Read")
+        );
+        assert_eq!(
+            tool_name("bash", Provider::OpenCode),
+            ToolMapping::Mapped("bash")
+        );
+        assert_eq!(
+            tool_name("grep", Provider::Codex),
+            ToolMapping::Mapped("grep")
+        );
     }
 
     #[test]
     fn test_cursor_tools_unsupported() {
-        assert_eq!(tool_name("read", Provider::Cursor), Some(None));
-        assert_eq!(tool_name("bash", Provider::Cursor), Some(None));
+        assert_eq!(
+            tool_name("read", Provider::Cursor),
+            ToolMapping::Unsupported
+        );
+        assert_eq!(
+            tool_name("bash", Provider::Cursor),
+            ToolMapping::Unsupported
+        );
     }
 
     #[test]
     fn test_ls_claude_only() {
-        assert_eq!(tool_name("ls", Provider::Claude), Some(Some("LS")));
-        assert_eq!(tool_name("ls", Provider::OpenCode), Some(None));
-        assert_eq!(tool_name("ls", Provider::Codex), Some(None));
-        assert_eq!(tool_name("ls", Provider::Cursor), Some(None));
+        assert_eq!(tool_name("ls", Provider::Claude), ToolMapping::Mapped("LS"));
+        assert_eq!(
+            tool_name("ls", Provider::OpenCode),
+            ToolMapping::Unsupported
+        );
+        assert_eq!(tool_name("ls", Provider::Codex), ToolMapping::Unsupported);
+        assert_eq!(tool_name("ls", Provider::Cursor), ToolMapping::Unsupported);
     }
 
     #[test]
     fn test_unknown_tool_returns_none() {
-        assert_eq!(tool_name("unknown_tool", Provider::Claude), None);
-        assert_eq!(tool_name("foobar", Provider::OpenCode), None);
+        assert_eq!(
+            tool_name("unknown_tool", Provider::Claude),
+            ToolMapping::Unknown
+        );
+        assert_eq!(
+            tool_name("foobar", Provider::OpenCode),
+            ToolMapping::Unknown
+        );
     }
 
     #[test]

@@ -348,16 +348,13 @@ pub fn validate_semantics(specs: &[NormalizedSpec], profiles: &PresetsMap) -> Ve
                 Some(preset_mapping) => {
                     for provider in &spec.targets {
                         let provider_key = provider.to_string();
-                        let has_model = preset_mapping
-                            .get(&provider_key)
-                            .map(|v| {
-                                // String shorthand or object with "model" key
-                                v.is_string()
-                                    || v.get("model")
-                                        .and_then(|m| m.as_str())
-                                        .is_some_and(|s| !s.is_empty())
-                            })
-                            .unwrap_or(false);
+                        let has_model = preset_mapping.get(&provider_key).is_some_and(|v| {
+                            // String shorthand or object with "model" key
+                            v.is_string()
+                                || v.get("model")
+                                    .and_then(|m| m.as_str())
+                                    .is_some_and(|s| !s.is_empty())
+                        });
 
                         if !has_model {
                             errors.push(SemanticError {

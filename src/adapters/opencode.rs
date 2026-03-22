@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::format::render_markdown_with_frontmatter;
 use crate::model::resolve_provider_model_config;
-use crate::tools::{all_tool_names, tool_name};
+use crate::tools::{ToolMapping, all_tool_names, tool_name};
 use crate::types::{
     CompileWarning, GeneratedFile, NormalizedSpec, PresetsMap, Provider, SpecKind, WarnKind,
 };
@@ -30,7 +30,7 @@ fn build_tool_map(
     // Set spec's tools to true
     for tool in &spec.tools {
         match tool_name(tool.as_str(), Provider::OpenCode) {
-            None => {
+            ToolMapping::Unknown => {
                 warnings.push(CompileWarning {
                     code: WarnKind::MissingMapping,
                     provider: Provider::OpenCode,
@@ -39,10 +39,10 @@ fn build_tool_map(
                     message: format!("Tool '{tool}' does not map to an OpenCode tool."),
                 });
             }
-            Some(None) => {
+            ToolMapping::Unsupported => {
                 // Intentionally unsupported on OpenCode (e.g., ls) → silently skip
             }
-            Some(Some(name)) => {
+            ToolMapping::Mapped(name) => {
                 tools_map.insert(name.to_string(), Value::Bool(true));
             }
         }

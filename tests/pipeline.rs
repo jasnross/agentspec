@@ -23,9 +23,11 @@ fn setup(tmp: &TempDir) -> PathBuf {
         .arg("-r")
         .arg(fixture_dir())
         .arg(&dest)
-        .status()
-        .unwrap_or_else(|err| panic!("failed to copy fixture: {err}"));
-    assert!(status.success(), "cp fixture failed");
+        .status();
+    assert!(
+        status.as_ref().is_ok_and(std::process::ExitStatus::success),
+        "cp fixture failed: {status:?}"
+    );
     set_script_permissions(&dest);
     dest
 }

@@ -111,7 +111,7 @@ impl AgentspecConfig {
     /// Apply CLI flag overrides to this config.
     pub fn apply_overrides(&mut self, args: &CommonArgs) {
         if !args.target.is_empty() {
-            self.targets = args.target.clone();
+            self.targets.clone_from(&args.target);
         }
     }
 

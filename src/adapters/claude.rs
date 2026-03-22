@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::format::render_markdown_with_frontmatter;
 use crate::model::resolve_provider_model_config;
-use crate::tools::tool_name;
+use crate::tools::{ToolMapping, tool_name};
 use crate::types::{
     CompileWarning, GeneratedFile, NormalizedSpec, PresetsMap, Provider, SpecKind, WarnKind,
 };
@@ -16,7 +16,7 @@ fn map_tools(spec: &NormalizedSpec, warnings: &mut Vec<CompileWarning>) -> Vec<S
         .iter()
         .filter_map(|tool| {
             match tool_name(tool.as_str(), Provider::Claude) {
-                None => {
+                ToolMapping::Unknown => {
                     // Unknown canonical tool → warning
                     warnings.push(CompileWarning {
                         code: WarnKind::MissingMapping,
@@ -27,11 +27,11 @@ fn map_tools(spec: &NormalizedSpec, warnings: &mut Vec<CompileWarning>) -> Vec<S
                     });
                     None
                 }
-                Some(None) => {
+                ToolMapping::Unsupported => {
                     // Intentionally unsupported on Claude → silently drop
                     None
                 }
-                Some(Some(name)) => Some(name.to_string()),
+                ToolMapping::Mapped(name) => Some(name.to_string()),
             }
         })
         .collect()
