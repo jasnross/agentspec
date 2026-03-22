@@ -140,7 +140,6 @@ pub fn check_generated_state(
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
     use crate::types::Provider;

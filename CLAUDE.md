@@ -48,11 +48,12 @@ All clippy lint groups are set to `deny` in `Cargo.toml`. Notable ones that
 affect everyday coding:
 
 - `unwrap_used` — use `?`, `match`, or an explicit fallback instead of `.unwrap()`
-- `expect_used` — avoid `.expect()` in non-test code; in tests, prefer explicit assertions and only allow `clippy::expect_used` at the test-module/file level when it materially improves readability
+- `expect_used` — avoid `.expect()` in non-test code; tests are allowed via `clippy.toml` (`allow-expect-in-tests = true`)
 - `uninlined_format_args` — write `format!("{x}")` not `format!("{}", x)`
 - `doc_markdown` — wrap identifiers like `CanonicalSpec`, `MiniJinja`, `OpenCode`
   in backticks in doc comments
 - `unnecessary_wraps` — don't return `Result<T>` from functions that can't fail
+- Any `#[allow(clippy::...)]` should include a nearby comment explaining why it's needed and keep scope as narrow as possible (item-level over module-level)
 
 Run `cargo fmt && cargo clippy --all-targets` before committing; CI enforces both.
 

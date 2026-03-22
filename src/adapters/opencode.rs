@@ -51,6 +51,7 @@ fn build_tool_map(
     tools_map
 }
 
+#[allow(clippy::too_many_lines)] // Keep this as one function so agent/skill/rule shaping stays in one place.
 pub fn adapt_opencode(
     spec: &NormalizedSpec,
     profiles: &PresetsMap,
@@ -197,9 +198,8 @@ pub fn build_opencode_instructions(files: &[GeneratedFile]) -> Option<GeneratedF
         return None;
     }
     let json = serde_json::json!({ "instructions": rule_paths });
-    let mut content = match serde_json::to_string_pretty(&json) {
-        Ok(content) => content,
-        Err(_) => return None,
+    let Ok(mut content) = serde_json::to_string_pretty(&json) else {
+        return None;
     };
     content.push('\n');
     Some(GeneratedFile::text(
@@ -212,7 +212,6 @@ pub fn build_opencode_instructions(files: &[GeneratedFile]) -> Option<GeneratedF
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used)]
 mod tests {
     use std::collections::HashMap;
 

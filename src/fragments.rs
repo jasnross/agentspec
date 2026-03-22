@@ -96,6 +96,7 @@ pub fn build_environment(
 ///
 /// Reconstructs the caller's variable scope via `State::lookup` so that
 /// `{% with %}` variables are available inside the included template.
+#[allow(clippy::needless_pass_by_value)] // MiniJinja custom functions receive owned args (`String`, `Kwargs`) by API design.
 fn include_indented(
     state: &State,
     template_name: String,
@@ -179,7 +180,6 @@ pub fn resolve_fragments(
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
     use std::fs;

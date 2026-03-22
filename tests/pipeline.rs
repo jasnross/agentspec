@@ -1,8 +1,6 @@
 //! Integration tests using a self-contained fixture under `tests/fixtures/agent-config/`.
 //! These tests always run — no external dotfiles checkout required.
 
-#![allow(clippy::expect_used)]
-
 use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
@@ -22,13 +20,11 @@ fn fixture_dir() -> PathBuf {
 fn setup(tmp: &TempDir) -> PathBuf {
     let dest = tmp.path().join("agent-config");
     let status = std::process::Command::new("cp")
-        .args([
-            "-r",
-            fixture_dir().to_str().expect("fixture path is valid utf-8"),
-            dest.to_str().expect("tmp path is valid utf-8"),
-        ])
+        .arg("-r")
+        .arg(fixture_dir())
+        .arg(&dest)
         .status()
-        .expect("failed to copy fixture");
+        .unwrap_or_else(|err| panic!("failed to copy fixture: {err}"));
     assert!(status.success(), "cp fixture failed");
     set_script_permissions(&dest);
     dest

@@ -25,6 +25,7 @@ use parse::load_canonical_specs;
 use schema::load_schemas;
 use validate::{normalize_specs, validate_schema, validate_semantics};
 
+#[allow(clippy::too_many_lines)] // Keep orchestration in one place so pipeline phase order is obvious at a glance.
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -163,7 +164,7 @@ fn main() -> Result<()> {
                         anyhow::bail!("check failed: {} problem(s) found", check.problem_count());
                     }
                 }
-                _ => unreachable!(),
+                Command::Validate(_) | Command::Completions { .. } => unreachable!(),
             }
         }
         Command::Completions { .. } => unreachable!("handled above"),

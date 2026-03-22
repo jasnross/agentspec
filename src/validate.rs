@@ -97,6 +97,7 @@ pub fn validate_schema(specs: &[CanonicalSpec], schema: &Value) -> Result<Vec<Sc
 /// - `tools` are deduplicated and sorted
 /// - `targets` defaults to all four providers
 /// - Output is sorted by `id`
+#[allow(clippy::too_many_lines)] // Normalization intentionally stays centralized to keep defaulting rules in one pass.
 pub fn normalize_specs(specs: Vec<CanonicalSpec>) -> Result<Vec<NormalizedSpec>> {
     let mut normalized = Vec::with_capacity(specs.len());
 
@@ -380,7 +381,6 @@ pub fn validate_semantics(specs: &[NormalizedSpec], profiles: &PresetsMap) -> Ve
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-#[allow(clippy::expect_used)]
 mod tests {
     use std::collections::HashMap;
 

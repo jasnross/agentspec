@@ -1,0 +1,2 @@
+## Test ergonomics: `expect(...)` in tests keeps assertion failures readable.
+allow-expect-in-tests = true

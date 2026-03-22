@@ -260,7 +260,6 @@ pub fn load_canonical_specs(config: &AgentspecConfig) -> Result<Vec<CanonicalSpe
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
     use std::fs;

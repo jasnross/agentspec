@@ -76,7 +76,6 @@ pub fn adapt_codex(
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used)]
 mod tests {
     use std::collections::HashMap;
 

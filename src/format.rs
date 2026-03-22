@@ -77,7 +77,11 @@ fn serialize_yaml_value(lines: &mut Vec<String>, key: &str, value: &Value, inden
                             lines.push(format!("{prefix}  - {s}"));
                         }
                     }
-                    _ => {
+                    Value::Null
+                    | Value::Bool(_)
+                    | Value::Number(_)
+                    | Value::Array(_)
+                    | Value::Object(_) => {
                         lines.push(format!("{prefix}  - {item}"));
                     }
                 }
@@ -137,7 +141,6 @@ fn yaml_quote(s: &str) -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
     use serde_json::json;
