@@ -60,7 +60,7 @@ Run `cargo fmt && cargo clippy --all-targets` before committing; CI enforces bot
 
 `main.rs` runs these in order:
 
-1. **Load** — `parse.rs` reads `.md` files from `spec/agents/` and `spec/skills/`,
+1. **Load** — `parse.rs` reads `.md` files from `spec/agents/`, `spec/skills/`, and `spec/rules/`,
    splits frontmatter from body, produces `Vec<CanonicalSpec>`
 2. **Fragment resolution** — `fragments.rs` renders MiniJinja `{% include %}`
    and `{% with %}` tags in spec bodies
@@ -105,12 +105,13 @@ Run `cargo fmt && cargo clippy --all-targets` before committing; CI enforces bot
 
 ## Provider Support Matrix
 
-| Feature                  | Claude | OpenCode       | Codex | Cursor    |
-| ------------------------ | ------ | -------------- | ----- | --------- |
-| Agents                   | ✓      | ✓              | —     | —         |
-| Skills (user-invocable)  | ✓      | ✓ (commands/)  | ✓     | ✓         |
-| Skills (agent-invocable) | ✓      | ✓ (skills/)    | —     | —         |
-| Tool map                 | list   | boolean object | list  | inherited |
+| Feature                  | Claude | OpenCode           | Codex | Cursor    |
+| ------------------------ | ------ | ------------------ | ----- | --------- |
+| Agents                   | ✓      | ✓                  | —     | —         |
+| Skills (user-invocable)  | ✓      | ✓ (commands/)      | ✓     | ✓         |
+| Skills (agent-invocable) | ✓      | ✓ (skills/)        | —     | —         |
+| Rules                    | ✓      | ✓ (instructions/)  | ✓     | ✓         |
+| Tool map                 | list   | boolean object     | list  | inherited |
 
 ## Tool Name Mapping
 
@@ -133,8 +134,8 @@ reinstall the binary (`cargo install --path .`) before the updated schema takes
 effect — the installed `agentspec` binary will otherwise still enforce the old
 schema.
 
-The schema is duplicated at `agent-config/spec/schema/canonical.schema.json`
-for editor tooling. Keep both files in sync when making schema changes.
+The authoritative schema is `schemas/canonical.schema.json` in this repository.
+There is no separate copy in `agent-config/` — the binary is the single source of truth.
 
 ## Integration Tests
 
