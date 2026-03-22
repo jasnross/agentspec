@@ -6,10 +6,11 @@ configurations for Claude Code, Cursor, Codex, and OpenCode.
 ## Usage
 
 ```sh
-agentspec compile              # compile all specs for all providers
+agentspec compile                         # compile all specs for all providers
 agentspec compile --target claude,cursor  # compile for specific providers
-agentspec validate             # validate specs without generating output
-agentspec check                # verify generated files are up to date
+agentspec compile --profile home          # apply a machine-specific overlay
+agentspec validate                        # validate specs without generating output
+agentspec check                           # verify generated files are up to date
 ```
 
 ## Configuration
@@ -41,16 +42,26 @@ opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
 codex = { model = "gpt-5.3-codex", reasoning_effort = "medium" }
 cursor = "fast"
 
-# Machine-specific overrides — merged in when AGENTSPEC_PROFILE=<name>
+# Machine-specific overrides — merged in when --profile home (or AGENTSPEC_PROFILE=home)
 [profile_overrides.home.balanced]
 opencode = { model = "openai/gpt-5.3-codex", variant = "medium" }
 ```
 
-Select a machine overlay at compile time:
+## Profile Overlays
+
+Use `--profile` to apply a machine-specific overlay at compile time:
 
 ```sh
-AGENTSPEC_PROFILE=home agentspec compile
+agentspec compile --profile home
+agentspec validate --profile work
 ```
 
-Provider values in `[profile_overrides.<name>.<profile>]` merge over the
-corresponding `[profiles.<profile>]` entries at the provider level.
+Provider values in `[profile_overrides.<name>.<profile>]` merge over the corresponding
+`[profiles.<profile>]` entries at the provider level.
+
+To make a selection permanent, set the `AGENTSPEC_PROFILE` environment variable
+in your shell profile instead:
+
+```sh
+export AGENTSPEC_PROFILE=home
+```

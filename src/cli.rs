@@ -31,9 +31,10 @@ pub struct CommonArgs {
     #[arg(long, value_delimiter = ',')]
     pub target: Vec<Provider>,
 
-    /// Mapping profile name (e.g., "home", "work"); also reads `AGENTSPEC_PROFILE` env var
+    /// Profile overlay to apply (e.g., "home", "work"); also reads `AGENTSPEC_PROFILE` env var.
+    /// Set AGENTSPEC_PROFILE in your shell profile to make a selection permanent.
     #[arg(long, env = "AGENTSPEC_PROFILE")]
-    pub mapping_profile: Option<String>,
+    pub profile: Option<String>,
 
     /// Treat warnings as errors (exit code 1)
     #[arg(long)]

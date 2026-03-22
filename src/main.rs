@@ -68,7 +68,7 @@ fn main() -> Result<()> {
     eprintln!("normalized {} specs", specs.len());
 
     // Resolve model profiles from config, applying machine overlay if set
-    let profiles = config.resolve_profiles(args.mapping_profile.as_deref());
+    let profiles = config.resolve_profiles(args.profile.as_deref());
     if profiles.is_empty() {
         eprintln!("no model profiles configured");
     } else {
