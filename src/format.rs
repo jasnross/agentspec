@@ -34,7 +34,16 @@ fn serialize_yaml_value(lines: &mut Vec<String>, key: &str, value: &Value, inden
     let prefix = " ".repeat(indent);
     match value {
         Value::String(s) => {
-            if yaml_needs_quoting(s) {
+            if s.contains('\n') {
+                // Use YAML block scalar for strings containing newlines.
+                // This matches js-yaml's behavior for multi-line / folded strings.
+                let trimmed = s.trim_end_matches('\n');
+                let chomp = if s.ends_with('\n') { "" } else { "-" };
+                lines.push(format!("{prefix}{key}: |{chomp}"));
+                for line in trimmed.lines() {
+                    lines.push(format!("{prefix}  {line}"));
+                }
+            } else if yaml_needs_quoting(s) {
                 lines.push(format!("{prefix}{key}: {}", yaml_quote(s)));
             } else {
                 lines.push(format!("{prefix}{key}: {s}"));
@@ -127,30 +136,6 @@ fn yaml_quote(s: &str) -> String {
     format!("'{escaped}'")
 }
 
-/// Serialize a JSON value with sorted keys for deterministic output.
-#[allow(dead_code)] // used in Phase 7 (manifest writing)
-pub fn stable_json(value: &Value) -> String {
-    let sorted = sort_json_keys(value);
-    let mut output = serde_json::to_string_pretty(&sorted).expect("JSON serialization");
-    output.push('\n');
-    output
-}
-
-fn sort_json_keys(value: &Value) -> Value {
-    match value {
-        Value::Object(map) => {
-            let mut sorted: serde_json::Map<String, Value> = serde_json::Map::new();
-            let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort();
-            for key in keys {
-                sorted.insert(key.clone(), sort_json_keys(&map[key]));
-            }
-            Value::Object(sorted)
-        }
-        Value::Array(arr) => Value::Array(arr.iter().map(sort_json_keys).collect()),
-        other => other.clone(),
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -236,14 +221,4 @@ mod tests {
         assert!(!yaml_needs_quoting("Bash, Read, Write"));
     }
 
-    #[test]
-    fn test_stable_json_sorts_keys() {
-        let value = json!({"z": 1, "a": 2, "m": {"z": 3, "a": 4}});
-        let result = stable_json(&value);
-        let lines: Vec<&str> = result.lines().collect();
-        // "a" should come before "m" which comes before "z"
-        assert!(result.find("\"a\"").unwrap() < result.find("\"m\"").unwrap());
-        assert!(result.find("\"m\"").unwrap() < result.find("\"z\": 1").unwrap());
-        assert_eq!(lines.last().unwrap(), &"}");
-    }
 }

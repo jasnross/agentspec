@@ -5,17 +5,17 @@ use serde_json::Value;
 
 use crate::format::render_markdown_with_frontmatter;
 use crate::model::resolve_provider_model_config;
-use crate::types::{CompileWarning, GeneratedFile, NormalizedSpec, ProfilesMap, Provider};
+use crate::types::{CompileWarning, GeneratedFile, NormalizedSpec, PresetsMap, Provider};
 
 pub fn adapt_codex(
     spec: &NormalizedSpec,
-    profiles: &ProfilesMap,
+    profiles: &PresetsMap,
 ) -> (Vec<GeneratedFile>, Vec<CompileWarning>) {
     let warnings = Vec::new();
 
     let resolved_model = spec
         .execution
-        .model_profile
+        .preset
         .as_ref()
         .map(|profile| resolve_provider_model_config(profile, Provider::Codex, profiles))
         .unwrap_or_default();
@@ -80,7 +80,7 @@ mod tests {
             agent_invocable: false,
             body: "# Commit\n\nBody.".to_string(),
             execution: Execution {
-                model_profile: Some("deep".to_string()),
+                preset: Some("deep".to_string()),
                 ..Default::default()
             },
             tools: vec![],
@@ -92,7 +92,7 @@ mod tests {
         }
     }
 
-    fn test_profiles() -> ProfilesMap {
+    fn test_profiles() -> PresetsMap {
         let mut profile = HashMap::new();
         profile.insert(
             "codex".to_string(),

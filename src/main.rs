@@ -13,12 +13,13 @@ mod types;
 mod validate;
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
+use clap_complete::generate;
 
-use cli::{Cli, Command};
+use cli::{Cli, Command, CommonArgs};
 use compile::compile_specs;
 use config::AgentspecConfig;
-use emit::{check_generated_state, write_generated_files, write_manifest};
+use emit::{check_generated_state, write_generated_files};
 use fragments::{build_environment, load_fragments, resolve_fragments};
 use parse::load_canonical_specs;
 use schema::load_schemas;
@@ -26,7 +27,14 @@ use validate::{normalize_specs, validate_schema, validate_semantics};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let args = cli.command.args();
+
+    // Handle completions before any I/O — no config or spec loading needed.
+    if let Command::Completions { shell } = cli.command {
+        generate(shell, &mut Cli::command(), "agentspec", &mut std::io::stdout());
+        return Ok(());
+    }
+
+    let args: &CommonArgs = cli.command.args().expect("non-Completions command has args");
 
     let cwd = std::env::current_dir().context("failed to determine current directory")?;
     let mut config = AgentspecConfig::discover(&cwd)?;
@@ -42,22 +50,21 @@ fn main() -> Result<()> {
     // Phase 3: Resolve fragments
     let fragments_dir = config.resolve(&config.spec.fragments_dir);
     let fragment_map = load_fragments(&fragments_dir)?;
-    let (env, fragment_warnings) = build_environment(&fragment_map)?;
+    let (env, fragment_warnings) = build_environment(&fragment_map);
     let specs = resolve_fragments(specs, &env)?;
     let registered_count = fragment_map.len() - fragment_warnings.len();
     for w in &fragment_warnings {
-        eprintln!("warning: {}", w);
+        eprintln!("warning: {w}");
     }
     eprintln!(
-        "resolved fragments ({} fragment templates loaded)",
-        registered_count
+        "resolved fragments ({registered_count} fragment templates loaded)"
     );
 
     // Validate frontmatter against canonical JSON schema
     let schema_errors = validate_schema(&specs, &schemas.canonical)?;
     if !schema_errors.is_empty() {
         for err in &schema_errors {
-            eprintln!("error: {}", err);
+            eprintln!("error: {err}");
         }
         anyhow::bail!("{} schema validation error(s)", schema_errors.len());
     }
@@ -67,19 +74,19 @@ fn main() -> Result<()> {
     let specs = normalize_specs(specs)?;
     eprintln!("normalized {} specs", specs.len());
 
-    // Resolve model profiles from config, applying machine overlay if set
-    let profiles = config.resolve_profiles(args.profile.as_deref());
+    // Resolve model presets from config, applying machine profile overlay if set
+    let profiles = config.resolve_presets(args.profile.as_deref());
     if profiles.is_empty() {
-        eprintln!("no model profiles configured");
+        eprintln!("no presets configured");
     } else {
-        eprintln!("loaded {} model profile(s)", profiles.len());
+        eprintln!("loaded {} preset(s)", profiles.len());
     }
 
     // Semantic validation
     let semantic_errors = validate_semantics(&specs, &profiles);
     if !semantic_errors.is_empty() {
         for err in &semantic_errors {
-            eprintln!("error: {}", err);
+            eprintln!("error: {err}");
         }
         anyhow::bail!("{} semantic validation error(s)", semantic_errors.len());
     }
@@ -90,10 +97,10 @@ fn main() -> Result<()> {
     match &cli.command {
         Command::Validate(_) => {
             if args.strict && total_warnings > 0 {
-                anyhow::bail!("{} warning(s) treated as errors (--strict)", total_warnings);
+                anyhow::bail!("{total_warnings} warning(s) treated as errors (--strict)");
             }
             if total_warnings > 0 {
-                eprintln!("validation complete ({} warning(s))", total_warnings);
+                eprintln!("validation complete ({total_warnings} warning(s))");
             } else {
                 eprintln!("validation complete");
             }
@@ -108,19 +115,18 @@ fn main() -> Result<()> {
             let result = compile_specs(&specs, &profiles, &targets);
 
             for w in &result.warnings {
-                eprintln!("warning: {}", w);
+                eprintln!("warning: {w}");
             }
 
             total_warnings += result.warnings.len();
             if args.strict && total_warnings > 0 {
-                anyhow::bail!("{} warning(s) treated as errors (--strict)", total_warnings);
+                anyhow::bail!("{total_warnings} warning(s) treated as errors (--strict)");
             }
 
             eprintln!(
-                "compiled {} files for {} provider(s) (hash: {})",
+                "compiled {} files for {} provider(s)",
                 result.files.len(),
-                targets.len(),
-                &result.source_hash[..12]
+                targets.len()
             );
 
             let output_dir = config.resolve(&config.output.dir);
@@ -128,7 +134,6 @@ fn main() -> Result<()> {
             match &cli.command {
                 Command::Compile(_) => {
                     write_generated_files(&result.files, &output_dir, &targets)?;
-                    write_manifest(&result, &output_dir)?;
                     eprintln!(
                         "wrote {} files to {}",
                         result.files.len(),
@@ -141,13 +146,13 @@ fn main() -> Result<()> {
                         eprintln!("check passed: generated files are up to date");
                     } else {
                         for path in &check.missing {
-                            eprintln!("missing: {}", path);
+                            eprintln!("missing: {path}");
                         }
                         for path in &check.outdated {
-                            eprintln!("outdated: {}", path);
+                            eprintln!("outdated: {path}");
                         }
                         for path in &check.unexpected {
-                            eprintln!("unexpected: {}", path);
+                            eprintln!("unexpected: {path}");
                         }
                         anyhow::bail!("check failed: {} problem(s) found", check.problem_count());
                     }
@@ -155,6 +160,7 @@ fn main() -> Result<()> {
                 _ => unreachable!(),
             }
         }
+        Command::Completions { .. } => unreachable!("handled above"),
     }
 
     Ok(())

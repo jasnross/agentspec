@@ -110,7 +110,7 @@ pub struct NormalizedSpec {
 #[derive(Debug, Clone, Default)]
 #[allow(dead_code)] // fields read in later phases
 pub struct Execution {
-    pub model_profile: Option<String>,
+    pub preset: Option<String>,
     pub temperature: Option<f64>,
     pub mode: Option<String>,
     pub readonly: Option<bool>,
@@ -135,14 +135,14 @@ pub struct Routing {
 }
 
 // ---------------------------------------------------------------------------
-// Profile types
+// Preset types
 // ---------------------------------------------------------------------------
 
-/// Resolved model profiles: profile name → per-provider model config (string or object).
+/// Resolved model presets: preset name → per-provider model config (string or object).
 ///
 /// String shorthand (e.g., `"opus"`) or object form (`{model, variant, reasoning_effort}`).
-/// Produced by `AgentspecConfig::resolve_profiles` and consumed by adapters.
-pub type ProfilesMap = HashMap<String, HashMap<String, serde_json::Value>>;
+/// Produced by `AgentspecConfig::resolve_presets` and consumed by adapters.
+pub type PresetsMap = HashMap<String, HashMap<String, serde_json::Value>>;
 
 /// Resolved model configuration for a specific provider.
 #[derive(Debug, Clone, Default)]
@@ -236,5 +236,4 @@ impl fmt::Display for WarnKind {
 pub struct CompileResult {
     pub files: Vec<GeneratedFile>,
     pub warnings: Vec<CompileWarning>,
-    pub source_hash: String,
 }

@@ -42,7 +42,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "model_profile": {
+        "preset": {
           "type": "string",
           "minLength": 1
         },

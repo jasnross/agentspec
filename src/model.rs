@@ -1,4 +1,4 @@
-use crate::types::{ModelConfig, ProfilesMap, Provider};
+use crate::types::{ModelConfig, PresetsMap, Provider};
 
 /// Resolve the model configuration for a given profile and provider.
 ///
@@ -9,7 +9,7 @@ use crate::types::{ModelConfig, ProfilesMap, Provider};
 pub fn resolve_provider_model_config(
     profile_name: &str,
     provider: Provider,
-    profiles: &ProfilesMap,
+    profiles: &PresetsMap,
 ) -> ModelConfig {
     let Some(profile) = profiles.get(profile_name) else {
         return ModelConfig::default();
@@ -50,7 +50,7 @@ mod tests {
 
     fn make_profiles(
         profiles: HashMap<String, HashMap<String, serde_json::Value>>,
-    ) -> ProfilesMap {
+    ) -> PresetsMap {
         profiles
     }
 

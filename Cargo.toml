@@ -7,13 +7,13 @@ description = "Compile provider-neutral SKILL.md/AGENT.md specs into ready-to-us
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
+clap_complete = "4"
 indexmap = { version = "2", features = ["serde"] }
 jsonschema = "0.28"
 minijinja = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yml = "0.0.12"
-sha2 = "0.10"
 thiserror = "2"
 toml = "0.8"
 walkdir = "2"
@@ -22,11 +22,13 @@ walkdir = "2"
 tempfile = "3"
 
 [lints.clippy]
-# uninlined_format_args = "warn"
-complexity = "warn"
-doc_markdown = "warn"
-items_after_statements = "warn"
-match_wildcard_for_single_variants = "warn"
-perf = "warn"
-style = "warn"
-suspicious = "warn"
+complexity = "deny"
+doc_markdown = "deny"
+items_after_statements = "deny"
+match_wildcard_for_single_variants = "deny"
+perf = "deny"
+style = "deny"
+suspicious = "deny"
+uninlined_format_args = "deny"
+unnecessary_wraps = "deny"
+unwrap_used = "deny"

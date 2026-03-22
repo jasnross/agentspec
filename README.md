@@ -8,7 +8,7 @@ configurations for Claude Code, Cursor, Codex, and OpenCode.
 ```sh
 agentspec compile                         # compile all specs for all providers
 agentspec compile --target claude,cursor  # compile for specific providers
-agentspec compile --profile home          # apply a machine-specific overlay
+agentspec compile --profile home          # apply a machine profile
 agentspec validate                        # validate specs without generating output
 agentspec check                           # verify generated files are up to date
 ```
@@ -28,26 +28,26 @@ fragments_dir = "spec/fragments"
 [output]
 dir = "generated"
 
-# Model profiles: profile name → per-provider model config.
+# Model presets: preset name → per-provider model config.
 # Values are either a string shorthand or an object with model/variant/reasoning_effort.
-[profiles.deep_review]
+[presets.deep_review]
 claude = "opus"
 opencode = { model = "anthropic/claude-opus-4-6", variant = "max" }
 codex = { model = "gpt-5.3-codex", reasoning_effort = "xhigh" }
 cursor = "inherit"
 
-[profiles.balanced]
+[presets.balanced]
 claude = "sonnet"
 opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
 codex = { model = "gpt-5.3-codex", reasoning_effort = "medium" }
 cursor = "fast"
 
-# Machine-specific overrides — merged in when --profile home (or AGENTSPEC_PROFILE=home)
-[profile_overrides.home.balanced]
+# Machine profiles — merged in when --profile home (or AGENTSPEC_PROFILE=home)
+[profiles.home.balanced]
 opencode = { model = "openai/gpt-5.3-codex", variant = "medium" }
 ```
 
-## Profile Overlays
+## Machine Profiles
 
 Use `--profile` to apply a machine-specific overlay at compile time:
 
@@ -56,8 +56,8 @@ agentspec compile --profile home
 agentspec validate --profile work
 ```
 
-Provider values in `[profile_overrides.<name>.<profile>]` merge over the corresponding
-`[profiles.<profile>]` entries at the provider level.
+Provider values in `[profiles.<name>.<preset>]` merge over the corresponding
+`[presets.<preset>]` entries at the provider level.
 
 To make a selection permanent, set the `AGENTSPEC_PROFILE` environment variable
 in your shell profile instead:

@@ -7,7 +7,7 @@ use crate::format::render_markdown_with_frontmatter;
 use crate::model::resolve_provider_model_config;
 use crate::tools::{all_tool_names, tool_name};
 use crate::types::{
-    CompileWarning, GeneratedFile, NormalizedSpec, ProfilesMap, Provider, SpecKind, WarnKind,
+    CompileWarning, GeneratedFile, NormalizedSpec, PresetsMap, Provider, SpecKind, WarnKind,
 };
 
 /// Build the boolean tool map used by `OpenCode` agents and agent-invocable skills.
@@ -53,13 +53,13 @@ fn build_tool_map(
 
 pub fn adapt_opencode(
     spec: &NormalizedSpec,
-    profiles: &ProfilesMap,
+    profiles: &PresetsMap,
 ) -> (Vec<GeneratedFile>, Vec<CompileWarning>) {
     let mut warnings = Vec::new();
 
     let resolved_model = spec
         .execution
-        .model_profile
+        .preset
         .as_ref()
         .map(|profile| resolve_provider_model_config(profile, Provider::OpenCode, profiles))
         .unwrap_or_default();
@@ -93,7 +93,7 @@ pub fn adapt_opencode(
             "temperature".to_string(),
             Value::Number(
                 serde_json::Number::from_f64(temp)
-                    .unwrap_or_else(|| serde_json::Number::from_f64(0.0).unwrap()),
+                    .unwrap_or_else(|| serde_json::Number::from(0u64)),
             ),
         );
     }
@@ -218,7 +218,7 @@ mod tests {
 
     #[test]
     fn test_agent_has_boolean_tool_map() {
-        let (files, _) = adapt_opencode(&test_agent(), &ProfilesMap::new());
+        let (files, _) = adapt_opencode(&test_agent(), &PresetsMap::new());
         let content = String::from_utf8(files[0].content.clone()).unwrap();
         assert!(content.contains("bash: true"));
         assert!(content.contains("read: true"));
@@ -227,14 +227,14 @@ mod tests {
 
     #[test]
     fn test_agent_has_mode() {
-        let (files, _) = adapt_opencode(&test_agent(), &ProfilesMap::new());
+        let (files, _) = adapt_opencode(&test_agent(), &PresetsMap::new());
         let content = String::from_utf8(files[0].content.clone()).unwrap();
         assert!(content.contains("mode: subagent"));
     }
 
     #[test]
     fn test_agent_path() {
-        let (files, _) = adapt_opencode(&test_agent(), &ProfilesMap::new());
+        let (files, _) = adapt_opencode(&test_agent(), &PresetsMap::new());
         assert_eq!(
             files[0].path.to_str().unwrap(),
             "generated/opencode/agents/code-reviewer.md"
@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn test_user_invocable_skill_creates_command() {
-        let (files, _) = adapt_opencode(&test_skill(), &ProfilesMap::new());
+        let (files, _) = adapt_opencode(&test_skill(), &PresetsMap::new());
         assert_eq!(files.len(), 1); // only command, not agent-invocable
         assert_eq!(
             files[0].path.to_str().unwrap(),
@@ -256,7 +256,7 @@ mod tests {
         let mut spec = test_skill();
         spec.agent_invocable = true;
 
-        let (files, _) = adapt_opencode(&spec, &ProfilesMap::new());
+        let (files, _) = adapt_opencode(&spec, &PresetsMap::new());
         assert_eq!(files.len(), 2);
         let paths: Vec<String> = files
             .iter()
@@ -274,7 +274,7 @@ mod tests {
             ..Default::default()
         });
 
-        let (files, _) = adapt_opencode(&spec, &ProfilesMap::new());
+        let (files, _) = adapt_opencode(&spec, &PresetsMap::new());
         let content = String::from_utf8(files[0].content.clone()).unwrap();
         assert!(content.contains("agent: code-reviewer"));
     }
@@ -284,7 +284,7 @@ mod tests {
         let mut spec = test_agent();
         spec.tools = vec!["unknown_tool".to_string()];
 
-        let (_, warnings) = adapt_opencode(&spec, &ProfilesMap::new());
+        let (_, warnings) = adapt_opencode(&spec, &PresetsMap::new());
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].code, WarnKind::MissingMapping);
     }

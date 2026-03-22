@@ -56,7 +56,7 @@ pub fn load_fragments(fragments_dir: &Path) -> Result<HashMap<String, String>> {
 /// auto-indentation of included content.
 pub fn build_environment(
     fragments: &HashMap<String, String>,
-) -> Result<(Environment<'static>, Vec<String>)> {
+) -> (Environment<'static>, Vec<String>) {
     let mut env = Environment::new();
     // Lenient: undefined variables evaluate as falsy rather than erroring.
     // This matches Handlebars semantics where optional boolean flags (e.g.,
@@ -69,7 +69,7 @@ pub fn build_environment(
     // (e.g., Handlebars syntax pre-migration), we skip them with a warning.
     // They'll only cause an error if actually referenced by a spec.
     for (name, content) in fragments {
-        let template_name = format!("{}.md", name);
+        let template_name = format!("{name}.md");
         match env.add_template_owned(template_name.clone(), content.clone()) {
             Ok(()) => {}
             Err(e) => {
@@ -77,8 +77,7 @@ pub fn build_environment(
                 // This is expected during the migration period. The fragment will
                 // cause a "template not found" error if a spec tries to include it.
                 warnings.push(format!(
-                    "skipping fragment '{}' (parse error: {})",
-                    template_name, e
+                    "skipping fragment '{template_name}' (parse error: {e})"
                 ));
             }
         }
@@ -88,7 +87,7 @@ pub fn build_environment(
     // Usage: {{ include_indented("fragment/name.md", indent=4) }}
     env.add_function("include_indented", include_indented);
 
-    Ok((env, warnings))
+    (env, warnings)
 }
 
 /// Custom function that renders a template and indents every line by the specified amount.
@@ -129,7 +128,7 @@ fn include_indented(
                 // empty lines don't get indented
                 line.to_string()
             } else {
-                format!("{}{}", prefix, line)
+                format!("{prefix}{line}")
             }
         })
         .collect::<Vec<_>>()
@@ -137,20 +136,17 @@ fn include_indented(
 
     // Preserve trailing newline if the original had one
     if rendered.ends_with('\n') && !indented.ends_with('\n') {
-        Ok(format!("{}\n", indented))
+        Ok(format!("{indented}\n"))
     } else {
         Ok(indented)
     }
 }
 
-/// Check if a string contains `MiniJinja` template syntax (as opposed to Handlebars).
+/// Check if a string contains `MiniJinja` template syntax.
 ///
-/// `MiniJinja` uses `{% ... %}` for block tags. Handlebars uses `{{> ...}}` for partials
-/// and `{{#if}}` for blocks. We detect `MiniJinja` by looking for `{%` or for
-/// `include_indented(` (our custom function, which may appear with varying whitespace
-/// after `{{`).
+/// Detects `{% ... %}` block tags and `{{ ... }}` expression tags.
 fn contains_minijinja_syntax(body: &str) -> bool {
-    body.contains("{%") || body.contains("include_indented(")
+    body.contains("{%") || body.contains("{{")
 }
 
 /// Resolve fragment references in spec bodies by rendering them through `MiniJinja`.
@@ -220,11 +216,11 @@ mod tests {
         let mut fragments = HashMap::new();
         fragments.insert("greeting".to_string(), "Hello, world!".to_string());
 
-        let (env, _warnings) = build_environment(&fragments).unwrap();
-        let tmpl = env
+        let (env, _warnings) = build_environment(&fragments);
+        let template = env
             .template_from_str("Before.\n{% include \"greeting.md\" %}\nAfter.")
             .unwrap();
-        let result = tmpl.render(minijinja::context! {}).unwrap();
+        let result = template.render(minijinja::context! {}).unwrap();
         assert_eq!(result, "Before.\nHello, world!\nAfter.");
     }
 
@@ -233,7 +229,7 @@ mod tests {
         let mut fragments = HashMap::new();
         fragments.insert("greeting".to_string(), "Hello, {{ name }}!".to_string());
 
-        let (env, _warnings) = build_environment(&fragments).unwrap();
+        let (env, _warnings) = build_environment(&fragments);
         let tmpl = env
             .template_from_str(
                 "{% with name = \"Alice\" %}{% include \"greeting.md\" %}{% endwith %}",
@@ -252,7 +248,7 @@ mod tests {
             "before {% include \"inner.md\" %} after".to_string(),
         );
 
-        let (env, _warnings) = build_environment(&fragments).unwrap();
+        let (env, _warnings) = build_environment(&fragments);
         let tmpl = env
             .template_from_str("start {% include \"outer.md\" %} end")
             .unwrap();
@@ -263,7 +259,7 @@ mod tests {
     #[test]
     fn test_missing_fragment_errors() {
         let fragments = HashMap::new();
-        let (env, _warnings) = build_environment(&fragments).unwrap();
+        let (env, _warnings) = build_environment(&fragments);
         let tmpl = env
             .template_from_str("{% include \"nonexistent.md\" %}")
             .unwrap();
@@ -276,7 +272,7 @@ mod tests {
         let mut fragments = HashMap::new();
         fragments.insert("rules".to_string(), "Rule 1\nRule 2\nRule 3".to_string());
 
-        let (env, _warnings) = build_environment(&fragments).unwrap();
+        let (env, _warnings) = build_environment(&fragments);
         let tmpl = env
             .template_from_str("Items:\n   {{ include_indented(\"rules.md\", indent=3) }}")
             .unwrap();
@@ -287,7 +283,7 @@ mod tests {
     #[test]
     fn test_resolve_fragments_no_syntax() {
         let fragments = HashMap::new();
-        let (env, _warnings) = build_environment(&fragments).unwrap();
+        let (env, _warnings) = build_environment(&fragments);
 
         let specs = vec![CanonicalSpec {
             path: "test.md".into(),
@@ -306,7 +302,7 @@ mod tests {
         let mut fragments = HashMap::new();
         fragments.insert("footer".to_string(), "-- End --".to_string());
 
-        let (env, _warnings) = build_environment(&fragments).unwrap();
+        let (env, _warnings) = build_environment(&fragments);
 
         let specs = vec![CanonicalSpec {
             path: "test.md".into(),
@@ -325,7 +321,7 @@ mod tests {
         let mut fragments = HashMap::new();
         fragments.insert("rules".to_string(), "Rule 1\nRule 2\nRule 3".to_string());
 
-        let (env, _warnings) = build_environment(&fragments).unwrap();
+        let (env, _warnings) = build_environment(&fragments);
         let tmpl = env
             .template_from_str(
                 "Items:\n   {% filter indent(3, first=false) %}{% include \"rules.md\" %}{% endfilter %}",
@@ -343,7 +339,7 @@ mod tests {
             "Hello, {{ name }}!\nWelcome aboard.".to_string(),
         );
 
-        let (env, _warnings) = build_environment(&fragments).unwrap();
+        let (env, _warnings) = build_environment(&fragments);
         let tmpl = env
             .template_from_str(
                 "Message:\n    {% filter indent(4, first=false) %}{% with name = \"Alice\" %}{% include \"greeting.md\" %}{% endwith %}{% endfilter %}",

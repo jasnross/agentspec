@@ -6,7 +6,7 @@ use serde_json::Value;
 use crate::format::render_markdown_with_frontmatter;
 use crate::model::resolve_provider_model_config;
 use crate::tools::tool_name;
-use crate::types::{CompileWarning, GeneratedFile, NormalizedSpec, ProfilesMap, Provider, SpecKind, WarnKind};
+use crate::types::{CompileWarning, GeneratedFile, NormalizedSpec, PresetsMap, Provider, SpecKind, WarnKind};
 
 /// Map canonical tool IDs to Claude-specific tool names.
 fn map_tools(
@@ -40,7 +40,7 @@ fn map_tools(
 
 pub fn adapt_claude(
     spec: &NormalizedSpec,
-    profiles: &ProfilesMap,
+    profiles: &PresetsMap,
 ) -> (Vec<GeneratedFile>, Vec<CompileWarning>) {
     let mut warnings = Vec::new();
 
@@ -61,7 +61,7 @@ pub fn adapt_claude(
             );
         }
 
-        if let Some(profile) = &spec.execution.model_profile {
+        if let Some(profile) = &spec.execution.preset {
             let resolved = resolve_provider_model_config(profile, Provider::Claude, profiles);
             if let Some(model) = resolved.model {
                 fm.insert("model".to_string(), Value::String(model));
@@ -112,7 +112,7 @@ pub fn adapt_claude(
         fm.insert("tools".to_string(), Value::String(mapped_tools.join(", ")));
     }
 
-    if let Some(profile) = &spec.execution.model_profile {
+    if let Some(profile) = &spec.execution.preset {
         let resolved = resolve_provider_model_config(profile, Provider::Claude, profiles);
         if let Some(model) = resolved.model {
             fm.insert("model".to_string(), Value::String(model));
@@ -161,7 +161,7 @@ mod tests {
 
     #[test]
     fn test_skill_generates_correct_path() {
-        let (files, warnings) = adapt_claude(&test_skill(), &ProfilesMap::new());
+        let (files, warnings) = adapt_claude(&test_skill(), &PresetsMap::new());
         assert!(warnings.is_empty());
         assert_eq!(files.len(), 1);
         assert_eq!(
@@ -172,14 +172,14 @@ mod tests {
 
     #[test]
     fn test_skill_frontmatter_contains_tools() {
-        let (files, _) = adapt_claude(&test_skill(), &ProfilesMap::new());
+        let (files, _) = adapt_claude(&test_skill(), &PresetsMap::new());
         let content = String::from_utf8(files[0].content.clone()).unwrap();
         assert!(content.contains("allowed-tools: Bash, Read"));
     }
 
     #[test]
     fn test_skill_not_agent_invocable_adds_disable() {
-        let (files, _) = adapt_claude(&test_skill(), &ProfilesMap::new());
+        let (files, _) = adapt_claude(&test_skill(), &PresetsMap::new());
         let content = String::from_utf8(files[0].content.clone()).unwrap();
         assert!(content.contains("disable-model-invocation: true"));
         // user_invocable is true, so no user-invocable: false
@@ -193,7 +193,7 @@ mod tests {
         spec.id = "code-reviewer".to_string();
         spec.name = "code-reviewer".to_string();
 
-        let (files, _) = adapt_claude(&spec, &ProfilesMap::new());
+        let (files, _) = adapt_claude(&spec, &PresetsMap::new());
         assert_eq!(
             files[0].path.to_str().unwrap(),
             "generated/claude/agents/code-reviewer.md"
@@ -211,7 +211,7 @@ mod tests {
         // Instead use a tool not in the spec list (no tools produces no allowed-tools key).
         spec.tools = vec![];
 
-        let (files, warnings) = adapt_claude(&spec, &ProfilesMap::new());
+        let (files, warnings) = adapt_claude(&spec, &PresetsMap::new());
         assert!(warnings.is_empty());
         let content = String::from_utf8(files[0].content.clone()).unwrap();
         assert!(!content.contains("allowed-tools"));
@@ -222,7 +222,7 @@ mod tests {
         let mut spec = test_skill();
         spec.tools = vec!["unknown_tool".to_string()];
 
-        let (_, warnings) = adapt_claude(&spec, &ProfilesMap::new());
+        let (_, warnings) = adapt_claude(&spec, &PresetsMap::new());
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].code, WarnKind::MissingMapping);
         assert!(warnings[0].message.contains("unknown_tool"));

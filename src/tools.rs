@@ -58,7 +58,7 @@ pub fn tool_name(canonical: &str, provider: Provider) -> Option<Option<&'static 
 
 /// Returns the sorted list of all tool names valid for a given provider.
 ///
-/// Used by the OpenCode adapter to build its boolean tool map (universe of all tools).
+/// Used by the `OpenCode` adapter to build its boolean tool map (universe of all tools).
 pub fn all_tool_names(provider: Provider) -> Vec<&'static str> {
     const CANONICAL: &[&str] = &[
         "bash", "edit", "glob", "grep", "ls", "read", "task", "todowrite", "webfetch",

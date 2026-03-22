@@ -3,11 +3,9 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use serde_json::json;
 use walkdir::WalkDir;
 
-use crate::format::stable_json;
-use crate::types::{CompileResult, GeneratedFile, Provider};
+use crate::types::{GeneratedFile, Provider};
 
 /// Write all generated files to disk.
 ///
@@ -49,35 +47,6 @@ pub fn write_generated_files(
     Ok(())
 }
 
-/// Write the manifest.json file.
-///
-/// Contains sourceHash, file list (provider + path), and compilation warnings.
-pub fn write_manifest(result: &CompileResult, output_dir: &Path) -> Result<()> {
-    fs::create_dir_all(output_dir)
-        .with_context(|| format!("failed to create {}", output_dir.display()))?;
-
-    let manifest = json!({
-        "sourceHash": result.source_hash,
-        "files": result.files.iter().map(|f| json!({
-            "provider": f.provider.to_string(),
-            "path": f.path.to_str().unwrap_or_default(),
-        })).collect::<Vec<_>>(),
-        "warnings": result.warnings.iter().map(|w| json!({
-            "code": w.code.to_string(),
-            "provider": w.provider.to_string(),
-            "specId": w.spec_id,
-            "field": w.field,
-            "message": w.message,
-        })).collect::<Vec<_>>(),
-    });
-
-    let manifest_path = output_dir.join("manifest.json");
-    fs::write(&manifest_path, stable_json(&manifest))
-        .with_context(|| format!("failed to write {}", manifest_path.display()))?;
-
-    Ok(())
-}
-
 /// Differences found when checking generated state against expected output.
 #[derive(Debug, Default)]
 pub struct CheckResult {
@@ -102,8 +71,7 @@ impl CheckResult {
 /// - Missing: expected file doesn't exist on disk
 /// - Outdated: file exists but content differs
 /// - Unexpected: file exists on disk but isn't in the expected set
-///
-/// `manifest.json` is excluded from the comparison.
+#[allow(clippy::unnecessary_wraps)] // Result retained: this function reads files and may fail in future
 pub fn check_generated_state(
     expected: &[GeneratedFile],
     base_dir: &Path,
@@ -279,32 +247,6 @@ mod tests {
         assert!(!stale_dir.join("old.md").exists());
         // New file should exist
         assert!(base.join("generated/claude/skills/new/SKILL.md").exists());
-    }
-
-    #[test]
-    fn test_write_manifest() {
-        let tmp = TempDir::new().unwrap();
-        let output_dir = tmp.path().join("generated");
-
-        let result = CompileResult {
-            files: vec![make_file(
-                Provider::Claude,
-                "generated/claude/skills/test/SKILL.md",
-                "content",
-            )],
-            warnings: vec![],
-            source_hash: "abc123".to_string(),
-        };
-
-        write_manifest(&result, &output_dir).unwrap();
-
-        let manifest_path = output_dir.join("manifest.json");
-        assert!(manifest_path.exists());
-
-        let manifest: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
-        assert_eq!(manifest["sourceHash"], "abc123");
-        assert_eq!(manifest["files"].as_array().unwrap().len(), 1);
     }
 
     #[test]

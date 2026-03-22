@@ -7,7 +7,7 @@ use jsonschema::{Draft, Validator};
 use serde_json::Value;
 
 use crate::types::{
-    CanonicalSpec, Execution, NormalizedSpec, ProfilesMap, Provider, Routing, SkillMeta, SpecKind,
+    CanonicalSpec, Execution, NormalizedSpec, PresetsMap, Provider, Routing, SkillMeta, SpecKind,
 };
 
 // ---------------------------------------------------------------------------
@@ -64,7 +64,7 @@ pub fn validate_schema(specs: &[CanonicalSpec], schema: &Value) -> Result<Vec<Sc
     let validator = Validator::options()
         .with_draft(Draft::Draft7)
         .build(schema)
-        .map_err(|e| anyhow::anyhow!("failed to compile canonical schema: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("failed to compile canonical schema: {e}"))?;
 
     let mut errors = Vec::new();
 
@@ -184,8 +184,8 @@ pub fn normalize_specs(specs: Vec<CanonicalSpec>) -> Result<Vec<NormalizedSpec>>
         // Execution
         let exec_obj = fm.get("execution");
         let execution = Execution {
-            model_profile: exec_obj
-                .and_then(|e| e.get("model_profile"))
+            preset: exec_obj
+                .and_then(|e| e.get("preset"))
                 .and_then(|v| v.as_str())
                 .map(String::from),
             temperature: exec_obj
@@ -271,7 +271,7 @@ pub fn normalize_specs(specs: Vec<CanonicalSpec>) -> Result<Vec<NormalizedSpec>>
 /// This function does no I/O and cannot fail structurally.
 pub fn validate_semantics(
     specs: &[NormalizedSpec],
-    profiles: &ProfilesMap,
+    profiles: &PresetsMap,
 ) -> Vec<SemanticError> {
     let mut errors = Vec::new();
     let mut id_set = std::collections::HashSet::new();
@@ -310,27 +310,26 @@ pub fn validate_semantics(
             errors.push(SemanticError {
                 path: spec.source_path.clone(),
                 message: format!(
-                    "skill.delegate_to '{}' does not match any canonical id",
-                    delegate_to
+                    "skill.delegate_to '{delegate_to}' does not match any canonical id"
                 ),
             });
         }
 
-        // Model profile validation (skip if no profiles loaded)
-        if let Some(ref profile_name) = spec.execution.model_profile
+        // Preset validation (skip if no presets loaded)
+        if let Some(ref preset_name) = spec.execution.preset
             && !profiles.is_empty()
         {
-            match profiles.get(profile_name) {
+            match profiles.get(preset_name) {
                 None => {
                     errors.push(SemanticError {
                         path: spec.source_path.clone(),
-                        message: format!("unknown model profile '{}'", profile_name),
+                        message: format!("unknown preset '{preset_name}'"),
                     });
                 }
-                Some(profile_mapping) => {
+                Some(preset_mapping) => {
                     for provider in &spec.targets {
                         let provider_key = provider.to_string();
-                        let has_model = profile_mapping
+                        let has_model = preset_mapping
                             .get(&provider_key)
                             .map(|v| {
                                 // String shorthand or object with "model" key
@@ -345,8 +344,7 @@ pub fn validate_semantics(
                             errors.push(SemanticError {
                                 path: spec.source_path.clone(),
                                 message: format!(
-                                    "model profile '{}' missing mapping for provider '{}'",
-                                    profile_name, provider
+                                    "preset '{preset_name}' missing mapping for provider '{provider}'"
                                 ),
                             });
                         }
@@ -535,12 +533,12 @@ mod tests {
     #[test]
     fn test_normalize_execution_fields() {
         let spec = make_spec(
-            r#"{"id":"test","description":"desc","version":1,"execution":{"model_profile":"fast","temperature":0.5,"mode":"subagent","readonly":true,"background":false}}"#,
+            r#"{"id":"test","description":"desc","version":1,"execution":{"preset":"fast","temperature":0.5,"mode":"subagent","readonly":true,"background":false}}"#,
             "body",
         );
         let normalized = normalize_specs(vec![spec]).unwrap();
         let exec = &normalized[0].execution;
-        assert_eq!(exec.model_profile.as_deref(), Some("fast"));
+        assert_eq!(exec.preset.as_deref(), Some("fast"));
         assert_eq!(exec.temperature, Some(0.5));
         assert_eq!(exec.mode.as_deref(), Some("subagent"));
         assert_eq!(exec.readonly, Some(true));
@@ -588,7 +586,7 @@ mod tests {
             make_normalized("alpha", SpecKind::Agent, "body"),
             make_normalized("beta", SpecKind::Skill, "body"),
         ];
-        let errors = validate_semantics(&specs, &ProfilesMap::new());
+        let errors = validate_semantics(&specs, &PresetsMap::new());
         assert!(errors.is_empty(), "expected no errors, got: {:?}", errors);
     }
 
@@ -598,7 +596,7 @@ mod tests {
             make_normalized("dup", SpecKind::Agent, "body a"),
             make_normalized("dup", SpecKind::Agent, "body b"),
         ];
-        let errors = validate_semantics(&specs, &ProfilesMap::new());
+        let errors = validate_semantics(&specs, &PresetsMap::new());
         assert_eq!(errors.len(), 1);
         assert!(errors[0].message.contains("duplicate id 'dup'"));
     }
@@ -606,7 +604,7 @@ mod tests {
     #[test]
     fn test_semantics_empty_body() {
         let specs = vec![make_normalized("empty", SpecKind::Agent, "")];
-        let errors = validate_semantics(&specs, &ProfilesMap::new());
+        let errors = validate_semantics(&specs, &PresetsMap::new());
         assert!(
             errors
                 .iter()
@@ -619,7 +617,7 @@ mod tests {
         let mut spec = make_normalized("no-invoke", SpecKind::Skill, "body");
         spec.user_invocable = false;
         spec.agent_invocable = false;
-        let errors = validate_semantics(&[spec], &ProfilesMap::new());
+        let errors = validate_semantics(&[spec], &PresetsMap::new());
         assert!(
             errors
                 .iter()
@@ -634,7 +632,7 @@ mod tests {
             delegate_to: Some("nonexistent".to_string()),
             ..Default::default()
         });
-        let errors = validate_semantics(&[spec], &ProfilesMap::new());
+        let errors = validate_semantics(&[spec], &PresetsMap::new());
         assert!(
             errors
                 .iter()
@@ -650,7 +648,7 @@ mod tests {
             delegate_to: Some("target-skill".to_string()),
             ..Default::default()
         });
-        let errors = validate_semantics(&[delegator, target], &ProfilesMap::new());
+        let errors = validate_semantics(&[delegator, target], &PresetsMap::new());
         assert!(
             errors.is_empty(),
             "valid delegate_to should not error, got: {:?}",
@@ -659,33 +657,33 @@ mod tests {
     }
 
     #[test]
-    fn test_semantics_unknown_model_profile() {
+    fn test_semantics_unknown_preset() {
         let mut spec = make_normalized("profiled", SpecKind::Agent, "body");
-        spec.execution.model_profile = Some("nonexistent".to_string());
+        spec.execution.preset = Some("nonexistent".to_string());
 
-        // Need at least one profile so model_profile validation isn't skipped
-        let mut profiles = ProfilesMap::new();
-        profiles.insert("known".to_string(), HashMap::new());
-        let errors = validate_semantics(&[spec], &profiles);
+        // Need at least one preset so preset validation isn't skipped
+        let mut presets = PresetsMap::new();
+        presets.insert("known".to_string(), HashMap::new());
+        let errors = validate_semantics(&[spec], &presets);
         assert!(
             errors
                 .iter()
-                .any(|e| e.message.contains("unknown model profile 'nonexistent'"))
+                .any(|e| e.message.contains("unknown preset 'nonexistent'"))
         );
     }
 
     #[test]
-    fn test_semantics_model_profile_missing_provider() {
+    fn test_semantics_preset_missing_provider() {
         let mut spec = make_normalized("profiled", SpecKind::Agent, "body");
-        spec.execution.model_profile = Some("fast".to_string());
+        spec.execution.preset = Some("fast".to_string());
 
         // Only claude has a mapping, other 3 providers are missing
-        let mut profiles = ProfilesMap::new();
-        let mut fast_profile = HashMap::new();
-        fast_profile.insert("claude".to_string(), serde_json::json!("claude-sonnet"));
-        profiles.insert("fast".to_string(), fast_profile);
+        let mut presets = PresetsMap::new();
+        let mut fast_preset = HashMap::new();
+        fast_preset.insert("claude".to_string(), serde_json::json!("claude-sonnet"));
+        presets.insert("fast".to_string(), fast_preset);
 
-        let errors = validate_semantics(&[spec], &profiles);
+        let errors = validate_semantics(&[spec], &presets);
         // Should have errors for cursor, codex, opencode
         assert_eq!(
             errors.len(),
@@ -696,23 +694,23 @@ mod tests {
     }
 
     #[test]
-    fn test_semantics_model_profile_all_providers_mapped() {
+    fn test_semantics_preset_all_providers_mapped() {
         let mut spec = make_normalized("profiled", SpecKind::Agent, "body");
-        spec.execution.model_profile = Some("fast".to_string());
+        spec.execution.preset = Some("fast".to_string());
 
-        let mut fast_profile = HashMap::new();
-        fast_profile.insert("claude".to_string(), serde_json::json!("claude-sonnet"));
-        fast_profile.insert("cursor".to_string(), serde_json::json!("cursor-fast"));
-        fast_profile.insert("codex".to_string(), serde_json::json!("codex-mini"));
-        fast_profile.insert(
+        let mut fast_preset = HashMap::new();
+        fast_preset.insert("claude".to_string(), serde_json::json!("claude-sonnet"));
+        fast_preset.insert("cursor".to_string(), serde_json::json!("cursor-fast"));
+        fast_preset.insert("codex".to_string(), serde_json::json!("codex-mini"));
+        fast_preset.insert(
             "opencode".to_string(),
             serde_json::json!({"model": "oc-fast"}),
         );
 
-        let mut profiles = ProfilesMap::new();
-        profiles.insert("fast".to_string(), fast_profile);
+        let mut presets = PresetsMap::new();
+        presets.insert("fast".to_string(), fast_preset);
 
-        let errors = validate_semantics(&[spec], &profiles);
+        let errors = validate_semantics(&[spec], &presets);
         assert!(errors.is_empty(), "expected no errors, got: {:?}", errors);
     }
 }
