@@ -12,7 +12,7 @@ cargo build
 cargo test
 cargo fmt                       # format all source files
 cargo fmt --check               # verify formatting without writing (what CI runs)
-cargo clippy
+cargo clippy --all-targets      # lint all targets (including tests)
 cargo install --path .          # reinstall binary after schema changes (see below)
 
 # From agent-config/ (the spec library that exercises this compiler)
@@ -54,7 +54,7 @@ affect everyday coding:
   in backticks in doc comments
 - `unnecessary_wraps` — don't return `Result<T>` from functions that can't fail
 
-Run `cargo fmt && cargo clippy` before committing; CI enforces both.
+Run `cargo fmt && cargo clippy --all-targets` before committing; CI enforces both.
 
 ## Pipeline Stages
 
@@ -77,21 +77,21 @@ Run `cargo fmt && cargo clippy` before committing; CI enforces both.
 
 ## Module Map
 
-| Module | Role |
-|---|---|
-| `types.rs` | All shared data types: `CanonicalSpec`, `NormalizedSpec`, `Execution`, `PresetsMap`, `CompileResult`, `Provider`, etc. |
-| `cli.rs` | `clap` argument parsing; `CommonArgs` reads `AGENTSPEC_PROFILE` env var |
-| `config.rs` | `agentspec.toml` discovery and parsing; `resolve_presets()` merges machine profile overlays |
-| `parse.rs` | Loads `.md` spec files from disk |
-| `fragments.rs` | MiniJinja environment setup and fragment rendering |
-| `schema.rs` | Embeds `canonical.schema.json` via `include_str!`; parses it once at startup |
-| `validate.rs` | Schema validation, normalization, semantic checks |
-| `compile.rs` | Provider dispatch loop; sorts output by path |
-| `emit.rs` | Writes files to disk; `check_generated_state` diffs expected vs actual |
-| `format.rs` | YAML frontmatter serializer; hand-rolled to match js-yaml plain-string style |
-| `model.rs` | Resolves a spec's `execution.preset` name to a `ModelConfig` for a specific provider |
-| `tools.rs` | Canonical → provider-specific tool name mapping table |
-| `adapters/` | One file per provider: `claude.rs`, `opencode.rs`, `codex.rs`, `cursor.rs` |
+| Module         | Role                                                                                                                   |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `types.rs`     | All shared data types: `CanonicalSpec`, `NormalizedSpec`, `Execution`, `PresetsMap`, `CompileResult`, `Provider`, etc. |
+| `cli.rs`       | `clap` argument parsing; `CommonArgs` reads `AGENTSPEC_PROFILE` env var                                                |
+| `config.rs`    | `agentspec.toml` discovery and parsing; `resolve_presets()` merges machine profile overlays                            |
+| `parse.rs`     | Loads `.md` spec files from disk                                                                                       |
+| `fragments.rs` | MiniJinja environment setup and fragment rendering                                                                     |
+| `schema.rs`    | Embeds `canonical.schema.json` via `include_str!`; parses it once at startup                                           |
+| `validate.rs`  | Schema validation, normalization, semantic checks                                                                      |
+| `compile.rs`   | Provider dispatch loop; sorts output by path                                                                           |
+| `emit.rs`      | Writes files to disk; `check_generated_state` diffs expected vs actual                                                 |
+| `format.rs`    | YAML frontmatter serializer; hand-rolled to match js-yaml plain-string style                                           |
+| `model.rs`     | Resolves a spec's `execution.preset` name to a `ModelConfig` for a specific provider                                   |
+| `tools.rs`     | Canonical → provider-specific tool name mapping table                                                                  |
+| `adapters/`    | One file per provider: `claude.rs`, `opencode.rs`, `codex.rs`, `cursor.rs`                                             |
 
 ## Key Types
 
@@ -105,12 +105,12 @@ Run `cargo fmt && cargo clippy` before committing; CI enforces both.
 
 ## Provider Support Matrix
 
-| Feature | Claude | OpenCode | Codex | Cursor |
-|---|---|---|---|---|
-| Agents | ✓ | ✓ | — | — |
-| Skills (user-invocable) | ✓ | ✓ (commands/) | ✓ | ✓ |
-| Skills (agent-invocable) | ✓ | ✓ (skills/) | — | — |
-| Tool map | list | boolean object | list | inherited |
+| Feature                  | Claude | OpenCode       | Codex | Cursor    |
+| ------------------------ | ------ | -------------- | ----- | --------- |
+| Agents                   | ✓      | ✓              | —     | —         |
+| Skills (user-invocable)  | ✓      | ✓ (commands/)  | ✓     | ✓         |
+| Skills (agent-invocable) | ✓      | ✓ (skills/)    | —     | —         |
+| Tool map                 | list   | boolean object | list  | inherited |
 
 ## Tool Name Mapping
 
