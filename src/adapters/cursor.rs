@@ -4,11 +4,11 @@ use indexmap::IndexMap;
 use serde_json::Value;
 
 use crate::format::render_markdown_with_frontmatter;
-use crate::types::{CompileWarning, GeneratedFile, MappingBundle, NormalizedSpec, Provider};
+use crate::types::{CompileWarning, GeneratedFile, NormalizedSpec, ProfilesMap, Provider};
 
 pub fn adapt_cursor(
     spec: &NormalizedSpec,
-    _mappings: &MappingBundle,
+    _profiles: &ProfilesMap,
 ) -> (Vec<GeneratedFile>, Vec<CompileWarning>) {
     let warnings = Vec::new();
 
@@ -44,9 +44,10 @@ pub fn adapt_cursor(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
     use crate::types::{Execution, SpecKind};
-    use std::collections::HashMap;
 
     fn test_spec() -> NormalizedSpec {
         NormalizedSpec {
@@ -71,7 +72,7 @@ mod tests {
 
     #[test]
     fn test_cursor_uses_id_not_name() {
-        let (files, _) = adapt_cursor(&test_spec(), &MappingBundle::default());
+        let (files, _) = adapt_cursor(&test_spec(), &ProfilesMap::new());
         let content = String::from_utf8(files[0].content.clone()).unwrap();
         // Cursor uses spec.id for name, not spec.name
         assert!(content.contains("name: commit"));
@@ -80,7 +81,7 @@ mod tests {
 
     #[test]
     fn test_cursor_no_tools_or_model() {
-        let (files, _) = adapt_cursor(&test_spec(), &MappingBundle::default());
+        let (files, _) = adapt_cursor(&test_spec(), &ProfilesMap::new());
         let content = String::from_utf8(files[0].content.clone()).unwrap();
         assert!(!content.contains("tools"));
         assert!(!content.contains("model"));
@@ -89,7 +90,7 @@ mod tests {
 
     #[test]
     fn test_cursor_skill_path() {
-        let (files, _) = adapt_cursor(&test_spec(), &MappingBundle::default());
+        let (files, _) = adapt_cursor(&test_spec(), &ProfilesMap::new());
         assert_eq!(
             files[0].path.to_str().unwrap(),
             "generated/cursor/skills/commit/SKILL.md"

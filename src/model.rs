@@ -1,18 +1,17 @@
-use crate::types::{MappingBundle, ModelConfig, Provider};
+use crate::types::{ModelConfig, ProfilesMap, Provider};
 
-#[allow(dead_code)] // called by provider adapters in Phase 6
 /// Resolve the model configuration for a given profile and provider.
 ///
 /// Mirrors the TypeScript `resolveProviderModelConfig`:
 /// - String shorthand (e.g., `"opus"`) → `ModelConfig { model: "opus", .. }`
 /// - Object form (e.g., `{ model: "...", variant: "max" }`) → extract known fields
-/// - Missing provider key → `ModelConfig { model: None, .. }`
+/// - Missing profile or provider key → `ModelConfig { model: None, .. }`
 pub fn resolve_provider_model_config(
     profile_name: &str,
     provider: Provider,
-    mappings: &MappingBundle,
+    profiles: &ProfilesMap,
 ) -> ModelConfig {
-    let Some(profile) = mappings.models.profiles.get(profile_name) else {
+    let Some(profile) = profiles.get(profile_name) else {
         return ModelConfig::default();
     };
 
@@ -45,17 +44,14 @@ pub fn resolve_provider_model_config(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::types::ModelsMapping;
     use std::collections::HashMap;
 
-    fn make_mappings(
+    use super::*;
+
+    fn make_profiles(
         profiles: HashMap<String, HashMap<String, serde_json::Value>>,
-    ) -> MappingBundle {
-        MappingBundle {
-            models: ModelsMapping { profiles },
-            ..Default::default()
-        }
+    ) -> ProfilesMap {
+        profiles
     }
 
     #[test]
@@ -63,8 +59,8 @@ mod tests {
         let mut profile = HashMap::new();
         profile.insert("claude".to_string(), serde_json::json!("opus"));
 
-        let mappings = make_mappings(HashMap::from([("deep".to_string(), profile)]));
-        let config = resolve_provider_model_config("deep", Provider::Claude, &mappings);
+        let profiles = make_profiles(HashMap::from([("deep".to_string(), profile)]));
+        let config = resolve_provider_model_config("deep", Provider::Claude, &profiles);
 
         assert_eq!(config.model.as_deref(), Some("opus"));
         assert!(config.variant.is_none());
@@ -79,8 +75,8 @@ mod tests {
             serde_json::json!({"model": "anthropic/claude-opus-4-6", "variant": "max"}),
         );
 
-        let mappings = make_mappings(HashMap::from([("deep".to_string(), profile)]));
-        let config = resolve_provider_model_config("deep", Provider::OpenCode, &mappings);
+        let profiles = make_profiles(HashMap::from([("deep".to_string(), profile)]));
+        let config = resolve_provider_model_config("deep", Provider::OpenCode, &profiles);
 
         assert_eq!(config.model.as_deref(), Some("anthropic/claude-opus-4-6"));
         assert_eq!(config.variant.as_deref(), Some("max"));
@@ -94,8 +90,8 @@ mod tests {
             serde_json::json!({"model": "gpt-5.3-codex", "reasoning_effort": "xhigh"}),
         );
 
-        let mappings = make_mappings(HashMap::from([("deep".to_string(), profile)]));
-        let config = resolve_provider_model_config("deep", Provider::Codex, &mappings);
+        let profiles = make_profiles(HashMap::from([("deep".to_string(), profile)]));
+        let config = resolve_provider_model_config("deep", Provider::Codex, &profiles);
 
         assert_eq!(config.model.as_deref(), Some("gpt-5.3-codex"));
         assert_eq!(config.reasoning_effort.as_deref(), Some("xhigh"));
@@ -103,8 +99,8 @@ mod tests {
 
     #[test]
     fn test_missing_profile() {
-        let mappings = make_mappings(HashMap::new());
-        let config = resolve_provider_model_config("nonexistent", Provider::Claude, &mappings);
+        let profiles = make_profiles(HashMap::new());
+        let config = resolve_provider_model_config("nonexistent", Provider::Claude, &profiles);
         assert!(config.model.is_none());
     }
 
@@ -113,9 +109,9 @@ mod tests {
         let mut profile = HashMap::new();
         profile.insert("claude".to_string(), serde_json::json!("opus"));
 
-        let mappings = make_mappings(HashMap::from([("deep".to_string(), profile)]));
+        let profiles = make_profiles(HashMap::from([("deep".to_string(), profile)]));
         // cursor is not in the profile
-        let config = resolve_provider_model_config("deep", Provider::Cursor, &mappings);
+        let config = resolve_provider_model_config("deep", Provider::Cursor, &profiles);
         assert!(config.model.is_none());
     }
 }

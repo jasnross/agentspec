@@ -135,62 +135,14 @@ pub struct Routing {
 }
 
 // ---------------------------------------------------------------------------
-// Mapping types
+// Profile types
 // ---------------------------------------------------------------------------
 
-/// All three mapping files combined.
-#[derive(Debug, Clone)]
-#[allow(dead_code)] // tools and features read in Phase 6
-pub struct MappingBundle {
-    pub models: ModelsMapping,
-    pub tools: ToolsMapping,
-    pub features: FeaturesMapping,
-}
-
-impl Default for MappingBundle {
-    fn default() -> Self {
-        Self {
-            models: ModelsMapping::default(),
-            tools: ToolsMapping {
-                tools: HashMap::new(),
-            },
-            features: FeaturesMapping {
-                providers: HashMap::new(),
-            },
-        }
-    }
-}
-
-/// Model mapping: profile name → per-provider model config (string or object).
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct ModelsMapping {
-    #[serde(default)]
-    pub profiles: HashMap<String, HashMap<String, serde_json::Value>>,
-}
-
-/// Tool mapping: canonical tool name → per-provider name (or null if unsupported).
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ToolsMapping {
-    pub tools: HashMap<String, HashMap<String, Option<String>>>,
-}
-
-/// Feature flags per provider.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct FeaturesMapping {
-    pub providers: HashMap<String, ProviderFeatures>,
-}
-
-/// Per-provider feature flags.
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct ProviderFeatures {
-    pub supports_agents: Option<bool>,
-    pub supports_skills: Option<bool>,
-    pub supports_subagents: Option<bool>,
-    pub supports_custom_modes: Option<bool>,
-    pub supports_tool_allowlist: Option<bool>,
-    pub supports_temperature: Option<bool>,
-    pub tools_format: Option<String>,
-}
+/// Resolved model profiles: profile name → per-provider model config (string or object).
+///
+/// String shorthand (e.g., `"opus"`) or object form (`{model, variant, reasoning_effort}`).
+/// Produced by `AgentspecConfig::resolve_profiles` and consumed by adapters.
+pub type ProfilesMap = HashMap<String, HashMap<String, serde_json::Value>>;
 
 /// Resolved model configuration for a specific provider.
 #[derive(Debug, Clone, Default)]

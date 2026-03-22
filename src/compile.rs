@@ -2,7 +2,7 @@ use sha2::{Digest, Sha256};
 
 use crate::adapters::{adapt_claude, adapt_codex, adapt_cursor, adapt_opencode};
 use crate::types::{
-    CompileResult, CompileWarning, GeneratedFile, MappingBundle, NormalizedSpec, Provider, SpecKind,
+    CompileResult, CompileWarning, GeneratedFile, NormalizedSpec, ProfilesMap, Provider, SpecKind,
 };
 
 /// Compile normalized specs into provider-specific generated files.
@@ -15,7 +15,7 @@ use crate::types::{
 /// 5. Compute SHA-256 hash of inputs for the manifest
 pub fn compile_specs(
     specs: &[NormalizedSpec],
-    mappings: &MappingBundle,
+    profiles: &ProfilesMap,
     targets: &[Provider],
 ) -> CompileResult {
     let mut files: Vec<GeneratedFile> = Vec::new();
@@ -35,15 +35,15 @@ pub fn compile_specs(
 
         for target in spec_targets {
             // Feature-gate: skip if provider doesn't support this spec kind
-            if !provider_supports_kind(target, spec.kind, mappings) {
+            if !provider_supports_kind(target, spec.kind) {
                 continue;
             }
 
             let (mut adapter_files, mut adapter_warnings) = match target {
-                Provider::Claude => adapt_claude(spec, mappings),
-                Provider::Cursor => adapt_cursor(spec, mappings),
-                Provider::Codex => adapt_codex(spec, mappings),
-                Provider::OpenCode => adapt_opencode(spec, mappings),
+                Provider::Claude => adapt_claude(spec, profiles),
+                Provider::Cursor => adapt_cursor(spec, profiles),
+                Provider::Codex => adapt_codex(spec, profiles),
+                Provider::OpenCode => adapt_opencode(spec, profiles),
             };
 
             files.append(&mut adapter_files);
@@ -55,7 +55,7 @@ pub fn compile_specs(
     files.sort_by(|a, b| a.path.cmp(&b.path));
 
     // Compute SHA-256 hash of inputs
-    let source_hash = hash_inputs(specs, mappings, &sorted_targets);
+    let source_hash = hash_inputs(specs, profiles, &sorted_targets);
 
     CompileResult {
         files,
@@ -64,19 +64,19 @@ pub fn compile_specs(
     }
 }
 
-/// Check if a provider supports the given spec kind based on features mapping.
+/// Check if a provider supports the given spec kind.
 ///
-/// Matches TypeScript behavior: missing feature flag = falsy = unsupported.
-/// Only explicitly `true` enables a spec kind for a provider.
-fn provider_supports_kind(provider: Provider, kind: SpecKind, mappings: &MappingBundle) -> bool {
-    let provider_key = provider.to_string();
-    let Some(features) = mappings.features.providers.get(&provider_key) else {
-        return false;
-    };
-
-    match kind {
-        SpecKind::Agent => features.supports_agents.unwrap_or(false),
-        SpecKind::Skill => features.supports_skills.unwrap_or(false),
+/// These are static facts about each provider's capabilities:
+/// - Claude and OpenCode support both agents and skills
+/// - Codex and Cursor support skills only (no agents)
+fn provider_supports_kind(provider: Provider, kind: SpecKind) -> bool {
+    match (provider, kind) {
+        (Provider::Claude, _) => true,
+        (Provider::OpenCode, _) => true,
+        (Provider::Codex, SpecKind::Skill) => true,
+        (Provider::Codex, SpecKind::Agent) => false,
+        (Provider::Cursor, SpecKind::Skill) => true,
+        (Provider::Cursor, SpecKind::Agent) => false,
     }
 }
 
@@ -84,9 +84,8 @@ fn provider_supports_kind(provider: Provider, kind: SpecKind, mappings: &Mapping
 ///
 /// Matches the TypeScript approach: serialize inputs to JSON then hash.
 /// We use `serde_json` with sorted keys for deterministic output.
-fn hash_inputs(specs: &[NormalizedSpec], mappings: &MappingBundle, targets: &[Provider]) -> String {
+fn hash_inputs(specs: &[NormalizedSpec], profiles: &ProfilesMap, targets: &[Provider]) -> String {
     // Build a canonical JSON representation of all compilation inputs.
-    // Matches TypeScript: JSON.stringify({ specs, mappings, targets })
     let payload = serde_json::json!({
         "specs": specs.iter().map(|s| serde_json::json!({
             "id": s.id,
@@ -116,11 +115,7 @@ fn hash_inputs(specs: &[NormalizedSpec], mappings: &MappingBundle, targets: &[Pr
                 "aliases": r.aliases,
             })),
         })).collect::<Vec<_>>(),
-        "mappings": {
-            "models": serde_json::to_value(&mappings.models).unwrap_or_default(),
-            "tools": serde_json::to_value(&mappings.tools).unwrap_or_default(),
-            "features": serde_json::to_value(&mappings.features).unwrap_or_default(),
-        },
+        "profiles": serde_json::to_value(profiles).unwrap_or_default(),
         "targets": targets.iter().map(|t| t.to_string()).collect::<Vec<_>>(),
     });
 
@@ -131,9 +126,10 @@ fn hash_inputs(specs: &[NormalizedSpec], mappings: &MappingBundle, targets: &[Pr
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::types::{Execution, FeaturesMapping, ProviderFeatures, ToolsMapping};
     use std::collections::HashMap;
+
+    use super::*;
+    use crate::types::Execution;
 
     fn minimal_spec(id: &str, kind: SpecKind) -> NormalizedSpec {
         NormalizedSpec {
@@ -156,31 +152,10 @@ mod tests {
         }
     }
 
-    fn full_mappings() -> MappingBundle {
-        let mut providers = HashMap::new();
-        for p in Provider::ALL {
-            providers.insert(
-                p.to_string(),
-                ProviderFeatures {
-                    supports_agents: Some(true),
-                    supports_skills: Some(true),
-                    ..Default::default()
-                },
-            );
-        }
-        MappingBundle {
-            features: FeaturesMapping { providers },
-            tools: ToolsMapping {
-                tools: HashMap::new(),
-            },
-            ..Default::default()
-        }
-    }
-
     #[test]
     fn test_compile_produces_files_for_all_targets() {
         let specs = vec![minimal_spec("test-skill", SpecKind::Skill)];
-        let result = compile_specs(&specs, &full_mappings(), &Provider::ALL);
+        let result = compile_specs(&specs, &ProfilesMap::new(), &Provider::ALL);
 
         // Should have files for all 4 providers (claude, cursor, codex, opencode)
         let providers: Vec<String> = result
@@ -196,7 +171,7 @@ mod tests {
     #[test]
     fn test_compile_respects_target_filter() {
         let specs = vec![minimal_spec("test-skill", SpecKind::Skill)];
-        let result = compile_specs(&specs, &full_mappings(), &[Provider::Claude]);
+        let result = compile_specs(&specs, &ProfilesMap::new(), &[Provider::Claude]);
 
         for file in &result.files {
             assert_eq!(file.provider, Provider::Claude);
@@ -206,17 +181,16 @@ mod tests {
     #[test]
     fn test_compile_feature_gates_agents() {
         let specs = vec![minimal_spec("test-agent", SpecKind::Agent)];
-        let mut mappings = full_mappings();
-        // Cursor doesn't support agents
-        mappings
-            .features
-            .providers
-            .get_mut("cursor")
-            .unwrap()
-            .supports_agents = Some(false);
+        let result = compile_specs(&specs, &ProfilesMap::new(), &Provider::ALL);
 
-        let result = compile_specs(&specs, &mappings, &Provider::ALL);
-        assert!(result.files.iter().all(|f| f.provider != Provider::Cursor));
+        // Codex and Cursor don't support agents
+        assert!(result
+            .files
+            .iter()
+            .all(|f| f.provider != Provider::Cursor && f.provider != Provider::Codex));
+        // Claude and OpenCode do support agents
+        assert!(result.files.iter().any(|f| f.provider == Provider::Claude));
+        assert!(result.files.iter().any(|f| f.provider == Provider::OpenCode));
     }
 
     #[test]
@@ -225,7 +199,7 @@ mod tests {
             minimal_spec("zzz-skill", SpecKind::Skill),
             minimal_spec("aaa-skill", SpecKind::Skill),
         ];
-        let result = compile_specs(&specs, &full_mappings(), &Provider::ALL);
+        let result = compile_specs(&specs, &ProfilesMap::new(), &Provider::ALL);
 
         let paths: Vec<String> = result
             .files
@@ -240,27 +214,36 @@ mod tests {
     #[test]
     fn test_compile_hash_is_deterministic() {
         let specs = vec![minimal_spec("test", SpecKind::Skill)];
-        let mappings = full_mappings();
 
-        let r1 = compile_specs(&specs, &mappings, &Provider::ALL);
-        let r2 = compile_specs(&specs, &mappings, &Provider::ALL);
+        let r1 = compile_specs(&specs, &ProfilesMap::new(), &Provider::ALL);
+        let r2 = compile_specs(&specs, &ProfilesMap::new(), &Provider::ALL);
         assert_eq!(r1.source_hash, r2.source_hash);
     }
 
     #[test]
     fn test_compile_hash_changes_with_different_input() {
-        let mappings = full_mappings();
-
         let r1 = compile_specs(
             &[minimal_spec("test-a", SpecKind::Skill)],
-            &mappings,
+            &ProfilesMap::new(),
             &Provider::ALL,
         );
         let r2 = compile_specs(
             &[minimal_spec("test-b", SpecKind::Skill)],
-            &mappings,
+            &ProfilesMap::new(),
             &Provider::ALL,
         );
         assert_ne!(r1.source_hash, r2.source_hash);
+    }
+
+    #[test]
+    fn test_provider_supports_kind() {
+        assert!(provider_supports_kind(Provider::Claude, SpecKind::Agent));
+        assert!(provider_supports_kind(Provider::Claude, SpecKind::Skill));
+        assert!(provider_supports_kind(Provider::OpenCode, SpecKind::Agent));
+        assert!(provider_supports_kind(Provider::OpenCode, SpecKind::Skill));
+        assert!(!provider_supports_kind(Provider::Codex, SpecKind::Agent));
+        assert!(provider_supports_kind(Provider::Codex, SpecKind::Skill));
+        assert!(!provider_supports_kind(Provider::Cursor, SpecKind::Agent));
+        assert!(provider_supports_kind(Provider::Cursor, SpecKind::Skill));
     }
 }

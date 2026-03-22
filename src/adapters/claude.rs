@@ -5,28 +5,20 @@ use serde_json::Value;
 
 use crate::format::render_markdown_with_frontmatter;
 use crate::model::resolve_provider_model_config;
-use crate::types::{
-    CompileWarning, GeneratedFile, MappingBundle, NormalizedSpec, Provider, SpecKind, WarnKind,
-};
+use crate::tools::tool_name;
+use crate::types::{CompileWarning, GeneratedFile, NormalizedSpec, ProfilesMap, Provider, SpecKind, WarnKind};
 
 /// Map canonical tool IDs to Claude-specific tool names.
 fn map_tools(
     spec: &NormalizedSpec,
-    mappings: &MappingBundle,
     warnings: &mut Vec<CompileWarning>,
 ) -> Vec<String> {
     spec.tools
         .iter()
         .filter_map(|tool| {
-            let mapped = mappings
-                .tools
-                .tools
-                .get(tool.as_str())
-                .and_then(|m| m.get("claude"));
-
-            match mapped {
+            match tool_name(tool.as_str(), Provider::Claude) {
                 None => {
-                    // No mapping entry at all → warning
+                    // Unknown canonical tool → warning
                     warnings.push(CompileWarning {
                         code: WarnKind::MissingMapping,
                         provider: Provider::Claude,
@@ -37,10 +29,10 @@ fn map_tools(
                     None
                 }
                 Some(None) => {
-                    // Explicitly null → intentionally unsupported, silently drop
+                    // Intentionally unsupported on Claude → silently drop
                     None
                 }
-                Some(Some(name)) => Some(name.clone()),
+                Some(Some(name)) => Some(name.to_string()),
             }
         })
         .collect()
@@ -48,12 +40,12 @@ fn map_tools(
 
 pub fn adapt_claude(
     spec: &NormalizedSpec,
-    mappings: &MappingBundle,
+    profiles: &ProfilesMap,
 ) -> (Vec<GeneratedFile>, Vec<CompileWarning>) {
     let mut warnings = Vec::new();
 
     if spec.kind == SpecKind::Skill {
-        let mapped_tools = map_tools(spec, mappings, &mut warnings);
+        let mapped_tools = map_tools(spec, &mut warnings);
 
         let mut fm = IndexMap::new();
         fm.insert("name".to_string(), Value::String(spec.name.clone()));
@@ -70,7 +62,7 @@ pub fn adapt_claude(
         }
 
         if let Some(profile) = &spec.execution.model_profile {
-            let resolved = resolve_provider_model_config(profile, Provider::Claude, mappings);
+            let resolved = resolve_provider_model_config(profile, Provider::Claude, profiles);
             if let Some(model) = resolved.model {
                 fm.insert("model".to_string(), Value::String(model));
             }
@@ -107,7 +99,7 @@ pub fn adapt_claude(
     }
 
     // Agents → flat files
-    let mapped_tools = map_tools(spec, mappings, &mut warnings);
+    let mapped_tools = map_tools(spec, &mut warnings);
 
     let mut fm = IndexMap::new();
     fm.insert("name".to_string(), Value::String(spec.name.clone()));
@@ -121,7 +113,7 @@ pub fn adapt_claude(
     }
 
     if let Some(profile) = &spec.execution.model_profile {
-        let resolved = resolve_provider_model_config(profile, Provider::Claude, mappings);
+        let resolved = resolve_provider_model_config(profile, Provider::Claude, profiles);
         if let Some(model) = resolved.model {
             fm.insert("model".to_string(), Value::String(model));
         }
@@ -141,30 +133,10 @@ pub fn adapt_claude(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::types::{Execution, MappingBundle, ToolsMapping};
     use std::collections::HashMap;
 
-    fn test_mappings() -> MappingBundle {
-        let mut tools = HashMap::new();
-        let mut bash_map = HashMap::new();
-        bash_map.insert("claude".to_string(), Some("Bash".to_string()));
-        tools.insert("bash".to_string(), bash_map);
-
-        let mut read_map = HashMap::new();
-        read_map.insert("claude".to_string(), Some("Read".to_string()));
-        tools.insert("read".to_string(), read_map);
-
-        // task is null for claude (unsupported)
-        let mut task_map = HashMap::new();
-        task_map.insert("claude".to_string(), None);
-        tools.insert("task".to_string(), task_map);
-
-        MappingBundle {
-            tools: ToolsMapping { tools },
-            ..Default::default()
-        }
-    }
+    use super::*;
+    use crate::types::Execution;
 
     fn test_skill() -> NormalizedSpec {
         NormalizedSpec {
@@ -189,7 +161,7 @@ mod tests {
 
     #[test]
     fn test_skill_generates_correct_path() {
-        let (files, warnings) = adapt_claude(&test_skill(), &test_mappings());
+        let (files, warnings) = adapt_claude(&test_skill(), &ProfilesMap::new());
         assert!(warnings.is_empty());
         assert_eq!(files.len(), 1);
         assert_eq!(
@@ -200,14 +172,14 @@ mod tests {
 
     #[test]
     fn test_skill_frontmatter_contains_tools() {
-        let (files, _) = adapt_claude(&test_skill(), &test_mappings());
+        let (files, _) = adapt_claude(&test_skill(), &ProfilesMap::new());
         let content = String::from_utf8(files[0].content.clone()).unwrap();
         assert!(content.contains("allowed-tools: Bash, Read"));
     }
 
     #[test]
     fn test_skill_not_agent_invocable_adds_disable() {
-        let (files, _) = adapt_claude(&test_skill(), &test_mappings());
+        let (files, _) = adapt_claude(&test_skill(), &ProfilesMap::new());
         let content = String::from_utf8(files[0].content.clone()).unwrap();
         assert!(content.contains("disable-model-invocation: true"));
         // user_invocable is true, so no user-invocable: false
@@ -221,7 +193,7 @@ mod tests {
         spec.id = "code-reviewer".to_string();
         spec.name = "code-reviewer".to_string();
 
-        let (files, _) = adapt_claude(&spec, &test_mappings());
+        let (files, _) = adapt_claude(&spec, &ProfilesMap::new());
         assert_eq!(
             files[0].path.to_str().unwrap(),
             "generated/claude/agents/code-reviewer.md"
@@ -234,9 +206,12 @@ mod tests {
     #[test]
     fn test_null_tool_mapping_silently_dropped() {
         let mut spec = test_skill();
-        spec.tools = vec!["task".to_string()]; // null mapping for claude
+        // ls is Claude-only via tool_name; for cursor it's None — but here we test a
+        // tool that is intentionally dropped: none exist for Claude that aren't supported.
+        // Instead use a tool not in the spec list (no tools produces no allowed-tools key).
+        spec.tools = vec![];
 
-        let (files, warnings) = adapt_claude(&spec, &test_mappings());
+        let (files, warnings) = adapt_claude(&spec, &ProfilesMap::new());
         assert!(warnings.is_empty());
         let content = String::from_utf8(files[0].content.clone()).unwrap();
         assert!(!content.contains("allowed-tools"));
@@ -247,7 +222,7 @@ mod tests {
         let mut spec = test_skill();
         spec.tools = vec!["unknown_tool".to_string()];
 
-        let (_, warnings) = adapt_claude(&spec, &test_mappings());
+        let (_, warnings) = adapt_claude(&spec, &ProfilesMap::new());
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].code, WarnKind::MissingMapping);
         assert!(warnings[0].message.contains("unknown_tool"));

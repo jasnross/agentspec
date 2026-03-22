@@ -5,11 +5,11 @@ use serde_json::Value;
 
 use crate::format::render_markdown_with_frontmatter;
 use crate::model::resolve_provider_model_config;
-use crate::types::{CompileWarning, GeneratedFile, MappingBundle, NormalizedSpec, Provider};
+use crate::types::{CompileWarning, GeneratedFile, NormalizedSpec, ProfilesMap, Provider};
 
 pub fn adapt_codex(
     spec: &NormalizedSpec,
-    mappings: &MappingBundle,
+    profiles: &ProfilesMap,
 ) -> (Vec<GeneratedFile>, Vec<CompileWarning>) {
     let warnings = Vec::new();
 
@@ -17,7 +17,7 @@ pub fn adapt_codex(
         .execution
         .model_profile
         .as_ref()
-        .map(|profile| resolve_provider_model_config(profile, Provider::Codex, mappings))
+        .map(|profile| resolve_provider_model_config(profile, Provider::Codex, profiles))
         .unwrap_or_default();
 
     let mut fm = IndexMap::new();
@@ -38,24 +38,35 @@ pub fn adapt_codex(
         );
     }
 
-    let files = vec![GeneratedFile::text(
+    let skill_dir = Path::new("generated")
+        .join("codex")
+        .join("skills")
+        .join(&spec.id);
+
+    let mut files = vec![GeneratedFile::text(
         Provider::Codex,
-        Path::new("generated")
-            .join("codex")
-            .join("skills")
-            .join(&spec.id)
-            .join("SKILL.md"),
+        skill_dir.join("SKILL.md"),
         render_markdown_with_frontmatter(&fm, &spec.body),
     )];
+
+    for sf in &spec.supporting_files {
+        files.push(GeneratedFile::binary(
+            Provider::Codex,
+            skill_dir.join(&sf.relative_path),
+            sf.content.clone(),
+            if sf.executable { Some(0o755) } else { None },
+        ));
+    }
 
     (files, warnings)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::types::{Execution, ModelsMapping, SpecKind, ToolsMapping};
     use std::collections::HashMap;
+
+    use super::*;
+    use crate::types::{Execution, SpecKind};
 
     fn test_spec() -> NormalizedSpec {
         NormalizedSpec {
@@ -81,26 +92,18 @@ mod tests {
         }
     }
 
-    fn test_mappings() -> MappingBundle {
+    fn test_profiles() -> ProfilesMap {
         let mut profile = HashMap::new();
         profile.insert(
             "codex".to_string(),
             serde_json::json!({"model": "gpt-5.3-codex", "reasoning_effort": "medium"}),
         );
-        MappingBundle {
-            models: ModelsMapping {
-                profiles: HashMap::from([("deep".to_string(), profile)]),
-            },
-            tools: ToolsMapping {
-                tools: HashMap::new(),
-            },
-            ..Default::default()
-        }
+        HashMap::from([("deep".to_string(), profile)])
     }
 
     #[test]
     fn test_codex_includes_model_and_reasoning() {
-        let (files, _) = adapt_codex(&test_spec(), &test_mappings());
+        let (files, _) = adapt_codex(&test_spec(), &test_profiles());
         let content = String::from_utf8(files[0].content.clone()).unwrap();
         assert!(content.contains("model: gpt-5.3-codex"));
         assert!(content.contains("model_reasoning_effort: medium"));
@@ -108,14 +111,14 @@ mod tests {
 
     #[test]
     fn test_codex_uses_id_for_name() {
-        let (files, _) = adapt_codex(&test_spec(), &test_mappings());
+        let (files, _) = adapt_codex(&test_spec(), &test_profiles());
         let content = String::from_utf8(files[0].content.clone()).unwrap();
         assert!(content.contains("name: commit"));
     }
 
     #[test]
     fn test_codex_path() {
-        let (files, _) = adapt_codex(&test_spec(), &test_mappings());
+        let (files, _) = adapt_codex(&test_spec(), &test_profiles());
         assert_eq!(
             files[0].path.to_str().unwrap(),
             "generated/codex/skills/commit/SKILL.md"

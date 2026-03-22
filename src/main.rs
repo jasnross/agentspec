@@ -5,10 +5,10 @@ mod config;
 mod emit;
 mod format;
 mod fragments;
-mod mappings;
 mod model;
 mod parse;
 mod schema;
+mod tools;
 mod types;
 mod validate;
 
@@ -20,7 +20,6 @@ use compile::compile_specs;
 use config::AgentspecConfig;
 use emit::{check_generated_state, write_generated_files, write_manifest};
 use fragments::{build_environment, load_fragments, resolve_fragments};
-use mappings::load_mappings;
 use parse::load_canonical_specs;
 use schema::load_schemas;
 use validate::{normalize_specs, validate_schema, validate_semantics};
@@ -68,24 +67,16 @@ fn main() -> Result<()> {
     let specs = normalize_specs(specs)?;
     eprintln!("normalized {} specs", specs.len());
 
-    // Load mappings (models, tools, features) with optional profile overlay
-    let mappings_path = config.resolve(&config.mappings.models);
-    let mappings = if mappings_path.is_file() {
-        let m = load_mappings(&config, &schemas, args.mapping_profile.as_deref())?;
-        eprintln!(
-            "loaded mappings ({} model profiles, {} tools, {} providers)",
-            m.models.profiles.len(),
-            m.tools.tools.len(),
-            m.features.providers.len()
-        );
-        m
+    // Resolve model profiles from config, applying machine overlay if set
+    let profiles = config.resolve_profiles(args.mapping_profile.as_deref());
+    if profiles.is_empty() {
+        eprintln!("no model profiles configured");
     } else {
-        eprintln!("no models mapping found, skipping mapping validation");
-        types::MappingBundle::default()
-    };
+        eprintln!("loaded {} model profile(s)", profiles.len());
+    }
 
     // Semantic validation
-    let semantic_errors = validate_semantics(&specs, &mappings);
+    let semantic_errors = validate_semantics(&specs, &profiles);
     if !semantic_errors.is_empty() {
         for err in &semantic_errors {
             eprintln!("error: {}", err);
@@ -114,7 +105,7 @@ fn main() -> Result<()> {
                 args.target.clone()
             };
 
-            let result = compile_specs(&specs, &mappings, &targets);
+            let result = compile_specs(&specs, &profiles, &targets);
 
             for w in &result.warnings {
                 eprintln!("warning: {}", w);

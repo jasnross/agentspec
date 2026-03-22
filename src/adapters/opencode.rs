@@ -5,8 +5,9 @@ use serde_json::Value;
 
 use crate::format::render_markdown_with_frontmatter;
 use crate::model::resolve_provider_model_config;
+use crate::tools::{all_tool_names, tool_name};
 use crate::types::{
-    CompileWarning, GeneratedFile, MappingBundle, NormalizedSpec, Provider, SpecKind, WarnKind,
+    CompileWarning, GeneratedFile, NormalizedSpec, ProfilesMap, Provider, SpecKind, WarnKind,
 };
 
 /// Build the boolean tool map used by `OpenCode` agents and agent-invocable skills.
@@ -15,39 +16,20 @@ use crate::types::{
 /// then sets the spec's tools to true. This matches the TypeScript behavior exactly.
 fn build_tool_map(
     spec: &NormalizedSpec,
-    mappings: &MappingBundle,
     warnings: &mut Vec<CompileWarning>,
 ) -> serde_json::Map<String, Value> {
-    // Build sorted universe of all OpenCode tool names
-    let mut tool_universe: Vec<String> = mappings
-        .tools
-        .tools
-        .values()
-        .filter_map(|provider_map| {
-            provider_map
-                .get("opencode")
-                .and_then(|v| v.as_ref())
-                .cloned()
-        })
-        .collect();
-    tool_universe.sort();
-    tool_universe.dedup();
+    // Build sorted universe of all OpenCode tool names (excludes intentionally unsupported)
+    let tool_universe = all_tool_names(Provider::OpenCode);
 
     // Initialize all to false
     let mut tools_map = serde_json::Map::new();
-    for tool_name in &tool_universe {
-        tools_map.insert(tool_name.clone(), Value::Bool(false));
+    for name in &tool_universe {
+        tools_map.insert((*name).to_string(), Value::Bool(false));
     }
 
     // Set spec's tools to true
     for tool in &spec.tools {
-        let mapped = mappings
-            .tools
-            .tools
-            .get(tool.as_str())
-            .and_then(|m| m.get("opencode"));
-
-        match mapped {
+        match tool_name(tool.as_str(), Provider::OpenCode) {
             None => {
                 warnings.push(CompileWarning {
                     code: WarnKind::MissingMapping,
@@ -58,10 +40,10 @@ fn build_tool_map(
                 });
             }
             Some(None) => {
-                // Explicitly null → intentionally unsupported
+                // Intentionally unsupported on OpenCode (e.g., ls) → silently skip
             }
             Some(Some(name)) => {
-                tools_map.insert(name.clone(), Value::Bool(true));
+                tools_map.insert(name.to_string(), Value::Bool(true));
             }
         }
     }
@@ -71,7 +53,7 @@ fn build_tool_map(
 
 pub fn adapt_opencode(
     spec: &NormalizedSpec,
-    mappings: &MappingBundle,
+    profiles: &ProfilesMap,
 ) -> (Vec<GeneratedFile>, Vec<CompileWarning>) {
     let mut warnings = Vec::new();
 
@@ -79,10 +61,10 @@ pub fn adapt_opencode(
         .execution
         .model_profile
         .as_ref()
-        .map(|profile| resolve_provider_model_config(profile, Provider::OpenCode, mappings))
+        .map(|profile| resolve_provider_model_config(profile, Provider::OpenCode, profiles))
         .unwrap_or_default();
 
-    let tools_map = build_tool_map(spec, mappings, &mut warnings);
+    let tools_map = build_tool_map(spec, &mut warnings);
 
     // Build base frontmatter (used for agents and agent-invocable skills)
     let mut fm = IndexMap::new();
@@ -184,30 +166,10 @@ pub fn adapt_opencode(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::types::{Execution, SkillMeta, ToolsMapping};
     use std::collections::HashMap;
 
-    fn test_mappings() -> MappingBundle {
-        let mut tools = HashMap::new();
-
-        let mut bash_map = HashMap::new();
-        bash_map.insert("opencode".to_string(), Some("bash".to_string()));
-        tools.insert("bash".to_string(), bash_map);
-
-        let mut read_map = HashMap::new();
-        read_map.insert("opencode".to_string(), Some("read".to_string()));
-        tools.insert("read".to_string(), read_map);
-
-        let mut edit_map = HashMap::new();
-        edit_map.insert("opencode".to_string(), Some("edit".to_string()));
-        tools.insert("edit".to_string(), edit_map);
-
-        MappingBundle {
-            tools: ToolsMapping { tools },
-            ..Default::default()
-        }
-    }
+    use super::*;
+    use crate::types::{Execution, SkillMeta};
 
     fn test_agent() -> NormalizedSpec {
         NormalizedSpec {
@@ -256,7 +218,7 @@ mod tests {
 
     #[test]
     fn test_agent_has_boolean_tool_map() {
-        let (files, _) = adapt_opencode(&test_agent(), &test_mappings());
+        let (files, _) = adapt_opencode(&test_agent(), &ProfilesMap::new());
         let content = String::from_utf8(files[0].content.clone()).unwrap();
         assert!(content.contains("bash: true"));
         assert!(content.contains("read: true"));
@@ -265,14 +227,14 @@ mod tests {
 
     #[test]
     fn test_agent_has_mode() {
-        let (files, _) = adapt_opencode(&test_agent(), &test_mappings());
+        let (files, _) = adapt_opencode(&test_agent(), &ProfilesMap::new());
         let content = String::from_utf8(files[0].content.clone()).unwrap();
         assert!(content.contains("mode: subagent"));
     }
 
     #[test]
     fn test_agent_path() {
-        let (files, _) = adapt_opencode(&test_agent(), &test_mappings());
+        let (files, _) = adapt_opencode(&test_agent(), &ProfilesMap::new());
         assert_eq!(
             files[0].path.to_str().unwrap(),
             "generated/opencode/agents/code-reviewer.md"
@@ -281,7 +243,7 @@ mod tests {
 
     #[test]
     fn test_user_invocable_skill_creates_command() {
-        let (files, _) = adapt_opencode(&test_skill(), &test_mappings());
+        let (files, _) = adapt_opencode(&test_skill(), &ProfilesMap::new());
         assert_eq!(files.len(), 1); // only command, not agent-invocable
         assert_eq!(
             files[0].path.to_str().unwrap(),
@@ -294,7 +256,7 @@ mod tests {
         let mut spec = test_skill();
         spec.agent_invocable = true;
 
-        let (files, _) = adapt_opencode(&spec, &test_mappings());
+        let (files, _) = adapt_opencode(&spec, &ProfilesMap::new());
         assert_eq!(files.len(), 2);
         let paths: Vec<String> = files
             .iter()
@@ -312,7 +274,7 @@ mod tests {
             ..Default::default()
         });
 
-        let (files, _) = adapt_opencode(&spec, &test_mappings());
+        let (files, _) = adapt_opencode(&spec, &ProfilesMap::new());
         let content = String::from_utf8(files[0].content.clone()).unwrap();
         assert!(content.contains("agent: code-reviewer"));
     }
@@ -322,7 +284,7 @@ mod tests {
         let mut spec = test_agent();
         spec.tools = vec!["unknown_tool".to_string()];
 
-        let (_, warnings) = adapt_opencode(&spec, &test_mappings());
+        let (_, warnings) = adapt_opencode(&spec, &ProfilesMap::new());
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].code, WarnKind::MissingMapping);
     }

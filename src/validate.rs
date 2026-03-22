@@ -7,7 +7,7 @@ use jsonschema::{Draft, Validator};
 use serde_json::Value;
 
 use crate::types::{
-    CanonicalSpec, Execution, MappingBundle, NormalizedSpec, Provider, Routing, SkillMeta, SpecKind,
+    CanonicalSpec, Execution, NormalizedSpec, ProfilesMap, Provider, Routing, SkillMeta, SpecKind,
 };
 
 // ---------------------------------------------------------------------------
@@ -271,7 +271,7 @@ pub fn normalize_specs(specs: Vec<CanonicalSpec>) -> Result<Vec<NormalizedSpec>>
 /// This function does no I/O and cannot fail structurally.
 pub fn validate_semantics(
     specs: &[NormalizedSpec],
-    mappings: &MappingBundle,
+    profiles: &ProfilesMap,
 ) -> Vec<SemanticError> {
     let mut errors = Vec::new();
     let mut id_set = std::collections::HashSet::new();
@@ -316,15 +316,15 @@ pub fn validate_semantics(
             });
         }
 
-        // Model profile validation (skip if no mappings loaded yet — Phase 5)
-        if let Some(ref profile) = spec.execution.model_profile
-            && !mappings.models.profiles.is_empty()
+        // Model profile validation (skip if no profiles loaded)
+        if let Some(ref profile_name) = spec.execution.model_profile
+            && !profiles.is_empty()
         {
-            match mappings.models.profiles.get(profile) {
+            match profiles.get(profile_name) {
                 None => {
                     errors.push(SemanticError {
                         path: spec.source_path.clone(),
-                        message: format!("unknown model profile '{}'", profile),
+                        message: format!("unknown model profile '{}'", profile_name),
                     });
                 }
                 Some(profile_mapping) => {
@@ -346,7 +346,7 @@ pub fn validate_semantics(
                                 path: spec.source_path.clone(),
                                 message: format!(
                                     "model profile '{}' missing mapping for provider '{}'",
-                                    profile, provider
+                                    profile_name, provider
                                 ),
                             });
                         }
@@ -365,6 +365,8 @@ pub fn validate_semantics(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
     use crate::schema;
 
@@ -586,8 +588,7 @@ mod tests {
             make_normalized("alpha", SpecKind::Agent, "body"),
             make_normalized("beta", SpecKind::Skill, "body"),
         ];
-        let mappings = MappingBundle::default();
-        let errors = validate_semantics(&specs, &mappings);
+        let errors = validate_semantics(&specs, &ProfilesMap::new());
         assert!(errors.is_empty(), "expected no errors, got: {:?}", errors);
     }
 
@@ -597,8 +598,7 @@ mod tests {
             make_normalized("dup", SpecKind::Agent, "body a"),
             make_normalized("dup", SpecKind::Agent, "body b"),
         ];
-        let mappings = MappingBundle::default();
-        let errors = validate_semantics(&specs, &mappings);
+        let errors = validate_semantics(&specs, &ProfilesMap::new());
         assert_eq!(errors.len(), 1);
         assert!(errors[0].message.contains("duplicate id 'dup'"));
     }
@@ -606,8 +606,7 @@ mod tests {
     #[test]
     fn test_semantics_empty_body() {
         let specs = vec![make_normalized("empty", SpecKind::Agent, "")];
-        let mappings = MappingBundle::default();
-        let errors = validate_semantics(&specs, &mappings);
+        let errors = validate_semantics(&specs, &ProfilesMap::new());
         assert!(
             errors
                 .iter()
@@ -620,8 +619,7 @@ mod tests {
         let mut spec = make_normalized("no-invoke", SpecKind::Skill, "body");
         spec.user_invocable = false;
         spec.agent_invocable = false;
-        let mappings = MappingBundle::default();
-        let errors = validate_semantics(&[spec], &mappings);
+        let errors = validate_semantics(&[spec], &ProfilesMap::new());
         assert!(
             errors
                 .iter()
@@ -636,8 +634,7 @@ mod tests {
             delegate_to: Some("nonexistent".to_string()),
             ..Default::default()
         });
-        let mappings = MappingBundle::default();
-        let errors = validate_semantics(&[spec], &mappings);
+        let errors = validate_semantics(&[spec], &ProfilesMap::new());
         assert!(
             errors
                 .iter()
@@ -653,8 +650,7 @@ mod tests {
             delegate_to: Some("target-skill".to_string()),
             ..Default::default()
         });
-        let mappings = MappingBundle::default();
-        let errors = validate_semantics(&[delegator, target], &mappings);
+        let errors = validate_semantics(&[delegator, target], &ProfilesMap::new());
         assert!(
             errors.is_empty(),
             "valid delegate_to should not error, got: {:?}",
@@ -668,13 +664,9 @@ mod tests {
         spec.execution.model_profile = Some("nonexistent".to_string());
 
         // Need at least one profile so model_profile validation isn't skipped
-        let mut profiles = HashMap::new();
+        let mut profiles = ProfilesMap::new();
         profiles.insert("known".to_string(), HashMap::new());
-        let mappings = MappingBundle {
-            models: crate::types::ModelsMapping { profiles },
-            ..Default::default()
-        };
-        let errors = validate_semantics(&[spec], &mappings);
+        let errors = validate_semantics(&[spec], &profiles);
         assert!(
             errors
                 .iter()
@@ -688,16 +680,12 @@ mod tests {
         spec.execution.model_profile = Some("fast".to_string());
 
         // Only claude has a mapping, other 3 providers are missing
-        let mut profiles = HashMap::new();
+        let mut profiles = ProfilesMap::new();
         let mut fast_profile = HashMap::new();
         fast_profile.insert("claude".to_string(), serde_json::json!("claude-sonnet"));
         profiles.insert("fast".to_string(), fast_profile);
 
-        let mappings = MappingBundle {
-            models: crate::types::ModelsMapping { profiles },
-            ..Default::default()
-        };
-        let errors = validate_semantics(&[spec], &mappings);
+        let errors = validate_semantics(&[spec], &profiles);
         // Should have errors for cursor, codex, opencode
         assert_eq!(
             errors.len(),
@@ -721,14 +709,10 @@ mod tests {
             serde_json::json!({"model": "oc-fast"}),
         );
 
-        let mut profiles = HashMap::new();
+        let mut profiles = ProfilesMap::new();
         profiles.insert("fast".to_string(), fast_profile);
 
-        let mappings = MappingBundle {
-            models: crate::types::ModelsMapping { profiles },
-            ..Default::default()
-        };
-        let errors = validate_semantics(&[spec], &mappings);
+        let errors = validate_semantics(&[spec], &profiles);
         assert!(errors.is_empty(), "expected no errors, got: {:?}", errors);
     }
 }
