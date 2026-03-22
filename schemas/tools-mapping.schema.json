@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://example.local/agent-config/tools-mapping.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tools"
+  ],
+  "properties": {
+    "tools": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "read",
+        "write",
+        "edit",
+        "grep",
+        "glob",
+        "bash",
+        "webfetch",
+        "websearch",
+        "task",
+        "todowrite",
+        "ls"
+      ],
+      "properties": {
+        "read": { "$ref": "#/definitions/providerMapping" },
+        "write": { "$ref": "#/definitions/providerMapping" },
+        "edit": { "$ref": "#/definitions/providerMapping" },
+        "grep": { "$ref": "#/definitions/providerMapping" },
+        "glob": { "$ref": "#/definitions/providerMapping" },
+        "bash": { "$ref": "#/definitions/providerMapping" },
+        "webfetch": { "$ref": "#/definitions/providerMapping" },
+        "websearch": { "$ref": "#/definitions/providerMapping" },
+        "task": { "$ref": "#/definitions/providerMapping" },
+        "todowrite": { "$ref": "#/definitions/providerMapping" },
+        "ls": { "$ref": "#/definitions/providerMapping" }
+      }
+    }
+  },
+  "definitions": {
+    "providerMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claude",
+        "opencode",
+        "codex",
+        "cursor"
+      ],
+      "properties": {
+        "claude": {
+          "type": ["string", "null"]
+        },
+        "opencode": {
+          "type": ["string", "null"]
+        },
+        "codex": {
+          "type": ["string", "null"]
+        },
+        "cursor": {
+          "type": ["string", "null"]
+        }
+      }
+    }
+  }
+}

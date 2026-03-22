@@ -1,0 +1,32 @@
+[package]
+name = "agentspec"
+version = "0.1.0"
+edition = "2024"
+description = "Compile provider-neutral SKILL.md/AGENT.md specs into ready-to-use AI coding agent configurations"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+indexmap = { version = "2", features = ["serde"] }
+jsonschema = "0.28"
+minijinja = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yml = "0.0.12"
+sha2 = "0.10"
+thiserror = "2"
+toml = "0.8"
+walkdir = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.clippy]
+# uninlined_format_args = "warn"
+complexity = "warn"
+doc_markdown = "warn"
+items_after_statements = "warn"
+match_wildcard_for_single_variants = "warn"
+perf = "warn"
+style = "warn"
+suspicious = "warn"
