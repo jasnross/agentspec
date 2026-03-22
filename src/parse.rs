@@ -162,20 +162,28 @@ pub fn load_skill_specs(skills_dir: &Path) -> Result<Vec<CanonicalSpec>> {
         let fm = parse_yaml_to_json(&yaml_block)
             .with_context(|| format!("invalid YAML in {}", md_path.display()))?;
 
-        // Collect supporting files (non-.md files in the skill directory)
+        // Collect supporting files (non-.md files anywhere under the skill directory).
+        // WalkDir recurses into subdirectories (e.g., scripts/), preserving the path
+        // relative to the skill root so adapters emit the correct nested layout.
         let mut supporting_files = Vec::new();
-        for entry in &entries {
+        for entry in WalkDir::new(&skill_dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+        {
             let entry_path = entry.path();
+            // Skip SKILL.md itself and any other .md files (instructional content,
+            // not supporting files)
             if entry_path.extension().is_some_and(|ext| ext == "md") {
                 continue;
             }
             let relative_path = entry_path
-                .file_name()
-                .expect("file entry must have a name")
-                .into();
-            let file_content = fs::read(&entry_path)
+                .strip_prefix(&skill_dir)
+                .expect("WalkDir entry must be under skill_dir")
+                .to_path_buf();
+            let file_content = fs::read(entry_path)
                 .with_context(|| format!("failed to read {}", entry_path.display()))?;
-            let metadata = fs::metadata(&entry_path)
+            let metadata = fs::metadata(entry_path)
                 .with_context(|| format!("failed to stat {}", entry_path.display()))?;
             let executable = metadata.permissions().mode() & 0o111 != 0;
 
@@ -318,8 +326,10 @@ mod tests {
         let spec_content = "---\nid: my-skill\nkind: skill\ndescription: A test skill\nversion: 1\n---\nSkill body.\n";
         fs::write(skill_dir.join("SKILL.md"), spec_content).unwrap();
 
-        // Create a supporting script file with executable permission
-        let script_path = skill_dir.join("helper.sh");
+        // Create a supporting script file inside scripts/ subdirectory
+        let scripts_dir = skill_dir.join("scripts");
+        fs::create_dir(&scripts_dir).unwrap();
+        let script_path = scripts_dir.join("helper.sh");
         fs::write(&script_path, "#!/bin/bash\necho hello").unwrap();
         fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
 
@@ -330,7 +340,7 @@ mod tests {
         assert_eq!(specs[0].supporting_files.len(), 1);
         assert_eq!(
             specs[0].supporting_files[0].relative_path,
-            std::path::PathBuf::from("helper.sh")
+            std::path::PathBuf::from("scripts/helper.sh")
         );
         assert!(specs[0].supporting_files[0].executable);
     }

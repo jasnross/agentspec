@@ -51,26 +51,16 @@ fn test_load_specs_from_dotfiles() {
         "expected 27 skill specs (update if skills added/removed)"
     );
 
-    // Verify gh-safe has supporting file
-    let gh_safe_dir = skills_dir.join("gh-safe");
-    let non_md_files: Vec<_> = std::fs::read_dir(&gh_safe_dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.file_type().map(|t| t.is_file()).unwrap_or(false)
-                && e.path().extension().is_none_or(|ext| ext != "md")
-        })
-        .collect();
-    assert_eq!(
-        non_md_files.len(),
-        1,
-        "expected 1 supporting file in gh-safe"
+    // Verify gh-safe has supporting file in scripts/ subdirectory
+    let gh_safe_script = skills_dir.join("gh-safe").join("scripts").join("gh-safe.sh");
+    assert!(
+        gh_safe_script.exists(),
+        "expected gh-safe/scripts/gh-safe.sh to exist"
     );
-    assert_eq!(non_md_files[0].file_name().to_str().unwrap(), "gh-safe.sh");
 
     // Verify gh-safe.sh is executable
     use std::os::unix::fs::PermissionsExt;
-    let metadata = std::fs::metadata(gh_safe_dir.join("gh-safe.sh")).unwrap();
+    let metadata = std::fs::metadata(&gh_safe_script).unwrap();
     assert!(
         metadata.permissions().mode() & 0o111 != 0,
         "gh-safe.sh should be executable"
