@@ -156,6 +156,7 @@ pub fn adapt_claude(
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
     use std::collections::HashMap;
 

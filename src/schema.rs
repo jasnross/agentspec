@@ -7,11 +7,10 @@ use serde_json::Value;
 pub const CANONICAL_SCHEMA_STR: &str = include_str!("../schemas/canonical.schema.json");
 
 /// Parse the embedded canonical schema into `serde_json::Value`. Called once at startup.
-pub fn load_schemas() -> Schemas {
-    Schemas {
-        canonical: serde_json::from_str(CANONICAL_SCHEMA_STR)
-            .expect("embedded canonical schema is valid JSON"),
-    }
+pub fn load_schemas() -> Result<Schemas, serde_json::Error> {
+    Ok(Schemas {
+        canonical: serde_json::from_str(CANONICAL_SCHEMA_STR)?,
+    })
 }
 
 /// Pre-parsed JSON schemas for validation.
@@ -20,12 +19,13 @@ pub struct Schemas {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_schemas_parse_successfully() {
-        let schemas = load_schemas();
+        let schemas = load_schemas().expect("embedded schema should parse");
         assert!(schemas.canonical.is_object());
         assert_eq!(
             schemas.canonical["$schema"],

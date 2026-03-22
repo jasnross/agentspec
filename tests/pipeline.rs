@@ -1,6 +1,8 @@
 //! Integration tests using a self-contained fixture under `tests/fixtures/agent-config/`.
 //! These tests always run — no external dotfiles checkout required.
 
+#![allow(clippy::expect_used)]
+
 use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;

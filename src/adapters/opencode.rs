@@ -197,8 +197,10 @@ pub fn build_opencode_instructions(files: &[GeneratedFile]) -> Option<GeneratedF
         return None;
     }
     let json = serde_json::json!({ "instructions": rule_paths });
-    let mut content =
-        serde_json::to_string_pretty(&json).expect("instructions.json serialization is infallible");
+    let mut content = match serde_json::to_string_pretty(&json) {
+        Ok(content) => content,
+        Err(_) => return None,
+    };
     content.push('\n');
     Some(GeneratedFile::text(
         Provider::OpenCode,
@@ -210,6 +212,7 @@ pub fn build_opencode_instructions(files: &[GeneratedFile]) -> Option<GeneratedF
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
     use std::collections::HashMap;
 

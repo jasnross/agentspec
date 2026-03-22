@@ -380,6 +380,7 @@ pub fn validate_semantics(specs: &[NormalizedSpec], profiles: &PresetsMap) -> Ve
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
     use std::collections::HashMap;
 
@@ -404,7 +405,7 @@ mod tests {
 
     #[test]
     fn test_validate_schema_valid_spec() {
-        let schemas = schema::load_schemas();
+        let schemas = schema::load_schemas().expect("expected value");
         let spec = make_spec(&make_valid_fm(), "body text");
         let errors = validate_schema(&[spec], &schemas.canonical).expect("expected value");
         assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
@@ -412,7 +413,7 @@ mod tests {
 
     #[test]
     fn test_validate_schema_missing_id() {
-        let schemas = schema::load_schemas();
+        let schemas = schema::load_schemas().expect("expected value");
         let spec = make_spec(r#"{"description":"A test","version":1}"#, "body");
         let errors = validate_schema(&[spec], &schemas.canonical).expect("expected value");
         assert!(!errors.is_empty());
@@ -424,7 +425,7 @@ mod tests {
 
     #[test]
     fn test_validate_schema_invalid_id_pattern() {
-        let schemas = schema::load_schemas();
+        let schemas = schema::load_schemas().expect("expected value");
         let spec = make_spec(
             r#"{"id":"Invalid_ID","description":"A test","version":1}"#,
             "body",
@@ -435,7 +436,7 @@ mod tests {
 
     #[test]
     fn test_validate_schema_missing_version() {
-        let schemas = schema::load_schemas();
+        let schemas = schema::load_schemas().expect("expected value");
         let spec = make_spec(r#"{"id":"test","description":"A test"}"#, "body");
         let errors = validate_schema(&[spec], &schemas.canonical).expect("expected value");
         assert!(!errors.is_empty());
@@ -443,7 +444,7 @@ mod tests {
 
     #[test]
     fn test_validate_schema_extra_field() {
-        let schemas = schema::load_schemas();
+        let schemas = schema::load_schemas().expect("expected value");
         let spec = make_spec(
             r#"{"id":"test","description":"A test","version":1,"bogus":"field"}"#,
             "body",
@@ -457,7 +458,7 @@ mod tests {
 
     #[test]
     fn test_validate_schema_error_includes_path() {
-        let schemas = schema::load_schemas();
+        let schemas = schema::load_schemas().expect("expected value");
         let spec = CanonicalSpec {
             path: PathBuf::from("/specs/my-skill.md"),
             fm: serde_json::json!({"description": "no id or version"}),

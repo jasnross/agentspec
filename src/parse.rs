@@ -177,10 +177,10 @@ pub fn load_skill_specs(skills_dir: &Path) -> Result<Vec<CanonicalSpec>> {
             if entry_path.extension().is_some_and(|ext| ext == "md") {
                 continue;
             }
-            let relative_path = entry_path
-                .strip_prefix(&skill_dir)
-                .expect("WalkDir entry must be under skill_dir")
-                .to_path_buf();
+            let Ok(relative_path) = entry_path.strip_prefix(&skill_dir) else {
+                continue;
+            };
+            let relative_path = relative_path.to_path_buf();
             let file_content = fs::read(entry_path)
                 .with_context(|| format!("failed to read {}", entry_path.display()))?;
             let metadata = fs::metadata(entry_path)
@@ -260,6 +260,7 @@ pub fn load_canonical_specs(config: &AgentspecConfig) -> Result<Vec<CanonicalSpe
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
     use std::fs;

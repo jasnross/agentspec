@@ -47,8 +47,8 @@ commit body with `BREAKING CHANGE:`.
 All clippy lint groups are set to `deny` in `Cargo.toml`. Notable ones that
 affect everyday coding:
 
-- `unwrap_used` — use `?`, `.expect("reason")`, or an explicit fallback instead
-  of `.unwrap()`
+- `unwrap_used` — use `?`, `match`, or an explicit fallback instead of `.unwrap()`
+- `expect_used` — avoid `.expect()` in non-test code; in tests, prefer explicit assertions and only allow `clippy::expect_used` at the test-module/file level when it materially improves readability
 - `uninlined_format_args` — write `format!("{x}")` not `format!("{}", x)`
 - `doc_markdown` — wrap identifiers like `CanonicalSpec`, `MiniJinja`, `OpenCode`
   in backticks in doc comments

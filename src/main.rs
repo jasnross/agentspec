@@ -39,17 +39,17 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let args: &CommonArgs = cli
-        .command
-        .args()
-        .expect("non-Completions command has args");
+    let args: &CommonArgs = match cli.command.args() {
+        Some(args) => args,
+        None => anyhow::bail!("internal error: command args unavailable"),
+    };
 
     let cwd = std::env::current_dir().context("failed to determine current directory")?;
     let mut config = AgentspecConfig::discover(&cwd)?;
     config.apply_overrides(args);
 
     // Parse embedded schemas once
-    let schemas = load_schemas();
+    let schemas = load_schemas().context("failed to parse embedded canonical schema")?;
 
     // Phase 2: Load specs
     let specs = load_canonical_specs(&config)?;

@@ -71,6 +71,7 @@ pub fn adapt_cursor(
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
     use std::collections::HashMap;
 

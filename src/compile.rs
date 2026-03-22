@@ -80,6 +80,7 @@ fn provider_supports_kind(provider: Provider, kind: SpecKind) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
     use std::collections::HashMap;
 
