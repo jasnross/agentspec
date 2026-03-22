@@ -56,6 +56,18 @@ affect everyday coding:
 
 Run `cargo fmt && cargo clippy --all-targets` before committing; CI enforces both.
 
+## Module Layout
+
+Prefer the modern Rust module file convention over `mod.rs`:
+
+```
+src/adapters.rs          ← module root (not src/adapters/mod.rs)
+src/adapters/claude.rs
+src/adapters/cursor.rs
+```
+
+`mod.rs` files are harder to navigate in editors (multiple open tabs all named `mod.rs`) and are the older convention. The exception is `main.rs` and `lib.rs`, which are standard entry points.
+
 ## Pipeline Stages
 
 `main.rs` runs these in order:
