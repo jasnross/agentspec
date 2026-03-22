@@ -188,10 +188,10 @@ mod tests {
         fm.insert("model".to_string(), json!("opus"));
 
         let result = render_markdown_with_frontmatter(&fm, "Body");
-        let yaml_section = result.split("---").nth(1).unwrap().trim();
+        let yaml_section = result.split("---").nth(1).expect("expected value").trim();
         let keys: Vec<&str> = yaml_section
             .lines()
-            .map(|l| l.split(':').next().unwrap())
+            .map(|l| l.split(':').next().expect("expected value"))
             .collect();
         assert_eq!(keys, vec!["name", "description", "model"]);
     }

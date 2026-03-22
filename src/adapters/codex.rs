@@ -104,7 +104,7 @@ mod tests {
     #[test]
     fn test_codex_includes_model_and_reasoning() {
         let (files, _) = adapt_codex(&test_spec(), &test_profiles());
-        let content = String::from_utf8(files[0].content.clone()).unwrap();
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
         assert!(content.contains("model: gpt-5.3-codex"));
         assert!(content.contains("model_reasoning_effort: medium"));
     }
@@ -112,7 +112,7 @@ mod tests {
     #[test]
     fn test_codex_uses_id_for_name() {
         let (files, _) = adapt_codex(&test_spec(), &test_profiles());
-        let content = String::from_utf8(files[0].content.clone()).unwrap();
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
         assert!(content.contains("name: commit"));
     }
 
@@ -120,7 +120,7 @@ mod tests {
     fn test_codex_path() {
         let (files, _) = adapt_codex(&test_spec(), &test_profiles());
         assert_eq!(
-            files[0].path.to_str().unwrap(),
+            files[0].path.to_str().expect("expected value"),
             "generated/codex/skills/commit/SKILL.md"
         );
     }

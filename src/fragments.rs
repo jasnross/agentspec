@@ -185,17 +185,17 @@ mod tests {
 
     #[test]
     fn test_load_fragments() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("expected value");
         let frag_dir = tmp.path().join("fragments");
-        fs::create_dir_all(frag_dir.join("review")).unwrap();
+        fs::create_dir_all(frag_dir.join("review")).expect("expected value");
         fs::write(
             frag_dir.join("review/prompt-contract.md"),
             "You must follow these rules.",
         )
-        .unwrap();
-        fs::write(frag_dir.join("simple.md"), "Simple fragment.").unwrap();
+        .expect("expected value");
+        fs::write(frag_dir.join("simple.md"), "Simple fragment.").expect("expected value");
 
-        let fragments = load_fragments(&frag_dir).unwrap();
+        let fragments = load_fragments(&frag_dir).expect("expected value");
         assert_eq!(fragments.len(), 2);
         assert_eq!(
             fragments["review/prompt-contract"],
@@ -206,8 +206,8 @@ mod tests {
 
     #[test]
     fn test_load_fragments_nonexistent_dir() {
-        let tmp = tempfile::tempdir().unwrap();
-        let fragments = load_fragments(&tmp.path().join("nonexistent")).unwrap();
+        let tmp = tempfile::tempdir().expect("expected value");
+        let fragments = load_fragments(&tmp.path().join("nonexistent")).expect("expected value");
         assert!(fragments.is_empty());
     }
 
@@ -219,8 +219,10 @@ mod tests {
         let (env, _warnings) = build_environment(&fragments);
         let template = env
             .template_from_str("Before.\n{% include \"greeting.md\" %}\nAfter.")
-            .unwrap();
-        let result = template.render(minijinja::context! {}).unwrap();
+            .expect("expected value");
+        let result = template
+            .render(minijinja::context! {})
+            .expect("expected value");
         assert_eq!(result, "Before.\nHello, world!\nAfter.");
     }
 
@@ -234,8 +236,8 @@ mod tests {
             .template_from_str(
                 "{% with name = \"Alice\" %}{% include \"greeting.md\" %}{% endwith %}",
             )
-            .unwrap();
-        let result = tmpl.render(minijinja::context! {}).unwrap();
+            .expect("expected value");
+        let result = tmpl.render(minijinja::context! {}).expect("expected value");
         assert_eq!(result, "Hello, Alice!");
     }
 
@@ -251,8 +253,8 @@ mod tests {
         let (env, _warnings) = build_environment(&fragments);
         let tmpl = env
             .template_from_str("start {% include \"outer.md\" %} end")
-            .unwrap();
-        let result = tmpl.render(minijinja::context! {}).unwrap();
+            .expect("expected value");
+        let result = tmpl.render(minijinja::context! {}).expect("expected value");
         assert_eq!(result, "start before inner content after end");
     }
 
@@ -262,7 +264,7 @@ mod tests {
         let (env, _warnings) = build_environment(&fragments);
         let tmpl = env
             .template_from_str("{% include \"nonexistent.md\" %}")
-            .unwrap();
+            .expect("expected value");
         let result = tmpl.render(minijinja::context! {});
         assert!(result.is_err());
     }
@@ -275,8 +277,8 @@ mod tests {
         let (env, _warnings) = build_environment(&fragments);
         let tmpl = env
             .template_from_str("Items:\n   {{ include_indented(\"rules.md\", indent=3) }}")
-            .unwrap();
-        let result = tmpl.render(minijinja::context! {}).unwrap();
+            .expect("expected value");
+        let result = tmpl.render(minijinja::context! {}).expect("expected value");
         assert_eq!(result, "Items:\n   Rule 1\n   Rule 2\n   Rule 3");
     }
 
@@ -293,7 +295,7 @@ mod tests {
             supporting_files: vec![],
         }];
 
-        let resolved = resolve_fragments(specs, &env).unwrap();
+        let resolved = resolve_fragments(specs, &env).expect("expected value");
         assert_eq!(resolved[0].body, "Plain body with no template syntax.");
     }
 
@@ -312,7 +314,7 @@ mod tests {
             supporting_files: vec![],
         }];
 
-        let resolved = resolve_fragments(specs, &env).unwrap();
+        let resolved = resolve_fragments(specs, &env).expect("expected value");
         assert_eq!(resolved[0].body, "Body.\n-- End --");
     }
 
@@ -326,8 +328,8 @@ mod tests {
             .template_from_str(
                 "Items:\n   {% filter indent(3, first=false) %}{% include \"rules.md\" %}{% endfilter %}",
             )
-            .unwrap();
-        let result = tmpl.render(minijinja::context! {}).unwrap();
+            .expect("expected value");
+        let result = tmpl.render(minijinja::context! {}).expect("expected value");
         assert_eq!(result, "Items:\n   Rule 1\n   Rule 2\n   Rule 3");
     }
 
@@ -344,8 +346,8 @@ mod tests {
             .template_from_str(
                 "Message:\n    {% filter indent(4, first=false) %}{% with name = \"Alice\" %}{% include \"greeting.md\" %}{% endwith %}{% endfilter %}",
             )
-            .unwrap();
-        let result = tmpl.render(minijinja::context! {}).unwrap();
+            .expect("expected value");
+        let result = tmpl.render(minijinja::context! {}).expect("expected value");
         assert_eq!(result, "Message:\n    Hello, Alice!\n    Welcome aboard.");
     }
 }

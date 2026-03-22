@@ -219,7 +219,7 @@ mod tests {
     #[test]
     fn test_agent_has_boolean_tool_map() {
         let (files, _) = adapt_opencode(&test_agent(), &PresetsMap::new());
-        let content = String::from_utf8(files[0].content.clone()).unwrap();
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
         assert!(content.contains("bash: true"));
         assert!(content.contains("read: true"));
         assert!(content.contains("edit: false")); // not in spec's tools
@@ -228,7 +228,7 @@ mod tests {
     #[test]
     fn test_agent_has_mode() {
         let (files, _) = adapt_opencode(&test_agent(), &PresetsMap::new());
-        let content = String::from_utf8(files[0].content.clone()).unwrap();
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
         assert!(content.contains("mode: subagent"));
     }
 
@@ -236,7 +236,7 @@ mod tests {
     fn test_agent_path() {
         let (files, _) = adapt_opencode(&test_agent(), &PresetsMap::new());
         assert_eq!(
-            files[0].path.to_str().unwrap(),
+            files[0].path.to_str().expect("expected value"),
             "generated/opencode/agents/code-reviewer.md"
         );
     }
@@ -246,7 +246,7 @@ mod tests {
         let (files, _) = adapt_opencode(&test_skill(), &PresetsMap::new());
         assert_eq!(files.len(), 1); // only command, not agent-invocable
         assert_eq!(
-            files[0].path.to_str().unwrap(),
+            files[0].path.to_str().expect("expected value"),
             "generated/opencode/commands/commit.md"
         );
     }
@@ -260,7 +260,7 @@ mod tests {
         assert_eq!(files.len(), 2);
         let paths: Vec<String> = files
             .iter()
-            .map(|f| f.path.to_str().unwrap().to_string())
+            .map(|f| f.path.to_str().expect("expected value").to_string())
             .collect();
         assert!(paths.iter().any(|p| p.contains("commands/")));
         assert!(paths.iter().any(|p| p.contains("skills/")));
@@ -275,7 +275,7 @@ mod tests {
         });
 
         let (files, _) = adapt_opencode(&spec, &PresetsMap::new());
-        let content = String::from_utf8(files[0].content.clone()).unwrap();
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
         assert!(content.contains("agent: code-reviewer"));
     }
 

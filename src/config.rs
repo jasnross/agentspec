@@ -159,7 +159,7 @@ mod tests {
 
     #[test]
     fn test_discover_with_toml() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("expected value");
         let toml_content = r#"
 [spec]
 agents_dir = "my/agents"
@@ -167,8 +167,8 @@ agents_dir = "my/agents"
 [output]
 dir = "out"
 "#;
-        fs::write(tmp.path().join("agentspec.toml"), toml_content).unwrap();
-        let config = AgentspecConfig::discover(tmp.path()).unwrap();
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
         assert_eq!(config.spec.agents_dir, PathBuf::from("my/agents"));
         assert_eq!(config.output.dir, PathBuf::from("out"));
         // skills_dir should use default
@@ -178,15 +178,15 @@ dir = "out"
 
     #[test]
     fn test_discover_without_toml() {
-        let tmp = tempfile::tempdir().unwrap();
-        let config = AgentspecConfig::discover(tmp.path()).unwrap();
+        let tmp = tempfile::tempdir().expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
         assert_eq!(config.spec.agents_dir, PathBuf::from("spec/agents"));
         assert_eq!(config.root_dir, tmp.path());
     }
 
     #[test]
     fn test_discover_with_presets() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("expected value");
         let toml_content = r#"
 [presets.deep_review]
 claude = "opus"
@@ -195,8 +195,8 @@ claude = "opus"
 claude = "sonnet"
 opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
 "#;
-        fs::write(tmp.path().join("agentspec.toml"), toml_content).unwrap();
-        let config = AgentspecConfig::discover(tmp.path()).unwrap();
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
         assert_eq!(config.presets.len(), 2);
         assert!(config.presets.contains_key("deep_review"));
         assert!(config.presets.contains_key("balanced"));
@@ -213,13 +213,13 @@ opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
 
     #[test]
     fn test_resolve_presets_no_profile() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("expected value");
         let toml_content = r#"
 [presets.balanced]
 claude = "sonnet"
 "#;
-        fs::write(tmp.path().join("agentspec.toml"), toml_content).unwrap();
-        let config = AgentspecConfig::discover(tmp.path()).unwrap();
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
 
         let resolved = config.resolve_presets(None);
         assert_eq!(resolved.len(), 1);
@@ -228,7 +228,7 @@ claude = "sonnet"
 
     #[test]
     fn test_resolve_presets_with_profile() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("expected value");
         let toml_content = r#"
 [presets.balanced]
 claude = "sonnet"
@@ -237,8 +237,8 @@ opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
 [profiles.home.balanced]
 opencode = { model = "openai/gpt-5.3-codex", variant = "medium" }
 "#;
-        fs::write(tmp.path().join("agentspec.toml"), toml_content).unwrap();
-        let config = AgentspecConfig::discover(tmp.path()).unwrap();
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
 
         // Without profile: uses base presets
         let base = config.resolve_presets(None);
@@ -259,13 +259,13 @@ opencode = { model = "openai/gpt-5.3-codex", variant = "medium" }
 
     #[test]
     fn test_resolve_presets_unknown_profile_is_noop() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("expected value");
         let toml_content = r#"
 [presets.balanced]
 claude = "sonnet"
 "#;
-        fs::write(tmp.path().join("agentspec.toml"), toml_content).unwrap();
-        let config = AgentspecConfig::discover(tmp.path()).unwrap();
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
 
         let resolved = config.resolve_presets(Some("nonexistent"));
         assert_eq!(resolved["balanced"]["claude"], serde_json::json!("sonnet"));

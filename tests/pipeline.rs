@@ -42,12 +42,12 @@ fn set_script_permissions(dir: &Path) {
         let path = entry.path();
         if path.is_dir() {
             set_script_permissions(&path);
-        } else if path.extension().is_some_and(|ext| ext == "sh") {
-            if let Ok(meta) = std::fs::metadata(&path) {
-                let mut perms = meta.permissions();
-                perms.set_mode(perms.mode() | 0o111);
-                let _ = std::fs::set_permissions(&path, perms);
-            }
+        } else if path.extension().is_some_and(|ext| ext == "sh")
+            && let Ok(meta) = std::fs::metadata(&path)
+        {
+            let mut perms = meta.permissions();
+            perms.set_mode(perms.mode() | 0o111);
+            let _ = std::fs::set_permissions(&path, perms);
         }
     }
 }

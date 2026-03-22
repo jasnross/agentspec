@@ -151,7 +151,7 @@ mod tests {
 
     #[test]
     fn test_write_and_check_clean() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TempDir::new().expect("expected value");
         let base = tmp.path();
         let output_dir = base.join("generated");
 
@@ -161,18 +161,19 @@ mod tests {
             "---\nname: test\n---\n\nBody.\n",
         )];
 
-        write_generated_files(&files, &output_dir, &[Provider::Claude]).unwrap();
+        write_generated_files(&files, &output_dir, &[Provider::Claude]).expect("expected value");
 
         // Verify file exists
         assert!(base.join("generated/claude/skills/test/SKILL.md").exists());
 
-        let check = check_generated_state(&files, base, &[Provider::Claude]).unwrap();
-        assert!(check.is_clean(), "expected clean check: {:?}", check);
+        let check =
+            check_generated_state(&files, base, &[Provider::Claude]).expect("expected value");
+        assert!(check.is_clean(), "expected clean check: {check:?}");
     }
 
     #[test]
     fn test_check_detects_missing_file() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TempDir::new().expect("expected value");
         let base = tmp.path();
 
         let files = vec![make_file(
@@ -182,19 +183,20 @@ mod tests {
         )];
 
         // Don't write anything — file is missing
-        let check = check_generated_state(&files, base, &[Provider::Claude]).unwrap();
+        let check =
+            check_generated_state(&files, base, &[Provider::Claude]).expect("expected value");
         assert_eq!(check.missing.len(), 1);
         assert!(check.missing[0].contains("test/SKILL.md"));
     }
 
     #[test]
     fn test_check_detects_outdated_file() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TempDir::new().expect("expected value");
         let base = tmp.path();
 
         let dir = base.join("generated/claude/skills/test");
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("SKILL.md"), "old content").unwrap();
+        fs::create_dir_all(&dir).expect("expected value");
+        fs::write(dir.join("SKILL.md"), "old content").expect("expected value");
 
         let files = vec![make_file(
             Provider::Claude,
@@ -202,37 +204,39 @@ mod tests {
             "new content",
         )];
 
-        let check = check_generated_state(&files, base, &[Provider::Claude]).unwrap();
+        let check =
+            check_generated_state(&files, base, &[Provider::Claude]).expect("expected value");
         assert_eq!(check.outdated.len(), 1);
     }
 
     #[test]
     fn test_check_detects_unexpected_file() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TempDir::new().expect("expected value");
         let base = tmp.path();
 
         // Write an extra file that's not in the expected set
         let dir = base.join("generated/claude/agents");
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("stale.md"), "leftover").unwrap();
+        fs::create_dir_all(&dir).expect("expected value");
+        fs::write(dir.join("stale.md"), "leftover").expect("expected value");
 
         let files: Vec<GeneratedFile> = vec![];
 
-        let check = check_generated_state(&files, base, &[Provider::Claude]).unwrap();
+        let check =
+            check_generated_state(&files, base, &[Provider::Claude]).expect("expected value");
         assert_eq!(check.unexpected.len(), 1);
         assert!(check.unexpected[0].contains("stale.md"));
     }
 
     #[test]
     fn test_write_cleans_provider_dir_first() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TempDir::new().expect("expected value");
         let base = tmp.path();
         let output_dir = base.join("generated");
 
         // Create a stale file
         let stale_dir = output_dir.join("claude/agents");
-        fs::create_dir_all(&stale_dir).unwrap();
-        fs::write(stale_dir.join("old.md"), "stale").unwrap();
+        fs::create_dir_all(&stale_dir).expect("expected value");
+        fs::write(stale_dir.join("old.md"), "stale").expect("expected value");
 
         // Write new files (different path)
         let files = vec![make_file(
@@ -241,7 +245,7 @@ mod tests {
             "fresh",
         )];
 
-        write_generated_files(&files, &output_dir, &[Provider::Claude]).unwrap();
+        write_generated_files(&files, &output_dir, &[Provider::Claude]).expect("expected value");
 
         // Old file should be gone
         assert!(!stale_dir.join("old.md").exists());
@@ -251,7 +255,7 @@ mod tests {
 
     #[test]
     fn test_write_executable_permission() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TempDir::new().expect("expected value");
         let base = tmp.path();
         let output_dir = base.join("generated");
 
@@ -262,13 +266,13 @@ mod tests {
             Some(0o755),
         )];
 
-        write_generated_files(&files, &output_dir, &[Provider::Claude]).unwrap();
+        write_generated_files(&files, &output_dir, &[Provider::Claude]).expect("expected value");
 
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let meta =
-                fs::metadata(base.join("generated/claude/skills/gh-safe/gh-safe.sh")).unwrap();
+            let meta = fs::metadata(base.join("generated/claude/skills/gh-safe/gh-safe.sh"))
+                .expect("expected value");
             assert!(
                 meta.permissions().mode() & 0o111 != 0,
                 "should be executable"

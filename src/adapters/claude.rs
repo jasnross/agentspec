@@ -164,7 +164,7 @@ mod tests {
         assert!(warnings.is_empty());
         assert_eq!(files.len(), 1);
         assert_eq!(
-            files[0].path.to_str().unwrap(),
+            files[0].path.to_str().expect("expected value"),
             "generated/claude/skills/commit/SKILL.md"
         );
     }
@@ -172,14 +172,14 @@ mod tests {
     #[test]
     fn test_skill_frontmatter_contains_tools() {
         let (files, _) = adapt_claude(&test_skill(), &PresetsMap::new());
-        let content = String::from_utf8(files[0].content.clone()).unwrap();
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
         assert!(content.contains("allowed-tools: Bash, Read"));
     }
 
     #[test]
     fn test_skill_not_agent_invocable_adds_disable() {
         let (files, _) = adapt_claude(&test_skill(), &PresetsMap::new());
-        let content = String::from_utf8(files[0].content.clone()).unwrap();
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
         assert!(content.contains("disable-model-invocation: true"));
         // user_invocable is true, so no user-invocable: false
         assert!(!content.contains("user-invocable: false"));
@@ -194,10 +194,10 @@ mod tests {
 
         let (files, _) = adapt_claude(&spec, &PresetsMap::new());
         assert_eq!(
-            files[0].path.to_str().unwrap(),
+            files[0].path.to_str().expect("expected value"),
             "generated/claude/agents/code-reviewer.md"
         );
-        let content = String::from_utf8(files[0].content.clone()).unwrap();
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
         // Agents use "tools" not "allowed-tools"
         assert!(content.contains("tools: Bash, Read"));
     }
@@ -212,7 +212,7 @@ mod tests {
 
         let (files, warnings) = adapt_claude(&spec, &PresetsMap::new());
         assert!(warnings.is_empty());
-        let content = String::from_utf8(files[0].content.clone()).unwrap();
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
         assert!(!content.contains("allowed-tools"));
     }
 

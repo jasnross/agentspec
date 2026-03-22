@@ -368,7 +368,7 @@ mod tests {
     fn make_spec(fm_json: &str, body: &str) -> CanonicalSpec {
         CanonicalSpec {
             path: PathBuf::from("test.md"),
-            fm: serde_json::from_str(fm_json).unwrap(),
+            fm: serde_json::from_str(fm_json).expect("expected value"),
             body: body.to_string(),
             kind: SpecKind::Skill,
             supporting_files: vec![],
@@ -385,20 +385,19 @@ mod tests {
     fn test_validate_schema_valid_spec() {
         let schemas = schema::load_schemas();
         let spec = make_spec(&make_valid_fm(), "body text");
-        let errors = validate_schema(&[spec], &schemas.canonical).unwrap();
-        assert!(errors.is_empty(), "expected no errors, got: {:?}", errors);
+        let errors = validate_schema(&[spec], &schemas.canonical).expect("expected value");
+        assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
     }
 
     #[test]
     fn test_validate_schema_missing_id() {
         let schemas = schema::load_schemas();
         let spec = make_spec(r#"{"description":"A test","version":1}"#, "body");
-        let errors = validate_schema(&[spec], &schemas.canonical).unwrap();
+        let errors = validate_schema(&[spec], &schemas.canonical).expect("expected value");
         assert!(!errors.is_empty());
         assert!(
             errors.iter().any(|e| e.message.contains("id")),
-            "expected error about missing id, got: {:?}",
-            errors
+            "expected error about missing id, got: {errors:?}"
         );
     }
 
@@ -409,7 +408,7 @@ mod tests {
             r#"{"id":"Invalid_ID","description":"A test","version":1}"#,
             "body",
         );
-        let errors = validate_schema(&[spec], &schemas.canonical).unwrap();
+        let errors = validate_schema(&[spec], &schemas.canonical).expect("expected value");
         assert!(!errors.is_empty());
     }
 
@@ -417,7 +416,7 @@ mod tests {
     fn test_validate_schema_missing_version() {
         let schemas = schema::load_schemas();
         let spec = make_spec(r#"{"id":"test","description":"A test"}"#, "body");
-        let errors = validate_schema(&[spec], &schemas.canonical).unwrap();
+        let errors = validate_schema(&[spec], &schemas.canonical).expect("expected value");
         assert!(!errors.is_empty());
     }
 
@@ -428,7 +427,7 @@ mod tests {
             r#"{"id":"test","description":"A test","version":1,"bogus":"field"}"#,
             "body",
         );
-        let errors = validate_schema(&[spec], &schemas.canonical).unwrap();
+        let errors = validate_schema(&[spec], &schemas.canonical).expect("expected value");
         assert!(
             !errors.is_empty(),
             "additionalProperties should be rejected"
@@ -445,7 +444,7 @@ mod tests {
             kind: SpecKind::Skill,
             supporting_files: vec![],
         };
-        let errors = validate_schema(&[spec], &schemas.canonical).unwrap();
+        let errors = validate_schema(&[spec], &schemas.canonical).expect("expected value");
         assert!(
             errors
                 .iter()
@@ -469,7 +468,7 @@ mod tests {
             supporting_files: vec![],
         };
 
-        let normalized = normalize_specs(vec![spec]).unwrap();
+        let normalized = normalize_specs(vec![spec]).expect("expected value");
         assert_eq!(normalized.len(), 1);
         let n = &normalized[0];
         assert_eq!(n.name, "my-skill"); // name defaults to id
@@ -486,7 +485,7 @@ mod tests {
             r#"{"id":"test","name":"My Test","description":"desc","version":1}"#,
             "body",
         );
-        let normalized = normalize_specs(vec![spec]).unwrap();
+        let normalized = normalize_specs(vec![spec]).expect("expected value");
         assert_eq!(normalized[0].name, "My Test");
     }
 
@@ -496,7 +495,7 @@ mod tests {
             r#"{"id":"test","description":"desc","version":1,"capabilities":{"tools":["grep","bash","grep","edit"]}}"#,
             "body",
         );
-        let normalized = normalize_specs(vec![spec]).unwrap();
+        let normalized = normalize_specs(vec![spec]).expect("expected value");
         assert_eq!(normalized[0].tools, vec!["bash", "edit", "grep"]);
     }
 
@@ -506,7 +505,7 @@ mod tests {
             r#"{"id":"test","description":"desc","version":1,"compat":{"targets":["claude","cursor"]}}"#,
             "body",
         );
-        let normalized = normalize_specs(vec![spec]).unwrap();
+        let normalized = normalize_specs(vec![spec]).expect("expected value");
         assert_eq!(normalized[0].targets.len(), 2);
         assert_eq!(normalized[0].targets[0], Provider::Claude);
         assert_eq!(normalized[0].targets[1], Provider::Cursor);
@@ -522,7 +521,7 @@ mod tests {
             r#"{"id":"alpha","description":"desc","version":1}"#,
             "body a",
         );
-        let normalized = normalize_specs(vec![spec_b, spec_a]).unwrap();
+        let normalized = normalize_specs(vec![spec_b, spec_a]).expect("expected value");
         assert_eq!(normalized[0].id, "alpha");
         assert_eq!(normalized[1].id, "beta");
     }
@@ -533,7 +532,7 @@ mod tests {
             r#"{"id":"test","description":"desc","version":1,"execution":{"preset":"fast","temperature":0.5,"mode":"subagent","readonly":true,"background":false}}"#,
             "body",
         );
-        let normalized = normalize_specs(vec![spec]).unwrap();
+        let normalized = normalize_specs(vec![spec]).expect("expected value");
         let exec = &normalized[0].execution;
         assert_eq!(exec.preset.as_deref(), Some("fast"));
         assert_eq!(exec.temperature, Some(0.5));
@@ -548,8 +547,8 @@ mod tests {
             r#"{"id":"test","description":"desc","version":1,"skill":{"accepts_args":true,"delegate_to":"other-skill"}}"#,
             "body",
         );
-        let normalized = normalize_specs(vec![spec]).unwrap();
-        let skill = normalized[0].skill.as_ref().unwrap();
+        let normalized = normalize_specs(vec![spec]).expect("expected value");
+        let skill = normalized[0].skill.as_ref().expect("expected value");
         assert_eq!(skill.accepts_args, Some(true));
         assert_eq!(skill.delegate_to.as_deref(), Some("other-skill"));
     }
@@ -558,7 +557,7 @@ mod tests {
 
     fn make_normalized(id: &str, kind: SpecKind, body: &str) -> NormalizedSpec {
         NormalizedSpec {
-            source_path: PathBuf::from(format!("{}.md", id)),
+            source_path: PathBuf::from(format!("{id}.md")),
             id: id.to_string(),
             kind,
             name: id.to_string(),
@@ -584,7 +583,7 @@ mod tests {
             make_normalized("beta", SpecKind::Skill, "body"),
         ];
         let errors = validate_semantics(&specs, &PresetsMap::new());
-        assert!(errors.is_empty(), "expected no errors, got: {:?}", errors);
+        assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
     }
 
     #[test]
@@ -648,8 +647,7 @@ mod tests {
         let errors = validate_semantics(&[delegator, target], &PresetsMap::new());
         assert!(
             errors.is_empty(),
-            "valid delegate_to should not error, got: {:?}",
-            errors
+            "valid delegate_to should not error, got: {errors:?}"
         );
     }
 
@@ -685,8 +683,7 @@ mod tests {
         assert_eq!(
             errors.len(),
             3,
-            "expected 3 missing provider errors, got: {:?}",
-            errors
+            "expected 3 missing provider errors, got: {errors:?}"
         );
     }
 
@@ -708,6 +705,6 @@ mod tests {
         presets.insert("fast".to_string(), fast_preset);
 
         let errors = validate_semantics(&[spec], &presets);
-        assert!(errors.is_empty(), "expected no errors, got: {:?}", errors);
+        assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
     }
 }

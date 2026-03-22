@@ -231,7 +231,7 @@ mod tests {
     #[test]
     fn test_split_frontmatter_valid() {
         let content = "---\nid: test\nkind: agent\n---\nThis is the body.\n";
-        let (yaml, body) = split_frontmatter(content).unwrap();
+        let (yaml, body) = split_frontmatter(content).expect("expected value");
         assert_eq!(yaml, "id: test\nkind: agent");
         assert_eq!(body, "This is the body.\n");
     }
@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn test_split_frontmatter_empty_body() {
         let content = "---\nid: test\n---\n";
-        let (yaml, body) = split_frontmatter(content).unwrap();
+        let (yaml, body) = split_frontmatter(content).expect("expected value");
         assert_eq!(yaml, "id: test");
         assert_eq!(body, "");
     }
@@ -266,7 +266,7 @@ mod tests {
     fn test_split_frontmatter_rejects_four_dashes_close() {
         // `----` as closing delimiter should not match
         let content = "---\nid: test\n----\nbody\n---\nreal body";
-        let (yaml, body) = split_frontmatter(content).unwrap();
+        let (yaml, body) = split_frontmatter(content).expect("expected value");
         // The YAML block should include `----` and `body` since they're not valid closers
         assert!(yaml.contains("----"));
         assert_eq!(body, "real body");
@@ -276,7 +276,7 @@ mod tests {
     fn test_split_frontmatter_rejects_dashes_with_text() {
         // `---text` as closing delimiter should not match
         let content = "---\nid: test\n---not-a-delimiter\nstill yaml\n---\nreal body";
-        let (yaml, body) = split_frontmatter(content).unwrap();
+        let (yaml, body) = split_frontmatter(content).expect("expected value");
         assert!(yaml.contains("---not-a-delimiter"));
         assert_eq!(body, "real body");
     }
@@ -285,7 +285,7 @@ mod tests {
     fn test_split_frontmatter_closing_at_eof() {
         // Closing `---` at end of file (no trailing newline)
         let content = "---\nid: test\n---";
-        let (yaml, body) = split_frontmatter(content).unwrap();
+        let (yaml, body) = split_frontmatter(content).expect("expected value");
         assert_eq!(yaml, "id: test");
         assert_eq!(body, "");
     }
@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn test_parse_yaml_to_json() {
         let yaml = "id: my-agent\nkind: agent\nversion: 1";
-        let value = parse_yaml_to_json(yaml).unwrap();
+        let value = parse_yaml_to_json(yaml).expect("expected value");
         assert_eq!(value["id"], "my-agent");
         assert_eq!(value["kind"], "agent");
         assert_eq!(value["version"], 1);
@@ -301,14 +301,14 @@ mod tests {
 
     #[test]
     fn test_load_agent_specs() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("expected value");
         let agents_dir = tmp.path().join("agents");
-        fs::create_dir(&agents_dir).unwrap();
+        fs::create_dir(&agents_dir).expect("expected value");
 
         let spec_content = "---\nid: test-agent\nkind: agent\ndescription: A test\nversion: 1\n---\nAgent body here.\n";
-        fs::write(agents_dir.join("test-agent.md"), spec_content).unwrap();
+        fs::write(agents_dir.join("test-agent.md"), spec_content).expect("expected value");
 
-        let specs = load_agent_specs(&agents_dir).unwrap();
+        let specs = load_agent_specs(&agents_dir).expect("expected value");
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].kind, SpecKind::Agent);
         assert_eq!(specs[0].fm["id"], "test-agent");
@@ -318,22 +318,23 @@ mod tests {
 
     #[test]
     fn test_load_skill_specs_with_supporting_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("expected value");
         let skills_dir = tmp.path().join("skills");
         let skill_dir = skills_dir.join("my-skill");
-        fs::create_dir_all(&skill_dir).unwrap();
+        fs::create_dir_all(&skill_dir).expect("expected value");
 
         let spec_content = "---\nid: my-skill\nkind: skill\ndescription: A test skill\nversion: 1\n---\nSkill body.\n";
-        fs::write(skill_dir.join("SKILL.md"), spec_content).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), spec_content).expect("expected value");
 
         // Create a supporting script file inside scripts/ subdirectory
         let scripts_dir = skill_dir.join("scripts");
-        fs::create_dir(&scripts_dir).unwrap();
+        fs::create_dir(&scripts_dir).expect("expected value");
         let script_path = scripts_dir.join("helper.sh");
-        fs::write(&script_path, "#!/bin/bash\necho hello").unwrap();
-        fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(&script_path, "#!/bin/bash\necho hello").expect("expected value");
+        fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755))
+            .expect("expected value");
 
-        let specs = load_skill_specs(&skills_dir).unwrap();
+        let specs = load_skill_specs(&skills_dir).expect("expected value");
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].kind, SpecKind::Skill);
         assert_eq!(specs[0].fm["id"], "my-skill");
@@ -347,31 +348,36 @@ mod tests {
 
     #[test]
     fn test_load_skill_specs_no_md_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("expected value");
         let skills_dir = tmp.path().join("skills");
         let skill_dir = skills_dir.join("empty-skill");
-        fs::create_dir_all(&skill_dir).unwrap();
-        fs::write(skill_dir.join("readme.txt"), "not a spec").unwrap();
-
-        let result = load_skill_specs(&skills_dir);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("no .md file"));
-    }
-
-    #[test]
-    fn test_load_skill_specs_multiple_md_files() {
-        let tmp = tempfile::tempdir().unwrap();
-        let skills_dir = tmp.path().join("skills");
-        let skill_dir = skills_dir.join("multi-md");
-        fs::create_dir_all(&skill_dir).unwrap();
-        fs::write(skill_dir.join("SKILL.md"), "---\nid: a\n---\nbody").unwrap();
-        fs::write(skill_dir.join("OTHER.md"), "---\nid: b\n---\nbody").unwrap();
+        fs::create_dir_all(&skill_dir).expect("expected value");
+        fs::write(skill_dir.join("readme.txt"), "not a spec").expect("expected value");
 
         let result = load_skill_specs(&skills_dir);
         assert!(result.is_err());
         assert!(
             result
-                .unwrap_err()
+                .expect_err("expected error")
+                .to_string()
+                .contains("no .md file")
+        );
+    }
+
+    #[test]
+    fn test_load_skill_specs_multiple_md_files() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let skills_dir = tmp.path().join("skills");
+        let skill_dir = skills_dir.join("multi-md");
+        fs::create_dir_all(&skill_dir).expect("expected value");
+        fs::write(skill_dir.join("SKILL.md"), "---\nid: a\n---\nbody").expect("expected value");
+        fs::write(skill_dir.join("OTHER.md"), "---\nid: b\n---\nbody").expect("expected value");
+
+        let result = load_skill_specs(&skills_dir);
+        assert!(result.is_err());
+        assert!(
+            result
+                .expect_err("expected error")
                 .to_string()
                 .contains("multiple .md files")
         );
@@ -379,8 +385,8 @@ mod tests {
 
     #[test]
     fn test_nonexistent_dir_returns_empty() {
-        let tmp = tempfile::tempdir().unwrap();
-        let specs = load_agent_specs(&tmp.path().join("nonexistent")).unwrap();
+        let tmp = tempfile::tempdir().expect("expected value");
+        let specs = load_agent_specs(&tmp.path().join("nonexistent")).expect("expected value");
         assert!(specs.is_empty());
     }
 }

@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn test_cursor_uses_id_not_name() {
         let (files, _) = adapt_cursor(&test_spec(), &PresetsMap::new());
-        let content = String::from_utf8(files[0].content.clone()).unwrap();
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
         // Cursor uses spec.id for name, not spec.name
         assert!(content.contains("name: commit"));
         assert!(!content.contains("name: Commit Changes"));
@@ -82,7 +82,7 @@ mod tests {
     #[test]
     fn test_cursor_no_tools_or_model() {
         let (files, _) = adapt_cursor(&test_spec(), &PresetsMap::new());
-        let content = String::from_utf8(files[0].content.clone()).unwrap();
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
         assert!(!content.contains("tools"));
         assert!(!content.contains("model"));
         assert!(!content.contains("allowed-tools"));
@@ -92,7 +92,7 @@ mod tests {
     fn test_cursor_skill_path() {
         let (files, _) = adapt_cursor(&test_spec(), &PresetsMap::new());
         assert_eq!(
-            files[0].path.to_str().unwrap(),
+            files[0].path.to_str().expect("expected value"),
             "generated/cursor/skills/commit/SKILL.md"
         );
     }

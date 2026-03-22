@@ -157,7 +157,7 @@ mod tests {
         let paths: Vec<String> = result
             .files
             .iter()
-            .map(|f| f.path.to_str().unwrap().to_string())
+            .map(|f| f.path.to_str().expect("expected value").to_string())
             .collect();
         let mut sorted_paths = paths.clone();
         sorted_paths.sort();
