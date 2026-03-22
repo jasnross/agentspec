@@ -70,7 +70,6 @@ fn provider_supports_kind(provider: Provider, kind: SpecKind) -> bool {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -131,13 +130,20 @@ mod tests {
         let result = compile_specs(&specs, &PresetsMap::new(), &Provider::ALL);
 
         // Codex and Cursor don't support agents
-        assert!(result
-            .files
-            .iter()
-            .all(|f| f.provider != Provider::Cursor && f.provider != Provider::Codex));
+        assert!(
+            result
+                .files
+                .iter()
+                .all(|f| f.provider != Provider::Cursor && f.provider != Provider::Codex)
+        );
         // Claude and OpenCode do support agents
         assert!(result.files.iter().any(|f| f.provider == Provider::Claude));
-        assert!(result.files.iter().any(|f| f.provider == Provider::OpenCode));
+        assert!(
+            result
+                .files
+                .iter()
+                .any(|f| f.provider == Provider::OpenCode)
+        );
     }
 
     #[test]

@@ -10,6 +10,8 @@ OpenCode, Codex, and Cursor.
 # From this directory (agentspec/)
 cargo build
 cargo test
+cargo fmt                       # format all source files
+cargo fmt --check               # verify formatting without writing (what CI runs)
 cargo clippy
 cargo install --path .          # reinstall binary after schema changes (see below)
 
@@ -52,7 +54,7 @@ affect everyday coding:
   in backticks in doc comments
 - `unnecessary_wraps` — don't return `Result<T>` from functions that can't fail
 
-Run `cargo clippy` before committing; CI will reject violations.
+Run `cargo fmt && cargo clippy` before committing; CI enforces both.
 
 ## Pipeline Stages
 

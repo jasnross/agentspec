@@ -48,9 +48,7 @@ mod tests {
 
     use super::*;
 
-    fn make_profiles(
-        profiles: HashMap<String, HashMap<String, serde_json::Value>>,
-    ) -> PresetsMap {
+    fn make_profiles(profiles: HashMap<String, HashMap<String, serde_json::Value>>) -> PresetsMap {
         profiles
     }
 

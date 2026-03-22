@@ -269,10 +269,7 @@ pub fn normalize_specs(specs: Vec<CanonicalSpec>) -> Result<Vec<NormalizedSpec>>
 ///
 /// Returns all errors found. An empty vec means all checks pass.
 /// This function does no I/O and cannot fail structurally.
-pub fn validate_semantics(
-    specs: &[NormalizedSpec],
-    profiles: &PresetsMap,
-) -> Vec<SemanticError> {
+pub fn validate_semantics(specs: &[NormalizedSpec], profiles: &PresetsMap) -> Vec<SemanticError> {
     let mut errors = Vec::new();
     let mut id_set = std::collections::HashSet::new();
 

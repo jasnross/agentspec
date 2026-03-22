@@ -6,13 +6,12 @@ use serde_json::Value;
 use crate::format::render_markdown_with_frontmatter;
 use crate::model::resolve_provider_model_config;
 use crate::tools::tool_name;
-use crate::types::{CompileWarning, GeneratedFile, NormalizedSpec, PresetsMap, Provider, SpecKind, WarnKind};
+use crate::types::{
+    CompileWarning, GeneratedFile, NormalizedSpec, PresetsMap, Provider, SpecKind, WarnKind,
+};
 
 /// Map canonical tool IDs to Claude-specific tool names.
-fn map_tools(
-    spec: &NormalizedSpec,
-    warnings: &mut Vec<CompileWarning>,
-) -> Vec<String> {
+fn map_tools(spec: &NormalizedSpec, warnings: &mut Vec<CompileWarning>) -> Vec<String> {
     spec.tools
         .iter()
         .filter_map(|tool| {

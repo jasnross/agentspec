@@ -136,7 +136,6 @@ fn yaml_quote(s: &str) -> String {
     format!("'{escaped}'")
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,5 +219,4 @@ mod tests {
         assert!(!yaml_needs_quoting("Create git commits"));
         assert!(!yaml_needs_quoting("Bash, Read, Write"));
     }
-
 }

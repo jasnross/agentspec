@@ -52,7 +52,10 @@ fn test_load_specs_from_dotfiles() {
     );
 
     // Verify gh-safe has supporting file in scripts/ subdirectory
-    let gh_safe_script = skills_dir.join("gh-safe").join("scripts").join("gh-safe.sh");
+    let gh_safe_script = skills_dir
+        .join("gh-safe")
+        .join("scripts")
+        .join("gh-safe.sh");
     assert!(
         gh_safe_script.exists(),
         "expected gh-safe/scripts/gh-safe.sh to exist"

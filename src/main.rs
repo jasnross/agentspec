@@ -30,11 +30,19 @@ fn main() -> Result<()> {
 
     // Handle completions before any I/O — no config or spec loading needed.
     if let Command::Completions { shell } = cli.command {
-        generate(shell, &mut Cli::command(), "agentspec", &mut std::io::stdout());
+        generate(
+            shell,
+            &mut Cli::command(),
+            "agentspec",
+            &mut std::io::stdout(),
+        );
         return Ok(());
     }
 
-    let args: &CommonArgs = cli.command.args().expect("non-Completions command has args");
+    let args: &CommonArgs = cli
+        .command
+        .args()
+        .expect("non-Completions command has args");
 
     let cwd = std::env::current_dir().context("failed to determine current directory")?;
     let mut config = AgentspecConfig::discover(&cwd)?;
@@ -56,9 +64,7 @@ fn main() -> Result<()> {
     for w in &fragment_warnings {
         eprintln!("warning: {w}");
     }
-    eprintln!(
-        "resolved fragments ({registered_count} fragment templates loaded)"
-    );
+    eprintln!("resolved fragments ({registered_count} fragment templates loaded)");
 
     // Validate frontmatter against canonical JSON schema
     let schema_errors = validate_schema(&specs, &schemas.canonical)?;
