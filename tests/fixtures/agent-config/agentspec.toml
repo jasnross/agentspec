@@ -1,0 +1,16 @@
+[spec]
+agents_dir = "spec/agents"
+skills_dir = "spec/skills"
+fragments_dir = "spec/fragments"
+
+[output]
+dir = "generated"
+
+[presets.default]
+claude = "sonnet"
+opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
+codex = { model = "gpt-4o" }
+cursor = "fast"
+
+[profiles.test.default]
+opencode = { model = "openai/gpt-4o", variant = "medium" }
