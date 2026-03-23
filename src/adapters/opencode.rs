@@ -60,8 +60,8 @@ pub fn adapt_opencode(
 
     if spec.kind == SpecKind::Rule {
         // `OpenCode` has no per-file activation trigger, so `paths:` is intentionally dropped.
-        // Rule content is emitted as plain body; `instructions.json` is built separately
-        // by `build_opencode_instructions` after all specs are compiled.
+        // Rule content is emitted as plain body; `agentspec sync` patches `opencode.json`
+        // with the resulting file paths via `patch_opencode_instructions`.
         let content = format!("{}\n", spec.body.trim());
         let path = Path::new("generated")
             .join("opencode")
@@ -179,36 +179,6 @@ pub fn adapt_opencode(
     )];
 
     (files, warnings)
-}
-
-/// Build a standalone `instructions.json` fragment listing all `OpenCode` rule paths.
-///
-/// Returns `None` if no `OpenCode` rule files are present. The JSON structure is:
-/// ```json
-/// { "instructions": ["generated/opencode/rules/<id>/AGENTS.md", ...] }
-/// ```
-pub fn build_opencode_instructions(files: &[GeneratedFile]) -> Option<GeneratedFile> {
-    let rules_prefix = std::path::Path::new("generated/opencode/rules");
-    let rule_paths: Vec<serde_json::Value> = files
-        .iter()
-        .filter(|f| f.provider == Provider::OpenCode && f.path.starts_with(rules_prefix))
-        .map(|f| serde_json::Value::String(f.path.to_string_lossy().into_owned()))
-        .collect();
-    if rule_paths.is_empty() {
-        return None;
-    }
-    let json = serde_json::json!({ "instructions": rule_paths });
-    let Ok(mut content) = serde_json::to_string_pretty(&json) else {
-        return None;
-    };
-    content.push('\n');
-    Some(GeneratedFile::text(
-        Provider::OpenCode,
-        Path::new("generated")
-            .join("opencode")
-            .join("instructions.json"),
-        content,
-    ))
 }
 
 #[cfg(test)]
@@ -369,35 +339,6 @@ mod tests {
             "paths should be dropped for opencode"
         );
         assert!(content.contains("# API Design"));
-    }
-
-    #[test]
-    fn test_build_opencode_instructions_with_rules() {
-        let rule_file = GeneratedFile::text(
-            Provider::OpenCode,
-            "generated/opencode/rules/api-design/AGENTS.md",
-            "body".to_string(),
-        );
-        let result = build_opencode_instructions(&[rule_file]);
-        assert!(result.is_some());
-        let file = result.expect("expected value");
-        assert_eq!(
-            file.path.to_str().expect("expected value"),
-            "generated/opencode/instructions.json"
-        );
-        let content = String::from_utf8(file.content.clone()).expect("expected value");
-        assert!(content.contains("generated/opencode/rules/api-design/AGENTS.md"));
-    }
-
-    #[test]
-    fn test_build_opencode_instructions_none_without_rules() {
-        let skill_file = GeneratedFile::text(
-            Provider::OpenCode,
-            "generated/opencode/commands/commit.md",
-            "body".to_string(),
-        );
-        let result = build_opencode_instructions(&[skill_file]);
-        assert!(result.is_none());
     }
 
     #[test]

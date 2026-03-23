@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 
-use crate::types::Provider;
+use crate::types::{Provider, SyncMode, SyncStrategy};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -24,6 +24,9 @@ pub enum Command {
 
     /// Check that generated files match what compile would produce
     Check(CommonArgs),
+
+    /// Compile and distribute generated files to each tool's config directory
+    Sync(SyncArgs),
 
     /// Print shell completion script to stdout
     Completions {
@@ -48,10 +51,38 @@ pub struct CommonArgs {
     pub strict: bool,
 }
 
+/// Arguments for the `sync` subcommand.
+#[derive(Parser, Debug)]
+pub struct SyncArgs {
+    #[command(flatten)]
+    pub common: CommonArgs,
+
+    /// Skip compilation; sync from existing generated output
+    #[arg(long)]
+    pub no_compile: bool,
+
+    /// Show what would be synced without making changes
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Override sync strategy for all providers
+    #[arg(long, value_enum)]
+    pub strategy: Option<SyncStrategy>,
+
+    /// Override destination root for all providers (implies --mode=path)
+    #[arg(long)]
+    pub dest: Option<String>,
+
+    /// Override target mode for all providers
+    #[arg(long, value_enum)]
+    pub mode: Option<SyncMode>,
+}
+
 impl Command {
     pub fn args(&self) -> Option<&CommonArgs> {
         match self {
             Command::Validate(args) | Command::Compile(args) | Command::Check(args) => Some(args),
+            Command::Sync(args) => Some(&args.common),
             Command::Completions { .. } => None,
         }
     }

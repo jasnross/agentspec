@@ -1,6 +1,4 @@
-use crate::adapters::{
-    adapt_claude, adapt_codex, adapt_cursor, adapt_opencode, build_opencode_instructions,
-};
+use crate::adapters::{adapt_claude, adapt_codex, adapt_cursor, adapt_opencode};
 use crate::types::{
     CompileResult, CompileWarning, GeneratedFile, NormalizedSpec, PresetsMap, Provider, SpecKind,
 };
@@ -48,11 +46,6 @@ pub fn compile_specs(
             files.append(&mut adapter_files);
             warnings.append(&mut adapter_warnings);
         }
-    }
-
-    // Aggregate OpenCode rule paths into instructions.json
-    if let Some(instructions_file) = build_opencode_instructions(&files) {
-        files.push(instructions_file);
     }
 
     // Sort output files by path for deterministic ordering

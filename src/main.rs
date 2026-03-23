@@ -8,6 +8,7 @@ mod fragments;
 mod model;
 mod parse;
 mod schema;
+mod sync;
 mod tools;
 mod types;
 mod validate;
@@ -23,9 +24,43 @@ use emit::{check_generated_state, write_generated_files};
 use fragments::{build_environment, load_fragments, resolve_fragments};
 use parse::load_canonical_specs;
 use schema::load_schemas;
+use types::CompileResult;
+use types::{NormalizedSpec, PresetsMap, Provider};
 use validate::{normalize_specs, validate_schema, validate_semantics};
 
-#[allow(clippy::too_many_lines)] // Keep orchestration in one place so pipeline phase order is obvious at a glance.
+/// Runs the compile pipeline, prints warnings, enforces `--strict`, and reports the
+/// compiled file count. Returns the result and the resolved target list so the caller
+/// can decide what to do next (write, check, or sync).
+fn run_compile(
+    specs: &[NormalizedSpec],
+    profiles: &PresetsMap,
+    target_override: &[Provider],
+    config_targets: &[Provider],
+    strict: bool,
+    total_warnings: &mut usize,
+) -> Result<(CompileResult, Vec<Provider>)> {
+    let targets: Vec<Provider> = if target_override.is_empty() {
+        config_targets.to_vec()
+    } else {
+        target_override.to_vec()
+    };
+    let result = compile_specs(specs, profiles, &targets);
+    for w in &result.warnings {
+        eprintln!("warning: {w}");
+    }
+    *total_warnings += result.warnings.len();
+    if strict && *total_warnings > 0 {
+        anyhow::bail!("{total_warnings} warning(s) treated as errors (--strict)");
+    }
+    eprintln!(
+        "compiled {} files for {} provider(s)",
+        result.files.len(),
+        targets.len()
+    );
+    Ok((result, targets))
+}
+
+#[allow(clippy::too_many_lines)]
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -112,32 +147,31 @@ fn main() -> Result<()> {
                 eprintln!("validation complete");
             }
         }
+        Command::Sync(sync_args) => {
+            if !sync_args.no_compile {
+                let (result, targets) = run_compile(
+                    &specs,
+                    &profiles,
+                    &sync_args.common.target,
+                    &config.targets,
+                    sync_args.common.strict,
+                    &mut total_warnings,
+                )?;
+                let output_dir = config.resolve(&config.output.dir);
+                write_generated_files(&result.files, &output_dir, &targets)?;
+            }
+            sync::run_sync(&config, sync_args)?;
+        }
         Command::Compile(_) | Command::Check(_) => {
-            let targets = if args.target.is_empty() {
-                config.targets.clone()
-            } else {
-                args.target.clone()
-            };
-
-            let result = compile_specs(&specs, &profiles, &targets);
-
-            for w in &result.warnings {
-                eprintln!("warning: {w}");
-            }
-
-            total_warnings += result.warnings.len();
-            if args.strict && total_warnings > 0 {
-                anyhow::bail!("{total_warnings} warning(s) treated as errors (--strict)");
-            }
-
-            eprintln!(
-                "compiled {} files for {} provider(s)",
-                result.files.len(),
-                targets.len()
-            );
-
+            let (result, targets) = run_compile(
+                &specs,
+                &profiles,
+                &args.target,
+                &config.targets,
+                args.strict,
+                &mut total_warnings,
+            )?;
             let output_dir = config.resolve(&config.output.dir);
-
             match &cli.command {
                 Command::Compile(_) => {
                     write_generated_files(&result.files, &output_dir, &targets)?;
@@ -164,7 +198,9 @@ fn main() -> Result<()> {
                         anyhow::bail!("check failed: {} problem(s) found", check.problem_count());
                     }
                 }
-                Command::Validate(_) | Command::Completions { .. } => unreachable!(),
+                Command::Validate(_) | Command::Completions { .. } | Command::Sync(_) => {
+                    unreachable!()
+                }
             }
         }
         Command::Completions { .. } => unreachable!("handled above"),

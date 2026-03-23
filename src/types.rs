@@ -220,6 +220,34 @@ impl fmt::Display for CompileWarning {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Sync types
+// ---------------------------------------------------------------------------
+
+/// Where synced files should be placed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum SyncMode {
+    /// Sync to user-level config dirs (`~/.claude/`, `~/.config/opencode/`, etc.)
+    #[default]
+    User,
+    /// Sync to project-local config dirs (`.claude/`, `.cursor/`, etc.)
+    Project,
+    /// Sync to explicit paths specified per-kind in `SyncTargetConfig`
+    Path,
+}
+
+/// How files are distributed from `generated/` to the destination.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum SyncStrategy {
+    /// Create symlinks from destination into `generated/`
+    #[default]
+    Symlink,
+    /// Copy files and track ownership via `.agentspec-manifest.json`
+    Copy,
+}
+
 /// Warning codes emitted during compilation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WarnKind {

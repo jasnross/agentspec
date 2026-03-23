@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 
 use crate::cli::CommonArgs;
-use crate::types::{PresetsMap, Provider};
+use crate::types::{PresetsMap, Provider, SyncMode, SyncStrategy};
 
 /// Top-level config parsed from `agentspec.toml`.
 #[derive(Debug, Deserialize)]
@@ -28,6 +28,10 @@ pub struct AgentspecConfig {
     /// provider level within each named preset.
     #[serde(default)]
     pub profiles: HashMap<String, HashMap<String, HashMap<String, serde_json::Value>>>,
+
+    /// Per-provider sync target configuration (e.g., `[sync.claude]`).
+    #[serde(default)]
+    pub sync: HashMap<String, SyncTargetConfig>,
 
     /// Root directory where agentspec.toml was found (not serialized).
     #[serde(skip)]
@@ -57,6 +61,7 @@ impl Default for AgentspecConfig {
             targets: Provider::ALL.to_vec(),
             presets: HashMap::new(),
             profiles: HashMap::new(),
+            sync: HashMap::new(),
             root_dir: PathBuf::new(),
         }
     }
@@ -79,6 +84,58 @@ impl Default for OutputConfig {
             dir: PathBuf::from("generated"),
         }
     }
+}
+
+/// Per-provider sync target configuration.
+///
+/// Controls where and how generated files are distributed for a single provider.
+/// When `mode` is `Path`, the per-kind fields (`agents`, `skills`, `rules`, `commands`)
+/// supply explicit destination directories (tilde-expanded at use site).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct SyncTargetConfig {
+    /// Where to place synced files (user-level, project-local, or explicit path).
+    pub mode: SyncMode,
+    /// How to distribute: symlink into `generated/` or copy with manifest tracking.
+    pub strategy: SyncStrategy,
+    /// Whether to strip `name:` lines from `SKILL.md` files after copying
+    /// (used for plugin namespace prefixing in work profile).
+    pub strip_name: bool,
+    /// Explicit destination for agent specs (used when `mode = "path"`).
+    pub agents: Option<String>,
+    /// Explicit destination for skill specs.
+    pub skills: Option<String>,
+    /// Explicit destination for rule specs.
+    pub rules: Option<String>,
+    /// Explicit destination for command specs.
+    pub commands: Option<String>,
+}
+
+/// Partial sync target config used for profile overlay deserialization.
+///
+/// All fields are `Option` so we can distinguish "absent in TOML" from "set to default".
+/// Only `Some` values override the base config during merge.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SyncTargetPartial {
+    pub mode: Option<SyncMode>,
+    pub strategy: Option<SyncStrategy>,
+    pub strip_name: Option<bool>,
+    pub agents: Option<String>,
+    pub skills: Option<String>,
+    pub rules: Option<String>,
+    pub commands: Option<String>,
+}
+
+/// CLI flag overrides for sync target resolution (highest precedence).
+#[derive(Debug, Clone, Default)]
+pub struct SyncOverrides {
+    /// Override sync mode for all providers.
+    pub mode: Option<SyncMode>,
+    /// Override sync strategy for all providers.
+    pub strategy: Option<SyncStrategy>,
+    /// Override destination root (implies `mode = Path`).
+    pub dest: Option<String>,
 }
 
 impl AgentspecConfig {
@@ -140,6 +197,77 @@ impl AgentspecConfig {
 
         resolved
     }
+
+    /// Resolve the sync target config for a provider, merging base → profile → CLI overrides.
+    ///
+    /// Precedence (highest wins): CLI `SyncOverrides` → profile overlay → base `[sync.<provider>]`.
+    /// Unknown profiles are silently ignored (consistent with `resolve_presets`).
+    pub fn resolve_sync_target(
+        &self,
+        provider: Provider,
+        active_profile: Option<&str>,
+        cli: &SyncOverrides,
+    ) -> SyncTargetConfig {
+        let provider_str = provider.to_string();
+
+        // Start with base config (or default if not configured)
+        let mut resolved = self.sync.get(&provider_str).cloned().unwrap_or_default();
+
+        // Apply profile overlay if present (only explicitly-set fields override)
+        if let Some(profile_name) = active_profile
+            && let Some(profile) = self.profiles.get(profile_name)
+            && let Some(sync_overrides) = profile.get("sync")
+            && let Some(provider_value) = sync_overrides.get(&provider_str)
+        {
+            match serde_json::from_value::<SyncTargetPartial>(provider_value.clone()) {
+                Ok(partial) => {
+                    if let Some(mode) = partial.mode {
+                        resolved.mode = mode;
+                    }
+                    if let Some(strategy) = partial.strategy {
+                        resolved.strategy = strategy;
+                    }
+                    if let Some(strip_name) = partial.strip_name {
+                        resolved.strip_name = strip_name;
+                    }
+                    if partial.agents.is_some() {
+                        resolved.agents = partial.agents;
+                    }
+                    if partial.skills.is_some() {
+                        resolved.skills = partial.skills;
+                    }
+                    if partial.rules.is_some() {
+                        resolved.rules = partial.rules;
+                    }
+                    if partial.commands.is_some() {
+                        resolved.commands = partial.commands;
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "warning: invalid sync config in profile '{profile_name}' for provider '{provider_str}': {e}"
+                    );
+                }
+            }
+        }
+
+        // Apply CLI overrides last (highest precedence)
+        if let Some(mode) = cli.mode {
+            resolved.mode = mode;
+        }
+        if let Some(strategy) = cli.strategy {
+            resolved.strategy = strategy;
+        }
+        if let Some(ref dest) = cli.dest {
+            resolved.mode = SyncMode::Path;
+            resolved.agents = Some(format!("{dest}/agents"));
+            resolved.skills = Some(format!("{dest}/skills"));
+            resolved.rules = Some(format!("{dest}/rules"));
+            resolved.commands = Some(format!("{dest}/commands"));
+        }
+
+        resolved
+    }
 }
 
 #[cfg(test)]
@@ -157,6 +285,7 @@ mod tests {
         assert_eq!(config.targets.len(), 4);
         assert!(config.presets.is_empty());
         assert!(config.profiles.is_empty());
+        assert!(config.sync.is_empty());
     }
 
     #[test]
@@ -271,5 +400,152 @@ claude = "sonnet"
 
         let resolved = config.resolve_presets(Some("nonexistent"));
         assert_eq!(resolved["balanced"]["claude"], serde_json::json!("sonnet"));
+    }
+
+    // -----------------------------------------------------------------------
+    // resolve_sync_target tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_resolve_sync_target_default_when_no_sync_configured() {
+        let config = AgentspecConfig::default();
+        let cli = SyncOverrides::default();
+        let result = config.resolve_sync_target(Provider::Claude, None, &cli);
+        assert_eq!(result.mode, SyncMode::User);
+        assert_eq!(result.strategy, SyncStrategy::Symlink);
+        assert!(!result.strip_name);
+        assert!(result.agents.is_none());
+    }
+
+    #[test]
+    fn test_resolve_sync_target_applies_base_config() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[sync.claude]
+strategy = "copy"
+strip_name = true
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+        let cli = SyncOverrides::default();
+
+        let result = config.resolve_sync_target(Provider::Claude, None, &cli);
+        assert_eq!(result.strategy, SyncStrategy::Copy);
+        assert!(result.strip_name);
+        assert_eq!(result.mode, SyncMode::User); // default
+    }
+
+    #[test]
+    fn test_resolve_sync_target_profile_overrides_base() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[sync.claude]
+strategy = "symlink"
+
+[profiles.work.sync.claude]
+strategy = "copy"
+strip_name = true
+skills = "~/Workspace/thoughts/plugin/claude/skills"
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+        let cli = SyncOverrides::default();
+
+        // Without profile: base config
+        let base = config.resolve_sync_target(Provider::Claude, None, &cli);
+        assert_eq!(base.strategy, SyncStrategy::Symlink);
+        assert!(!base.strip_name);
+
+        // With profile: overridden
+        let work = config.resolve_sync_target(Provider::Claude, Some("work"), &cli);
+        assert_eq!(work.strategy, SyncStrategy::Copy);
+        assert!(work.strip_name);
+        assert_eq!(
+            work.skills.as_deref(),
+            Some("~/Workspace/thoughts/plugin/claude/skills")
+        );
+    }
+
+    #[test]
+    fn test_resolve_sync_target_unknown_profile_is_noop() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[sync.claude]
+strategy = "copy"
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+        let cli = SyncOverrides::default();
+
+        let result = config.resolve_sync_target(Provider::Claude, Some("nonexistent"), &cli);
+        assert_eq!(result.strategy, SyncStrategy::Copy); // base preserved
+    }
+
+    #[test]
+    fn test_resolve_sync_target_cli_overrides_win() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[sync.claude]
+strategy = "symlink"
+mode = "user"
+
+[profiles.work.sync.claude]
+strategy = "copy"
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+
+        let cli = SyncOverrides {
+            mode: Some(SyncMode::Project),
+            strategy: Some(SyncStrategy::Symlink),
+            dest: None,
+        };
+
+        // CLI overrides both base and profile
+        let result = config.resolve_sync_target(Provider::Claude, Some("work"), &cli);
+        assert_eq!(result.mode, SyncMode::Project);
+        assert_eq!(result.strategy, SyncStrategy::Symlink);
+    }
+
+    #[test]
+    fn test_resolve_sync_target_partial_profile_preserves_base() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[sync.claude]
+mode = "path"
+strategy = "copy"
+strip_name = true
+agents = "~/custom/agents"
+
+[profiles.work.sync.claude]
+strip_name = false
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+        let cli = SyncOverrides::default();
+
+        let result = config.resolve_sync_target(Provider::Claude, Some("work"), &cli);
+        // Profile only set strip_name — mode, strategy, agents must be preserved from base
+        assert_eq!(result.mode, SyncMode::Path);
+        assert_eq!(result.strategy, SyncStrategy::Copy);
+        assert!(!result.strip_name); // overridden to false
+        assert_eq!(result.agents.as_deref(), Some("~/custom/agents"));
+    }
+
+    #[test]
+    fn test_resolve_sync_target_cli_dest_implies_path_mode() {
+        let config = AgentspecConfig::default();
+        let cli = SyncOverrides {
+            mode: None,
+            strategy: None,
+            dest: Some("/tmp/sync-test".to_string()),
+        };
+
+        let result = config.resolve_sync_target(Provider::Claude, None, &cli);
+        assert_eq!(result.mode, SyncMode::Path);
+        assert_eq!(result.agents.as_deref(), Some("/tmp/sync-test/agents"));
+        assert_eq!(result.skills.as_deref(), Some("/tmp/sync-test/skills"));
+        assert_eq!(result.rules.as_deref(), Some("/tmp/sync-test/rules"));
+        assert_eq!(result.commands.as_deref(), Some("/tmp/sync-test/commands"));
     }
 }

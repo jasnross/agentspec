@@ -20,6 +20,9 @@ agentspec validate              # schema + semantic checks only
 agentspec compile               # full pipeline; writes generated/
 agentspec compile --profile home  # with machine profile overlay
 agentspec check                 # verify generated files match compile output
+agentspec sync                  # compile + distribute to tool config dirs
+agentspec sync --dry-run        # preview sync operations without writing
+agentspec sync --no-compile     # sync from existing generated output
 ```
 
 ## Git Commits
@@ -87,24 +90,30 @@ src/adapters/cursor.rs
    adapter → `CompileResult { files, warnings }`
 8. **Emit** — `emit.rs` writes files to disk (`compile`) or diffs against disk
    (`check`)
+9. **Sync** — `sync.rs` distributes generated files to each tool's config directory
+   via symlink or copy strategy; patches `opencode.json` for rules (`sync` command only)
 
 ## Module Map
 
-| Module         | Role                                                                                                                   |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `types.rs`     | All shared data types: `CanonicalSpec`, `NormalizedSpec`, `Execution`, `PresetsMap`, `CompileResult`, `Provider`, etc. |
-| `cli.rs`       | `clap` argument parsing; `CommonArgs` reads `AGENTSPEC_PROFILE` env var                                                |
-| `config.rs`    | `agentspec.toml` discovery and parsing; `resolve_presets()` merges machine profile overlays                            |
-| `parse.rs`     | Loads `.md` spec files from disk                                                                                       |
-| `fragments.rs` | MiniJinja environment setup and fragment rendering                                                                     |
-| `schema.rs`    | Embeds `canonical.schema.json` via `include_str!`; parses it once at startup                                           |
-| `validate.rs`  | Schema validation, normalization, semantic checks                                                                      |
-| `compile.rs`   | Provider dispatch loop; sorts output by path                                                                           |
-| `emit.rs`      | Writes files to disk; `check_generated_state` diffs expected vs actual                                                 |
-| `format.rs`    | YAML frontmatter serializer; hand-rolled to match js-yaml plain-string style                                           |
-| `model.rs`     | Resolves a spec's `execution.preset` name to a `ModelConfig` for a specific provider                                   |
-| `tools.rs`     | Canonical → provider-specific tool name mapping table                                                                  |
-| `adapters/`    | One file per provider: `claude.rs`, `opencode.rs`, `codex.rs`, `cursor.rs`                                             |
+| Module              | Role                                                                                                                   |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `types.rs`          | All shared data types: `CanonicalSpec`, `NormalizedSpec`, `Execution`, `PresetsMap`, `CompileResult`, `Provider`, etc. |
+| `cli.rs`            | `clap` argument parsing; `CommonArgs` reads `AGENTSPEC_PROFILE` env var                                                |
+| `config.rs`         | `agentspec.toml` discovery and parsing; `resolve_presets()` merges machine profile overlays; `resolve_sync_target()` for sync config |
+| `parse.rs`          | Loads `.md` spec files from disk                                                                                       |
+| `fragments.rs`      | MiniJinja environment setup and fragment rendering                                                                     |
+| `schema.rs`         | Embeds `canonical.schema.json` via `include_str!`; parses it once at startup                                           |
+| `validate.rs`       | Schema validation, normalization, semantic checks                                                                      |
+| `compile.rs`        | Provider dispatch loop; sorts output by path                                                                           |
+| `emit.rs`           | Writes files to disk; `check_generated_state` diffs expected vs actual                                                 |
+| `format.rs`         | YAML frontmatter serializer; hand-rolled to match js-yaml plain-string style                                           |
+| `model.rs`          | Resolves a spec's `execution.preset` name to a `ModelConfig` for a specific provider                                   |
+| `tools.rs`          | Canonical → provider-specific tool name mapping table                                                                  |
+| `adapters/`         | One file per provider: `claude.rs`, `opencode.rs`, `codex.rs`, `cursor.rs`                                             |
+| `sync.rs`           | Sync orchestrator: iterates providers/kinds, dispatches to strategy, patches `opencode.json` |
+| `sync/provider.rs`  | `SyncKind`, destination resolution, `all_sync_kinds`, `patch_opencode_instructions`          |
+| `sync/strategy.rs`  | Symlink and copy sync strategies, stale cleanup, `apply_strip_name`                          |
+| `sync/manifest.rs`  | `.agentspec-manifest.json` ownership tracking for the copy strategy                          |
 
 ## Key Types
 

@@ -264,21 +264,11 @@ fn test_compile_generates_expected_files() {
         "missing opencode api-design rule"
     );
 
-    // OpenCode: instructions.json with both rule paths
-    let instructions_path = dir.join("generated/opencode/instructions.json");
+    // OpenCode: instructions.json is no longer produced by compile — it is patched by
+    // `agentspec sync` into opencode.json directly. Verify it is absent.
     assert!(
-        instructions_path.exists(),
-        "missing opencode instructions.json"
-    );
-    let instructions_content =
-        std::fs::read_to_string(&instructions_path).expect("failed to read instructions.json");
-    assert!(
-        instructions_content.contains("general-guidance"),
-        "instructions.json should reference general-guidance"
-    );
-    assert!(
-        instructions_content.contains("api-design"),
-        "instructions.json should reference api-design"
+        !dir.join("generated/opencode/instructions.json").exists(),
+        "instructions.json should not be produced by compile"
     );
 }
 
