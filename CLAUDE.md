@@ -27,6 +27,13 @@ agentspec sync --no-compile     # sync from existing generated output
 
 ## Release Runbook
 
+GitHub Actions policy:
+
+- All workflow `uses:` references must be pinned to full-length commit SHAs.
+- Do not use floating tags like `@v4` or `@stable` in this repository.
+- When adding or updating an action, resolve the current tag to a commit SHA and
+  include the human-readable tag in an inline comment (for example `# v4`).
+
 Standard release flow:
 
 1. Merge conventional-commit changes to `main`.
