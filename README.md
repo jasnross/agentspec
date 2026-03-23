@@ -121,3 +121,106 @@ in your shell profile instead:
 ```sh
 export AGENTSPEC_PROFILE=home
 ```
+
+## Release Policy
+
+- Version tags use `vX.Y.Z` and must match the `Cargo.toml` package version.
+- Standard releases follow the `release-please` PR flow into protected `main`.
+- Manual hotfix publication is an exception path and uses `release.yml`
+  `workflow_dispatch` with an explicit tag.
+- Supported versions: latest release and previous minor release.
+
+## Install and Update
+
+### Homebrew (shared org tap)
+
+```sh
+brew tap jasnross/tap
+brew install agentspec
+brew upgrade agentspec
+brew uninstall agentspec
+```
+
+The formula lives in the separate tap repository (`jasnross/homebrew-tap`) so
+source-repo ACLs, formula CI, and release automation boundaries stay decoupled.
+
+### mise (`github:` backend)
+
+```sh
+mise use -g github:jasnross/agentspec@latest
+agentspec --version
+```
+
+To pin a specific version:
+
+```sh
+mise use -g github:jasnross/agentspec@0.1.0
+```
+
+To remove it:
+
+```sh
+mise uninstall github:jasnross/agentspec
+```
+
+## Artifact Compatibility Contract
+
+- Release archives are published as `agentspec-vX.Y.Z-<target>.tar.gz`.
+- Supported release targets:
+  - `aarch64-apple-darwin`
+  - `x86_64-apple-darwin`
+  - `x86_64-unknown-linux-gnu`
+- Every release publishes `SHA256SUMS`, SPDX JSON SBOM (`*.spdx.json`), and
+  GitHub OIDC attestations.
+- Homebrew and `mise` consumers rely on this naming contract as stable API.
+
+## Verify Release Integrity
+
+Download release assets and verify checksums:
+
+```sh
+shasum -a 256 -c SHA256SUMS
+```
+
+Verify provenance attestations with GitHub CLI:
+
+```sh
+gh attestation verify agentspec-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz --repo jasnross/agentspec
+gh attestation verify agentspec-vX.Y.Z-sbom.spdx.json --repo jasnross/agentspec
+```
+
+## Distribution Support
+
+- Primary install channels are Homebrew custom tap and `mise` GitHub releases.
+- `asdf` support is intentionally deferred until a named long-term owner commits
+  to maintaining the plugin.
+
+## Tap Update Procedure (manual path)
+
+Tap PR automation is currently deferred. After each release:
+
+1. Update `Formula/agentspec.rb` in `jasnross/homebrew-tap` to the new tag.
+2. Update SHA256 values from the release `SHA256SUMS` asset.
+3. Run tap CI (`brew audit` and `brew test`) and merge with required approvals.
+
+## Troubleshooting
+
+- `brew install agentspec` fails with checksum mismatch: refresh the tap,
+  verify formula SHA entries match release `SHA256SUMS`, then retry.
+- `mise` selects the wrong asset: configure explicit `asset_pattern` in
+  `mise.toml` for your platform.
+- Attestation verification fails: confirm you are verifying a file downloaded
+  from the matching `jasnross/agentspec` release tag.
+
+## Rollback Guidance
+
+If a bad release is published:
+
+1. Mark the broken release in team comms and ask users to pin to the last known
+   good version.
+2. Revert or supersede the corresponding Homebrew tap formula update so
+   `brew upgrade` does not move users onto the broken release.
+3. Cut a replacement patch release (`vX.Y.Z+1`) through the standard
+   `release-please` flow when possible.
+4. If emergency timing requires `workflow_dispatch`, document the incident and
+   follow up with a normal release PR to restore the default process.

@@ -25,6 +25,42 @@ agentspec sync --dry-run        # preview sync operations without writing
 agentspec sync --no-compile     # sync from existing generated output
 ```
 
+## Release Runbook
+
+Standard release flow:
+
+1. Merge conventional-commit changes to `main`.
+2. Review and merge the `release-please` PR (version + changelog).
+3. Verify tag-triggered `release.yml` jobs succeed:
+   - all target builds and archive smoke tests
+   - checksum generation/verification
+   - SBOM + attestation publication
+   - Homebrew gate
+4. Update `jasnross/homebrew-tap` `Formula/agentspec.rb` with the new version
+   and SHA256 entries from `SHA256SUMS`.
+5. Confirm install paths (`brew` and `mise`) and announce release.
+
+Hotfix exception path:
+
+- Use `release.yml` `workflow_dispatch` only when waiting for the normal
+  `release-please` PR is unacceptable (e.g., urgent breakage/security fix).
+- Record the reason in release notes and follow up with a normal release PR to
+  return to the default protected-branch flow.
+
+Release execution checklist:
+
+- [ ] release-please PR merged and tag created
+- [ ] `release.yml` completed with all checks green
+- [ ] release page contains archives + `SHA256SUMS` + SPDX SBOM + attestations
+- [ ] `homebrew-tap` formula updated and CI passed
+- [ ] `brew` + `mise` install paths verified
+
+Hotfix decision criteria:
+
+- user-facing breakage in latest release with no immediate workaround
+- security issue requiring same-day patch
+- release pipeline/tagging fault that blocks standard remediation timing
+
 ## Git Commits
 
 All commits must follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):

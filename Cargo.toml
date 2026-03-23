@@ -3,6 +3,7 @@ name = "agentspec"
 version = "0.1.0"
 edition = "2024"
 description = "Compile provider-neutral SKILL.md/AGENT.md specs into ready-to-use AI coding agent configurations"
+license = "MIT"
 
 [dependencies]
 anyhow = "1"

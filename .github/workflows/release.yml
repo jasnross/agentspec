@@ -1,0 +1,222 @@
+name: Release Artifacts
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (for hotfix exception path)"
+        required: true
+        type: string
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo outputs
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --locked --release --target "${{ matrix.target }}"
+
+      - name: Package archive
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          ARCHIVE="agentspec-v${VERSION}-${{ matrix.target }}.tar.gz"
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/agentspec" "dist/agentspec"
+          tar -C dist -czf "dist/${ARCHIVE}" agentspec
+          rm "dist/agentspec"
+
+      - name: Smoke test packaged archive
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          ARCHIVE="agentspec-v${VERSION}-${{ matrix.target }}.tar.gz"
+          mkdir -p smoke
+          tar -C smoke -xzf "dist/${ARCHIVE}"
+          OUTPUT=$("smoke/agentspec" --version)
+          case "${OUTPUT}" in
+            *"${VERSION}"*) ;;
+            *)
+              echo "Expected version ${VERSION} in output, got: ${OUTPUT}" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Upload archive artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-archive-${{ matrix.target }}
+          path: dist/*.tar.gz
+
+  homebrew-gate:
+    name: Homebrew gate
+    needs: build
+    runs-on: macos-14
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Download archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-archive-*
+          merge-multiple: true
+          path: dist
+
+      - name: Verify install using temporary formula
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          TARGET="aarch64-apple-darwin"
+          ARCHIVE="agentspec-v${VERSION}-${TARGET}.tar.gz"
+          read -r SHA _ < <(shasum -a 256 "dist/${ARCHIVE}")
+
+          cat > agentspec-ci.rb <<EOF
+          class AgentspecCi < Formula
+            desc "agentspec release verification formula"
+            homepage "https://github.com/${GITHUB_REPOSITORY}"
+            version "${VERSION}"
+            url "file://${GITHUB_WORKSPACE}/dist/${ARCHIVE}"
+            sha256 "${SHA}"
+
+            def install
+              bin.install "agentspec"
+            end
+          end
+          EOF
+
+          brew install --formula ./agentspec-ci.rb
+          OUTPUT=$(agentspec --version)
+          case "${OUTPUT}" in
+            *"${VERSION}"*) ;;
+            *)
+              echo "Expected version ${VERSION} in output, got: ${OUTPUT}" >&2
+              exit 1
+              ;;
+          esac
+
+  publish:
+    name: Publish release assets
+    needs:
+      - build
+      - homebrew-gate
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      id-token: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Validate tag, Cargo version, and release metadata
+        run: |
+          TAG="${RELEASE_TAG}"
+          VERSION="${TAG#v}"
+          CARGO_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "agentspec") | .version')
+
+          if [ "${TAG}" = "${VERSION}" ]; then
+            echo "Expected tag with v-prefix, got: ${TAG}" >&2
+            exit 1
+          fi
+
+          if [ "${VERSION}" != "${CARGO_VERSION}" ]; then
+            echo "Tag version (${VERSION}) does not match Cargo.toml (${CARGO_VERSION})." >&2
+            exit 1
+          fi
+
+          RELEASE_TAG_FROM_API=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '.tag_name')
+          if [ "${RELEASE_TAG_FROM_API}" != "${TAG}" ]; then
+            echo "Release metadata tag (${RELEASE_TAG_FROM_API}) does not match workflow tag (${TAG})." >&2
+            exit 1
+          fi
+
+          if [ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]; then
+            git fetch origin main --quiet
+            if ! git merge-base --is-ancestor HEAD origin/main; then
+              echo "Tag ${TAG} is not on origin/main. Use workflow_dispatch for hotfix exceptions." >&2
+              exit 1
+            fi
+          fi
+
+          echo "VERSION=${VERSION}" >> "${GITHUB_ENV}"
+          echo "SBOM_FILE=agentspec-v${VERSION}-sbom.spdx.json" >> "${GITHUB_ENV}"
+
+      - name: Download archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-archive-*
+          merge-multiple: true
+          path: dist
+
+      - name: Generate SHA256SUMS
+        run: |
+          cd dist
+          sha256sum agentspec-v${VERSION}-*.tar.gz > ../SHA256SUMS
+
+      - name: Verify SHA256SUMS integrity
+        run: |
+          sha256sum --check SHA256SUMS
+
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: dist
+          format: spdx-json
+          output-file: ${{ env.SBOM_FILE }}
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Upload release assets
+        run: gh release upload "${RELEASE_TAG}" dist/*.tar.gz SHA256SUMS "${SBOM_FILE}" --clobber
+
+      - name: Add tap update reminder
+        run: |
+          {
+            echo "## Homebrew tap follow-up"
+            echo
+            echo "Tap automation is deferred. Update jasnross/homebrew-tap Formula/agentspec.rb manually for ${RELEASE_TAG}."
+            echo "Use SHA256 values from this release's SHA256SUMS asset and pass tap CI before merge."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Attest release archives
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/*.tar.gz
+
+      - name: Attest SPDX SBOM
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: ${{ env.SBOM_FILE }}
