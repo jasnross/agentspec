@@ -132,6 +132,9 @@ jobs:
       attestations: write
       contents: write
       id-token: write
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
@@ -142,6 +145,7 @@ jobs:
           ref: ${{ env.RELEASE_TAG }}
 
       - name: Validate tag, Cargo version, and release metadata
+        id: meta
         run: |
           TAG="${RELEASE_TAG}"
           VERSION="${TAG#v}"
@@ -173,6 +177,8 @@ jobs:
 
           echo "VERSION=${VERSION}" >> "${GITHUB_ENV}"
           echo "SBOM_FILE=agentspec-v${VERSION}-sbom.spdx.json" >> "${GITHUB_ENV}"
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "release_tag=${TAG}" >> "${GITHUB_OUTPUT}"
 
       - name: Download archives
         uses: actions/download-artifact@v4
@@ -202,14 +208,11 @@ jobs:
       - name: Upload release assets
         run: gh release upload "${RELEASE_TAG}" dist/*.tar.gz SHA256SUMS "${SBOM_FILE}" --clobber
 
-      - name: Add tap update reminder
-        run: |
-          {
-            echo "## Homebrew tap follow-up"
-            echo
-            echo "Tap automation is deferred. Update jasnross/homebrew-tap Formula/agentspec.rb manually for ${RELEASE_TAG}."
-            echo "Use SHA256 values from this release's SHA256SUMS asset and pass tap CI before merge."
-          } >> "${GITHUB_STEP_SUMMARY}"
+      - name: Upload release metadata artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-metadata
+          path: SHA256SUMS
 
       - name: Attest release archives
         uses: actions/attest-build-provenance@v4
@@ -220,3 +223,144 @@ jobs:
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: ${{ env.SBOM_FILE }}
+
+  tap-pr:
+    name: Open Homebrew tap PR
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ needs.publish.outputs.release_tag }}
+      VERSION: ${{ needs.publish.outputs.version }}
+      HOMEBREW_TAP_PAT: ${{ secrets.HOMEBREW_TAP_PAT }}
+    steps:
+      - name: Validate token configuration
+        run: |
+          if [ -z "${HOMEBREW_TAP_PAT}" ]; then
+            echo "Missing HOMEBREW_TAP_PAT secret. Configure a token with write access to jasnross/homebrew-tap." >&2
+            exit 1
+          fi
+
+      - name: Check out tap repository
+        uses: actions/checkout@v4
+        with:
+          repository: jasnross/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_PAT }}
+          path: homebrew-tap
+
+      - name: Download release metadata
+        uses: actions/download-artifact@v4
+        with:
+          name: release-metadata
+          path: release-metadata
+
+      - name: Update formula and open or update PR
+        id: tap_pr
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_PAT }}
+        run: |
+          set -euo pipefail
+
+          SHA_FILE="${GITHUB_WORKSPACE}/release-metadata/SHA256SUMS"
+          FORMULA="Formula/agentspec.rb"
+
+          if [ ! -f "${SHA_FILE}" ]; then
+            echo "Missing SHA256SUMS artifact from release workflow." >&2
+            exit 1
+          fi
+
+          ARM_SHA=$(grep "agentspec-v${VERSION}-aarch64-apple-darwin.tar.gz" "${SHA_FILE}" | awk '{print $1}')
+          MAC_SHA=$(grep "agentspec-v${VERSION}-x86_64-apple-darwin.tar.gz" "${SHA_FILE}" | awk '{print $1}')
+          LINUX_SHA=$(grep "agentspec-v${VERSION}-x86_64-unknown-linux-gnu.tar.gz" "${SHA_FILE}" | awk '{print $1}')
+
+          if [ -z "${ARM_SHA}" ] || [ -z "${MAC_SHA}" ] || [ -z "${LINUX_SHA}" ]; then
+            echo "Failed to parse one or more target digests from SHA256SUMS for ${RELEASE_TAG}." >&2
+            exit 1
+          fi
+
+          cd homebrew-tap
+
+          git config user.name "agentspec-bot"
+          git config user.email "actions@users.noreply.github.com"
+
+          BRANCH="automation/agentspec-${RELEASE_TAG}"
+          if git ls-remote --exit-code origin "${BRANCH}" >/dev/null 2>&1; then
+            git fetch origin "${BRANCH}"
+            git checkout -B "${BRANCH}" "origin/${BRANCH}"
+          else
+            git checkout -b "${BRANCH}"
+          fi
+
+          TMP_FILE=$(mktemp)
+          awk -v version="${VERSION}" -v arm_sha="${ARM_SHA}" -v mac_sha="${MAC_SHA}" -v linux_sha="${LINUX_SHA}" '
+            /^  version "/ {
+              print "  version \"" version "\""
+              next
+            }
+            /aarch64-apple-darwin\.tar\.gz/ {
+              print
+              getline
+              print "      sha256 \"" arm_sha "\""
+              next
+            }
+            /x86_64-apple-darwin\.tar\.gz/ {
+              print
+              getline
+              print "      sha256 \"" mac_sha "\""
+              next
+            }
+            /x86_64-unknown-linux-gnu\.tar\.gz/ {
+              print
+              getline
+              print "      sha256 \"" linux_sha "\""
+              next
+            }
+            { print }
+          ' "${FORMULA}" > "${TMP_FILE}"
+          mv "${TMP_FILE}" "${FORMULA}"
+
+          FORMULA_CHANGED="false"
+          git add "${FORMULA}"
+          if git diff --cached --quiet; then
+            echo "No formula changes detected for ${RELEASE_TAG}."
+          else
+            FORMULA_CHANGED="true"
+            git commit -m "chore(agentspec): update formula to ${RELEASE_TAG}"
+            git push --set-upstream origin "${BRANCH}"
+          fi
+
+          EXISTING_PR_NUMBER=$(gh pr list --repo jasnross/homebrew-tap --head "${BRANCH}" --state open --json number --jq '.[0].number')
+          PR_TITLE="chore(agentspec): update formula to ${RELEASE_TAG}"
+          PR_BODY=$(cat <<EOF
+          ## Summary
+          - update `Formula/agentspec.rb` to ${RELEASE_TAG}
+          - refresh macOS arm64/x64 and Linux x64 SHA256 values from release SHA256SUMS
+
+          ## Source Release
+          - https://github.com/jasnross/agentspec/releases/tag/${RELEASE_TAG}
+          EOF
+          )
+
+          if [ -n "${EXISTING_PR_NUMBER}" ]; then
+            gh pr edit "${EXISTING_PR_NUMBER}" --repo jasnross/homebrew-tap --title "${PR_TITLE}" --body "${PR_BODY}"
+            PR_URL=$(gh pr view "${EXISTING_PR_NUMBER}" --repo jasnross/homebrew-tap --json url --jq '.url')
+          elif [ "${FORMULA_CHANGED}" = "false" ]; then
+            PR_URL=""
+          else
+            PR_URL=$(gh pr create --repo jasnross/homebrew-tap --base main --head "${BRANCH}" --title "${PR_TITLE}" --body "${PR_BODY}")
+          fi
+
+          echo "pr_url=${PR_URL}" >> "${GITHUB_OUTPUT}"
+
+      - name: Summarize tap automation result
+        run: |
+          {
+            echo "## Homebrew tap automation"
+            echo
+            if [ -n "${{ steps.tap_pr.outputs.pr_url }}" ]; then
+              echo "Tap PR: ${{ steps.tap_pr.outputs.pr_url }}"
+            else
+              echo "No tap PR created: formula already matched ${RELEASE_TAG}."
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
