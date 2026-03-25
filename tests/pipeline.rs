@@ -367,3 +367,88 @@ fn test_compile_with_profile_overrides_model() {
         "base model should be replaced by profile: {content}"
     );
 }
+
+#[test]
+fn test_sync_prefix_strip_name_conflict_errors() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = tmp.path();
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        "[sync.claude]\nprefix = \"tw\"\nstrip_name = true\n",
+    )
+    .expect("failed to write agentspec.toml");
+
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--no-compile", "--target", "claude"])
+        .current_dir(dir)
+        .output()
+        .expect("failed to run agentspec sync");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "sync should fail:\n{stderr}");
+    assert!(
+        stderr.contains("`prefix` and `strip_name` are mutually exclusive"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn test_sync_prefix_symlink_conflict_errors() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = tmp.path();
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        "[sync.claude]\nprefix = \"tw\"\nstrategy = \"symlink\"\n",
+    )
+    .expect("failed to write agentspec.toml");
+
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--no-compile", "--target", "claude"])
+        .current_dir(dir)
+        .output()
+        .expect("failed to run agentspec sync");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "sync should fail:\n{stderr}");
+    assert!(
+        stderr.contains("`prefix` requires `strategy = \"copy\"`"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn test_sync_opencode_commands_prefix_subdir() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = tmp.path();
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        "[sync.opencode]\nmode = \"user\"\nprefix = \"tw\"\n",
+    )
+    .expect("failed to write agentspec.toml");
+    std::fs::create_dir_all(dir.join("generated/opencode/commands"))
+        .expect("failed to create generated commands dir");
+    std::fs::write(
+        dir.join("generated/opencode/commands/commit.md"),
+        "---\nname: commit\n---\n",
+    )
+    .expect("failed to write generated command");
+
+    let home = dir.join("home");
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--no-compile", "--target", "opencode"])
+        .env("HOME", &home)
+        .current_dir(dir)
+        .output()
+        .expect("failed to run agentspec sync");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "sync failed:\n{stderr}");
+    assert!(
+        stderr.contains(".config/opencode/commands/tw"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        home.join(".config/opencode/commands/tw/commit.md").exists(),
+        "prefixed opencode command file should exist"
+    );
+}

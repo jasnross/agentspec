@@ -14,7 +14,7 @@ use manifest::Manifest;
 use provider::{
     SyncKind, all_sync_kinds, generated_source_dir, patch_opencode_instructions, resolve_dest_dir,
 };
-use strategy::{SyncEntry, apply_strip_name, sync_copied_dir, sync_symlinked_dir};
+use strategy::{NamePrefixMode, SyncEntry, apply_strip_name, sync_copied_dir, sync_symlinked_dir};
 
 /// Resolves the home directory from the environment.
 fn home_dir() -> Result<PathBuf> {
@@ -41,7 +41,16 @@ fn sync_one_kind(
     ctx: &SyncContext<'_>,
 ) -> Result<(Vec<SyncEntry>, PathBuf)> {
     let source_dir = generated_source_dir(provider, kind, ctx.output_dir);
-    let dest_dir = resolve_dest_dir(provider, kind, target, ctx.home, ctx.cwd)?;
+    let mut dest_dir = resolve_dest_dir(provider, kind, target, ctx.home, ctx.cwd)?;
+    let mut file_prefix: Option<String> = None;
+
+    if let Some(prefix) = target.prefix.as_deref() {
+        if provider == Provider::OpenCode && kind == SyncKind::Commands {
+            dest_dir = dest_dir.join(prefix);
+        } else if kind != SyncKind::Rules {
+            file_prefix = Some(format!("{prefix}-"));
+        }
+    }
 
     if !source_dir.is_dir() {
         eprintln!("  skip {provider}/{}: no generated output", kind.dir_name());
@@ -56,10 +65,39 @@ fn sync_one_kind(
     );
 
     let entries = match target.strategy {
-        SyncStrategy::Symlink => sync_symlinked_dir(&source_dir, &dest_dir, ctx.dry_run)?,
+        SyncStrategy::Symlink => sync_symlinked_dir(
+            &source_dir,
+            &dest_dir,
+            file_prefix.as_deref(),
+            target.allow_overwrite,
+            ctx.dry_run,
+        )?,
         SyncStrategy::Copy => {
             let mut manifest = Manifest::load(&dest_dir)?;
-            let result = sync_copied_dir(&source_dir, &dest_dir, &mut manifest, ctx.dry_run)?;
+            let name_prefix = if provider == Provider::Claude {
+                match kind {
+                    SyncKind::Agents => target
+                        .prefix
+                        .as_deref()
+                        .map(|prefix| (prefix, NamePrefixMode::Agents)),
+                    SyncKind::Skills => target
+                        .prefix
+                        .as_deref()
+                        .map(|prefix| (prefix, NamePrefixMode::Skills)),
+                    SyncKind::Commands | SyncKind::Rules => None,
+                }
+            } else {
+                None
+            };
+            let result = sync_copied_dir(
+                &source_dir,
+                &dest_dir,
+                &mut manifest,
+                file_prefix.as_deref(),
+                name_prefix,
+                target.allow_overwrite,
+                ctx.dry_run,
+            )?;
             if !ctx.dry_run {
                 manifest.save(&dest_dir)?;
             }
@@ -141,6 +179,7 @@ pub fn run_sync(config: &AgentspecConfig, args: &SyncArgs) -> Result<()> {
         mode: args.mode,
         strategy: args.strategy,
         dest: args.dest.clone(),
+        force: args.force,
     };
 
     let targets = if args.common.target.is_empty() {
@@ -154,6 +193,7 @@ pub fn run_sync(config: &AgentspecConfig, args: &SyncArgs) -> Result<()> {
     for provider in &targets {
         let target =
             config.resolve_sync_target(*provider, args.common.profile.as_deref(), &cli_overrides);
+        target.validate_for_sync(*provider)?;
         eprintln!(
             "syncing {provider} (mode={:?}, strategy={:?})",
             target.mode, target.strategy

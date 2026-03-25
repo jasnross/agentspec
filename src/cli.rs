@@ -65,6 +65,10 @@ pub struct SyncArgs {
     #[arg(long)]
     pub dry_run: bool,
 
+    /// Allow overwriting user-owned files at sync destinations (disables collision errors).
+    #[arg(long)]
+    pub force: bool,
+
     /// Override sync strategy for all providers
     #[arg(long, value_enum)]
     pub strategy: Option<SyncStrategy>,

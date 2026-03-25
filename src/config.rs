@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
 use crate::cli::CommonArgs;
@@ -101,6 +101,16 @@ pub struct SyncTargetConfig {
     /// Whether to strip `name:` lines from `SKILL.md` files after copying
     /// (used for plugin namespace prefixing in work profile).
     pub strip_name: bool,
+    /// Optional namespace prefix applied to synced skill/agent/command names.
+    /// For Claude: filesystem dir uses `{prefix}-{name}`, `name:` frontmatter uses `{prefix}:{name}`.
+    /// For `OpenCode`: synced into a `{prefix}/` subdirectory.
+    /// For Cursor/Codex: filename becomes `{prefix}-{name}`.
+    /// Rules are never prefixed.
+    pub prefix: Option<String>,
+    /// Permit overwriting user-owned files at the destination.
+    /// When false (default), sync errors on collision. Overridden by `--force`.
+    #[serde(default)]
+    pub allow_overwrite: bool,
     /// Explicit destination for agent specs (used when `mode = "path"`).
     pub agents: Option<String>,
     /// Explicit destination for skill specs.
@@ -121,6 +131,8 @@ struct SyncTargetPartial {
     pub mode: Option<SyncMode>,
     pub strategy: Option<SyncStrategy>,
     pub strip_name: Option<bool>,
+    pub prefix: Option<String>,
+    pub allow_overwrite: Option<bool>,
     pub agents: Option<String>,
     pub skills: Option<String>,
     pub rules: Option<String>,
@@ -136,6 +148,29 @@ pub struct SyncOverrides {
     pub strategy: Option<SyncStrategy>,
     /// Override destination root (implies `mode = Path`).
     pub dest: Option<String>,
+    /// Allow overwriting user-owned files at sync destinations.
+    pub force: bool,
+}
+
+impl SyncTargetConfig {
+    /// Validate sync settings for provider-specific constraints.
+    pub fn validate_for_sync(&self, provider: Provider) -> Result<()> {
+        if self.prefix.is_some() && self.strip_name {
+            bail!("sync config for {provider}: `prefix` and `strip_name` are mutually exclusive");
+        }
+
+        if self.prefix.is_some()
+            && provider == Provider::Claude
+            && self.strategy == SyncStrategy::Symlink
+        {
+            bail!(
+                "sync config for {provider}: `prefix` requires `strategy = \"copy\"` \
+                 because Claude skill/agent names come from frontmatter"
+            );
+        }
+
+        Ok(())
+    }
 }
 
 impl AgentspecConfig {
@@ -230,6 +265,14 @@ impl AgentspecConfig {
                     if let Some(strip_name) = partial.strip_name {
                         resolved.strip_name = strip_name;
                     }
+                    if partial.prefix.is_some() {
+                        resolved.prefix = partial
+                            .prefix
+                            .and_then(|value| if value.is_empty() { None } else { Some(value) });
+                    }
+                    if let Some(allow_overwrite) = partial.allow_overwrite {
+                        resolved.allow_overwrite = allow_overwrite;
+                    }
                     if partial.agents.is_some() {
                         resolved.agents = partial.agents;
                     }
@@ -264,6 +307,13 @@ impl AgentspecConfig {
             resolved.skills = Some(format!("{dest}/skills"));
             resolved.rules = Some(format!("{dest}/rules"));
             resolved.commands = Some(format!("{dest}/commands"));
+        }
+        if cli.force {
+            resolved.allow_overwrite = true;
+        }
+
+        if resolved.prefix.as_deref() == Some("") {
+            resolved.prefix = None;
         }
 
         resolved
@@ -414,6 +464,8 @@ claude = "sonnet"
         assert_eq!(result.mode, SyncMode::User);
         assert_eq!(result.strategy, SyncStrategy::Symlink);
         assert!(!result.strip_name);
+        assert!(result.prefix.is_none());
+        assert!(!result.allow_overwrite);
         assert!(result.agents.is_none());
     }
 
@@ -432,6 +484,8 @@ strip_name = true
         let result = config.resolve_sync_target(Provider::Claude, None, &cli);
         assert_eq!(result.strategy, SyncStrategy::Copy);
         assert!(result.strip_name);
+        assert!(result.prefix.is_none());
+        assert!(!result.allow_overwrite);
         assert_eq!(result.mode, SyncMode::User); // default
     }
 
@@ -499,6 +553,7 @@ strategy = "copy"
             mode: Some(SyncMode::Project),
             strategy: Some(SyncStrategy::Symlink),
             dest: None,
+            force: false,
         };
 
         // CLI overrides both base and profile
@@ -539,6 +594,7 @@ strip_name = false
             mode: None,
             strategy: None,
             dest: Some("/tmp/sync-test".to_string()),
+            force: false,
         };
 
         let result = config.resolve_sync_target(Provider::Claude, None, &cli);
@@ -547,5 +603,76 @@ strip_name = false
         assert_eq!(result.skills.as_deref(), Some("/tmp/sync-test/skills"));
         assert_eq!(result.rules.as_deref(), Some("/tmp/sync-test/rules"));
         assert_eq!(result.commands.as_deref(), Some("/tmp/sync-test/commands"));
+    }
+
+    #[test]
+    fn test_resolve_sync_target_empty_prefix_normalized_to_none() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[sync.claude]
+prefix = ""
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+
+        let result = config.resolve_sync_target(Provider::Claude, None, &SyncOverrides::default());
+        assert!(result.prefix.is_none());
+    }
+
+    #[test]
+    fn test_resolve_sync_target_cli_force_sets_allow_overwrite() {
+        let config = AgentspecConfig::default();
+        let cli = SyncOverrides {
+            force: true,
+            ..SyncOverrides::default()
+        };
+
+        let result = config.resolve_sync_target(Provider::Claude, None, &cli);
+        assert!(result.allow_overwrite);
+    }
+
+    #[test]
+    fn test_validate_prefix_strip_name_conflict() {
+        let target = SyncTargetConfig {
+            prefix: Some("tw".to_string()),
+            strip_name: true,
+            ..SyncTargetConfig::default()
+        };
+
+        let result = target.validate_for_sync(Provider::Claude);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_prefix_requires_copy_for_claude() {
+        let target = SyncTargetConfig {
+            prefix: Some("tw".to_string()),
+            strategy: SyncStrategy::Symlink,
+            ..SyncTargetConfig::default()
+        };
+
+        let result = target.validate_for_sync(Provider::Claude);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_prefix_symlink_ok_for_opencode() {
+        let target = SyncTargetConfig {
+            prefix: Some("tw".to_string()),
+            strategy: SyncStrategy::Symlink,
+            ..SyncTargetConfig::default()
+        };
+
+        let result = target.validate_for_sync(Provider::OpenCode);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_prefix_none_no_error() {
+        let target = SyncTargetConfig::default();
+
+        for provider in Provider::ALL {
+            assert!(target.validate_for_sync(provider).is_ok());
+        }
     }
 }

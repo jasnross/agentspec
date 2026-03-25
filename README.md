@@ -16,6 +16,7 @@ agentspec sync                   # compile and sync to all configured targets
 agentspec sync --profile work    # apply a machine profile
 agentspec sync --dry-run         # preview without making changes
 agentspec sync --no-compile      # sync from existing generated output
+agentspec sync --force           # allow overwriting user-owned destination files
 agentspec sync --target claude   # sync a specific provider only
 agentspec compile                # compile only, writes generated/
 agentspec validate               # validate specs without generating output
@@ -93,6 +94,58 @@ skills = "~/Workspace/.cursor/skills"
 
 - `symlink` — creates per-entry symlinks from the destination into `generated/`; stale symlinks are removed automatically
 - `copy` — copies files and tracks ownership via `.agentspec-manifest.json`; stale copies are removed on the next sync
+
+**Namespace prefix:**
+
+Set `prefix = "<name>"` in `[sync.<provider>]` to avoid collisions with user-owned
+files or other spec libraries. Prefixing applies to agents, skills, and commands,
+but not rules.
+
+| Provider | Prefix behavior                                                                                                                 | Invocation example |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| Claude   | Path uses dash prefix (`tw-commit.md` for agents, `tw-commit/` for skills), `name:` frontmatter uses colon prefix (`tw:commit`) | `tw:commit`        |
+| OpenCode | Commands sync under a prefix subdirectory (`commands/tw/commit.md`); agents/skills use dash-prefixed names                      | `/tw/commit`       |
+| Cursor   | Path uses dash prefix (`tw-commit/...`)                                                                                         | `tw-commit`        |
+| Codex    | Path uses dash prefix (`tw-commit/...`)                                                                                         | `tw-commit`        |
+
+Notes:
+
+- For Claude, prefixing requires `strategy = "copy"` (frontmatter must be rewritten).
+- `prefix` and `strip_name` are mutually exclusive.
+- `agentspec` does not create aliases, so prefixed names are the names you invoke.
+
+```toml
+# Namespace prefix: avoids collisions with user-owned or cross-library names.
+# Claude: agent file becomes tw-commit.md, skill directory becomes tw-commit/,
+# and name: frontmatter becomes tw:commit.
+# Requires strategy = "copy" for Claude (name: is in frontmatter, not filename).
+[sync.claude]
+strategy = "copy"
+prefix = "tw"
+
+# OpenCode: commands land in a tw/ subdirectory -> invoked as /tw/commit.
+# OpenCode agents/skills also use tw-<name> path prefixing.
+[sync.opencode]
+prefix = "tw"
+
+# Cursor/Codex: filename path becomes tw-<name>
+[sync.cursor]
+prefix = "tw"
+
+[sync.codex]
+prefix = "tw"
+```
+
+**Collision detection:**
+
+By default, sync errors when a user-owned file already exists at a destination
+path. To resolve a collision, configure a `prefix` or remove the conflicting
+file manually.
+
+- Set `allow_overwrite = true` in `[sync.<provider>]` to restore overwrite behavior
+  (copy collisions are backed up; symlink strategy backs up regular files/dirs and
+  replaces conflicting symlinks).
+- Use `agentspec sync --force` for a one-time override.
 
 For OpenCode, `agentspec sync` also patches the `instructions` array in
 `opencode.json` with the absolute paths of the synced rule files.
