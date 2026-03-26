@@ -4,7 +4,7 @@ mod strategy;
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 
 use crate::cli::SyncArgs;
 use crate::config::{AgentspecConfig, SyncOverrides, SyncTargetConfig};
@@ -182,24 +182,47 @@ pub fn run_sync(config: &AgentspecConfig, args: &SyncArgs) -> Result<()> {
         force: args.force,
     };
 
-    let targets = if args.common.target.is_empty() {
-        config.targets.clone()
-    } else {
+    let has_explicit_target_selection = !args.common.target.is_empty();
+    let targets = if has_explicit_target_selection {
         args.common.target.clone()
+    } else {
+        config.configured_sync_providers(args.common.profile.as_deref())?
     };
+
+    if targets.is_empty() {
+        bail!(
+            "no sync providers are configured; add [sync.<provider>] (or [profiles.<name>.sync.<provider>]) in agentspec.toml, or run CLI-only sync with an explicit target (for example: --target claude --mode user|project or --target claude --dest <path>)"
+        );
+    }
+
+    let mut resolved_targets: Vec<(Provider, SyncTargetConfig)> = Vec::new();
+    for provider in targets {
+        let intent = config.resolve_sync_intent(
+            provider,
+            args.common.profile.as_deref(),
+            &cli_overrides,
+            has_explicit_target_selection,
+        )?;
+
+        if !intent.has_explicit_config && !intent.cli_only_allowed {
+            bail!(
+                "sync config for {provider} is not configured; add [sync.{provider}] (or [profiles.<name>.sync.{provider}]) in agentspec.toml, or pass explicit CLI-only sync arguments with --target {provider} and --mode user|project, or --target {provider} --dest <path>"
+            );
+        }
+
+        intent.target.validate_for_sync(provider)?;
+        resolved_targets.push((provider, intent.target));
+    }
 
     let mut all_entries: Vec<SyncEntry> = Vec::new();
 
-    for provider in &targets {
-        let target =
-            config.resolve_sync_target(*provider, args.common.profile.as_deref(), &cli_overrides);
-        target.validate_for_sync(*provider)?;
+    for (provider, target) in &resolved_targets {
         eprintln!(
             "syncing {provider} (mode={:?}, strategy={:?})",
             target.mode, target.strategy
         );
 
-        sync_provider(*provider, &target, &ctx, &mut all_entries)?;
+        sync_provider(*provider, target, &ctx, &mut all_entries)?;
     }
 
     print_summary(&all_entries);

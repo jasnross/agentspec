@@ -17,7 +17,7 @@ agentspec sync --profile work    # apply a machine profile
 agentspec sync --dry-run         # preview without making changes
 agentspec sync --no-compile      # sync from existing generated output
 agentspec sync --force           # allow overwriting user-owned destination files
-agentspec sync --target claude   # sync a specific provider only
+agentspec sync --target claude --mode user # CLI-only sync for one provider
 agentspec compile                # compile only, writes generated/
 agentspec validate               # validate specs without generating output
 agentspec check                  # verify generated files are up to date
@@ -94,6 +94,32 @@ skills = "~/Workspace/.cursor/skills"
 
 - `symlink` — creates per-entry symlinks from the destination into `generated/`; stale symlinks are removed automatically
 - `copy` — copies files and tracks ownership via `.agentspec-manifest.json`; stale copies are removed on the next sync
+
+### Sync target selection
+
+`agentspec sync` selects providers from explicit sync configuration only:
+
+- Default sync scope is providers configured under `[sync.<provider>]` plus active profile overlays under `[profiles.<name>.sync.<provider>]`.
+- If no providers are configured, sync fails fast with actionable guidance.
+- `--target` requires either configured sync for that provider or explicit CLI-only intent.
+- CLI-only sync is supported with explicit target plus either:
+  - `--mode user` or `--mode project`, or
+  - `--dest <path>` (implies `mode=path`)
+
+Examples:
+
+```sh
+# configured-only default sync (syncs only configured providers)
+agentspec sync
+
+# unconfigured targeted sync fails (no [sync.claude] and no CLI-only mode)
+agentspec sync --target claude
+
+# CLI-only targeted sync succeeds
+agentspec sync --target claude --mode user
+agentspec sync --target claude --mode project
+agentspec sync --target claude --dest /tmp/agentspec-sync
+```
 
 **Namespace prefix:**
 

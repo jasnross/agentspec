@@ -149,16 +149,24 @@ fn main() -> Result<()> {
         }
         Command::Sync(sync_args) => {
             if !sync_args.no_compile {
-                let (result, targets) = run_compile(
-                    &specs,
-                    &profiles,
-                    &sync_args.common.target,
-                    &config.targets,
-                    sync_args.common.strict,
-                    &mut total_warnings,
-                )?;
-                let output_dir = config.resolve(&config.output.dir);
-                write_generated_files(&result.files, &output_dir, &targets)?;
+                let sync_compile_targets = if sync_args.common.target.is_empty() {
+                    config.configured_sync_providers(sync_args.common.profile.as_deref())?
+                } else {
+                    sync_args.common.target.clone()
+                };
+
+                if !sync_compile_targets.is_empty() {
+                    let (result, targets) = run_compile(
+                        &specs,
+                        &profiles,
+                        &sync_compile_targets,
+                        &config.targets,
+                        sync_args.common.strict,
+                        &mut total_warnings,
+                    )?;
+                    let output_dir = config.resolve(&config.output.dir);
+                    write_generated_files(&result.files, &output_dir, &targets)?;
+                }
             }
             sync::run_sync(&config, sync_args)?;
         }

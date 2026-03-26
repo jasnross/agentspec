@@ -452,3 +452,306 @@ fn test_sync_opencode_commands_prefix_subdir() {
         "prefixed opencode command file should exist"
     );
 }
+
+#[test]
+fn test_sync_no_config_errors_with_guidance() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let home = dir.join("home");
+
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--no-compile"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync --no-compile");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "sync should fail:\n{stderr}");
+    assert!(
+        stderr.contains("no sync providers are configured"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("--target claude --mode user|project"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn test_sync_without_target_only_syncs_configured_providers() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let home = dir.join("home");
+
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        r#"
+[presets.default]
+claude = "sonnet"
+opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
+codex = { model = "gpt-4o" }
+cursor = "fast"
+
+[sync.cursor]
+mode = "user"
+strategy = "symlink"
+"#,
+    )
+    .expect("failed to write agentspec.toml");
+
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--no-compile"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync --no-compile");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "sync should succeed:\n{stderr}");
+    assert!(stderr.contains("syncing cursor"), "stderr: {stderr}");
+    assert!(
+        !stderr.contains("syncing claude"),
+        "claude should not be synced by default: {stderr}"
+    );
+    assert!(
+        !stderr.contains("syncing opencode"),
+        "opencode should not be synced by default: {stderr}"
+    );
+}
+
+#[test]
+fn test_sync_target_unconfigured_errors_without_dest() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let home = dir.join("home");
+
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--no-compile", "--target", "claude"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync --target claude");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "sync should fail:\n{stderr}");
+    assert!(
+        stderr.contains("sync config for claude is not configured"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn test_sync_target_unconfigured_with_dest_allowed() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let home = dir.join("home");
+    let dest = dir.join("sync-out");
+
+    let output = std::process::Command::new(agentspec())
+        .args([
+            "sync",
+            "--no-compile",
+            "--target",
+            "claude",
+            "--dest",
+            dest.to_str().expect("dest path should be valid utf-8"),
+        ])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync --target claude --dest");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "sync should succeed:\n{stderr}");
+    assert!(
+        stderr.contains("syncing claude (mode=Path"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn test_sync_target_unconfigured_with_mode_user_allowed() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let home = dir.join("home");
+
+    let output = std::process::Command::new(agentspec())
+        .args([
+            "sync",
+            "--no-compile",
+            "--target",
+            "claude",
+            "--mode",
+            "user",
+        ])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync --target claude --mode user");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "sync should succeed:\n{stderr}");
+    assert!(
+        stderr.contains("syncing claude (mode=User"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn test_sync_target_unconfigured_with_mode_project_allowed() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let home = dir.join("home");
+
+    let output = std::process::Command::new(agentspec())
+        .args([
+            "sync",
+            "--no-compile",
+            "--target",
+            "claude",
+            "--mode",
+            "project",
+        ])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync --target claude --mode project");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "sync should succeed:\n{stderr}");
+    assert!(
+        stderr.contains("syncing claude (mode=Project"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn test_sync_no_config_mode_user_without_target_errors() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let home = dir.join("home");
+
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--no-compile", "--mode", "user"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync --mode user");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "sync should fail:\n{stderr}");
+    assert!(
+        stderr.contains("no sync providers are configured"),
+        "stderr: {stderr}"
+    );
+    assert!(stderr.contains("explicit target"), "stderr: {stderr}");
+}
+
+#[test]
+fn test_sync_profile_config_only_is_respected() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let home = dir.join("home");
+
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        r#"
+[presets.default]
+claude = "sonnet"
+opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
+codex = { model = "gpt-4o" }
+cursor = "fast"
+
+[profiles.work.sync.cursor]
+mode = "user"
+strategy = "symlink"
+"#,
+    )
+    .expect("failed to write agentspec.toml");
+
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--no-compile", "--profile", "work"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync --profile work --no-compile");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "sync should succeed:\n{stderr}");
+    assert!(stderr.contains("syncing cursor"), "stderr: {stderr}");
+    assert!(
+        !stderr.contains("syncing claude"),
+        "claude should not be synced by profile-only cursor config: {stderr}"
+    );
+}
+
+#[test]
+fn test_sync_invalid_profile_sync_config_surfaces_contextual_error() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let home = dir.join("home");
+
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        r#"
+[presets.default]
+claude = "sonnet"
+opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
+codex = { model = "gpt-4o" }
+cursor = "fast"
+
+[profiles.work.sync.cursor]
+invalid_field = "oops"
+"#,
+    )
+    .expect("failed to write agentspec.toml");
+
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--no-compile", "--profile", "work"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync --profile work --no-compile");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "sync should fail:\n{stderr}");
+    assert!(
+        stderr.contains("invalid sync config at [profiles.work.sync.cursor]"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn test_sync_invalid_base_sync_config_surfaces_parse_error() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let home = dir.join("home");
+
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        r#"
+[presets.default]
+claude = "sonnet"
+opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
+codex = { model = "gpt-4o" }
+cursor = "fast"
+
+[sync.cursor]
+invalid_field = "oops"
+"#,
+    )
+    .expect("failed to write agentspec.toml");
+
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--no-compile"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync --no-compile");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "sync should fail:\n{stderr}");
+    assert!(stderr.contains("failed to parse"), "stderr: {stderr}");
+    assert!(stderr.contains("unknown field"), "stderr: {stderr}");
+}

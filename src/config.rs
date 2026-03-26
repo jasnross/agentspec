@@ -92,7 +92,7 @@ impl Default for OutputConfig {
 /// When `mode` is `Path`, the per-kind fields (`agents`, `skills`, `rules`, `commands`)
 /// supply explicit destination directories (tilde-expanded at use site).
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct SyncTargetConfig {
     /// Where to place synced files (user-level, project-local, or explicit path).
     pub mode: SyncMode,
@@ -150,6 +150,17 @@ pub struct SyncOverrides {
     pub dest: Option<String>,
     /// Allow overwriting user-owned files at sync destinations.
     pub force: bool,
+}
+
+/// Effective sync intent for a provider after config/profile/CLI evaluation.
+#[derive(Debug, Clone)]
+pub struct ResolvedSyncIntent {
+    /// Final sync target after applying base -> profile -> CLI precedence.
+    pub target: SyncTargetConfig,
+    /// Whether this provider has explicit sync config in base/profile.
+    pub has_explicit_config: bool,
+    /// Whether CLI-only sync is allowed for this provider in this invocation.
+    pub cli_only_allowed: bool,
 }
 
 impl SyncTargetConfig {
@@ -242,55 +253,42 @@ impl AgentspecConfig {
         provider: Provider,
         active_profile: Option<&str>,
         cli: &SyncOverrides,
-    ) -> SyncTargetConfig {
+    ) -> Result<SyncTargetConfig> {
         let provider_str = provider.to_string();
 
         // Start with base config (or default if not configured)
         let mut resolved = self.sync.get(&provider_str).cloned().unwrap_or_default();
 
         // Apply profile overlay if present (only explicitly-set fields override)
-        if let Some(profile_name) = active_profile
-            && let Some(profile) = self.profiles.get(profile_name)
-            && let Some(sync_overrides) = profile.get("sync")
-            && let Some(provider_value) = sync_overrides.get(&provider_str)
-        {
-            match serde_json::from_value::<SyncTargetPartial>(provider_value.clone()) {
-                Ok(partial) => {
-                    if let Some(mode) = partial.mode {
-                        resolved.mode = mode;
-                    }
-                    if let Some(strategy) = partial.strategy {
-                        resolved.strategy = strategy;
-                    }
-                    if let Some(strip_name) = partial.strip_name {
-                        resolved.strip_name = strip_name;
-                    }
-                    if partial.prefix.is_some() {
-                        resolved.prefix = partial
-                            .prefix
-                            .and_then(|value| if value.is_empty() { None } else { Some(value) });
-                    }
-                    if let Some(allow_overwrite) = partial.allow_overwrite {
-                        resolved.allow_overwrite = allow_overwrite;
-                    }
-                    if partial.agents.is_some() {
-                        resolved.agents = partial.agents;
-                    }
-                    if partial.skills.is_some() {
-                        resolved.skills = partial.skills;
-                    }
-                    if partial.rules.is_some() {
-                        resolved.rules = partial.rules;
-                    }
-                    if partial.commands.is_some() {
-                        resolved.commands = partial.commands;
-                    }
-                }
-                Err(e) => {
-                    eprintln!(
-                        "warning: invalid sync config in profile '{profile_name}' for provider '{provider_str}': {e}"
-                    );
-                }
+        if let Some(partial) = self.profile_sync_partial(provider, active_profile)? {
+            if let Some(mode) = partial.mode {
+                resolved.mode = mode;
+            }
+            if let Some(strategy) = partial.strategy {
+                resolved.strategy = strategy;
+            }
+            if let Some(strip_name) = partial.strip_name {
+                resolved.strip_name = strip_name;
+            }
+            if partial.prefix.is_some() {
+                resolved.prefix = partial
+                    .prefix
+                    .and_then(|value| if value.is_empty() { None } else { Some(value) });
+            }
+            if let Some(allow_overwrite) = partial.allow_overwrite {
+                resolved.allow_overwrite = allow_overwrite;
+            }
+            if partial.agents.is_some() {
+                resolved.agents = partial.agents;
+            }
+            if partial.skills.is_some() {
+                resolved.skills = partial.skills;
+            }
+            if partial.rules.is_some() {
+                resolved.rules = partial.rules;
+            }
+            if partial.commands.is_some() {
+                resolved.commands = partial.commands;
             }
         }
 
@@ -316,7 +314,93 @@ impl AgentspecConfig {
             resolved.prefix = None;
         }
 
-        resolved
+        Ok(resolved)
+    }
+
+    fn profile_sync_partial(
+        &self,
+        provider: Provider,
+        active_profile: Option<&str>,
+    ) -> Result<Option<SyncTargetPartial>> {
+        let provider_str = provider.to_string();
+        if let Some(profile_name) = active_profile
+            && let Some(profile) = self.profiles.get(profile_name)
+            && let Some(sync_overrides) = profile.get("sync")
+            && let Some(provider_value) = sync_overrides.get(&provider_str)
+        {
+            let partial = serde_json::from_value::<SyncTargetPartial>(provider_value.clone())
+                .with_context(|| {
+                    format!("invalid sync config at [profiles.{profile_name}.sync.{provider_str}]")
+                })?;
+            return Ok(Some(partial));
+        }
+
+        Ok(None)
+    }
+
+    /// Returns providers with explicit sync config in base and/or active profile.
+    pub fn configured_sync_providers(&self, active_profile: Option<&str>) -> Result<Vec<Provider>> {
+        Provider::ALL
+            .into_iter()
+            .try_fold(Vec::new(), |mut acc, provider| {
+                if self.has_explicit_sync_config(provider, active_profile)? {
+                    acc.push(provider);
+                }
+                Ok(acc)
+            })
+    }
+
+    /// Returns whether a provider has explicit sync config in base and/or active profile.
+    pub fn has_explicit_sync_config(
+        &self,
+        provider: Provider,
+        active_profile: Option<&str>,
+    ) -> Result<bool> {
+        let provider_str = provider.to_string();
+        if self.sync.contains_key(&provider_str) {
+            return Ok(true);
+        }
+
+        Ok(self
+            .profile_sync_partial(provider, active_profile)?
+            .is_some())
+    }
+
+    /// Returns whether CLI flags provide sufficient explicit intent for CLI-only sync.
+    ///
+    /// CLI-only sync always requires explicit provider selection via `--target`.
+    pub fn cli_sync_intent_sufficient(
+        cli: &SyncOverrides,
+        has_explicit_target_selection: bool,
+    ) -> bool {
+        if !has_explicit_target_selection {
+            return false;
+        }
+
+        if cli.dest.is_some() {
+            return true;
+        }
+
+        matches!(cli.mode, Some(SyncMode::User | SyncMode::Project))
+    }
+
+    /// Resolves effective sync intent metadata for a provider.
+    pub fn resolve_sync_intent(
+        &self,
+        provider: Provider,
+        active_profile: Option<&str>,
+        cli: &SyncOverrides,
+        has_explicit_target_selection: bool,
+    ) -> Result<ResolvedSyncIntent> {
+        let has_explicit_config = self.has_explicit_sync_config(provider, active_profile)?;
+        let cli_only_allowed = Self::cli_sync_intent_sufficient(cli, has_explicit_target_selection);
+        let target = self.resolve_sync_target(provider, active_profile, cli)?;
+
+        Ok(ResolvedSyncIntent {
+            target,
+            has_explicit_config,
+            cli_only_allowed,
+        })
     }
 }
 
@@ -363,6 +447,20 @@ dir = "out"
         let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
         assert_eq!(config.spec.agents_dir, PathBuf::from("spec/agents"));
         assert_eq!(config.root_dir, tmp.path());
+    }
+
+    #[test]
+    fn test_discover_invalid_sync_field_errors() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[sync.cursor]
+invalid_field = "oops"
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let err = AgentspecConfig::discover(tmp.path()).expect_err("expected parse error");
+        let full = format!("{err:#}");
+        assert!(full.contains("failed to parse"), "error: {full}");
+        assert!(full.contains("unknown field"), "error: {full}");
     }
 
     #[test]
@@ -460,7 +558,9 @@ claude = "sonnet"
     fn test_resolve_sync_target_default_when_no_sync_configured() {
         let config = AgentspecConfig::default();
         let cli = SyncOverrides::default();
-        let result = config.resolve_sync_target(Provider::Claude, None, &cli);
+        let result = config
+            .resolve_sync_target(Provider::Claude, None, &cli)
+            .expect("expected value");
         assert_eq!(result.mode, SyncMode::User);
         assert_eq!(result.strategy, SyncStrategy::Symlink);
         assert!(!result.strip_name);
@@ -481,7 +581,9 @@ strip_name = true
         let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
         let cli = SyncOverrides::default();
 
-        let result = config.resolve_sync_target(Provider::Claude, None, &cli);
+        let result = config
+            .resolve_sync_target(Provider::Claude, None, &cli)
+            .expect("expected value");
         assert_eq!(result.strategy, SyncStrategy::Copy);
         assert!(result.strip_name);
         assert!(result.prefix.is_none());
@@ -506,12 +608,16 @@ skills = "~/Workspace/thoughts/plugin/claude/skills"
         let cli = SyncOverrides::default();
 
         // Without profile: base config
-        let base = config.resolve_sync_target(Provider::Claude, None, &cli);
+        let base = config
+            .resolve_sync_target(Provider::Claude, None, &cli)
+            .expect("expected value");
         assert_eq!(base.strategy, SyncStrategy::Symlink);
         assert!(!base.strip_name);
 
         // With profile: overridden
-        let work = config.resolve_sync_target(Provider::Claude, Some("work"), &cli);
+        let work = config
+            .resolve_sync_target(Provider::Claude, Some("work"), &cli)
+            .expect("expected value");
         assert_eq!(work.strategy, SyncStrategy::Copy);
         assert!(work.strip_name);
         assert_eq!(
@@ -531,7 +637,9 @@ strategy = "copy"
         let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
         let cli = SyncOverrides::default();
 
-        let result = config.resolve_sync_target(Provider::Claude, Some("nonexistent"), &cli);
+        let result = config
+            .resolve_sync_target(Provider::Claude, Some("nonexistent"), &cli)
+            .expect("expected value");
         assert_eq!(result.strategy, SyncStrategy::Copy); // base preserved
     }
 
@@ -557,7 +665,9 @@ strategy = "copy"
         };
 
         // CLI overrides both base and profile
-        let result = config.resolve_sync_target(Provider::Claude, Some("work"), &cli);
+        let result = config
+            .resolve_sync_target(Provider::Claude, Some("work"), &cli)
+            .expect("expected value");
         assert_eq!(result.mode, SyncMode::Project);
         assert_eq!(result.strategy, SyncStrategy::Symlink);
     }
@@ -579,7 +689,9 @@ strip_name = false
         let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
         let cli = SyncOverrides::default();
 
-        let result = config.resolve_sync_target(Provider::Claude, Some("work"), &cli);
+        let result = config
+            .resolve_sync_target(Provider::Claude, Some("work"), &cli)
+            .expect("expected value");
         // Profile only set strip_name — mode, strategy, agents must be preserved from base
         assert_eq!(result.mode, SyncMode::Path);
         assert_eq!(result.strategy, SyncStrategy::Copy);
@@ -597,7 +709,9 @@ strip_name = false
             force: false,
         };
 
-        let result = config.resolve_sync_target(Provider::Claude, None, &cli);
+        let result = config
+            .resolve_sync_target(Provider::Claude, None, &cli)
+            .expect("expected value");
         assert_eq!(result.mode, SyncMode::Path);
         assert_eq!(result.agents.as_deref(), Some("/tmp/sync-test/agents"));
         assert_eq!(result.skills.as_deref(), Some("/tmp/sync-test/skills"));
@@ -615,7 +729,9 @@ prefix = ""
         fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
         let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
 
-        let result = config.resolve_sync_target(Provider::Claude, None, &SyncOverrides::default());
+        let result = config
+            .resolve_sync_target(Provider::Claude, None, &SyncOverrides::default())
+            .expect("expected value");
         assert!(result.prefix.is_none());
     }
 
@@ -627,8 +743,187 @@ prefix = ""
             ..SyncOverrides::default()
         };
 
-        let result = config.resolve_sync_target(Provider::Claude, None, &cli);
+        let result = config
+            .resolve_sync_target(Provider::Claude, None, &cli)
+            .expect("expected value");
         assert!(result.allow_overwrite);
+    }
+
+    // -----------------------------------------------------------------------
+    // explicit sync intent tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_has_explicit_sync_config_detects_base() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[sync.claude]
+strategy = "copy"
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+
+        assert!(
+            config
+                .has_explicit_sync_config(Provider::Claude, None)
+                .expect("expected value")
+        );
+        assert!(
+            !config
+                .has_explicit_sync_config(Provider::Cursor, None)
+                .expect("expected value")
+        );
+    }
+
+    #[test]
+    fn test_has_explicit_sync_config_detects_profile_only() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[profiles.work.sync.cursor]
+mode = "project"
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+
+        assert!(
+            !config
+                .has_explicit_sync_config(Provider::Cursor, None)
+                .expect("expected value")
+        );
+        assert!(
+            config
+                .has_explicit_sync_config(Provider::Cursor, Some("work"))
+                .expect("expected value")
+        );
+    }
+
+    #[test]
+    fn test_has_explicit_sync_config_invalid_profile_sync_returns_error() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[profiles.work.sync.cursor]
+invalid_field = "oops"
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+
+        let err = config
+            .has_explicit_sync_config(Provider::Cursor, Some("work"))
+            .expect_err("invalid profile sync config should error");
+        assert!(
+            err.to_string()
+                .contains("invalid sync config at [profiles.work.sync.cursor]"),
+            "error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_configured_sync_providers_unions_base_and_profile() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[sync.claude]
+strategy = "copy"
+
+[profiles.work.sync.cursor]
+mode = "project"
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+
+        assert_eq!(
+            config
+                .configured_sync_providers(None)
+                .expect("expected value"),
+            vec![Provider::Claude]
+        );
+        assert_eq!(
+            config
+                .configured_sync_providers(Some("work"))
+                .expect("expected value"),
+            vec![Provider::Claude, Provider::Cursor]
+        );
+    }
+
+    #[test]
+    fn test_cli_sync_intent_requires_explicit_target_selection() {
+        let cli = SyncOverrides {
+            mode: Some(SyncMode::User),
+            ..SyncOverrides::default()
+        };
+
+        assert!(!AgentspecConfig::cli_sync_intent_sufficient(&cli, false));
+    }
+
+    #[test]
+    fn test_cli_sync_intent_dest_with_target_is_sufficient() {
+        let cli = SyncOverrides {
+            dest: Some("/tmp/out".to_string()),
+            ..SyncOverrides::default()
+        };
+
+        assert!(AgentspecConfig::cli_sync_intent_sufficient(&cli, true));
+    }
+
+    #[test]
+    fn test_cli_sync_intent_mode_user_with_target_is_sufficient() {
+        let cli = SyncOverrides {
+            mode: Some(SyncMode::User),
+            ..SyncOverrides::default()
+        };
+
+        assert!(AgentspecConfig::cli_sync_intent_sufficient(&cli, true));
+    }
+
+    #[test]
+    fn test_cli_sync_intent_mode_project_with_target_is_sufficient() {
+        let cli = SyncOverrides {
+            mode: Some(SyncMode::Project),
+            ..SyncOverrides::default()
+        };
+
+        assert!(AgentspecConfig::cli_sync_intent_sufficient(&cli, true));
+    }
+
+    #[test]
+    fn test_cli_sync_intent_mode_path_without_dest_is_insufficient() {
+        let cli = SyncOverrides {
+            mode: Some(SyncMode::Path),
+            ..SyncOverrides::default()
+        };
+
+        assert!(!AgentspecConfig::cli_sync_intent_sufficient(&cli, true));
+    }
+
+    #[test]
+    fn test_cli_sync_intent_strategy_only_is_insufficient() {
+        let cli = SyncOverrides {
+            strategy: Some(SyncStrategy::Copy),
+            ..SyncOverrides::default()
+        };
+
+        assert!(!AgentspecConfig::cli_sync_intent_sufficient(&cli, true));
+    }
+
+    #[test]
+    fn test_resolve_sync_intent_reports_config_and_cli_metadata() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[profiles.work.sync.cursor]
+mode = "project"
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+        let cli = SyncOverrides {
+            mode: Some(SyncMode::Project),
+            ..SyncOverrides::default()
+        };
+
+        let intent = config
+            .resolve_sync_intent(Provider::Cursor, Some("work"), &cli, true)
+            .expect("expected value");
+        assert!(intent.has_explicit_config);
+        assert!(intent.cli_only_allowed);
+        assert_eq!(intent.target.mode, SyncMode::Project);
     }
 
     #[test]
