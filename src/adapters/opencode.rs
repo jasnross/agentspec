@@ -54,7 +54,7 @@ pub fn adapt_opencode(
     match spec {
         NormalizedSpec::Agent(s) => adapt_agent_spec(s, presets),
         NormalizedSpec::Skill(s) => adapt_skill_spec(s, presets),
-        NormalizedSpec::Rule(s) => adapt_rule_spec(&s),
+        NormalizedSpec::Rule(s) => Ok(adapt_rule_spec(&s)),
     }
 }
 
@@ -196,8 +196,7 @@ fn adapt_skill_spec(
     Ok(files)
 }
 
-#[allow(clippy::unnecessary_wraps)] // FIXME: decide on return type
-fn adapt_rule_spec(spec: &NormalizedRuleSpec) -> Result<Vec<GeneratedFile>> {
+fn adapt_rule_spec(spec: &NormalizedRuleSpec) -> Vec<GeneratedFile> {
     let content = format!("{}\n", spec.body.trim()).into_bytes();
     let path = Path::new("generated")
         .join("opencode")
@@ -205,12 +204,12 @@ fn adapt_rule_spec(spec: &NormalizedRuleSpec) -> Result<Vec<GeneratedFile>> {
         .join(&spec.frontmatter.id)
         .join("AGENTS.md");
 
-    Ok(vec![GeneratedFile {
+    vec![GeneratedFile {
         provider: Provider::OpenCode,
         path,
         content,
         mode: None,
-    }])
+    }]
 }
 
 /// Map a canonical tool to its `OpenCode` tool name.

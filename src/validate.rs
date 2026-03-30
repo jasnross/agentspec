@@ -31,17 +31,16 @@ pub fn normalize_specs(specs: Vec<Spec>) -> Result<Vec<NormalizedSpec>> {
 
     for spec in specs {
         results.push(match spec {
-            Spec::Agent(agent_spec) => NormalizedSpec::Agent(normalize_agent_spec(agent_spec)?),
-            Spec::Skill(skill_spec) => NormalizedSpec::Skill(normalize_skill_spec(skill_spec)?),
-            Spec::Rule(rule_spec) => NormalizedSpec::Rule(normalize_rule_spec(rule_spec)?),
+            Spec::Agent(agent_spec) => NormalizedSpec::Agent(normalize_agent_spec(agent_spec)),
+            Spec::Skill(skill_spec) => NormalizedSpec::Skill(normalize_skill_spec(skill_spec)),
+            Spec::Rule(rule_spec) => NormalizedSpec::Rule(normalize_rule_spec(rule_spec)),
         });
     }
 
     Ok(results)
 }
 
-#[allow(clippy::unnecessary_wraps)] // FIXME: decide on return type
-fn normalize_agent_spec(spec: AgentSpec) -> Result<NormalizedAgentSpec> {
+fn normalize_agent_spec(spec: AgentSpec) -> NormalizedAgentSpec {
     let frontmatter = NormalizedAgentFrontmatter {
         id: spec.frontmatter.id,
         description: spec.frontmatter.description,
@@ -49,15 +48,14 @@ fn normalize_agent_spec(spec: AgentSpec) -> Result<NormalizedAgentSpec> {
         capabilities: spec.frontmatter.capabilities,
     };
 
-    Ok(NormalizedAgentSpec {
+    NormalizedAgentSpec {
         path: spec.path,
         frontmatter,
         body: spec.body,
-    })
+    }
 }
 
-#[allow(clippy::unnecessary_wraps)] // FIXME: decide on return type
-fn normalize_skill_spec(spec: SkillSpec) -> Result<NormalizedSkillSpec> {
+fn normalize_skill_spec(spec: SkillSpec) -> NormalizedSkillSpec {
     let frontmatter = NormalizedSkillFrontmatter {
         id: spec.frontmatter.id,
         description: spec.frontmatter.description,
@@ -67,26 +65,25 @@ fn normalize_skill_spec(spec: SkillSpec) -> Result<NormalizedSkillSpec> {
         capabilities: spec.frontmatter.capabilities,
     };
 
-    Ok(NormalizedSkillSpec {
+    NormalizedSkillSpec {
         path: spec.path,
         frontmatter,
         body: spec.body,
         supporting_files: spec.supporting_files,
-    })
+    }
 }
 
-#[allow(clippy::unnecessary_wraps)] // FIXME: decide on return type
-fn normalize_rule_spec(spec: RuleSpec) -> Result<NormalizedRuleSpec> {
+fn normalize_rule_spec(spec: RuleSpec) -> NormalizedRuleSpec {
     let frontmatter = NormalizedRuleFrontmatter {
         id: spec.frontmatter.id,
         description: spec.frontmatter.description,
     };
 
-    Ok(NormalizedRuleSpec {
+    NormalizedRuleSpec {
         path: spec.path,
         frontmatter,
         body: spec.body,
-    })
+    }
 }
 
 /// Run semantic validation checks on normalized specs.
