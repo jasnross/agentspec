@@ -97,16 +97,21 @@ fn adapt_agent_spec(
         .and_then(|x| x.claude.clone())
         .and_then(|x| x.model);
 
-    let tools: Option<Vec<ClaudeTool>> =
-        spec.frontmatter
-            .capabilities
-            .and_then(|x| x.tools)
-            .map(|x| {
-                let mut tools: Vec<ClaudeTool> = x.iter().flat_map(adapt_tool).collect();
-                // Sort by serialized name — the value that appears in generated files.
-                tools.sort_by_key(|t| serde_yml::to_string(t).unwrap_or_default());
-                tools
-            });
+    let tools: Option<Vec<ClaudeTool>> = spec
+        .frontmatter
+        .capabilities
+        .and_then(|x| x.tools)
+        .map(|tool_specs| -> Result<Vec<ClaudeTool>> {
+            // Sort by serialized name — the value that appears in generated files.
+            let mut keyed: Vec<(String, ClaudeTool)> = tool_specs
+                .iter()
+                .flat_map(adapt_tool)
+                .map(|t| Ok((serde_yml::to_string(&t)?, t)))
+                .collect::<Result<_>>()?;
+            keyed.sort_by(|(a, _), (b, _)| a.cmp(b));
+            Ok(keyed.into_iter().map(|(_, t)| t).collect())
+        })
+        .transpose()?;
 
     let path = Path::new("generated")
         .join("claude")

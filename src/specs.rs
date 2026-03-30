@@ -43,13 +43,13 @@ impl Specs {
     }
 
     /// Apply defaults and convert raw frontmatter to fully-typed normalized structs.
-    pub fn normalize(self) -> Result<NormalizedSpecs> {
-        let specs = normalize_specs(self.specs)?;
-        Ok(NormalizedSpecs { specs })
+    pub fn normalize(self) -> NormalizedSpecs {
+        let specs = normalize_specs(self.specs);
+        NormalizedSpecs { specs }
     }
 }
 
-/// Stage 3: frontmatter is normalized; ready for semantic validation.
+/// Stage 2: frontmatter is normalized; ready for semantic validation.
 ///
 /// Advance to [`ValidatedSpecs`] by calling [`NormalizedSpecs::validate`].
 pub struct NormalizedSpecs {
@@ -79,7 +79,7 @@ impl NormalizedSpecs {
     }
 }
 
-/// Stage 4: all checks passed; ready for template resolution.
+/// Stage 3: all checks passed; ready for template resolution.
 ///
 /// Advance to [`ResolvedSpecs`](crate::templating::ResolvedSpecs) by passing
 /// through [`templating::resolve`](crate::templating::resolve).
@@ -222,8 +222,8 @@ fn load_skill_specs(dir: &Path) -> Result<Vec<Spec>> {
         {
             let entry_path = entry.path();
 
-            // Skip SKILL.md itself
-            if entry_path.file_name().is_some_and(|n| n == "SKILL.md") {
+            // Skip the spec file itself
+            if entry_path == md_path.as_path() {
                 continue;
             }
 

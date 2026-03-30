@@ -45,7 +45,7 @@ fn main() -> Result<()> {
     };
 
     let validated = Specs::load(&dirs)?
-        .normalize()?
+        .normalize()
         .validate(&config.presets)
         .map_err(|errors| {
             for e in &errors {

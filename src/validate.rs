@@ -1,8 +1,6 @@
 use std::fmt;
 use std::path::PathBuf;
 
-use anyhow::Result;
-
 use crate::presets::ProviderPresetsMap;
 use crate::spec::{
     AgentSpec, NormalizedAgentFrontmatter, NormalizedAgentSpec, NormalizedRuleFrontmatter,
@@ -26,18 +24,15 @@ impl fmt::Display for SemanticError {
 impl std::error::Error for SemanticError {}
 
 // TODO: move normalization into its own module
-pub fn normalize_specs(specs: Vec<Spec>) -> Result<Vec<NormalizedSpec>> {
-    let mut results = Vec::with_capacity(specs.len());
-
-    for spec in specs {
-        results.push(match spec {
-            Spec::Agent(agent_spec) => NormalizedSpec::Agent(normalize_agent_spec(agent_spec)),
-            Spec::Skill(skill_spec) => NormalizedSpec::Skill(normalize_skill_spec(skill_spec)),
-            Spec::Rule(rule_spec) => NormalizedSpec::Rule(normalize_rule_spec(rule_spec)),
-        });
-    }
-
-    Ok(results)
+pub fn normalize_specs(specs: Vec<Spec>) -> Vec<NormalizedSpec> {
+    specs
+        .into_iter()
+        .map(|spec| match spec {
+            Spec::Agent(s) => NormalizedSpec::Agent(normalize_agent_spec(s)),
+            Spec::Skill(s) => NormalizedSpec::Skill(normalize_skill_spec(s)),
+            Spec::Rule(s) => NormalizedSpec::Rule(normalize_rule_spec(s)),
+        })
+        .collect()
 }
 
 fn normalize_agent_spec(spec: AgentSpec) -> NormalizedAgentSpec {
@@ -101,7 +96,7 @@ pub fn validate_semantics(
         // Duplicate ID check
         if !id_set.insert(spec.id()) {
             errors.push(SemanticError {
-                path: spec.path().clone(),
+                path: spec.path().to_path_buf(),
                 message: format!("duplicate id '{}'", spec.id()),
             });
         }
@@ -109,7 +104,7 @@ pub fn validate_semantics(
         // Empty body check
         if spec.body().is_empty() {
             errors.push(SemanticError {
-                path: spec.path().clone(),
+                path: spec.path().to_path_buf(),
                 message: "instruction body cannot be empty".to_string(),
             });
         }
@@ -142,7 +137,7 @@ pub fn validate_semantics(
                 Some(_) => (),
                 None => {
                     errors.push(SemanticError {
-                        path: spec.path().clone(),
+                        path: spec.path().to_path_buf(),
                         message: format!("unknown preset '{preset_name}'"),
                     });
                 }
@@ -221,7 +216,7 @@ mod tests {
             body: "body text".to_string(),
         });
 
-        let normalized = normalize_specs(vec![spec]).expect("expected value");
+        let normalized = normalize_specs(vec![spec]);
         assert_eq!(normalized.len(), 1);
         let NormalizedSpec::Agent(ref n) = normalized[0] else {
             panic!("expected Agent variant")
@@ -247,7 +242,7 @@ mod tests {
             supporting_files: vec![],
         });
 
-        let normalized = normalize_specs(vec![spec]).expect("expected value");
+        let normalized = normalize_specs(vec![spec]);
         let NormalizedSpec::Skill(ref n) = normalized[0] else {
             panic!("expected Skill variant")
         };
@@ -268,7 +263,7 @@ mod tests {
             body: "body".to_string(),
         });
 
-        let normalized = normalize_specs(vec![spec]).expect("expected value");
+        let normalized = normalize_specs(vec![spec]);
         let NormalizedSpec::Rule(ref n) = normalized[0] else {
             panic!("expected Rule variant")
         };
@@ -291,7 +286,7 @@ mod tests {
             body: "body".to_string(),
         });
 
-        let normalized = normalize_specs(vec![spec]).expect("expected value");
+        let normalized = normalize_specs(vec![spec]);
         let NormalizedSpec::Agent(ref n) = normalized[0] else {
             panic!("expected Agent variant")
         };

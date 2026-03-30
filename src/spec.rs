@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -18,7 +18,7 @@ impl Spec {
         }
     }
 
-    pub fn path(&self) -> &PathBuf {
+    pub fn path(&self) -> &Path {
         match self {
             Spec::Agent(agent_spec) => &agent_spec.path,
             Spec::Skill(skill_spec) => &skill_spec.path,
@@ -35,7 +35,7 @@ pub enum NormalizedSpec {
 }
 
 impl NormalizedSpec {
-    pub fn id(&self) -> &String {
+    pub fn id(&self) -> &str {
         match self {
             NormalizedSpec::Agent(agent_spec) => &agent_spec.frontmatter.id,
             NormalizedSpec::Skill(skill_spec) => &skill_spec.frontmatter.id,
@@ -51,7 +51,7 @@ impl NormalizedSpec {
         }
     }
 
-    pub fn path(&self) -> &PathBuf {
+    pub fn path(&self) -> &Path {
         match self {
             NormalizedSpec::Agent(agent_spec) => &agent_spec.path,
             NormalizedSpec::Skill(skill_spec) => &skill_spec.path,
