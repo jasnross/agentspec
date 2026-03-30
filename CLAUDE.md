@@ -113,6 +113,19 @@ needed and keep scope as narrow as possible (item-level over module-level).
 
 Run `cargo fmt && cargo clippy --all-targets` before committing; CI enforces both.
 
+## Serde
+
+Prefer struct-level attributes over repeating the same attribute on every field:
+
+- **`#[serde(rename_all = "...")]`** — use on the struct instead of per-field
+  `#[serde(rename = "...")]` when all fields follow the same naming convention
+  (e.g., `"kebab-case"`, `"camelCase"`).
+- **`#[serde_with::skip_serializing_none]`** — use on the struct instead of
+  `#[serde(skip_serializing_if = "Option::is_none")]` on every `Option` field.
+  `serde_with` is already a dependency.
+
+These compose cleanly — both can appear on the same struct.
+
 ## Module Layout
 
 Prefer the modern Rust module file convention over `mod.rs`:

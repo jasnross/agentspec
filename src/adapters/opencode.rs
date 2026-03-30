@@ -13,35 +13,33 @@ use crate::spec::{
 };
 
 // See: https://opencode.ai/docs/agents/#markdown
+#[serde_with::skip_serializing_none]
 #[derive(Serialize)]
 struct OpenCodeAgentFrontmatter {
     description: String,
     mode: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     variant: Option<String>,
     tools: IndexMap<String, bool>,
 }
 
 // See: https://opencode.ai/docs/commands/#markdown
+#[serde_with::skip_serializing_none]
 #[derive(Serialize)]
 struct OpenCodeCommandFrontmatter {
     description: String,
     agent: &'static str,
     subtask: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
 }
 
 // See: https://opencode.ai/docs/skills/#write-frontmatter
+#[serde_with::skip_serializing_none]
 #[derive(Serialize)]
 struct OpenCodeSkillFrontmatter {
     name: String,
     description: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     variant: Option<String>,
     tools: IndexMap<String, bool>,
 }

@@ -25,9 +25,9 @@ struct CursorSkillFrontmatter {
 
 // See: https://cursor.com/docs/rules#rule-file-format
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct CursorRuleFrontmatter {
     description: String,
-    #[serde(rename = "alwaysApply")]
     always_apply: bool,
 }
 

@@ -20,23 +20,17 @@ struct ClaudeAgentFrontmatter {
 }
 
 // See: https://code.claude.com/docs/en/skills#frontmatter-reference
+#[serde_with::skip_serializing_none]
 #[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
 struct ClaudeSkillFrontmatter {
-    // FIXME: Is there a way to make skipping None the default for the whole struct?
     // FIXME: support `agent` in config
     // FIXME: support `context: fork` via `background` in config: https://code.claude.com/docs/en/skills#run-skills-in-a-subagent
     name: String,
     description: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
-    #[serde(rename = "allowed-tools", skip_serializing_if = "Option::is_none")]
     allowed_tools: Option<Vec<ClaudeTool>>,
-    #[serde(rename = "user-invocable", skip_serializing_if = "Option::is_none")]
     user_invocable: Option<bool>,
-    #[serde(
-        rename = "disable-model-invocation",
-        skip_serializing_if = "Option::is_none"
-    )]
     disable_model_invocation: Option<bool>,
 }
 
@@ -251,6 +245,11 @@ mod tests {
 
     #[test]
     fn test_adapt_agent_tools_are_sorted() {
+        #[derive(Deserialize)]
+        struct Frontmatter {
+            tools: Option<Vec<String>>,
+        }
+
         // Tools provided in reverse alphabetical order to confirm sorting.
         let spec = NormalizedSpec::Agent(NormalizedAgentSpec {
             path: "test.md".into(),
@@ -273,11 +272,6 @@ mod tests {
         let content = String::from_utf8(files[0].content.clone()).expect("expected value");
 
         // Parse the tools list back out of the generated YAML frontmatter.
-        #[derive(Deserialize)]
-        struct Frontmatter {
-            tools: Option<Vec<String>>,
-        }
-
         let yaml = content
             .strip_prefix("---\n")
             .and_then(|s| s.split_once("\n---\n"))
