@@ -1,0 +1,3 @@
+[tools]
+"cargo:cargo-sort-derives" = "latest"
+rust = "latest"
