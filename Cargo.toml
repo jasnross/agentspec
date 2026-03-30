@@ -42,5 +42,8 @@ unwrap_used = "deny"
 wildcard_enum_match_arm = "deny"
 
 # Disabled pedantic lints: high noise, low signal.
+implicit_hasher = "allow"     # requires generics over BuildHasher — unnecessary for internal APIs
+missing_errors_doc = "allow"  # pub fns are cross-module, not a documented public API yet
+must_use_candidate = "allow"  # flags every pure fn — too noisy until the API stabilizes
 similar_names = "allow"       # flags unambiguous pairs like `dst`/`dest`
 struct_field_names = "allow"  # flags structs where all fields share a suffix (e.g. `*_dir`)

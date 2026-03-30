@@ -1,25 +1,19 @@
-mod adapters;
 mod cli;
-mod compile;
 mod config;
 mod emit;
-mod fragments;
-mod presets;
-mod spec;
-mod specs;
 mod sync;
-mod validate;
 
+use agentspec::compile::CompileResult;
+use agentspec::fragments::{build_environment, load_fragments};
+use agentspec::presets::ProviderPresetsMap;
+use agentspec::provider::Provider;
+use agentspec::specs::{SpecDirs, Specs, ValidatedSpecs};
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use cli::{Cli, Command, CommonArgs};
-use compile::CompileResult;
-use config::{AgentspecConfig, Provider};
+use config::AgentspecConfig;
 use emit::{check_generated_state, write_generated_files};
-use fragments::{build_environment, load_fragments};
-use presets::ProviderPresetsMap;
-use specs::{SpecDirs, Specs};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -135,7 +129,7 @@ fn main() -> Result<()> {
 /// Runs the compile step and reports the compiled file count. Returns the result and the
 /// resolved target list so the caller can decide what to do next (write, check, or sync).
 fn run_compile(
-    validated: &specs::ValidatedSpecs,
+    validated: &ValidatedSpecs,
     presets: &ProviderPresetsMap,
     override_providers: &[Provider],
     config_providers: &[Provider],
