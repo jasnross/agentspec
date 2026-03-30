@@ -3,11 +3,10 @@ mod fragments;
 use std::path::PathBuf;
 
 use anyhow::Result;
+use fragments::{build_environment, load_fragments, resolve_fragments};
 
 use crate::spec::NormalizedSpec;
 use crate::specs::ValidatedSpecs;
-
-use fragments::{build_environment, load_fragments, resolve_fragments};
 
 /// Configuration for the template resolution pass.
 ///

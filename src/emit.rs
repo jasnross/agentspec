@@ -2,11 +2,10 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
-use anyhow::{Context, Result};
-use walkdir::WalkDir;
-
 use agentspec::compile::GeneratedFile;
 use agentspec::provider::Provider;
+use anyhow::{Context, Result};
+use walkdir::WalkDir;
 
 /// Write all generated files to disk.
 ///
@@ -141,10 +140,10 @@ pub fn check_generated_state(
 
 #[cfg(test)]
 mod tests {
+    use agentspec::provider::Provider;
     use tempfile::TempDir;
 
     use super::*;
-    use agentspec::provider::Provider;
 
     fn make_file(provider: Provider, rel_path: &str, content: &str) -> GeneratedFile {
         GeneratedFile::text(provider, rel_path, content.to_string())
@@ -167,8 +166,7 @@ mod tests {
         // Verify file exists
         assert!(base.join("generated/claude/skills/test/SKILL.md").exists());
 
-        let check =
-            check_generated_state(&files, base, &[Provider::Claude]);
+        let check = check_generated_state(&files, base, &[Provider::Claude]);
         assert!(check.is_clean(), "expected clean check: {check:?}");
     }
 
@@ -184,8 +182,7 @@ mod tests {
         )];
 
         // Don't write anything — file is missing
-        let check =
-            check_generated_state(&files, base, &[Provider::Claude]);
+        let check = check_generated_state(&files, base, &[Provider::Claude]);
         assert_eq!(check.missing.len(), 1);
         assert!(check.missing[0].contains("test/SKILL.md"));
     }
@@ -205,8 +202,7 @@ mod tests {
             "new content",
         )];
 
-        let check =
-            check_generated_state(&files, base, &[Provider::Claude]);
+        let check = check_generated_state(&files, base, &[Provider::Claude]);
         assert_eq!(check.outdated.len(), 1);
     }
 
@@ -222,8 +218,7 @@ mod tests {
 
         let files: Vec<GeneratedFile> = vec![];
 
-        let check =
-            check_generated_state(&files, base, &[Provider::Claude]);
+        let check = check_generated_state(&files, base, &[Provider::Claude]);
         assert_eq!(check.unexpected.len(), 1);
         assert!(check.unexpected[0].contains("stale.md"));
     }

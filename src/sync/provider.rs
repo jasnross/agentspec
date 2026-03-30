@@ -1,11 +1,10 @@
 use std::path::{Path, PathBuf};
 
+use agentspec::provider::Provider;
 use anyhow::{Context, Result};
 use walkdir::WalkDir;
 
-use agentspec::provider::Provider;
-use crate::config::SyncMode;
-use crate::config::SyncTargetConfig;
+use crate::config::{SyncMode, SyncTargetConfig};
 
 /// The kinds of outputs the sync command distributes, mirroring the `generated/<provider>/`
 /// subdirectories.

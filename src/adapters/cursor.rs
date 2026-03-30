@@ -4,8 +4,8 @@ use anyhow::Result;
 use serde::Serialize;
 
 use crate::compile::GeneratedFile;
-use crate::provider::Provider;
 use crate::presets::ProviderPresetsMap;
+use crate::provider::Provider;
 use crate::spec::{NormalizedAgentSpec, NormalizedRuleSpec, NormalizedSkillSpec, NormalizedSpec};
 
 // See: https://cursor.com/docs/subagents#configuration-fields

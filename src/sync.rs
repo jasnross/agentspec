@@ -4,6 +4,7 @@ mod strategy;
 
 use std::path::{Path, PathBuf};
 
+use agentspec::provider::Provider;
 use anyhow::{Context, Result, bail};
 use manifest::Manifest;
 use provider::{
@@ -12,9 +13,7 @@ use provider::{
 use strategy::{NamePrefixMode, SyncEntry, apply_strip_name, sync_copied_dir, sync_symlinked_dir};
 
 use crate::cli::SyncArgs;
-use crate::config::{AgentspecConfig, SyncOverrides, SyncTargetConfig};
-use agentspec::provider::Provider;
-use crate::config::{SyncMode, SyncStrategy};
+use crate::config::{AgentspecConfig, SyncMode, SyncOverrides, SyncStrategy, SyncTargetConfig};
 
 /// Runs the sync command: distributes generated files to each tool's config directory.
 ///

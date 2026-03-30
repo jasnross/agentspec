@@ -1,13 +1,7 @@
-mod check;
-mod compile;
-mod completions;
-mod sync;
-mod validate;
-
+use agentspec::provider::Provider;
 use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 
-use agentspec::provider::Provider;
 use crate::config::{SyncMode, SyncStrategy};
 
 #[derive(Debug, Parser)]
@@ -45,7 +39,7 @@ pub enum Command {
 #[derive(Debug, Default, Parser)]
 pub struct CommonArgs {
     /// Comma-separated list of providers to generate (e.g., claude,cursor,opencode)
-    /// FIXME: this should be specified as multiple arguments, not comma-separated
+    /// COMMENT: this should be specified as multiple arguments, not comma-separated
     #[arg(long, value_delimiter = ',')]
     pub provider: Vec<Provider>,
 }

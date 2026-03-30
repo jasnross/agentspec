@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use agentspec::presets::ProviderPresets;
+use agentspec::provider::Provider;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 use strum::VariantArray;
 
 use crate::cli::CommonArgs;
-use agentspec::presets::ProviderPresets;
-use agentspec::provider::Provider;
 
 /// Where synced files should be placed.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, clap::ValueEnum)]
@@ -332,8 +332,9 @@ pub struct SyncIntent {
 mod tests {
     use std::fs;
 
-    use super::*;
     use agentspec::presets::{ClaudePreset, CursorPreset, OpenCodePreset};
+
+    use super::*;
 
     #[test]
     fn test_default_config() {
