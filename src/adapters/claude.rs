@@ -24,14 +24,13 @@ struct ClaudeAgentFrontmatter {
 #[derive(Serialize)]
 #[serde(rename_all = "kebab-case")]
 struct ClaudeSkillFrontmatter {
-    // FIXME: support `agent` in config
-    // FIXME: support `context: fork` via `background` in config: https://code.claude.com/docs/en/skills#run-skills-in-a-subagent
+    // FIXME: Support executing skills in forked subagents
     name: String,
     description: String,
     model: Option<String>,
-    allowed_tools: Option<Vec<ClaudeTool>>,
     user_invocable: Option<bool>,
     disable_model_invocation: Option<bool>,
+    allowed_tools: Option<Vec<ClaudeTool>>,
 }
 
 // FIXME: Should we consider setting all default Claude tools in the generated file? Otherwise Claude's default behavior is to disallow any unlisted tools.
@@ -170,9 +169,9 @@ fn adapt_skill_spec(
         name,
         description,
         model,
-        allowed_tools,
         user_invocable,
         disable_model_invocation,
+        allowed_tools,
     };
 
     let frontmatter_str = serde_yml::to_string(&frontmatter)?;

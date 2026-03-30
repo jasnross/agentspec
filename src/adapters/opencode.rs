@@ -27,9 +27,8 @@ struct OpenCodeAgentFrontmatter {
 #[serde_with::skip_serializing_none]
 #[derive(Serialize)]
 struct OpenCodeCommandFrontmatter {
+    // FIXME: Support executing commands in forked subagents
     description: String,
-    agent: &'static str,
-    subtask: bool,
     model: Option<String>,
 }
 
@@ -143,8 +142,6 @@ fn adapt_skill_spec(
     if user_invocable {
         let frontmatter = OpenCodeCommandFrontmatter {
             description: description.clone(),
-            agent: "build", // FIXME: support `agent` in config
-            subtask: true,  // FIXME: support `background` in config
             model: model.clone(),
         };
         let frontmatter_str = serde_yml::to_string(&frontmatter)?;
