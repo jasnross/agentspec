@@ -43,9 +43,6 @@ struct OpenCodeSkillFrontmatter {
     tools: IndexMap<String, bool>,
 }
 
-// TODO: Remember that for OpenCode we need to add the rules as instructions in opencode.json when syncing
-// See: https://opencode.ai/docs/rules/#custom-instructions
-
 pub fn adapt_opencode(
     spec: NormalizedSpec,
     presets: &ProviderPresetsMap,
@@ -93,17 +90,16 @@ fn adapt_agent_spec(
 
     let frontmatter_str = serde_yml::to_string(&frontmatter)?;
     let body = spec.body;
-    let content = format!("---\n{frontmatter_str}---\n\n{}", body.trim()).into_bytes();
+    let content = format!("---\n{frontmatter_str}---\n\n{}", body.trim());
 
-    Ok(vec![GeneratedFile {
-        provider: Provider::OpenCode,
-        path: Path::new("generated")
+    Ok(vec![GeneratedFile::text(
+        Provider::OpenCode,
+        Path::new("generated")
             .join("opencode")
             .join("agents")
             .join(format!("{id}.md")),
         content,
-        mode: None,
-    }])
+    )])
 }
 
 fn adapt_skill_spec(
@@ -145,16 +141,15 @@ fn adapt_skill_spec(
             model: model.clone(),
         };
         let frontmatter_str = serde_yml::to_string(&frontmatter)?;
-        let content = format!("---\n{frontmatter_str}---\n\n{}", body.trim()).into_bytes();
-        files.push(GeneratedFile {
-            provider: Provider::OpenCode,
-            path: Path::new("generated")
+        let content = format!("---\n{frontmatter_str}---\n\n{}", body.trim());
+        files.push(GeneratedFile::text(
+            Provider::OpenCode,
+            Path::new("generated")
                 .join("opencode")
                 .join("commands")
                 .join(format!("{id}.md")),
             content,
-            mode: None,
-        });
+        ));
     }
 
     if agent_invocable {
@@ -166,19 +161,18 @@ fn adapt_skill_spec(
             tools,
         };
         let frontmatter_str = serde_yml::to_string(&frontmatter)?;
-        let content = format!("---\n{frontmatter_str}---\n\n{}", body.trim()).into_bytes();
+        let content = format!("---\n{frontmatter_str}---\n\n{}", body.trim());
 
         let skill_dir = Path::new("generated")
             .join("opencode")
             .join("skills")
             .join(&id);
 
-        files.push(GeneratedFile {
-            provider: Provider::OpenCode,
-            path: skill_dir.join("SKILL.md"),
+        files.push(GeneratedFile::text(
+            Provider::OpenCode,
+            skill_dir.join("SKILL.md"),
             content,
-            mode: None,
-        });
+        ));
 
         for sf in supporting_files {
             files.push(GeneratedFile::binary(
@@ -194,19 +188,14 @@ fn adapt_skill_spec(
 }
 
 fn adapt_rule_spec(spec: &NormalizedRuleSpec) -> Vec<GeneratedFile> {
-    let content = format!("{}\n", spec.body.trim()).into_bytes();
+    let content = format!("{}\n", spec.body.trim());
     let path = Path::new("generated")
         .join("opencode")
         .join("rules")
         .join(&spec.frontmatter.id)
         .join("AGENTS.md");
 
-    vec![GeneratedFile {
-        provider: Provider::OpenCode,
-        path,
-        content,
-        mode: None,
-    }]
+    vec![GeneratedFile::text(Provider::OpenCode, path, content)]
 }
 
 /// Map a canonical tool to its `OpenCode` tool name.

@@ -70,14 +70,9 @@ fn adapt_agent_spec(
 
     let frontmatter_str = serde_yml::to_string(&frontmatter)?;
     let body = spec.body.trim();
-    let content = format!("---\n{frontmatter_str}---\n\n{body}").into_bytes();
+    let content = format!("---\n{frontmatter_str}---\n\n{body}");
 
-    Ok(vec![GeneratedFile {
-        provider: Provider::Cursor,
-        path,
-        content,
-        mode: None,
-    }])
+    Ok(vec![GeneratedFile::text(Provider::Cursor, path, content)])
 }
 
 fn adapt_skill_spec(spec: NormalizedSkillSpec) -> Result<Vec<GeneratedFile>> {
@@ -91,19 +86,18 @@ fn adapt_skill_spec(spec: NormalizedSkillSpec) -> Result<Vec<GeneratedFile>> {
 
     let frontmatter_str = serde_yml::to_string(&frontmatter)?;
     let body = spec.body.trim();
-    let content = format!("---\n{frontmatter_str}---\n\n{body}").into_bytes();
+    let content = format!("---\n{frontmatter_str}---\n\n{body}");
 
     let skill_dir = Path::new("generated")
         .join("cursor")
         .join("skills")
         .join(&id);
 
-    let mut files = vec![GeneratedFile {
-        provider: Provider::Cursor,
-        path: skill_dir.join("SKILL.md"),
+    let mut files = vec![GeneratedFile::text(
+        Provider::Cursor,
+        skill_dir.join("SKILL.md"),
         content,
-        mode: None,
-    }];
+    )];
 
     for sf in spec.supporting_files {
         files.push(GeneratedFile::binary(
@@ -127,19 +121,14 @@ fn adapt_rule_spec(spec: NormalizedRuleSpec) -> Result<Vec<GeneratedFile>> {
 
     let frontmatter_str = serde_yml::to_string(&frontmatter)?;
     let body = spec.body.trim();
-    let content = format!("---\n{frontmatter_str}---\n\n{body}").into_bytes();
+    let content = format!("---\n{frontmatter_str}---\n\n{body}");
 
     let path = Path::new("generated")
         .join("cursor")
         .join("rules")
         .join(format!("{}.mdc", spec.frontmatter.id));
 
-    Ok(vec![GeneratedFile {
-        provider: Provider::Cursor,
-        path,
-        content,
-        mode: None,
-    }])
+    Ok(vec![GeneratedFile::text(Provider::Cursor, path, content)])
 }
 
 #[cfg(test)]

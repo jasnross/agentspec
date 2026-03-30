@@ -29,9 +29,6 @@ impl SyncKind {
 }
 
 /// Returns the sync kinds generated for a given provider.
-///
-/// Codex only returns `[Skills]` — the Codex adapter emits individual `.md` rule files but
-/// Codex expects a single `~/.codex/AGENTS.md`; fixing the adapter is tracked in `TODO.md`.
 pub fn all_sync_kinds(provider: Provider) -> Vec<SyncKind> {
     match provider {
         Provider::Claude => vec![SyncKind::Agents, SyncKind::Rules, SyncKind::Skills],
