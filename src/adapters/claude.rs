@@ -104,16 +104,16 @@ fn adapt_agent_spec(
         .and_then(|x| x.claude.clone())
         .and_then(|x| x.model);
 
-    let tools: Option<Vec<ClaudeTool>> = spec
-        .frontmatter
-        .capabilities
-        .and_then(|x| x.tools)
-        .map(|x| {
-            let mut tools: Vec<ClaudeTool> = x.iter().flat_map(adapt_tool).collect();
-            // Sort by serialized name — the value that appears in generated files.
-            tools.sort_by_key(|t| serde_yml::to_string(t).unwrap_or_default());
-            tools
-        });
+    let tools: Option<Vec<ClaudeTool>> =
+        spec.frontmatter
+            .capabilities
+            .and_then(|x| x.tools)
+            .map(|x| {
+                let mut tools: Vec<ClaudeTool> = x.iter().flat_map(adapt_tool).collect();
+                // Sort by serialized name — the value that appears in generated files.
+                tools.sort_by_key(|t| serde_yml::to_string(t).unwrap_or_default());
+                tools
+            });
 
     let path = Path::new("generated")
         .join("claude")
@@ -129,7 +129,7 @@ fn adapt_agent_spec(
 
     let frontmatter_str = serde_yml::to_string(&frontmatter)?;
     let body = spec.body.trim();
-    let content = format!("---\n{frontmatter_str}\n---\n\n{body}");
+    let content = format!("---\n{frontmatter_str}---\n\n{body}");
 
     Ok(vec![GeneratedFile::text(Provider::Claude, path, content)])
 }
@@ -218,6 +218,28 @@ fn adapt_rule_spec(spec: &NormalizedRuleSpec) -> Vec<GeneratedFile> {
     }]
 }
 
+fn adapt_tool(tool: &ToolFrontmatter) -> Vec<ClaudeTool> {
+    match tool {
+        ToolFrontmatter::Read => vec![ClaudeTool::Read],
+        ToolFrontmatter::Write => vec![ClaudeTool::Write],
+        ToolFrontmatter::Edit => vec![ClaudeTool::Edit],
+        ToolFrontmatter::Grep => vec![ClaudeTool::Grep],
+        ToolFrontmatter::Glob => vec![ClaudeTool::Glob],
+        ToolFrontmatter::Bash => vec![ClaudeTool::Bash],
+        ToolFrontmatter::WebFetch => vec![ClaudeTool::WebFetch],
+        ToolFrontmatter::WebSearch => vec![ClaudeTool::WebSearch],
+        ToolFrontmatter::Question => vec![ClaudeTool::AskUserQuestion],
+        ToolFrontmatter::Tasks => vec![
+            ClaudeTool::TaskCreate,
+            ClaudeTool::TaskGet,
+            ClaudeTool::TaskList,
+            ClaudeTool::TaskUpdate,
+            ClaudeTool::TaskStop,
+            ClaudeTool::TodoWrite,
+        ],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -267,28 +289,9 @@ mod tests {
 
         let mut sorted = tools.clone();
         sorted.sort_unstable();
-        assert_eq!(tools, sorted, "tools should be sorted alphabetically in generated output");
-    }
-}
-
-fn adapt_tool(tool: &ToolFrontmatter) -> Vec<ClaudeTool> {
-    match tool {
-        ToolFrontmatter::Read => vec![ClaudeTool::Read],
-        ToolFrontmatter::Write => vec![ClaudeTool::Write],
-        ToolFrontmatter::Edit => vec![ClaudeTool::Edit],
-        ToolFrontmatter::Grep => vec![ClaudeTool::Grep],
-        ToolFrontmatter::Glob => vec![ClaudeTool::Glob],
-        ToolFrontmatter::Bash => vec![ClaudeTool::Bash],
-        ToolFrontmatter::WebFetch => vec![ClaudeTool::WebFetch],
-        ToolFrontmatter::WebSearch => vec![ClaudeTool::WebSearch],
-        ToolFrontmatter::Question => vec![ClaudeTool::AskUserQuestion],
-        ToolFrontmatter::Tasks => vec![
-            ClaudeTool::TaskCreate,
-            ClaudeTool::TaskGet,
-            ClaudeTool::TaskList,
-            ClaudeTool::TaskUpdate,
-            ClaudeTool::TaskStop,
-            ClaudeTool::TodoWrite,
-        ],
+        assert_eq!(
+            tools, sorted,
+            "tools should be sorted alphabetically in generated output"
+        );
     }
 }

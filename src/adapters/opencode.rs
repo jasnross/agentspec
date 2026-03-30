@@ -262,6 +262,9 @@ mod tests {
         let keys: Vec<&str> = map.keys().map(String::as_str).collect();
         let mut sorted = keys.clone();
         sorted.sort_unstable();
-        assert_eq!(keys, sorted, "tool map keys should be in alphabetical order");
+        assert_eq!(
+            keys, sorted,
+            "tool map keys should be in alphabetical order"
+        );
     }
 }
