@@ -13,7 +13,7 @@ use crate::templating::ResolvedSpecs;
 pub struct GeneratedFile {
     /// Provider that produced this file
     pub provider: Provider,
-    /// Relative path from project root (e.g., "generated/claude/skills/commit/SKILL.md")
+    /// Relative path from the provider root (e.g., "agents/foo.md", "skills/commit/SKILL.md")
     pub path: PathBuf,
     /// File content
     pub content: Vec<u8>,

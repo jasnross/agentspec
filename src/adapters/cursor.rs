@@ -57,10 +57,7 @@ fn adapt_agent_spec(
         .and_then(|x| x.cursor.clone())
         .and_then(|x| x.model);
 
-    let path = Path::new("generated")
-        .join("cursor")
-        .join("agents")
-        .join(format!("{name}.md"));
+    let path = Path::new("agents").join(format!("{name}.md"));
 
     let frontmatter = CursorAgentFrontmatter {
         name,
@@ -88,10 +85,7 @@ fn adapt_skill_spec(spec: NormalizedSkillSpec) -> Result<Vec<GeneratedFile>> {
     let body = spec.body.trim();
     let content = format!("---\n{frontmatter_str}---\n\n{body}");
 
-    let skill_dir = Path::new("generated")
-        .join("cursor")
-        .join("skills")
-        .join(&id);
+    let skill_dir = Path::new("skills").join(&id);
 
     let mut files = vec![GeneratedFile::text(
         Provider::Cursor,
@@ -123,10 +117,7 @@ fn adapt_rule_spec(spec: NormalizedRuleSpec) -> Result<Vec<GeneratedFile>> {
     let body = spec.body.trim();
     let content = format!("---\n{frontmatter_str}---\n\n{body}");
 
-    let path = Path::new("generated")
-        .join("cursor")
-        .join("rules")
-        .join(format!("{}.mdc", spec.frontmatter.id));
+    let path = Path::new("rules").join(format!("{}.mdc", spec.frontmatter.id));
 
     Ok(vec![GeneratedFile::text(Provider::Cursor, path, content)])
 }

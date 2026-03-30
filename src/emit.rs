@@ -28,7 +28,7 @@ pub fn write_generated_files(
 
     // Write each file
     for file in files {
-        let full_path = output_dir.parent().unwrap_or(output_dir).join(&file.path);
+        let full_path = output_dir.join(file.provider.to_string()).join(&file.path);
         if let Some(parent) = full_path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create directory {}", parent.display()))?;
@@ -73,25 +73,27 @@ impl CheckResult {
 /// - Unexpected: file exists on disk but isn't in the expected set
 pub fn check_generated_state(
     expected: &[GeneratedFile],
-    base_dir: &Path,
+    output_dir: &Path,
     providers: &[Provider],
 ) -> CheckResult {
     let mut result = CheckResult::default();
 
-    // Build map of expected paths → content
+    // Build map of "<provider>/<rel_path>" → content
     let expected_map: HashMap<String, &[u8]> = expected
         .iter()
         .map(|f| {
-            (
-                f.path.to_str().unwrap_or_default().to_string(),
-                f.content.as_slice(),
-            )
+            let key = std::path::PathBuf::from(f.provider.to_string())
+                .join(&f.path)
+                .to_str()
+                .unwrap_or_default()
+                .to_string();
+            (key, f.content.as_slice())
         })
         .collect();
 
     // Check each expected file
     for (rel_path, expected_content) in &expected_map {
-        let full_path = base_dir.join(rel_path);
+        let full_path = output_dir.join(rel_path);
         match fs::read(&full_path) {
             Ok(actual) => {
                 if actual != *expected_content {
@@ -106,7 +108,7 @@ pub fn check_generated_state(
 
     // Check for unexpected files on disk
     for provider in providers {
-        let target_root = base_dir.join("generated").join(provider.to_string());
+        let target_root = output_dir.join(provider.to_string());
         if !target_root.exists() {
             continue;
         }
@@ -117,7 +119,7 @@ pub fn check_generated_state(
             .filter(|e| e.file_type().is_file())
             .filter_map(|e| {
                 e.path()
-                    .strip_prefix(base_dir)
+                    .strip_prefix(output_dir)
                     .ok()
                     .map(|p| p.to_str().unwrap_or_default().to_string())
             })
@@ -157,16 +159,16 @@ mod tests {
 
         let files = vec![make_file(
             Provider::Claude,
-            "generated/claude/skills/test/SKILL.md",
+            "skills/test/SKILL.md",
             "---\nname: test\n---\n\nBody.\n",
         )];
 
         write_generated_files(&files, &output_dir, &[Provider::Claude]).expect("expected value");
 
         // Verify file exists
-        assert!(base.join("generated/claude/skills/test/SKILL.md").exists());
+        assert!(output_dir.join("claude/skills/test/SKILL.md").exists());
 
-        let check = check_generated_state(&files, base, &[Provider::Claude]);
+        let check = check_generated_state(&files, &output_dir, &[Provider::Claude]);
         assert!(check.is_clean(), "expected clean check: {check:?}");
     }
 
@@ -174,15 +176,16 @@ mod tests {
     fn test_check_detects_missing_file() {
         let tmp = TempDir::new().expect("expected value");
         let base = tmp.path();
+        let output_dir = base.join("generated");
 
         let files = vec![make_file(
             Provider::Claude,
-            "generated/claude/skills/test/SKILL.md",
+            "skills/test/SKILL.md",
             "content",
         )];
 
         // Don't write anything — file is missing
-        let check = check_generated_state(&files, base, &[Provider::Claude]);
+        let check = check_generated_state(&files, &output_dir, &[Provider::Claude]);
         assert_eq!(check.missing.len(), 1);
         assert!(check.missing[0].contains("test/SKILL.md"));
     }
@@ -191,18 +194,19 @@ mod tests {
     fn test_check_detects_outdated_file() {
         let tmp = TempDir::new().expect("expected value");
         let base = tmp.path();
+        let output_dir = base.join("generated");
 
-        let dir = base.join("generated/claude/skills/test");
+        let dir = output_dir.join("claude/skills/test");
         fs::create_dir_all(&dir).expect("expected value");
         fs::write(dir.join("SKILL.md"), "old content").expect("expected value");
 
         let files = vec![make_file(
             Provider::Claude,
-            "generated/claude/skills/test/SKILL.md",
+            "skills/test/SKILL.md",
             "new content",
         )];
 
-        let check = check_generated_state(&files, base, &[Provider::Claude]);
+        let check = check_generated_state(&files, &output_dir, &[Provider::Claude]);
         assert_eq!(check.outdated.len(), 1);
     }
 
@@ -210,15 +214,16 @@ mod tests {
     fn test_check_detects_unexpected_file() {
         let tmp = TempDir::new().expect("expected value");
         let base = tmp.path();
+        let output_dir = base.join("generated");
 
         // Write an extra file that's not in the expected set
-        let dir = base.join("generated/claude/agents");
+        let dir = output_dir.join("claude/agents");
         fs::create_dir_all(&dir).expect("expected value");
         fs::write(dir.join("stale.md"), "leftover").expect("expected value");
 
         let files: Vec<GeneratedFile> = vec![];
 
-        let check = check_generated_state(&files, base, &[Provider::Claude]);
+        let check = check_generated_state(&files, &output_dir, &[Provider::Claude]);
         assert_eq!(check.unexpected.len(), 1);
         assert!(check.unexpected[0].contains("stale.md"));
     }
@@ -237,7 +242,7 @@ mod tests {
         // Write new files (different path)
         let files = vec![make_file(
             Provider::Claude,
-            "generated/claude/skills/new/SKILL.md",
+            "skills/new/SKILL.md",
             "fresh",
         )];
 
@@ -246,7 +251,7 @@ mod tests {
         // Old file should be gone
         assert!(!stale_dir.join("old.md").exists());
         // New file should exist
-        assert!(base.join("generated/claude/skills/new/SKILL.md").exists());
+        assert!(output_dir.join("claude/skills/new/SKILL.md").exists());
     }
 
     #[test]
@@ -257,7 +262,7 @@ mod tests {
 
         let files = vec![GeneratedFile::binary(
             Provider::Claude,
-            "generated/claude/skills/gh-safe/gh-safe.sh",
+            "skills/gh-safe/gh-safe.sh",
             b"#!/bin/bash\necho hi".to_vec(),
             Some(0o755),
         )];
@@ -267,7 +272,7 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let meta = fs::metadata(base.join("generated/claude/skills/gh-safe/gh-safe.sh"))
+            let meta = fs::metadata(output_dir.join("claude/skills/gh-safe/gh-safe.sh"))
                 .expect("expected value");
             assert!(
                 meta.permissions().mode() & 0o111 != 0,

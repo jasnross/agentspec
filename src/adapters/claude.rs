@@ -113,10 +113,7 @@ fn adapt_agent_spec(
         })
         .transpose()?;
 
-    let path = Path::new("generated")
-        .join("claude")
-        .join("agents")
-        .join(format!("{name}.md"));
+    let path = Path::new("agents").join(format!("{name}.md"));
 
     let frontmatter = ClaudeAgentFrontmatter {
         name,
@@ -165,10 +162,7 @@ fn adapt_skill_spec(
         Some(true)
     };
 
-    let skill_dir = Path::new("generated")
-        .join("claude")
-        .join("skills")
-        .join(&name);
+    let skill_dir = Path::new("skills").join(&name);
 
     let frontmatter = ClaudeSkillFrontmatter {
         name,
@@ -203,10 +197,7 @@ fn adapt_skill_spec(
 
 fn adapt_rule_spec(spec: &NormalizedRuleSpec) -> Vec<GeneratedFile> {
     let content = format!("{}\n", spec.body.trim()).into_bytes();
-    let path = Path::new("generated")
-        .join("claude")
-        .join("rules")
-        .join(format!("{}.md", spec.frontmatter.id));
+    let path = Path::new("rules").join(format!("{}.md", spec.frontmatter.id));
 
     vec![GeneratedFile {
         provider: Provider::Claude,

@@ -21,12 +21,7 @@
      Specs → ValidatedSpecs with no loss of safety
    - Retain this layer only if we expect real normalization work to arrive (e.g., applying preset
      defaults into spec fields before compilation)
-3. Decouple GeneratedFile.path from the output directory structure
-   - Currently paths include the `generated/` prefix (e.g. `generated/claude/agents/foo.md`)
-   - `write_generated_files` strips it via `.parent()` — fragile implicit coupling
-   - `check_generated_state` uses `base_dir.join()` directly — inconsistent resolution
-   - Fix: store paths relative to the provider root (e.g. `claude/agents/foo.md`)
-4. Unify emit and sync into a placement/strategy layer
+3. Unify emit and sync into a placement/strategy layer
    - emit and sync are the same operation (write files) with different targets and strategies
    - `generated/` should be optional — a cache/inspection artifact, not a mandatory intermediate step
    - Library should expose placement strategy types so consumers can route CompileResult to

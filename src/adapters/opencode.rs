@@ -94,10 +94,7 @@ fn adapt_agent_spec(
 
     Ok(vec![GeneratedFile::text(
         Provider::OpenCode,
-        Path::new("generated")
-            .join("opencode")
-            .join("agents")
-            .join(format!("{id}.md")),
+        Path::new("agents").join(format!("{id}.md")),
         content,
     )])
 }
@@ -144,10 +141,7 @@ fn adapt_skill_spec(
         let content = format!("---\n{frontmatter_str}---\n\n{}", body.trim());
         files.push(GeneratedFile::text(
             Provider::OpenCode,
-            Path::new("generated")
-                .join("opencode")
-                .join("commands")
-                .join(format!("{id}.md")),
+            Path::new("commands").join(format!("{id}.md")),
             content,
         ));
     }
@@ -163,10 +157,7 @@ fn adapt_skill_spec(
         let frontmatter_str = serde_yml::to_string(&frontmatter)?;
         let content = format!("---\n{frontmatter_str}---\n\n{}", body.trim());
 
-        let skill_dir = Path::new("generated")
-            .join("opencode")
-            .join("skills")
-            .join(&id);
+        let skill_dir = Path::new("skills").join(&id);
 
         files.push(GeneratedFile::text(
             Provider::OpenCode,
@@ -189,9 +180,7 @@ fn adapt_skill_spec(
 
 fn adapt_rule_spec(spec: &NormalizedRuleSpec) -> Vec<GeneratedFile> {
     let content = format!("{}\n", spec.body.trim());
-    let path = Path::new("generated")
-        .join("opencode")
-        .join("rules")
+    let path = Path::new("rules")
         .join(&spec.frontmatter.id)
         .join("AGENTS.md");
 
