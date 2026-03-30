@@ -5,12 +5,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use gray_matter::Matter;
 use gray_matter::engine::YAML;
-use minijinja::Environment;
 use walkdir::WalkDir;
 
-use crate::compile::{CompileResult, compile_specs};
-use crate::provider::Provider;
-use crate::fragments::resolve_fragments;
 use crate::presets::ProviderPresetsMap;
 use crate::spec::{
     AgentFrontmatter, AgentSpec, NormalizedSpec, RuleFrontmatter, RuleSpec, SkillFrontmatter,
@@ -83,29 +79,20 @@ impl NormalizedSpecs {
     }
 }
 
-/// Stage 4: all checks passed; safe to compile.
+/// Stage 4: all checks passed; ready for template resolution.
+///
+/// Advance to [`ResolvedSpecs`](crate::templating::ResolvedSpecs) by passing
+/// through [`templating::resolve`](crate::templating::resolve).
 pub struct ValidatedSpecs {
     specs: Vec<NormalizedSpec>,
 }
 
 impl ValidatedSpecs {
-    /// Render template tags in spec bodies using an externally-built environment.
+    /// Consume self and return the inner specs.
     ///
-    /// Template resolution is intentionally separate from the spec lifecycle
-    /// (load → normalize → validate) so that different templating engines or
-    /// additional preprocessing steps can be plugged in without coupling to specs.
-    pub fn resolve_templates(self, env: &Environment<'_>) -> Result<Self> {
-        let specs = resolve_fragments(self.specs, env)?;
-        Ok(Self { specs })
-    }
-
-    /// Compile specs into provider-specific generated files.
-    pub fn compile(
-        &self,
-        presets: &ProviderPresetsMap,
-        providers: &[Provider],
-    ) -> Result<CompileResult> {
-        compile_specs(&self.specs, presets, providers)
+    /// Used by the templating module to take ownership of the validated data.
+    pub fn into_specs(self) -> Vec<NormalizedSpec> {
+        self.specs
     }
 
     /// Access the validated specs directly (e.g. for the `validate` command).
@@ -118,7 +105,11 @@ impl ValidatedSpecs {
 // Spec loading
 // ---------------------------------------------------------------------------
 
-fn load_specs_from_dirs(agents_dir: &Path, skills_dir: &Path, rules_dir: &Path) -> Result<Vec<Spec>> {
+fn load_specs_from_dirs(
+    agents_dir: &Path,
+    skills_dir: &Path,
+    rules_dir: &Path,
+) -> Result<Vec<Spec>> {
     let mut specs = load_agent_specs(agents_dir)?;
     specs.extend(load_skill_specs(skills_dir)?);
     specs.extend(load_rule_specs(rules_dir)?);

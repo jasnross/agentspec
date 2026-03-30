@@ -4,10 +4,10 @@ mod emit;
 mod sync;
 
 use agentspec::compile::CompileResult;
-use agentspec::fragments::{build_environment, load_fragments};
 use agentspec::presets::ProviderPresetsMap;
 use agentspec::provider::Provider;
-use agentspec::specs::{SpecDirs, Specs, ValidatedSpecs};
+use agentspec::specs::{SpecDirs, Specs};
+use agentspec::templating::{self, ResolvedSpecs, TemplatingConfig};
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
@@ -54,11 +54,10 @@ fn main() -> Result<()> {
             anyhow::anyhow!("{} semantic validation error(s)", errors.len())
         })?;
 
-    // Template resolution — decoupled from the spec lifecycle
-    let fragments_dir = config.resolve(&config.spec.fragments_dir);
-    let fragment_map = load_fragments(&fragments_dir)?;
-    let env = build_environment(&fragment_map)?;
-    let validated = validated.resolve_templates(&env)?;
+    let templating_config = TemplatingConfig {
+        fragments_dir: config.resolve(&config.spec.fragments_dir),
+    };
+    let resolved = templating::resolve(validated, &templating_config)?;
 
     match &cli.command {
         Command::Validate(_) => {
@@ -74,7 +73,7 @@ fn main() -> Result<()> {
 
                 if !sync_compile_providers.is_empty() {
                     let (result, providers) = run_compile(
-                        &validated,
+                        &resolved,
                         &config.presets,
                         &sync_compile_providers,
                         &config.providers,
@@ -87,7 +86,7 @@ fn main() -> Result<()> {
         }
         Command::Compile(_) | Command::Check(_) => {
             let (result, providers) =
-                run_compile(&validated, &config.presets, &args.provider, &config.providers)?;
+                run_compile(&resolved, &config.presets, &args.provider, &config.providers)?;
             let output_dir = config.resolve(&config.output.dir);
             match &cli.command {
                 Command::Compile(_) => {
@@ -129,7 +128,7 @@ fn main() -> Result<()> {
 /// Runs the compile step and reports the compiled file count. Returns the result and the
 /// resolved target list so the caller can decide what to do next (write, check, or sync).
 fn run_compile(
-    validated: &ValidatedSpecs,
+    resolved: &ResolvedSpecs,
     presets: &ProviderPresetsMap,
     override_providers: &[Provider],
     config_providers: &[Provider],
@@ -139,7 +138,7 @@ fn run_compile(
     } else {
         override_providers.to_vec()
     };
-    let result = validated.compile(presets, &providers)?;
+    let result = resolved.compile(presets, &providers)?;
     eprintln!(
         "compiled {} files for {} provider(s)",
         result.files.len(),

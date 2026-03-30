@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use crate::adapters::{adapt_claude, adapt_cursor, adapt_opencode};
-use crate::config::Provider;
+use crate::provider::Provider;
 use crate::presets::ProviderPresetsMap;
 use crate::spec::NormalizedSpec;
 
