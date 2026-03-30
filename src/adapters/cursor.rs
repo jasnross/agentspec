@@ -70,7 +70,7 @@ fn adapt_agent_spec(
 
     let frontmatter_str = serde_yml::to_string(&frontmatter)?;
     let body = spec.body.trim();
-    let content = format!("---\n{frontmatter_str}\n---\n\n{body}").into_bytes();
+    let content = format!("---\n{frontmatter_str}---\n\n{body}").into_bytes();
 
     Ok(vec![GeneratedFile {
         provider: Provider::Cursor,
@@ -91,7 +91,7 @@ fn adapt_skill_spec(spec: NormalizedSkillSpec) -> Result<Vec<GeneratedFile>> {
 
     let frontmatter_str = serde_yml::to_string(&frontmatter)?;
     let body = spec.body.trim();
-    let content = format!("---\n{frontmatter_str}\n---\n\n{body}").into_bytes();
+    let content = format!("---\n{frontmatter_str}---\n\n{body}").into_bytes();
 
     let skill_dir = Path::new("generated")
         .join("cursor")
@@ -127,7 +127,7 @@ fn adapt_rule_spec(spec: NormalizedRuleSpec) -> Result<Vec<GeneratedFile>> {
 
     let frontmatter_str = serde_yml::to_string(&frontmatter)?;
     let body = spec.body.trim();
-    let content = format!("---\n{frontmatter_str}\n---\n\n{body}").into_bytes();
+    let content = format!("---\n{frontmatter_str}---\n\n{body}").into_bytes();
 
     let path = Path::new("generated")
         .join("cursor")
@@ -140,4 +140,40 @@ fn adapt_rule_spec(spec: NormalizedRuleSpec) -> Result<Vec<GeneratedFile>> {
         content,
         mode: None,
     }])
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::*;
+    use crate::spec::{NormalizedAgentFrontmatter, NormalizedAgentSpec};
+
+    #[test]
+    fn test_adapt_agent_output_format() {
+        let spec = NormalizedSpec::Agent(NormalizedAgentSpec {
+            path: "test.md".into(),
+            frontmatter: NormalizedAgentFrontmatter {
+                id: "test-agent".to_string(),
+                description: "Test agent".to_string(),
+                execution: None,
+                capabilities: None,
+            },
+            body: "Body.".to_string(),
+        });
+
+        let files = adapt_cursor(spec, &HashMap::new()).expect("expected value");
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
+
+        let expected = concat!(
+            "---\n",
+            "name: test-agent\n",
+            "description: Test agent\n",
+            "model: null\n",
+            "---\n",
+            "\n",
+            "Body.",
+        );
+        assert_eq!(content, expected);
+    }
 }

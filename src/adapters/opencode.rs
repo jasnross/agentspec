@@ -94,7 +94,7 @@ fn adapt_agent_spec(
 
     let frontmatter_str = serde_yml::to_string(&frontmatter)?;
     let body = spec.body;
-    let content = format!("---\n{frontmatter_str}\n---\n\n{}", body.trim()).into_bytes();
+    let content = format!("---\n{frontmatter_str}---\n\n{}", body.trim()).into_bytes();
 
     Ok(vec![GeneratedFile {
         provider: Provider::OpenCode,
@@ -148,7 +148,7 @@ fn adapt_skill_spec(
             model: model.clone(),
         };
         let frontmatter_str = serde_yml::to_string(&frontmatter)?;
-        let content = format!("---\n{frontmatter_str}\n---\n\n{}", body.trim()).into_bytes();
+        let content = format!("---\n{frontmatter_str}---\n\n{}", body.trim()).into_bytes();
         files.push(GeneratedFile {
             provider: Provider::OpenCode,
             path: Path::new("generated")
@@ -169,7 +169,7 @@ fn adapt_skill_spec(
             tools,
         };
         let frontmatter_str = serde_yml::to_string(&frontmatter)?;
-        let content = format!("---\n{frontmatter_str}\n---\n\n{}", body.trim()).into_bytes();
+        let content = format!("---\n{frontmatter_str}---\n\n{}", body.trim()).into_bytes();
 
         let skill_dir = Path::new("generated")
             .join("opencode")
@@ -250,7 +250,10 @@ fn build_tool_map(tools: &[ToolFrontmatter]) -> IndexMap<String, bool> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
+    use crate::spec::{NormalizedAgentFrontmatter, NormalizedAgentSpec};
 
     #[test]
     fn test_build_tool_map_keys_are_sorted() {
@@ -263,5 +266,43 @@ mod tests {
             keys, sorted,
             "tool map keys should be in alphabetical order"
         );
+    }
+
+    #[test]
+    fn test_adapt_agent_output_format() {
+        let spec = NormalizedSpec::Agent(NormalizedAgentSpec {
+            path: "test.md".into(),
+            frontmatter: NormalizedAgentFrontmatter {
+                id: "test-agent".to_string(),
+                description: "Test agent".to_string(),
+                execution: None,
+                capabilities: None,
+            },
+            body: "Body.".to_string(),
+        });
+
+        let files = adapt_opencode(spec, &HashMap::new()).expect("expected value");
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
+
+        let expected = concat!(
+            "---\n",
+            "description: Test agent\n",
+            "mode: subagent\n",
+            "tools:\n",
+            "  bash: false\n",
+            "  edit: false\n",
+            "  glob: false\n",
+            "  grep: false\n",
+            "  question: false\n",
+            "  read: false\n",
+            "  todowrite: false\n",
+            "  webfetch: false\n",
+            "  websearch: false\n",
+            "  write: false\n",
+            "---\n",
+            "\n",
+            "Body.",
+        );
+        assert_eq!(content, expected);
     }
 }

@@ -288,4 +288,33 @@ mod tests {
             "tools should be sorted alphabetically in generated output"
         );
     }
+
+    #[test]
+    fn test_adapt_agent_output_format() {
+        let spec = NormalizedSpec::Agent(NormalizedAgentSpec {
+            path: "test.md".into(),
+            frontmatter: NormalizedAgentFrontmatter {
+                id: "test-agent".to_string(),
+                description: "Test agent".to_string(),
+                execution: None,
+                capabilities: None,
+            },
+            body: "Body.".to_string(),
+        });
+
+        let files = adapt_claude(spec, &HashMap::new()).expect("expected value");
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
+
+        let expected = concat!(
+            "---\n",
+            "name: test-agent\n",
+            "description: Test agent\n",
+            "model: null\n",
+            "tools: null\n",
+            "---\n",
+            "\n",
+            "Body.",
+        );
+        assert_eq!(content, expected);
+    }
 }
