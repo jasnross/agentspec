@@ -250,3 +250,18 @@ fn build_tool_map(tools: &[ToolFrontmatter]) -> IndexMap<String, bool> {
 
     map
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_tool_map_keys_are_sorted() {
+        let tools = &[ToolFrontmatter::Write, ToolFrontmatter::Read];
+        let map = build_tool_map(tools);
+        let keys: Vec<&str> = map.keys().map(String::as_str).collect();
+        let mut sorted = keys.clone();
+        sorted.sort_unstable();
+        assert_eq!(keys, sorted, "tool map keys should be in alphabetical order");
+    }
+}

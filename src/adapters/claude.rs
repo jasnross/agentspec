@@ -85,7 +85,7 @@ pub fn adapt_claude(
     match spec {
         NormalizedSpec::Agent(s) => adapt_agent_spec(s, presets),
         NormalizedSpec::Skill(s) => adapt_skill_spec(s, presets),
-        NormalizedSpec::Rule(s) => adapt_rule_spec(&s),
+        NormalizedSpec::Rule(s) => Ok(adapt_rule_spec(&s)),
     }
 }
 
@@ -104,12 +104,16 @@ fn adapt_agent_spec(
         .and_then(|x| x.claude.clone())
         .and_then(|x| x.model);
 
-    // FIXME: sort this alphabetically for consistency
     let tools: Option<Vec<ClaudeTool>> = spec
         .frontmatter
         .capabilities
         .and_then(|x| x.tools)
-        .map(|x| x.iter().flat_map(adapt_tool).collect());
+        .map(|x| {
+            let mut tools: Vec<ClaudeTool> = x.iter().flat_map(adapt_tool).collect();
+            // Sort by serialized name — the value that appears in generated files.
+            tools.sort_by_key(|t| serde_yml::to_string(t).unwrap_or_default());
+            tools
+        });
 
     let path = Path::new("generated")
         .join("claude")
@@ -181,7 +185,6 @@ fn adapt_skill_spec(
     let body = spec.body.trim();
     let content = format!("---\n{frontmatter_str}---\n\n{body}");
 
-    // FIXME: we should test what happens if SKILL.md is not present
     let mut files = vec![GeneratedFile::text(
         Provider::Claude,
         skill_dir.join("SKILL.md"),
@@ -200,20 +203,72 @@ fn adapt_skill_spec(
     Ok(files)
 }
 
-#[allow(clippy::unnecessary_wraps)] // FIXME: decide on return type
-fn adapt_rule_spec(spec: &NormalizedRuleSpec) -> Result<Vec<GeneratedFile>> {
+fn adapt_rule_spec(spec: &NormalizedRuleSpec) -> Vec<GeneratedFile> {
     let content = format!("{}\n", spec.body.trim()).into_bytes();
     let path = Path::new("generated")
         .join("claude")
         .join("rules")
         .join(format!("{}.md", spec.frontmatter.id));
 
-    Ok(vec![GeneratedFile {
+    vec![GeneratedFile {
         provider: Provider::Claude,
         path,
         content,
         mode: None,
-    }])
+    }]
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use serde::Deserialize;
+
+    use super::*;
+    use crate::spec::{CapabilitiesFrontmatter, NormalizedAgentFrontmatter, NormalizedAgentSpec};
+
+    #[test]
+    fn test_adapt_agent_tools_are_sorted() {
+        // Tools provided in reverse alphabetical order to confirm sorting.
+        let spec = NormalizedSpec::Agent(NormalizedAgentSpec {
+            path: "test.md".into(),
+            frontmatter: NormalizedAgentFrontmatter {
+                id: "test-agent".to_string(),
+                description: "Test agent".to_string(),
+                execution: None,
+                capabilities: Some(CapabilitiesFrontmatter {
+                    tools: Some(vec![
+                        ToolFrontmatter::Write,
+                        ToolFrontmatter::Read,
+                        ToolFrontmatter::Bash,
+                    ]),
+                }),
+            },
+            body: "Body.".to_string(),
+        });
+
+        let files = adapt_claude(spec, &HashMap::new()).expect("expected value");
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
+
+        // Parse the tools list back out of the generated YAML frontmatter.
+        #[derive(Deserialize)]
+        struct Frontmatter {
+            tools: Option<Vec<String>>,
+        }
+
+        let yaml = content
+            .strip_prefix("---\n")
+            .and_then(|s| s.split_once("\n---\n"))
+            .map(|(fm, _)| fm)
+            .expect("expected YAML frontmatter");
+
+        let fm: Frontmatter = serde_yml::from_str(yaml).expect("expected value");
+        let tools = fm.tools.expect("expected tools list");
+
+        let mut sorted = tools.clone();
+        sorted.sort_unstable();
+        assert_eq!(tools, sorted, "tools should be sorted alphabetically in generated output");
+    }
 }
 
 fn adapt_tool(tool: &ToolFrontmatter) -> Vec<ClaudeTool> {

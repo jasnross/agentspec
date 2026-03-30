@@ -38,8 +38,7 @@ pub enum Command {
 
 #[derive(Debug, Default, Parser)]
 pub struct CommonArgs {
-    /// Comma-separated list of providers to generate (e.g., claude,cursor,opencode)
-    /// COMMENT: this should be specified as multiple arguments, not comma-separated
+    /// Providers to target (repeatable: `--provider claude --provider cursor`, or comma-separated: `--provider claude,cursor`)
     #[arg(long, value_delimiter = ',')]
     pub provider: Vec<Provider>,
 }
