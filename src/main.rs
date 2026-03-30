@@ -4,9 +4,9 @@ mod compile;
 mod config;
 mod emit;
 mod fragments;
-mod parse;
 mod presets;
 mod spec;
+mod specs;
 mod sync;
 mod validate;
 
@@ -15,18 +15,11 @@ use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use cli::{Cli, Command, CommonArgs};
 use compile::CompileResult;
-use compile::compile_specs;
-use config::AgentspecConfig;
+use config::{AgentspecConfig, Provider};
 use emit::{check_generated_state, write_generated_files};
 use fragments::{build_environment, load_fragments};
 use presets::ProviderPresetsMap;
-use validate::validate_semantics;
-
-use crate::config::Provider;
-use crate::fragments::resolve_fragments;
-use crate::parse::load_specs;
-use crate::spec::NormalizedSpec;
-use crate::validate::normalize_specs;
+use specs::{SpecDirs, Specs};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -51,34 +44,27 @@ fn main() -> Result<()> {
     let mut config = AgentspecConfig::discover(&cwd)?;
     config.apply_overrides(args);
 
-    // Load specs
-    let specs = load_specs(&config)?;
-    eprintln!("loaded {} specs", specs.len());
+    let dirs = SpecDirs {
+        agents: config.resolve(&config.spec.agents_dir),
+        skills: config.resolve(&config.spec.skills_dir),
+        rules: config.resolve(&config.spec.rules_dir),
+    };
 
-    // Resolve fragments
+    let validated = Specs::load(&dirs)?
+        .normalize()?
+        .validate(&config.presets)
+        .map_err(|errors| {
+            for e in &errors {
+                eprintln!("error: {e}");
+            }
+            anyhow::anyhow!("{} semantic validation error(s)", errors.len())
+        })?;
+
+    // Template resolution — decoupled from the spec lifecycle
     let fragments_dir = config.resolve(&config.spec.fragments_dir);
     let fragment_map = load_fragments(&fragments_dir)?;
     let env = build_environment(&fragment_map)?;
-    let specs = resolve_fragments(specs, &env)?;
-    eprintln!(
-        "resolved fragments ({} fragment templates loaded)",
-        fragment_map.len()
-    );
-
-    let specs = normalize_specs(specs)?;
-    eprintln!("normalized {} specs", specs.len());
-
-    let presets = config.presets.clone();
-    eprintln!("loaded {} preset(s)", presets.len());
-
-    let semantic_errors = validate_semantics(&specs, &presets);
-    if !semantic_errors.is_empty() {
-        for err in &semantic_errors {
-            eprintln!("error: {err}");
-        }
-        anyhow::bail!("{} semantic validation error(s)", semantic_errors.len());
-    }
-    eprintln!("semantic validation passed");
+    let validated = validated.resolve_templates(&env)?;
 
     match &cli.command {
         Command::Validate(_) => {
@@ -93,8 +79,12 @@ fn main() -> Result<()> {
                 };
 
                 if !sync_compile_providers.is_empty() {
-                    let (result, providers) =
-                        run_compile(&specs, &presets, &sync_compile_providers, &config.providers)?;
+                    let (result, providers) = run_compile(
+                        &validated,
+                        &config.presets,
+                        &sync_compile_providers,
+                        &config.providers,
+                    )?;
                     let output_dir = config.resolve(&config.output.dir);
                     write_generated_files(&result.files, &output_dir, &providers)?;
                 }
@@ -103,7 +93,7 @@ fn main() -> Result<()> {
         }
         Command::Compile(_) | Command::Check(_) => {
             let (result, providers) =
-                run_compile(&specs, &presets, &args.provider, &config.providers)?;
+                run_compile(&validated, &config.presets, &args.provider, &config.providers)?;
             let output_dir = config.resolve(&config.output.dir);
             match &cli.command {
                 Command::Compile(_) => {
@@ -142,10 +132,10 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// Runs the compile pipeline and reports the compiled file count. Returns the result and the
+/// Runs the compile step and reports the compiled file count. Returns the result and the
 /// resolved target list so the caller can decide what to do next (write, check, or sync).
 fn run_compile(
-    specs: &[NormalizedSpec],
+    validated: &specs::ValidatedSpecs,
     presets: &ProviderPresetsMap,
     override_providers: &[Provider],
     config_providers: &[Provider],
@@ -155,7 +145,7 @@ fn run_compile(
     } else {
         override_providers.to_vec()
     };
-    let result = compile_specs(specs, presets, &providers)?;
+    let result = validated.compile(presets, &providers)?;
     eprintln!(
         "compiled {} files for {} provider(s)",
         result.files.len(),

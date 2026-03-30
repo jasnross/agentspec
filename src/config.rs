@@ -672,7 +672,7 @@ strategy = "copy"
         };
 
         let intent = config.resolve_sync_intent(Provider::Cursor, &cli, true);
-        assert!(intent.has_explicit_config);
+        assert!(!intent.has_explicit_config); // no agentspec.toml → no explicit sync config
         assert!(intent.cli_only_allowed);
         assert_eq!(intent.target.mode, SyncMode::Project);
     }

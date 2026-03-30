@@ -7,15 +7,17 @@ use minijinja::value::Kwargs;
 use minijinja::{Environment, State};
 use walkdir::WalkDir;
 
-use crate::spec::Spec;
-
-// TODO: rename to template.rs and clean up
+use crate::spec::NormalizedSpec;
 
 /// Resolve fragment references in spec bodies by rendering them through `MiniJinja`.
 ///
 /// Each spec body is treated as an inline template. Specs that contain no template
-/// syntax pass through unchanged.
-pub fn resolve_fragments(specs: Vec<Spec>, env: &Environment<'_>) -> Result<Vec<Spec>> {
+/// syntax pass through unchanged. Operates on normalized specs so that template
+/// resolution is decoupled from the spec loading/validation lifecycle.
+pub fn resolve_fragments(
+    specs: Vec<NormalizedSpec>,
+    env: &Environment<'_>,
+) -> Result<Vec<NormalizedSpec>> {
     let mut resolved = Vec::with_capacity(specs.len());
 
     for mut spec in specs {
@@ -28,9 +30,9 @@ pub fn resolve_fragments(specs: Vec<Spec>, env: &Environment<'_>) -> Result<Vec<
             .with_context(|| format!("failed to resolve fragments in {}", spec.path().display()))?;
 
         match &mut spec {
-            Spec::Agent(agent_spec) => agent_spec.body = body,
-            Spec::Skill(skill_spec) => skill_spec.body = body,
-            Spec::Rule(rule_spec) => rule_spec.body = body,
+            NormalizedSpec::Agent(s) => s.body = body,
+            NormalizedSpec::Skill(s) => s.body = body,
+            NormalizedSpec::Rule(s) => s.body = body,
         }
 
         resolved.push(spec);
@@ -158,7 +160,7 @@ mod tests {
     use std::fs;
 
     use super::*;
-    use crate::spec::{AgentFrontmatter, AgentSpec};
+    use crate::spec::{NormalizedAgentFrontmatter, NormalizedAgentSpec};
 
     #[test]
     fn test_load_fragments() {
@@ -270,9 +272,9 @@ mod tests {
         let fragments = HashMap::new();
         let env = build_environment(&fragments).expect("expected value");
 
-        let specs = vec![Spec::Agent(AgentSpec {
+        let specs = vec![NormalizedSpec::Agent(NormalizedAgentSpec {
             path: "test.md".into(),
-            frontmatter: AgentFrontmatter {
+            frontmatter: NormalizedAgentFrontmatter {
                 id: "test".to_string(),
                 description: "test".to_string(),
                 execution: None,
@@ -282,7 +284,7 @@ mod tests {
         })];
 
         let resolved = resolve_fragments(specs, &env).expect("expected value");
-        let Spec::Agent(ref s) = resolved[0] else {
+        let NormalizedSpec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
         assert_eq!(s.body, "Plain body with no template syntax.");
@@ -295,9 +297,9 @@ mod tests {
 
         let env = build_environment(&fragments).expect("expected value");
 
-        let specs = vec![Spec::Agent(AgentSpec {
+        let specs = vec![NormalizedSpec::Agent(NormalizedAgentSpec {
             path: "test.md".into(),
-            frontmatter: AgentFrontmatter {
+            frontmatter: NormalizedAgentFrontmatter {
                 id: "test".to_string(),
                 description: "test".to_string(),
                 execution: None,
@@ -307,7 +309,7 @@ mod tests {
         })];
 
         let resolved = resolve_fragments(specs, &env).expect("expected value");
-        let Spec::Agent(ref s) = resolved[0] else {
+        let NormalizedSpec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
         assert_eq!(s.body, "Body.\n-- End --");

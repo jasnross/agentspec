@@ -1,27 +1,127 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use gray_matter::Matter;
 use gray_matter::engine::YAML;
+use minijinja::Environment;
 use walkdir::WalkDir;
 
-use crate::config::AgentspecConfig;
+use crate::compile::{CompileResult, compile_specs};
+use crate::config::Provider;
+use crate::fragments::resolve_fragments;
+use crate::presets::ProviderPresetsMap;
 use crate::spec::{
-    AgentFrontmatter, AgentSpec, RuleFrontmatter, RuleSpec, SkillFrontmatter, SkillSpec, Spec,
-    SupportingFile,
+    AgentFrontmatter, AgentSpec, NormalizedSpec, RuleFrontmatter, RuleSpec, SkillFrontmatter,
+    SkillSpec, Spec, SupportingFile,
 };
+use crate::validate::{SemanticError, normalize_specs, validate_semantics};
 
-pub fn load_specs(config: &AgentspecConfig) -> Result<Vec<Spec>> {
-    let agents_dir = config.resolve(&config.spec.agents_dir);
-    let skills_dir = config.resolve(&config.spec.skills_dir);
-    let rules_dir = config.resolve(&config.spec.rules_dir);
+// ---------------------------------------------------------------------------
+// Pipeline stage types
+// ---------------------------------------------------------------------------
 
-    let mut specs = load_agent_specs(&agents_dir)?;
-    specs.extend(load_skill_specs(&skills_dir)?);
-    specs.extend(load_rule_specs(&rules_dir)?);
+/// Directories from which specs are loaded.
+///
+/// Constructing this from an `AgentspecConfig` is the binary's responsibility;
+/// the spec pipeline has no dependency on the config format.
+pub struct SpecDirs {
+    pub agents: PathBuf,
+    pub skills: PathBuf,
+    pub rules: PathBuf,
+}
 
+/// Stage 1: specs loaded from disk.
+///
+/// Advance to [`NormalizedSpecs`] by calling [`Specs::normalize`].
+pub struct Specs {
+    specs: Vec<Spec>,
+}
+
+impl Specs {
+    /// Load all agent, skill, and rule specs from the given directories.
+    pub fn load(dirs: &SpecDirs) -> Result<Self> {
+        let specs = load_specs_from_dirs(&dirs.agents, &dirs.skills, &dirs.rules)?;
+        Ok(Self { specs })
+    }
+
+    /// Apply defaults and convert raw frontmatter to fully-typed normalized structs.
+    pub fn normalize(self) -> Result<NormalizedSpecs> {
+        let specs = normalize_specs(self.specs)?;
+        Ok(NormalizedSpecs { specs })
+    }
+}
+
+/// Stage 3: frontmatter is normalized; ready for semantic validation.
+///
+/// Advance to [`ValidatedSpecs`] by calling [`NormalizedSpecs::validate`].
+pub struct NormalizedSpecs {
+    specs: Vec<NormalizedSpec>,
+}
+
+impl NormalizedSpecs {
+    /// Run semantic checks (duplicate IDs, unknown presets, etc.).
+    ///
+    /// Returns `Err(errors)` listing every violation found so the caller can
+    /// format and report them; returns `Ok(ValidatedSpecs)` if all checks pass.
+    pub fn validate(
+        self,
+        presets: &ProviderPresetsMap,
+    ) -> Result<ValidatedSpecs, Vec<SemanticError>> {
+        let errors = validate_semantics(&self.specs, presets);
+        if errors.is_empty() {
+            Ok(ValidatedSpecs { specs: self.specs })
+        } else {
+            Err(errors)
+        }
+    }
+
+    /// Access the normalized specs without advancing the stage.
+    pub fn specs(&self) -> &[NormalizedSpec] {
+        &self.specs
+    }
+}
+
+/// Stage 4: all checks passed; safe to compile.
+pub struct ValidatedSpecs {
+    specs: Vec<NormalizedSpec>,
+}
+
+impl ValidatedSpecs {
+    /// Render template tags in spec bodies using an externally-built environment.
+    ///
+    /// Template resolution is intentionally separate from the spec lifecycle
+    /// (load → normalize → validate) so that different templating engines or
+    /// additional preprocessing steps can be plugged in without coupling to specs.
+    pub fn resolve_templates(self, env: &Environment<'_>) -> Result<Self> {
+        let specs = resolve_fragments(self.specs, env)?;
+        Ok(Self { specs })
+    }
+
+    /// Compile specs into provider-specific generated files.
+    pub fn compile(
+        &self,
+        presets: &ProviderPresetsMap,
+        providers: &[Provider],
+    ) -> Result<CompileResult> {
+        compile_specs(&self.specs, presets, providers)
+    }
+
+    /// Access the validated specs directly (e.g. for the `validate` command).
+    pub fn specs(&self) -> &[NormalizedSpec] {
+        &self.specs
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Spec loading
+// ---------------------------------------------------------------------------
+
+fn load_specs_from_dirs(agents_dir: &Path, skills_dir: &Path, rules_dir: &Path) -> Result<Vec<Spec>> {
+    let mut specs = load_agent_specs(agents_dir)?;
+    specs.extend(load_skill_specs(skills_dir)?);
+    specs.extend(load_rule_specs(rules_dir)?);
     Ok(specs)
 }
 
