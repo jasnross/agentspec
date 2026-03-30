@@ -5,8 +5,8 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use walkdir::WalkDir;
 
-use crate::config::Provider;
-use crate::compile::GeneratedFile;
+use agentspec::compile::GeneratedFile;
+use agentspec::provider::Provider;
 
 /// Write all generated files to disk.
 ///
@@ -145,7 +145,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::config::Provider;
+    use agentspec::provider::Provider;
 
     fn make_file(provider: Provider, rel_path: &str, content: &str) -> GeneratedFile {
         GeneratedFile::text(provider, rel_path, content.to_string())

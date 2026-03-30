@@ -7,7 +7,7 @@ mod validate;
 use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 
-use crate::config::Provider;
+use agentspec::provider::Provider;
 use crate::config::{SyncMode, SyncStrategy};
 
 #[derive(Debug, Parser)]

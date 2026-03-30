@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use walkdir::WalkDir;
 
-use crate::config::Provider;
+use agentspec::provider::Provider;
 use crate::config::SyncMode;
 use crate::config::SyncTargetConfig;
 

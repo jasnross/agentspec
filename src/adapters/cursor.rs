@@ -4,7 +4,7 @@ use anyhow::Result;
 use serde::Serialize;
 
 use crate::compile::GeneratedFile;
-use crate::config::Provider;
+use crate::provider::Provider;
 use crate::presets::ProviderPresetsMap;
 use crate::spec::{NormalizedAgentSpec, NormalizedRuleSpec, NormalizedSkillSpec, NormalizedSpec};
 

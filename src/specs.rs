@@ -9,7 +9,7 @@ use minijinja::Environment;
 use walkdir::WalkDir;
 
 use crate::compile::{CompileResult, compile_specs};
-use crate::config::Provider;
+use crate::provider::Provider;
 use crate::fragments::resolve_fragments;
 use crate::presets::ProviderPresetsMap;
 use crate::spec::{

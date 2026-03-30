@@ -2,33 +2,12 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
-use clap::ValueEnum;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use strum::VariantArray;
 
 use crate::cli::CommonArgs;
-use crate::presets::ProviderPresets;
-
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Deserialize,
-    Eq,
-    Hash,
-    PartialEq,
-    Serialize,
-    ValueEnum,
-    strum::Display,
-    strum::VariantArray,
-)]
-#[serde(rename_all = "lowercase")]
-#[strum(serialize_all = "lowercase")]
-pub enum Provider {
-    Claude,
-    Cursor,
-    OpenCode,
-}
+use agentspec::presets::ProviderPresets;
+use agentspec::provider::Provider;
 
 /// Where synced files should be placed.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, clap::ValueEnum)]
@@ -354,7 +333,7 @@ mod tests {
     use std::fs;
 
     use super::*;
-    use crate::presets::{ClaudePreset, CursorPreset, OpenCodePreset};
+    use agentspec::presets::{ClaudePreset, CursorPreset, OpenCodePreset};
 
     #[test]
     fn test_default_config() {

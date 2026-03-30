@@ -7,7 +7,7 @@ use strum::VariantArray as _;
 
 use crate::compile::GeneratedFile;
 use crate::presets::ProviderPresetsMap;
-use crate::config::Provider;
+use crate::provider::Provider;
 use crate::spec::{
     NormalizedAgentSpec, NormalizedRuleSpec, NormalizedSkillSpec, NormalizedSpec, ToolFrontmatter,
 };

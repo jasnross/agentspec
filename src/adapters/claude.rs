@@ -4,8 +4,8 @@ use anyhow::Result;
 use serde::Serialize;
 
 use crate::compile::GeneratedFile;
-use crate::config::Provider;
 use crate::presets::ProviderPresetsMap;
+use crate::provider::Provider;
 use crate::spec::{
     NormalizedAgentSpec, NormalizedRuleSpec, NormalizedSkillSpec, NormalizedSpec, ToolFrontmatter,
 };
@@ -104,6 +104,7 @@ fn adapt_agent_spec(
         .and_then(|x| x.claude.clone())
         .and_then(|x| x.model);
 
+    // FIXME: sort this alphabetically for consistency
     let tools: Option<Vec<ClaudeTool>> = spec
         .frontmatter
         .capabilities

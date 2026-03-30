@@ -13,7 +13,7 @@ use strategy::{NamePrefixMode, SyncEntry, apply_strip_name, sync_copied_dir, syn
 
 use crate::cli::SyncArgs;
 use crate::config::{AgentspecConfig, SyncOverrides, SyncTargetConfig};
-use crate::config::Provider;
+use agentspec::provider::Provider;
 use crate::config::{SyncMode, SyncStrategy};
 
 /// Runs the sync command: distributes generated files to each tool's config directory.
