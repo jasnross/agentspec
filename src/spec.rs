@@ -125,6 +125,7 @@ pub struct NormalizedRuleSpec {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentFrontmatter {
     pub id: String,
     pub description: String,
@@ -141,6 +142,7 @@ pub struct NormalizedAgentFrontmatter {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct SkillFrontmatter {
     pub id: String,
     pub description: Option<String>,
@@ -161,6 +163,7 @@ pub struct NormalizedSkillFrontmatter {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RuleFrontmatter {
     pub id: String,
     pub description: Option<String>,
@@ -173,11 +176,13 @@ pub struct NormalizedRuleFrontmatter {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CapabilitiesFrontmatter {
     pub tools: Option<Vec<ToolFrontmatter>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExecutionFrontmatter {
     pub preset: Option<String>,
 }

@@ -126,6 +126,11 @@ Prefer struct-level attributes over repeating the same attribute on every field:
 
 These compose cleanly — both can appear on the same struct.
 
+- **`#[serde(deny_unknown_fields)]`** — add to any struct deserialized from
+  user-facing input (spec frontmatter, config files). This turns typos and
+  unrecognized fields into parse errors instead of silent no-ops. Omit only
+  for structs that intentionally allow extension (e.g., pass-through types).
+
 ## Module Layout
 
 Prefer the modern Rust module file convention over `mod.rs`:
