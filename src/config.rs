@@ -212,7 +212,7 @@ impl Default for AgentspecConfig {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct SpecConfig {
     pub agents_dir: PathBuf,
     pub skills_dir: PathBuf,
@@ -232,7 +232,7 @@ impl Default for SpecConfig {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct OutputConfig {
     pub dir: PathBuf,
 }
