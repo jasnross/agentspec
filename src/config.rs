@@ -302,7 +302,7 @@ impl SyncTargetConfig {
 }
 
 /// CLI flag overrides for sync target resolution (highest precedence).
-/// FIXME: add the rest of the target config
+/// FIXME: Consider if other sync flags should be allowed here
 #[derive(Clone, Debug, Default)]
 pub struct SyncOverrides {
     /// Override sync mode for all providers.

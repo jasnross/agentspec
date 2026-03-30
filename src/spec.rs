@@ -60,7 +60,7 @@ impl NormalizedSpec {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 pub struct AgentSpec {
     /// Absolute path to the spec
     pub path: PathBuf,
