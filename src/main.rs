@@ -98,7 +98,7 @@ fn main() -> Result<()> {
                     );
                 }
                 Command::Check(_) => {
-                    let check = check_generated_state(&result.files, &config.root_dir, &providers)?;
+                    let check = check_generated_state(&result.files, &config.root_dir, &providers);
                     if check.is_clean() {
                         eprintln!("check passed: generated files are up to date");
                     } else {

@@ -72,12 +72,11 @@ impl CheckResult {
 /// - Missing: expected file doesn't exist on disk
 /// - Outdated: file exists but content differs
 /// - Unexpected: file exists on disk but isn't in the expected set
-#[allow(clippy::unnecessary_wraps)] // FIXME: decide on the return type
 pub fn check_generated_state(
     expected: &[GeneratedFile],
     base_dir: &Path,
     providers: &[Provider],
-) -> Result<CheckResult> {
+) -> CheckResult {
     let mut result = CheckResult::default();
 
     // Build map of expected paths → content
@@ -137,7 +136,7 @@ pub fn check_generated_state(
     result.outdated.sort();
     result.unexpected.sort();
 
-    Ok(result)
+    result
 }
 
 #[cfg(test)]
@@ -169,7 +168,7 @@ mod tests {
         assert!(base.join("generated/claude/skills/test/SKILL.md").exists());
 
         let check =
-            check_generated_state(&files, base, &[Provider::Claude]).expect("expected value");
+            check_generated_state(&files, base, &[Provider::Claude]);
         assert!(check.is_clean(), "expected clean check: {check:?}");
     }
 
@@ -186,7 +185,7 @@ mod tests {
 
         // Don't write anything — file is missing
         let check =
-            check_generated_state(&files, base, &[Provider::Claude]).expect("expected value");
+            check_generated_state(&files, base, &[Provider::Claude]);
         assert_eq!(check.missing.len(), 1);
         assert!(check.missing[0].contains("test/SKILL.md"));
     }
@@ -207,7 +206,7 @@ mod tests {
         )];
 
         let check =
-            check_generated_state(&files, base, &[Provider::Claude]).expect("expected value");
+            check_generated_state(&files, base, &[Provider::Claude]);
         assert_eq!(check.outdated.len(), 1);
     }
 
@@ -224,7 +223,7 @@ mod tests {
         let files: Vec<GeneratedFile> = vec![];
 
         let check =
-            check_generated_state(&files, base, &[Provider::Claude]).expect("expected value");
+            check_generated_state(&files, base, &[Provider::Claude]);
         assert_eq!(check.unexpected.len(), 1);
         assert!(check.unexpected[0].contains("stale.md"));
     }
