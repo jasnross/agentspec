@@ -1,174 +1,143 @@
 use std::path::Path;
 
-use indexmap::IndexMap;
-use serde_json::Value;
+use anyhow::Result;
+use serde::Serialize;
 
-use crate::format::render_markdown_with_frontmatter;
-use crate::types::{CompileWarning, GeneratedFile, NormalizedSpec, PresetsMap, Provider, SpecKind};
+use crate::compile::GeneratedFile;
+use crate::config::Provider;
+use crate::presets::ProviderPresetsMap;
+use crate::spec::{NormalizedAgentSpec, NormalizedRuleSpec, NormalizedSkillSpec, NormalizedSpec};
+
+// See: https://cursor.com/docs/subagents#configuration-fields
+#[derive(Serialize)]
+struct CursorAgentFrontmatter {
+    name: String,
+    description: String,
+    model: Option<String>,
+}
+
+// See: https://cursor.com/docs/skills#frontmatter-fields
+#[derive(Serialize)]
+struct CursorSkillFrontmatter {
+    name: String,
+    description: String,
+}
+
+// See: https://cursor.com/docs/rules#rule-file-format
+#[derive(Serialize)]
+struct CursorRuleFrontmatter {
+    description: String,
+    #[serde(rename = "alwaysApply")]
+    always_apply: bool,
+}
 
 pub fn adapt_cursor(
-    spec: &NormalizedSpec,
-    _profiles: &PresetsMap,
-) -> (Vec<GeneratedFile>, Vec<CompileWarning>) {
-    let warnings = Vec::new();
-
-    if spec.kind == SpecKind::Rule {
-        let mut fm = IndexMap::new();
-        fm.insert(
-            "description".to_string(),
-            Value::String(spec.description.clone()),
-        );
-        match &spec.paths {
-            Some(paths) => {
-                fm.insert(
-                    "globs".to_string(),
-                    Value::Array(paths.iter().map(|p| Value::String(p.clone())).collect()),
-                );
-            }
-            None => {
-                fm.insert("alwaysApply".to_string(), Value::Bool(true));
-            }
-        }
-        let content = render_markdown_with_frontmatter(&fm, &spec.body);
-        let path = Path::new("generated")
-            .join("cursor")
-            .join("rules")
-            .join(format!("{}.mdc", spec.id));
-        return (
-            vec![GeneratedFile::text(Provider::Cursor, path, content)],
-            warnings,
-        );
+    spec: NormalizedSpec,
+    presets: &ProviderPresetsMap,
+) -> Result<Vec<GeneratedFile>> {
+    match spec {
+        NormalizedSpec::Agent(s) => adapt_agent_spec(s, presets),
+        NormalizedSpec::Skill(s) => adapt_skill_spec(s),
+        NormalizedSpec::Rule(s) => adapt_rule_spec(s),
     }
+}
 
-    let mut fm = IndexMap::new();
-    fm.insert("name".to_string(), Value::String(spec.id.clone()));
-    fm.insert(
-        "description".to_string(),
-        Value::String(spec.description.clone()),
-    );
+fn adapt_agent_spec(
+    spec: NormalizedAgentSpec,
+    presets: &ProviderPresetsMap,
+) -> Result<Vec<GeneratedFile>> {
+    let name = spec.frontmatter.id;
+    let description = spec.frontmatter.description;
+
+    let model = spec
+        .frontmatter
+        .execution
+        .and_then(|x| x.preset)
+        .and_then(|x| presets.get(&x))
+        .and_then(|x| x.cursor.clone())
+        .and_then(|x| x.model);
+
+    let path = Path::new("generated")
+        .join("cursor")
+        .join("agents")
+        .join(format!("{name}.md"));
+
+    let frontmatter = CursorAgentFrontmatter {
+        name,
+        description,
+        model,
+    };
+
+    let frontmatter_str = serde_yml::to_string(&frontmatter)?;
+    let body = spec.body.trim();
+    let content = format!("---\n{frontmatter_str}\n---\n\n{body}").into_bytes();
+
+    Ok(vec![GeneratedFile {
+        provider: Provider::Cursor,
+        path,
+        content,
+        mode: None,
+    }])
+}
+
+fn adapt_skill_spec(spec: NormalizedSkillSpec) -> Result<Vec<GeneratedFile>> {
+    let id = spec.frontmatter.id;
+    let description = spec.frontmatter.description.unwrap_or_default();
+
+    let frontmatter = CursorSkillFrontmatter {
+        name: id.clone(),
+        description,
+    };
+
+    let frontmatter_str = serde_yml::to_string(&frontmatter)?;
+    let body = spec.body.trim();
+    let content = format!("---\n{frontmatter_str}\n---\n\n{body}").into_bytes();
 
     let skill_dir = Path::new("generated")
         .join("cursor")
         .join("skills")
-        .join(&spec.id);
+        .join(&id);
 
-    let mut files = vec![GeneratedFile::text(
-        Provider::Cursor,
-        skill_dir.join("SKILL.md"),
-        render_markdown_with_frontmatter(&fm, &spec.body),
-    )];
+    let mut files = vec![GeneratedFile {
+        provider: Provider::Cursor,
+        path: skill_dir.join("SKILL.md"),
+        content,
+        mode: None,
+    }];
 
-    for sf in &spec.supporting_files {
+    for sf in spec.supporting_files {
         files.push(GeneratedFile::binary(
             Provider::Cursor,
             skill_dir.join(&sf.relative_path),
-            sf.content.clone(),
+            sf.content,
             if sf.executable { Some(0o755) } else { None },
         ));
     }
 
-    (files, warnings)
+    Ok(files)
 }
 
-#[cfg(test)]
-mod tests {
-    use std::collections::HashMap;
+fn adapt_rule_spec(spec: NormalizedRuleSpec) -> Result<Vec<GeneratedFile>> {
+    let description = spec.frontmatter.description.unwrap_or_default();
 
-    use super::*;
-    use crate::types::{Execution, SpecKind};
+    let frontmatter = CursorRuleFrontmatter {
+        description,
+        always_apply: true,
+    };
 
-    fn test_spec() -> NormalizedSpec {
-        NormalizedSpec {
-            source_path: "/test/spec.md".into(),
-            id: "commit".to_string(),
-            kind: SpecKind::Skill,
-            paths: None,
-            name: "Commit Changes".to_string(),
-            description: "Create commits".to_string(),
-            version: 1,
-            user_invocable: true,
-            agent_invocable: false,
-            body: "# Commit\n\nBody.".to_string(),
-            execution: Execution::default(),
-            tools: vec![],
-            skill: None,
-            supporting_files: vec![],
-            targets: vec![Provider::Cursor],
-            provider_overrides: HashMap::new(),
-            routing: None,
-        }
-    }
+    let frontmatter_str = serde_yml::to_string(&frontmatter)?;
+    let body = spec.body.trim();
+    let content = format!("---\n{frontmatter_str}\n---\n\n{body}").into_bytes();
 
-    #[test]
-    fn test_cursor_uses_id_not_name() {
-        let (files, _) = adapt_cursor(&test_spec(), &PresetsMap::new());
-        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
-        // Cursor uses spec.id for name, not spec.name
-        assert!(content.contains("name: commit"));
-        assert!(!content.contains("name: Commit Changes"));
-    }
+    let path = Path::new("generated")
+        .join("cursor")
+        .join("rules")
+        .join(format!("{}.mdc", spec.frontmatter.id));
 
-    #[test]
-    fn test_cursor_no_tools_or_model() {
-        let (files, _) = adapt_cursor(&test_spec(), &PresetsMap::new());
-        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
-        assert!(!content.contains("tools"));
-        assert!(!content.contains("model"));
-        assert!(!content.contains("allowed-tools"));
-    }
-
-    fn test_rule() -> NormalizedSpec {
-        NormalizedSpec {
-            source_path: "/test/rule.md".into(),
-            id: "api-design".to_string(),
-            kind: SpecKind::Rule,
-            paths: None,
-            name: "api-design".to_string(),
-            description: "API design rules".to_string(),
-            version: 1,
-            user_invocable: false,
-            agent_invocable: false,
-            body: "# API Design\n\nValidate inputs.".to_string(),
-            execution: Execution::default(),
-            tools: vec![],
-            skill: None,
-            supporting_files: vec![],
-            targets: vec![Provider::Cursor],
-            provider_overrides: HashMap::new(),
-            routing: None,
-        }
-    }
-
-    #[test]
-    fn test_rule_without_paths_always_apply() {
-        let (files, _) = adapt_cursor(&test_rule(), &PresetsMap::new());
-        assert_eq!(files.len(), 1);
-        assert_eq!(
-            files[0].path.to_str().expect("expected value"),
-            "generated/cursor/rules/api-design.mdc"
-        );
-        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
-        assert!(content.contains("alwaysApply: true"));
-        assert!(!content.contains("globs"));
-    }
-
-    #[test]
-    fn test_rule_with_paths_uses_globs() {
-        let mut spec = test_rule();
-        spec.paths = Some(vec!["src/api/**".to_string()]);
-        let (files, _) = adapt_cursor(&spec, &PresetsMap::new());
-        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
-        assert!(content.contains("globs:"));
-        assert!(content.contains("src/api/**"));
-        assert!(!content.contains("alwaysApply"));
-    }
-
-    #[test]
-    fn test_cursor_skill_path() {
-        let (files, _) = adapt_cursor(&test_spec(), &PresetsMap::new());
-        assert_eq!(
-            files[0].path.to_str().expect("expected value"),
-            "generated/cursor/skills/commit/SKILL.md"
-        );
-    }
+    Ok(vec![GeneratedFile {
+        provider: Provider::Cursor,
+        path,
+        content,
+        mode: None,
+    }])
 }

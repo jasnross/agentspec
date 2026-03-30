@@ -1,0 +1,2 @@
+- Consider deriving id from path instead of requring in frontmatter
+- Do we actually need the normalized types?

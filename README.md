@@ -13,7 +13,6 @@ single source of truth.
 
 ```sh
 agentspec sync                   # compile and sync to all configured targets
-agentspec sync --profile work    # apply a machine profile
 agentspec sync --dry-run         # preview without making changes
 agentspec sync --no-compile      # sync from existing generated output
 agentspec sync --force           # allow overwriting user-owned destination files
@@ -51,10 +50,6 @@ claude = "sonnet"
 opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
 codex = { model = "gpt-5.3-codex", reasoning_effort = "medium" }
 cursor = "fast"
-
-# Machine profiles — merged in when --profile home (or AGENTSPEC_PROFILE=home)
-[profiles.home.balanced]
-opencode = { model = "openai/gpt-5.3-codex", variant = "medium" }
 ```
 
 ## Sync
@@ -68,20 +63,6 @@ tool's config directory in one step. Sync targets are configured in
 [sync.claude]
 mode = "user"       # user | project | path
 strategy = "symlink" # symlink | copy
-
-# Work profile: copy Claude/Cursor output to a shared workspace
-[profiles.work.sync.claude]
-mode = "path"
-strategy = "copy"
-strip_name = true   # remove name: from skill frontmatter (for plugin namespacing)
-agents = "~/Workspace/thoughts/plugin/agents"
-skills = "~/Workspace/thoughts/plugin/skills"
-rules  = "~/Workspace/thoughts/plugin/rules"
-
-[profiles.work.sync.cursor]
-mode = "path"
-strategy = "copy"
-skills = "~/Workspace/.cursor/skills"
 ```
 
 **Modes:**
@@ -99,7 +80,7 @@ skills = "~/Workspace/.cursor/skills"
 
 `agentspec sync` selects providers from explicit sync configuration only:
 
-- Default sync scope is providers configured under `[sync.<provider>]` plus active profile overlays under `[profiles.<name>.sync.<provider>]`.
+- Default sync scope is providers configured under `[sync.<provider>]`.
 - If no providers are configured, sync fails fast with actionable guidance.
 - `--target` requires either configured sync for that provider or explicit CLI-only intent.
 - CLI-only sync is supported with explicit target plus either:
@@ -179,27 +160,6 @@ For OpenCode, `agentspec sync` also patches the `instructions` array in
 > **Note**: Codex rules are not yet synced — the Codex adapter emits individual
 > `.md` rule files but Codex expects a single `~/.codex/AGENTS.md`. A fix is
 > tracked in `TODO.md`.
-
-## Machine Profiles
-
-Use `--profile` to apply a machine-specific overlay at compile or sync time:
-
-```sh
-agentspec sync --profile home
-agentspec compile --profile home
-agentspec validate --profile work
-```
-
-Provider values in `[profiles.<name>.<preset>]` merge over the corresponding
-`[presets.<preset>]` entries at the provider level. Profile overlays also apply
-to `[sync.*]` targets via `[profiles.<name>.sync.<provider>]`.
-
-To make a selection permanent, set the `AGENTSPEC_PROFILE` environment variable
-in your shell profile instead:
-
-```sh
-export AGENTSPEC_PROFILE=home
-```
 
 ## Release Policy
 

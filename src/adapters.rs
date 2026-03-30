@@ -1,9 +1,7 @@
 mod claude;
-mod codex;
 mod cursor;
 mod opencode;
 
-pub use claude::adapt_claude;
-pub use codex::adapt_codex;
-pub use cursor::adapt_cursor;
-pub use opencode::adapt_opencode;
+pub use claude::adapt_claude; // TODO: wire into compile.rs
+pub use cursor::adapt_cursor; // TODO: wire into compile.rs
+pub use opencode::adapt_opencode; // TODO: wire into compile.rs

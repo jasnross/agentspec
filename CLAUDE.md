@@ -18,7 +18,6 @@ cargo install --path .          # reinstall binary after schema changes (see bel
 # From agent-config/ (the spec library that exercises this compiler)
 agentspec validate              # schema + semantic checks only
 agentspec compile               # full pipeline; writes generated/
-agentspec compile --profile home  # with machine profile overlay
 agentspec check                 # verify generated files match compile output
 agentspec sync                  # compile + distribute to tool config dirs
 agentspec sync --dry-run        # preview sync operations without writing
@@ -90,16 +89,27 @@ commit body with `BREAKING CHANGE:`.
 
 ## Clippy
 
-All clippy lint groups are set to `deny` in `Cargo.toml`. Notable ones that
-affect everyday coding:
+Five lint groups (`complexity`, `pedantic`, `perf`, `style`, `suspicious`) are
+denied at `priority = -1` in `Cargo.toml`. Four `restriction` lints are
+additionally opted into: `expect_used`, `panic`, `unwrap_used`,
+`wildcard_enum_match_arm`.
+
+Notable lints that affect everyday coding:
 
 - `unwrap_used` — use `?`, `match`, or an explicit fallback instead of `.unwrap()`
-- `expect_used` — avoid `.expect()` in non-test code; tests are allowed via `clippy.toml` (`allow-expect-in-tests = true`)
+- `expect_used` / `panic` — avoid in non-test code; tests are allowed via
+  `clippy.toml` (`allow-expect-in-tests`, `allow-panic-in-tests`)
 - `uninlined_format_args` — write `format!("{x}")` not `format!("{}", x)`
-- `doc_markdown` — wrap identifiers like `CanonicalSpec`, `MiniJinja`, `OpenCode`
-  in backticks in doc comments
+- `doc_markdown` — wrap identifiers like `NormalizedSpecNew`, `MiniJinja`,
+  `OpenCode` in backticks in doc comments
 - `unnecessary_wraps` — don't return `Result<T>` from functions that can't fail
-- Any `#[allow(clippy::...)]` should include a nearby comment explaining why it's needed and keep scope as narrow as possible (item-level over module-level)
+
+Two pedantic lints are explicitly allowed: `similar_names` (flags unambiguous
+pairs like `dst`/`dest`) and `struct_field_names` (flags structs where fields
+share a suffix like `*_dir`).
+
+Any `#[allow(clippy::...)]` should include a nearby comment explaining why it's
+needed and keep scope as narrow as possible (item-level over module-level).
 
 Run `cargo fmt && cargo clippy --all-targets` before committing; CI enforces both.
 
@@ -120,87 +130,17 @@ src/adapters/cursor.rs
 `main.rs` runs these in order:
 
 1. **Load** — `parse.rs` reads `.md` files from `spec/agents/`, `spec/skills/`, and `spec/rules/`,
-   splits frontmatter from body, produces `Vec<CanonicalSpec>`
+   parses frontmatter via `gray_matter` into typed structs, produces `Vec<Spec>`
 2. **Fragment resolution** — `fragments.rs` renders MiniJinja `{% include %}`
    and `{% with %}` tags in spec bodies
-3. **Schema validation** — `validate.rs` checks frontmatter against
-   `schemas/canonical.schema.json` (embedded at compile time via `include_str!`)
-4. **Normalization** — `validate.rs` applies defaults, deduplicates/sorts tools,
-   resolves targets → `Vec<NormalizedSpec>`
-5. **Preset resolution** — `config.rs` merges machine profile overlays into presets
-6. **Semantic validation** — `validate.rs` checks preset references, tool names, etc.
-7. **Compile** — `compile.rs` dispatches each `(spec, target)` pair to a provider
-   adapter → `CompileResult { files, warnings }`
-8. **Emit** — `emit.rs` writes files to disk (`compile`) or diffs against disk
+3. **Normalization** — `validate.rs` applies defaults → `Vec<NormalizedSpecNew>`
+4. **Semantic validation** — `validate.rs` checks preset references, etc.
+5. **Compile** — `compile.rs` dispatches each `(spec, target)` pair to a provider
+   adapter → `CompileResult { files }`
+6. **Emit** — `emit.rs` writes files to disk (`compile`) or diffs against disk
    (`check`)
-9. **Sync** — `sync.rs` distributes generated files to each tool's config directory
+7. **Sync** — `sync.rs` distributes generated files to each tool's config directory
    via symlink or copy strategy; patches `opencode.json` for rules (`sync` command only)
-
-## Module Map
-
-| Module              | Role                                                                                                                   |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `types.rs`          | All shared data types: `CanonicalSpec`, `NormalizedSpec`, `Execution`, `PresetsMap`, `CompileResult`, `Provider`, etc. |
-| `cli.rs`            | `clap` argument parsing; `CommonArgs` reads `AGENTSPEC_PROFILE` env var                                                |
-| `config.rs`         | `agentspec.toml` discovery and parsing; `resolve_presets()` merges machine profile overlays; `resolve_sync_target()` for sync config |
-| `parse.rs`          | Loads `.md` spec files from disk                                                                                       |
-| `fragments.rs`      | MiniJinja environment setup and fragment rendering                                                                     |
-| `schema.rs`         | Embeds `canonical.schema.json` via `include_str!`; parses it once at startup                                           |
-| `validate.rs`       | Schema validation, normalization, semantic checks                                                                      |
-| `compile.rs`        | Provider dispatch loop; sorts output by path                                                                           |
-| `emit.rs`           | Writes files to disk; `check_generated_state` diffs expected vs actual                                                 |
-| `format.rs`         | YAML frontmatter serializer; hand-rolled to match js-yaml plain-string style                                           |
-| `model.rs`          | Resolves a spec's `execution.preset` name to a `ModelConfig` for a specific provider                                   |
-| `tools.rs`          | Canonical → provider-specific tool name mapping table                                                                  |
-| `adapters/`         | One file per provider: `claude.rs`, `opencode.rs`, `codex.rs`, `cursor.rs`                                             |
-| `sync.rs`           | Sync orchestrator: iterates providers/kinds, dispatches to strategy, patches `opencode.json` |
-| `sync/provider.rs`  | `SyncKind`, destination resolution, `all_sync_kinds`, `patch_opencode_instructions`          |
-| `sync/strategy.rs`  | Symlink and copy sync strategies, stale cleanup, `apply_strip_name`                          |
-| `sync/manifest.rs`  | `.agentspec-manifest.json` ownership tracking for the copy strategy                          |
-
-## Key Types
-
-- **`CanonicalSpec`** — raw parsed spec (path + frontmatter JSON + body string)
-- **`NormalizedSpec`** — post-validation spec with all defaults resolved and fields typed
-- **`PresetsMap`** — `HashMap<preset_name, HashMap<provider, serde_json::Value>>`;
-  produced by `resolve_presets()`, consumed by adapters
-- **`ModelConfig`** — resolved `{ model, variant, reasoning_effort }` for one provider
-- **`GeneratedFile`** — a single output file with provider, relative path, and bytes
-- **`CompileResult`** — `{ files: Vec<GeneratedFile>, warnings: Vec<CompileWarning> }`
-
-## Provider Support Matrix
-
-| Feature                  | Claude | OpenCode           | Codex | Cursor    |
-| ------------------------ | ------ | ------------------ | ----- | --------- |
-| Agents                   | ✓      | ✓                  | —     | —         |
-| Skills (user-invocable)  | ✓      | ✓ (commands/)      | ✓     | ✓         |
-| Skills (agent-invocable) | ✓      | ✓ (skills/)        | —     | —         |
-| Rules                    | ✓      | ✓ (instructions/)  | ✓     | ✓         |
-| Tool map                 | list   | boolean object     | list  | inherited |
-
-## Tool Name Mapping
-
-Canonical tool names (used in spec frontmatter) → provider-specific names live
-in `tools.rs`. Three return values from `tool_name()`:
-
-- `None` — unknown canonical name; emits `MissingMapping` warning
-- `Some(None)` — intentionally unsupported on this provider (silently dropped)
-- `Some(Some(name))` — the provider-specific string to emit
-
-`ls` is Claude-only; all other providers return `Some(None)`.
-To add a new tool, add rows to the `match` table in `tools.rs` and update the
-`CANONICAL` slice in `all_tool_names`.
-
-## Schema Embedding
-
-`schema.rs` uses `include_str!("../schemas/canonical.schema.json")` to embed
-the schema at compile time. After changing the schema, you must rebuild and
-reinstall the binary (`cargo install --path .`) before the updated schema takes
-effect — the installed `agentspec` binary will otherwise still enforce the old
-schema.
-
-The authoritative schema is `schemas/canonical.schema.json` in this repository.
-There is no separate copy in `agent-config/` — the binary is the single source of truth.
 
 ## Integration Tests
 
@@ -213,14 +153,3 @@ There is no separate copy in `agent-config/` — the binary is the single source
   the current `cargo test` invocation, not any previously installed version
 - Assert on hardcoded spec counts (8 agents, 27 skills); update those constants
   when adding or removing specs
-
-## Presets and Profiles
-
-**Presets** (`[presets.*]` in `agentspec.toml`) are named model config bundles
-for different task types (e.g., `deep_review`, `balanced`). Specs reference
-them via `execution.preset:` in frontmatter.
-
-**Profiles** (`[profiles.<name>.*]`) are per-machine overlays that merge over
-presets at compile time. Selected via `--profile <name>` or
-`AGENTSPEC_PROFILE=<name>`. Values at the same `preset → provider` key replace
-the base preset value entirely.

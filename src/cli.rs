@@ -1,9 +1,16 @@
+mod check;
+mod compile;
+mod completions;
+mod sync;
+mod validate;
+
 use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 
-use crate::types::{Provider, SyncMode, SyncStrategy};
+use crate::config::Provider;
+use crate::config::{SyncMode, SyncStrategy};
 
-#[derive(Parser, Debug)]
+#[derive(Debug, Parser)]
 #[command(
     name = "agentspec",
     about = "Compile provider-neutral specs into AI coding agent configurations"
@@ -14,7 +21,7 @@ pub struct Cli {
     pub command: Command,
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Debug, Subcommand)]
 pub enum Command {
     /// Validate spec files against schemas and run semantic checks
     Validate(CommonArgs),
@@ -35,24 +42,16 @@ pub enum Command {
     },
 }
 
-#[derive(Parser, Debug, Default)]
+#[derive(Debug, Default, Parser)]
 pub struct CommonArgs {
-    /// Comma-separated list of target providers (e.g., claude,cursor,codex,opencode)
+    /// Comma-separated list of providers to generate (e.g., claude,cursor,opencode)
+    /// FIXME: this should be specified as multiple arguments, not comma-separated
     #[arg(long, value_delimiter = ',')]
-    pub target: Vec<Provider>,
-
-    /// Profile overlay to apply (e.g., "home", "work"); also reads `AGENTSPEC_PROFILE` env var.
-    /// Set `AGENTSPEC_PROFILE` in your shell profile to make a selection permanent.
-    #[arg(long, env = "AGENTSPEC_PROFILE")]
-    pub profile: Option<String>,
-
-    /// Treat warnings as errors (exit code 1)
-    #[arg(long)]
-    pub strict: bool,
+    pub provider: Vec<Provider>,
 }
 
 /// Arguments for the `sync` subcommand.
-#[derive(Parser, Debug)]
+#[derive(Debug, Parser)]
 pub struct SyncArgs {
     #[command(flatten)]
     pub common: CommonArgs,
@@ -77,7 +76,7 @@ pub struct SyncArgs {
     #[arg(long)]
     pub dest: Option<String>,
 
-    /// Override target mode for all providers
+    /// Override sync mode for all providers
     #[arg(long, value_enum)]
     pub mode: Option<SyncMode>,
 }

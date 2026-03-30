@@ -9,14 +9,14 @@ use walkdir::WalkDir;
 
 use super::manifest::{Manifest, ManifestEntry};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NamePrefixMode {
     Agents,
     Skills,
 }
 
 /// The outcome of a single file sync operation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SyncAction {
     /// File or symlink was newly created.
     Created,
@@ -31,7 +31,7 @@ pub enum SyncAction {
 }
 
 /// A single sync outcome for reporting.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct SyncEntry {
     // Used in unit tests to assert which file was affected; not yet consumed by production code.
     #[allow(dead_code)]
@@ -41,7 +41,7 @@ pub struct SyncEntry {
 
 /// Ensures a symlink at `link` points to `target`.
 ///
-/// Behaviour table:
+/// Behavior table:
 /// - `link` is already a correct symlink → `Unchanged`
 /// - `link` is a symlink pointing elsewhere:
 ///   - if `allow_overwrite` is false and target is outside the managed source dir → error
@@ -240,7 +240,7 @@ pub fn sync_symlinked_dir(
 
 /// Copies a single source file to dest, tracking ownership in the manifest.
 ///
-/// Behaviour:
+/// Behavior:
 /// - `rel_path` not in manifest AND dest exists → backup, copy, record
 /// - `rel_path` in manifest AND content differs → warn, overwrite, update manifest
 /// - `rel_path` in manifest AND content same → `Unchanged`
@@ -374,7 +374,7 @@ pub fn sync_copied_dir(
         for entry in WalkDir::new(source_dir)
             .min_depth(1)
             .into_iter()
-            .filter_map(|e| e.ok())
+            .filter_map(Result::ok)
             .filter(|e| e.file_type().is_file())
         {
             let source = entry.path();
@@ -472,34 +472,33 @@ fn prefix_frontmatter_name(content: &str, prefix: &str) -> String {
     let mut first = true;
     let prefix_marker = format!("{prefix}:");
 
-    content
-        .lines()
-        .map(|line| {
-            if first && line == "---" {
-                first = false;
-                in_frontmatter = true;
-                return format!("{line}\n");
-            }
-
+    content.lines().fold(String::new(), |mut out, line| {
+        if first && line == "---" {
+            first = false;
+            in_frontmatter = true;
+        } else {
             first = false;
 
             if in_frontmatter && !frontmatter_done {
                 if line == "---" {
                     frontmatter_done = true;
                     in_frontmatter = false;
-                    return format!("{line}\n");
-                }
-
-                if let Some(value) = line.strip_prefix("name: ")
+                } else if let Some(value) = line.strip_prefix("name: ")
                     && !value.starts_with(&prefix_marker)
                 {
-                    return format!("name: {prefix}:{value}\n");
+                    out.push_str("name: ");
+                    out.push_str(prefix);
+                    out.push(':');
+                    out.push_str(value);
+                    out.push('\n');
+                    return out;
                 }
             }
-
-            format!("{line}\n")
-        })
-        .collect()
+        }
+        out.push_str(line);
+        out.push('\n');
+        out
+    })
 }
 
 fn lexical_normalize(path: &Path) -> PathBuf {
@@ -539,7 +538,7 @@ fn lexical_normalize(path: &Path) -> PathBuf {
 pub fn apply_prefix_name(dest_dir: &Path, prefix: &str, dry_run: bool) -> Result<()> {
     for entry in WalkDir::new(dest_dir)
         .into_iter()
-        .filter_map(|e| e.ok())
+        .filter_map(Result::ok)
         .filter(|e| {
             if !e.file_type().is_file() {
                 return false;
@@ -573,13 +572,11 @@ pub fn apply_prefix_name(dest_dir: &Path, prefix: &str, dry_run: bool) -> Result
 }
 
 /// Removes `name:` lines from all `SKILL.md` files under `dest_dir`.
-///
-/// Used for work-profile plugin copies where the plugin namespace prefix replaces the
-/// explicit `name:` frontmatter field.
+// FIXME: this isn't needed once we are using structs
 pub fn apply_strip_name(dest_dir: &Path, dry_run: bool) -> Result<()> {
     for entry in WalkDir::new(dest_dir)
         .into_iter()
-        .filter_map(|e| e.ok())
+        .filter_map(Result::ok)
         .filter(|e| e.file_type().is_file() && e.file_name() == "SKILL.md")
     {
         let path = entry.path();
@@ -614,8 +611,11 @@ pub fn apply_strip_name(dest_dir: &Path, dry_run: bool) -> Result<()> {
                     }
                     true
                 })
-                .map(|line| format!("{line}\n"))
-                .collect()
+                .fold(String::new(), |mut out, line| {
+                    out.push_str(line);
+                    out.push('\n');
+                    out
+                })
         };
 
         if stripped != content {
@@ -752,7 +752,7 @@ mod tests {
         // A .bak.<timestamp> file should exist
         let bak_exists = fs::read_dir(&dst)
             .expect("expected value")
-            .filter_map(|e| e.ok())
+            .filter_map(Result::ok)
             .any(|e| e.file_name().to_string_lossy().starts_with("foo.md.bak."));
         assert!(bak_exists, "expected backup file");
     }
@@ -774,7 +774,7 @@ mod tests {
         );
         let bak_exists = fs::read_dir(&dst)
             .expect("expected value")
-            .filter_map(|e| e.ok())
+            .filter_map(Result::ok)
             .any(|e| e.file_name().to_string_lossy().starts_with("foo.md.bak."));
         assert!(!bak_exists, "backup should not be created");
     }
@@ -917,7 +917,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&dest).expect("expected value"), "new");
         let bak_exists = fs::read_dir(&dst)
             .expect("expected value")
-            .filter_map(|e| e.ok())
+            .filter_map(Result::ok)
             .any(|e| e.file_name().to_string_lossy().starts_with("foo.md.bak."));
         assert!(bak_exists, "expected backup file");
     }

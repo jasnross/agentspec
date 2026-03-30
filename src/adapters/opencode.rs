@@ -1,353 +1,252 @@
 use std::path::Path;
 
+use anyhow::Result;
 use indexmap::IndexMap;
-use serde_json::Value;
+use serde::Serialize;
+use strum::VariantArray as _;
 
-use crate::format::render_markdown_with_frontmatter;
-use crate::model::resolve_provider_model_config;
-use crate::tools::{ToolMapping, all_tool_names, tool_name};
-use crate::types::{
-    CompileWarning, GeneratedFile, NormalizedSpec, PresetsMap, Provider, SpecKind, WarnKind,
+use crate::compile::GeneratedFile;
+use crate::presets::ProviderPresetsMap;
+use crate::config::Provider;
+use crate::spec::{
+    NormalizedAgentSpec, NormalizedRuleSpec, NormalizedSkillSpec, NormalizedSpec, ToolFrontmatter,
 };
+
+// See: https://opencode.ai/docs/agents/#markdown
+#[derive(Serialize)]
+struct OpenCodeAgentFrontmatter {
+    description: String,
+    mode: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    variant: Option<String>,
+    tools: IndexMap<String, bool>,
+}
+
+// See: https://opencode.ai/docs/commands/#markdown
+#[derive(Serialize)]
+struct OpenCodeCommandFrontmatter {
+    description: String,
+    agent: &'static str,
+    subtask: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+}
+
+// See: https://opencode.ai/docs/skills/#write-frontmatter
+#[derive(Serialize)]
+struct OpenCodeSkillFrontmatter {
+    name: String,
+    description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    variant: Option<String>,
+    tools: IndexMap<String, bool>,
+}
+
+// TODO: Remember that for OpenCode we need to add the rules as instructions in opencode.json when syncing
+// See: https://opencode.ai/docs/rules/#custom-instructions
+
+pub fn adapt_opencode(
+    spec: NormalizedSpec,
+    presets: &ProviderPresetsMap,
+) -> Result<Vec<GeneratedFile>> {
+    match spec {
+        NormalizedSpec::Agent(s) => adapt_agent_spec(s, presets),
+        NormalizedSpec::Skill(s) => adapt_skill_spec(s, presets),
+        NormalizedSpec::Rule(s) => adapt_rule_spec(&s),
+    }
+}
+
+fn adapt_agent_spec(
+    spec: NormalizedAgentSpec,
+    presets: &ProviderPresetsMap,
+) -> Result<Vec<GeneratedFile>> {
+    let id = spec.frontmatter.id;
+    let description = spec.frontmatter.description;
+
+    let preset = spec
+        .frontmatter
+        .execution
+        .and_then(|x| x.preset)
+        .and_then(|x| presets.get(&x))
+        .and_then(|x| x.opencode.clone());
+    let model = preset.as_ref().and_then(|x| x.model.clone());
+    let variant = preset.as_ref().and_then(|x| x.variant.clone());
+
+    let tools: Vec<ToolFrontmatter> = spec
+        .frontmatter
+        .capabilities
+        .and_then(|x| x.tools)
+        .into_iter()
+        .flatten()
+        .collect();
+
+    let tools = build_tool_map(&tools);
+
+    let frontmatter = OpenCodeAgentFrontmatter {
+        description,
+        mode: "subagent",
+        model,
+        variant,
+        tools,
+    };
+
+    let frontmatter_str = serde_yml::to_string(&frontmatter)?;
+    let body = spec.body;
+    let content = format!("---\n{frontmatter_str}\n---\n\n{}", body.trim()).into_bytes();
+
+    Ok(vec![GeneratedFile {
+        provider: Provider::OpenCode,
+        path: Path::new("generated")
+            .join("opencode")
+            .join("agents")
+            .join(format!("{id}.md")),
+        content,
+        mode: None,
+    }])
+}
+
+fn adapt_skill_spec(
+    spec: NormalizedSkillSpec,
+    presets: &ProviderPresetsMap,
+) -> Result<Vec<GeneratedFile>> {
+    let id = spec.frontmatter.id;
+    let description = spec.frontmatter.description.unwrap_or_default();
+    let user_invocable = spec.frontmatter.user_invocable;
+    let agent_invocable = spec.frontmatter.agent_invocable;
+
+    let preset = spec
+        .frontmatter
+        .execution
+        .and_then(|x| x.preset)
+        .and_then(|x| presets.get(&x))
+        .and_then(|x| x.opencode.clone());
+    let model = preset.as_ref().and_then(|x| x.model.clone());
+    let variant = preset.as_ref().and_then(|x| x.variant.clone());
+
+    let tools: Vec<ToolFrontmatter> = spec
+        .frontmatter
+        .capabilities
+        .and_then(|x| x.tools)
+        .into_iter()
+        .flatten()
+        .collect();
+
+    let tools = build_tool_map(&tools);
+
+    let body = spec.body;
+    let supporting_files = spec.supporting_files;
+
+    let mut files = Vec::new();
+
+    if user_invocable {
+        let frontmatter = OpenCodeCommandFrontmatter {
+            description: description.clone(),
+            agent: "build", // FIXME: support `agent` in config
+            subtask: true,  // FIXME: support `background` in config
+            model: model.clone(),
+        };
+        let frontmatter_str = serde_yml::to_string(&frontmatter)?;
+        let content = format!("---\n{frontmatter_str}\n---\n\n{}", body.trim()).into_bytes();
+        files.push(GeneratedFile {
+            provider: Provider::OpenCode,
+            path: Path::new("generated")
+                .join("opencode")
+                .join("commands")
+                .join(format!("{id}.md")),
+            content,
+            mode: None,
+        });
+    }
+
+    if agent_invocable {
+        let frontmatter = OpenCodeSkillFrontmatter {
+            name: id.clone(),
+            description,
+            model,
+            variant,
+            tools,
+        };
+        let frontmatter_str = serde_yml::to_string(&frontmatter)?;
+        let content = format!("---\n{frontmatter_str}\n---\n\n{}", body.trim()).into_bytes();
+
+        let skill_dir = Path::new("generated")
+            .join("opencode")
+            .join("skills")
+            .join(&id);
+
+        files.push(GeneratedFile {
+            provider: Provider::OpenCode,
+            path: skill_dir.join("SKILL.md"),
+            content,
+            mode: None,
+        });
+
+        for sf in supporting_files {
+            files.push(GeneratedFile::binary(
+                Provider::OpenCode,
+                skill_dir.join(&sf.relative_path),
+                sf.content,
+                if sf.executable { Some(0o755) } else { None },
+            ));
+        }
+    }
+
+    Ok(files)
+}
+
+#[allow(clippy::unnecessary_wraps)] // FIXME: decide on return type
+fn adapt_rule_spec(spec: &NormalizedRuleSpec) -> Result<Vec<GeneratedFile>> {
+    let content = format!("{}\n", spec.body.trim()).into_bytes();
+    let path = Path::new("generated")
+        .join("opencode")
+        .join("rules")
+        .join(&spec.frontmatter.id)
+        .join("AGENTS.md");
+
+    Ok(vec![GeneratedFile {
+        provider: Provider::OpenCode,
+        path,
+        content,
+        mode: None,
+    }])
+}
+
+/// Map a canonical tool to its `OpenCode` tool name.
+fn opencode_tool_name(tool: &ToolFrontmatter) -> &'static str {
+    match tool {
+        ToolFrontmatter::Read => "read",
+        ToolFrontmatter::Write => "write",
+        ToolFrontmatter::Edit => "edit",
+        ToolFrontmatter::Grep => "grep",
+        ToolFrontmatter::Glob => "glob",
+        ToolFrontmatter::Bash => "bash",
+        ToolFrontmatter::WebFetch => "webfetch",
+        ToolFrontmatter::WebSearch => "websearch",
+        ToolFrontmatter::Question => "question",
+        ToolFrontmatter::Tasks => "todowrite",
+    }
+}
 
 /// Build the boolean tool map used by `OpenCode` agents and agent-invocable skills.
 ///
-/// Creates a universe of all tools that have an `OpenCode` mapping, sets them all to false,
-/// then sets the spec's tools to true. This matches the TypeScript behavior exactly.
-fn build_tool_map(
-    spec: &NormalizedSpec,
-    warnings: &mut Vec<CompileWarning>,
-) -> serde_json::Map<String, Value> {
-    // Build sorted universe of all OpenCode tool names (excludes intentionally unsupported)
-    let tool_universe = all_tool_names(Provider::OpenCode);
+/// Initializes all ToolFrontmatter-expressible `OpenCode` tools to false, then enables the ones
+/// listed in the spec. Tools outside this set (list, lsp, patch, skill) are omitted and use
+/// `OpenCode`'s default (all enabled).
+fn build_tool_map(tools: &[ToolFrontmatter]) -> IndexMap<String, bool> {
+    let mut map: IndexMap<String, bool> = ToolFrontmatter::VARIANTS
+        .iter()
+        .map(|t| (opencode_tool_name(t).to_string(), false))
+        .collect();
 
-    // Initialize all to false
-    let mut tools_map = serde_json::Map::new();
-    for name in &tool_universe {
-        tools_map.insert((*name).to_string(), Value::Bool(false));
+    for tool in tools {
+        map.insert(opencode_tool_name(tool).to_string(), true);
     }
 
-    // Set spec's tools to true
-    for tool in &spec.tools {
-        match tool_name(tool.as_str(), Provider::OpenCode) {
-            ToolMapping::Unknown => {
-                warnings.push(CompileWarning {
-                    code: WarnKind::MissingMapping,
-                    provider: Provider::OpenCode,
-                    spec_id: spec.id.clone(),
-                    field: format!("capabilities.tools.{tool}"),
-                    message: format!("Tool '{tool}' does not map to an OpenCode tool."),
-                });
-            }
-            ToolMapping::Unsupported => {
-                // Intentionally unsupported on OpenCode (e.g., ls) → silently skip
-            }
-            ToolMapping::Mapped(name) => {
-                tools_map.insert(name.to_string(), Value::Bool(true));
-            }
-        }
-    }
+    map.sort_keys();
 
-    tools_map
-}
-
-#[allow(clippy::too_many_lines)] // Keep this as one function so agent/skill/rule shaping stays in one place.
-pub fn adapt_opencode(
-    spec: &NormalizedSpec,
-    profiles: &PresetsMap,
-) -> (Vec<GeneratedFile>, Vec<CompileWarning>) {
-    let mut warnings = Vec::new();
-
-    if spec.kind == SpecKind::Rule {
-        // `OpenCode` has no per-file activation trigger, so `paths:` is intentionally dropped.
-        // Rule content is emitted as plain body; `agentspec sync` patches `opencode.json`
-        // with the resulting file paths via `patch_opencode_instructions`.
-        let content = format!("{}\n", spec.body.trim());
-        let path = Path::new("generated")
-            .join("opencode")
-            .join("rules")
-            .join(&spec.id)
-            .join("AGENTS.md");
-        return (
-            vec![GeneratedFile::text(Provider::OpenCode, path, content)],
-            warnings,
-        );
-    }
-
-    let resolved_model = spec
-        .execution
-        .preset
-        .as_ref()
-        .map(|profile| resolve_provider_model_config(profile, Provider::OpenCode, profiles))
-        .unwrap_or_default();
-
-    let tools_map = build_tool_map(spec, &mut warnings);
-
-    // Build base frontmatter (used for agents and agent-invocable skills)
-    let mut fm = IndexMap::new();
-    fm.insert(
-        "description".to_string(),
-        Value::String(spec.description.clone()),
-    );
-    fm.insert("tools".to_string(), Value::Object(tools_map));
-
-    if let Some(ref model) = resolved_model.model {
-        fm.insert("model".to_string(), Value::String(model.clone()));
-    }
-
-    if let Some(ref variant) = resolved_model.variant {
-        fm.insert("variant".to_string(), Value::String(variant.clone()));
-    }
-
-    if spec.kind == SpecKind::Agent
-        && let Some(ref mode) = spec.execution.mode
-    {
-        fm.insert("mode".to_string(), Value::String(mode.clone()));
-    }
-
-    if let Some(temp) = spec.execution.temperature {
-        fm.insert(
-            "temperature".to_string(),
-            Value::Number(
-                serde_json::Number::from_f64(temp)
-                    .unwrap_or_else(|| serde_json::Number::from(0u64)),
-            ),
-        );
-    }
-
-    // Skills: dual output based on invocability
-    if spec.kind == SpecKind::Skill {
-        let mut files = Vec::new();
-
-        if spec.user_invocable {
-            let mut cmd_fm = IndexMap::new();
-            cmd_fm.insert(
-                "description".to_string(),
-                Value::String(spec.description.clone()),
-            );
-            if let Some(ref skill_meta) = spec.skill
-                && let Some(ref delegate_to) = skill_meta.delegate_to
-            {
-                cmd_fm.insert("agent".to_string(), Value::String(delegate_to.clone()));
-            }
-            if let Some(ref model) = resolved_model.model {
-                cmd_fm.insert("model".to_string(), Value::String(model.clone()));
-            }
-            files.push(GeneratedFile::text(
-                Provider::OpenCode,
-                Path::new("generated")
-                    .join("opencode")
-                    .join("commands")
-                    .join(format!("{}.md", spec.id)),
-                render_markdown_with_frontmatter(&cmd_fm, &spec.body),
-            ));
-        }
-
-        if spec.agent_invocable {
-            // Agent-invocable skills get the full frontmatter with tools map
-            fm.insert("name".to_string(), Value::String(spec.name.clone()));
-            let skill_dir = Path::new("generated")
-                .join("opencode")
-                .join("skills")
-                .join(&spec.id);
-            files.push(GeneratedFile::text(
-                Provider::OpenCode,
-                skill_dir.join("SKILL.md"),
-                render_markdown_with_frontmatter(&fm, &spec.body),
-            ));
-            for sf in &spec.supporting_files {
-                files.push(GeneratedFile::binary(
-                    Provider::OpenCode,
-                    skill_dir.join(&sf.relative_path),
-                    sf.content.clone(),
-                    if sf.executable { Some(0o755) } else { None },
-                ));
-            }
-        }
-
-        return (files, warnings);
-    }
-
-    // Agents → flat files
-    let files = vec![GeneratedFile::text(
-        Provider::OpenCode,
-        Path::new("generated")
-            .join("opencode")
-            .join("agents")
-            .join(format!("{}.md", spec.id)),
-        render_markdown_with_frontmatter(&fm, &spec.body),
-    )];
-
-    (files, warnings)
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::HashMap;
-
-    use super::*;
-    use crate::types::{Execution, SkillMeta};
-
-    fn test_agent() -> NormalizedSpec {
-        NormalizedSpec {
-            source_path: "/test/agent.md".into(),
-            id: "code-reviewer".to_string(),
-            kind: SpecKind::Agent,
-            paths: None,
-            name: "code-reviewer".to_string(),
-            description: "Reviews code".to_string(),
-            version: 1,
-            user_invocable: false,
-            agent_invocable: true,
-            body: "# Code Reviewer\n\nReview code.".to_string(),
-            execution: Execution {
-                mode: Some("subagent".to_string()),
-                ..Default::default()
-            },
-            tools: vec!["bash".to_string(), "read".to_string()],
-            skill: None,
-            supporting_files: vec![],
-            targets: vec![Provider::OpenCode],
-            provider_overrides: HashMap::new(),
-            routing: None,
-        }
-    }
-
-    fn test_skill() -> NormalizedSpec {
-        NormalizedSpec {
-            source_path: "/test/skill.md".into(),
-            id: "commit".to_string(),
-            kind: SpecKind::Skill,
-            paths: None,
-            name: "commit".to_string(),
-            description: "Create commits".to_string(),
-            version: 1,
-            user_invocable: true,
-            agent_invocable: false,
-            body: "# Commit\n\nBody.".to_string(),
-            execution: Execution::default(),
-            tools: vec!["bash".to_string()],
-            skill: None,
-            supporting_files: vec![],
-            targets: vec![Provider::OpenCode],
-            provider_overrides: HashMap::new(),
-            routing: None,
-        }
-    }
-
-    #[test]
-    fn test_agent_has_boolean_tool_map() {
-        let (files, _) = adapt_opencode(&test_agent(), &PresetsMap::new());
-        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
-        assert!(content.contains("bash: true"));
-        assert!(content.contains("read: true"));
-        assert!(content.contains("edit: false")); // not in spec's tools
-    }
-
-    #[test]
-    fn test_agent_has_mode() {
-        let (files, _) = adapt_opencode(&test_agent(), &PresetsMap::new());
-        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
-        assert!(content.contains("mode: subagent"));
-    }
-
-    #[test]
-    fn test_agent_path() {
-        let (files, _) = adapt_opencode(&test_agent(), &PresetsMap::new());
-        assert_eq!(
-            files[0].path.to_str().expect("expected value"),
-            "generated/opencode/agents/code-reviewer.md"
-        );
-    }
-
-    #[test]
-    fn test_user_invocable_skill_creates_command() {
-        let (files, _) = adapt_opencode(&test_skill(), &PresetsMap::new());
-        assert_eq!(files.len(), 1); // only command, not agent-invocable
-        assert_eq!(
-            files[0].path.to_str().expect("expected value"),
-            "generated/opencode/commands/commit.md"
-        );
-    }
-
-    #[test]
-    fn test_both_invocable_creates_two_files() {
-        let mut spec = test_skill();
-        spec.agent_invocable = true;
-
-        let (files, _) = adapt_opencode(&spec, &PresetsMap::new());
-        assert_eq!(files.len(), 2);
-        let paths: Vec<String> = files
-            .iter()
-            .map(|f| f.path.to_str().expect("expected value").to_string())
-            .collect();
-        assert!(paths.iter().any(|p| p.contains("commands/")));
-        assert!(paths.iter().any(|p| p.contains("skills/")));
-    }
-
-    #[test]
-    fn test_command_with_delegate_to() {
-        let mut spec = test_skill();
-        spec.skill = Some(SkillMeta {
-            delegate_to: Some("code-reviewer".to_string()),
-            ..Default::default()
-        });
-
-        let (files, _) = adapt_opencode(&spec, &PresetsMap::new());
-        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
-        assert!(content.contains("agent: code-reviewer"));
-    }
-
-    fn test_rule() -> NormalizedSpec {
-        NormalizedSpec {
-            source_path: "/test/rule.md".into(),
-            id: "api-design".to_string(),
-            kind: SpecKind::Rule,
-            paths: Some(vec!["src/api/**".to_string()]),
-            name: "api-design".to_string(),
-            description: "API design rules".to_string(),
-            version: 1,
-            user_invocable: false,
-            agent_invocable: false,
-            body: "# API Design\n\nValidate inputs.".to_string(),
-            execution: Execution::default(),
-            tools: vec![],
-            skill: None,
-            supporting_files: vec![],
-            targets: vec![Provider::OpenCode],
-            provider_overrides: HashMap::new(),
-            routing: None,
-        }
-    }
-
-    #[test]
-    fn test_rule_produces_agents_md() {
-        let (files, warnings) = adapt_opencode(&test_rule(), &PresetsMap::new());
-        assert!(warnings.is_empty());
-        assert_eq!(files.len(), 1);
-        assert_eq!(
-            files[0].path.to_str().expect("expected value"),
-            "generated/opencode/rules/api-design/AGENTS.md"
-        );
-        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
-        assert!(
-            !content.contains("---"),
-            "opencode rule should have no frontmatter"
-        );
-        assert!(
-            !content.contains("src/api/**"),
-            "paths should be dropped for opencode"
-        );
-        assert!(content.contains("# API Design"));
-    }
-
-    #[test]
-    fn test_missing_tool_mapping_warns() {
-        let mut spec = test_agent();
-        spec.tools = vec!["unknown_tool".to_string()];
-
-        let (_, warnings) = adapt_opencode(&spec, &PresetsMap::new());
-        assert_eq!(warnings.len(), 1);
-        assert_eq!(warnings[0].code, WarnKind::MissingMapping);
-    }
+    map
 }

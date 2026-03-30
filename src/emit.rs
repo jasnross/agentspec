@@ -5,7 +5,8 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use walkdir::WalkDir;
 
-use crate::types::{GeneratedFile, Provider};
+use crate::config::Provider;
+use crate::compile::GeneratedFile;
 
 /// Write all generated files to disk.
 ///
@@ -15,11 +16,11 @@ use crate::types::{GeneratedFile, Provider};
 pub fn write_generated_files(
     files: &[GeneratedFile],
     output_dir: &Path,
-    targets: &[Provider],
+    providers: &[Provider],
 ) -> Result<()> {
     // Delete provider directories for all targeted providers (clean slate)
-    for target in targets {
-        let target_dir = output_dir.join(target.to_string());
+    for provider in providers {
+        let target_dir = output_dir.join(provider.to_string());
         if target_dir.exists() {
             fs::remove_dir_all(&target_dir)
                 .with_context(|| format!("failed to delete {}", target_dir.display()))?;
@@ -71,11 +72,11 @@ impl CheckResult {
 /// - Missing: expected file doesn't exist on disk
 /// - Outdated: file exists but content differs
 /// - Unexpected: file exists on disk but isn't in the expected set
-#[allow(clippy::unnecessary_wraps)] // Result retained: this function reads files and may fail in future
+#[allow(clippy::unnecessary_wraps)] // FIXME: decide on the return type
 pub fn check_generated_state(
     expected: &[GeneratedFile],
     base_dir: &Path,
-    targets: &[Provider],
+    providers: &[Provider],
 ) -> Result<CheckResult> {
     let mut result = CheckResult::default();
 
@@ -106,15 +107,15 @@ pub fn check_generated_state(
     }
 
     // Check for unexpected files on disk
-    for target in targets {
-        let target_root = base_dir.join("generated").join(target.to_string());
+    for provider in providers {
+        let target_root = base_dir.join("generated").join(provider.to_string());
         if !target_root.exists() {
             continue;
         }
 
         let on_disk: HashSet<String> = WalkDir::new(&target_root)
             .into_iter()
-            .filter_map(|e| e.ok())
+            .filter_map(Result::ok)
             .filter(|e| e.file_type().is_file())
             .filter_map(|e| {
                 e.path()
@@ -141,9 +142,10 @@ pub fn check_generated_state(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::types::Provider;
     use tempfile::TempDir;
+
+    use super::*;
+    use crate::config::Provider;
 
     fn make_file(provider: Provider, rel_path: &str, content: &str) -> GeneratedFile {
         GeneratedFile::text(provider, rel_path, content.to_string())

@@ -3,14 +3,13 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use walkdir::WalkDir;
 
+use crate::config::Provider;
+use crate::config::SyncMode;
 use crate::config::SyncTargetConfig;
-use crate::types::{Provider, SyncMode};
 
-/// The kinds of outputs the sync command distributes, mirroring the `generated/<provider>/` subdirs.
-///
-/// Distinct from `SpecKind` because `OpenCode` emits `commands/` (a separate directory) from
-/// the same `Skill` spec kind — the two-level mapping is intentional.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The kinds of outputs the sync command distributes, mirroring the `generated/<provider>/`
+/// subdirectories.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SyncKind {
     Agents,
     Commands,
@@ -38,7 +37,6 @@ pub fn all_sync_kinds(provider: Provider) -> Vec<SyncKind> {
     match provider {
         Provider::Claude => vec![SyncKind::Agents, SyncKind::Rules, SyncKind::Skills],
         Provider::Cursor => vec![SyncKind::Rules, SyncKind::Skills],
-        Provider::Codex => vec![SyncKind::Skills],
         Provider::OpenCode => vec![
             SyncKind::Agents,
             SyncKind::Commands,
@@ -55,7 +53,6 @@ pub fn user_dest_dir(provider: Provider, kind: SyncKind, home: &Path) -> PathBuf
     match provider {
         Provider::Claude => home.join(".claude").join(kind.dir_name()),
         Provider::Cursor => home.join(".cursor").join(kind.dir_name()),
-        Provider::Codex => home.join(".codex").join(kind.dir_name()),
         Provider::OpenCode => home.join(".config").join("opencode").join(kind.dir_name()),
     }
 }
@@ -65,7 +62,6 @@ pub fn project_dest_dir(provider: Provider, kind: SyncKind, cwd: &Path) -> PathB
     let tool_dir = match provider {
         Provider::Claude => ".claude",
         Provider::Cursor => ".cursor",
-        Provider::Codex => ".codex",
         Provider::OpenCode => ".opencode",
     };
     cwd.join(tool_dir).join(kind.dir_name())
@@ -169,7 +165,7 @@ pub fn patch_opencode_instructions(
             .min_depth(1)
             .follow_links(true) // dest entries may be directory-level symlinks (symlink strategy)
             .into_iter()
-            .filter_map(|e| e.ok())
+            .filter_map(Result::ok)
             .filter(|e| e.file_type().is_file() && e.file_name() == "AGENTS.md")
             .map(|e| e.path().to_string_lossy().into_owned())
             .collect()
@@ -218,8 +214,9 @@ pub fn patch_opencode_instructions(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::PathBuf;
+
+    use super::*;
 
     fn home() -> PathBuf {
         PathBuf::from("/home/user")
@@ -268,13 +265,6 @@ mod tests {
         };
         let result = resolve_dest_dir(Provider::Claude, SyncKind::Agents, &config, &home(), &cwd());
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_all_sync_kinds_codex_skips_rules() {
-        let kinds = all_sync_kinds(Provider::Codex);
-        assert_eq!(kinds, vec![SyncKind::Skills]);
-        assert!(!kinds.contains(&SyncKind::Rules));
     }
 
     #[test]

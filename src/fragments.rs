@@ -7,7 +7,37 @@ use minijinja::value::Kwargs;
 use minijinja::{Environment, State};
 use walkdir::WalkDir;
 
-use crate::types::CanonicalSpec;
+use crate::spec::Spec;
+
+// TODO: rename to template.rs and clean up
+
+/// Resolve fragment references in spec bodies by rendering them through `MiniJinja`.
+///
+/// Each spec body is treated as an inline template. Specs that contain no template
+/// syntax pass through unchanged.
+pub fn resolve_fragments(specs: Vec<Spec>, env: &Environment<'_>) -> Result<Vec<Spec>> {
+    let mut resolved = Vec::with_capacity(specs.len());
+
+    for mut spec in specs {
+        let template = env
+            .template_from_str(spec.body())
+            .with_context(|| format!("failed to parse template in {}", spec.path().display()))?;
+
+        let body = template
+            .render(minijinja::context! {})
+            .with_context(|| format!("failed to resolve fragments in {}", spec.path().display()))?;
+
+        match &mut spec {
+            Spec::Agent(agent_spec) => agent_spec.body = body,
+            Spec::Skill(skill_spec) => skill_spec.body = body,
+            Spec::Rule(rule_spec) => rule_spec.body = body,
+        }
+
+        resolved.push(spec);
+    }
+
+    Ok(resolved)
+}
 
 /// Load fragment files from a directory. Returns a map of fragment name to content.
 ///
@@ -20,11 +50,12 @@ pub fn load_fragments(fragments_dir: &Path) -> Result<HashMap<String, String>> {
         return Ok(fragments);
     }
 
-    for entry in WalkDir::new(fragments_dir)
+    let entries = WalkDir::new(fragments_dir)
         .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file() && e.path().extension().is_some_and(|ext| ext == "md"))
-    {
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file() && e.path().extension().is_some_and(|ext| ext == "md"));
+
+    for entry in entries {
         let path = entry.path();
         let relative = path
             .strip_prefix(fragments_dir)
@@ -48,46 +79,25 @@ pub fn load_fragments(fragments_dir: &Path) -> Result<HashMap<String, String>> {
 /// (e.g., fragment "review/prompt-contract" → template "review/prompt-contract.md").
 /// This matches the `{% include "review/prompt-contract.md" %}` syntax used in specs.
 ///
-/// Fragments are loaded lazily via a source callback — they are only parsed when
-/// actually referenced by a `{% include %}`. This is important because fragments
-/// may still contain Handlebars syntax during the migration period (Phases 3-7).
-///
-/// A custom `include_indented` function is registered to support Handlebars-style
-/// auto-indentation of included content.
-pub fn build_environment(
-    fragments: &HashMap<String, String>,
-) -> (Environment<'static>, Vec<String>) {
+/// A custom `include_indented` function is registered to support
+/// indentation-aware includes.
+pub fn build_environment(fragments: &HashMap<String, String>) -> Result<Environment<'static>> {
     let mut env = Environment::new();
-    // Lenient: undefined variables evaluate as falsy rather than erroring.
-    // This matches Handlebars semantics where optional boolean flags (e.g.,
-    // `writeable`, `pr_specific`) default to falsy when not passed by the caller.
+    // Lenient: undefined variables evaluate as falsy rather than erroring,
+    // which is useful for optional boolean flags in templates.
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
-    let mut warnings = Vec::new();
 
-    // Register each fragment as a template with .md suffix.
-    // Fragments are registered eagerly — if any contain invalid MiniJinja syntax
-    // (e.g., Handlebars syntax pre-migration), we skip them with a warning.
-    // They'll only cause an error if actually referenced by a spec.
     for (name, content) in fragments {
         let template_name = format!("{name}.md");
-        match env.add_template_owned(template_name.clone(), content.clone()) {
-            Ok(()) => {}
-            Err(e) => {
-                // Fragment contains syntax MiniJinja can't parse (likely Handlebars).
-                // This is expected during the migration period. The fragment will
-                // cause a "template not found" error if a spec tries to include it.
-                warnings.push(format!(
-                    "skipping fragment '{template_name}' (parse error: {e})"
-                ));
-            }
-        }
+        env.add_template_owned(template_name.clone(), content.clone())
+            .with_context(|| format!("failed to parse fragment '{template_name}'"))?;
     }
 
     // Register the include_indented custom function for indentation-aware includes.
     // Usage: {{ include_indented("fragment/name.md", indent=4) }}
     env.add_function("include_indented", include_indented);
 
-    (env, warnings)
+    Ok(env)
 }
 
 /// Custom function that renders a template and indents every line by the specified amount.
@@ -105,7 +115,7 @@ fn include_indented(
     let indent: usize = kwargs.get::<usize>("indent").unwrap_or(0);
     kwargs.assert_all_used()?;
 
-    let tmpl = state.env().get_template(&template_name)?;
+    let template = state.env().get_template(&template_name)?;
 
     // Pass the caller's known variables as context so {% with %} vars propagate.
     let known: std::collections::BTreeMap<String, minijinja::Value> = state
@@ -113,7 +123,7 @@ fn include_indented(
         .iter()
         .filter_map(|name| state.lookup(name).map(|v| (name.to_string(), v)))
         .collect();
-    let rendered = tmpl.render(known)?;
+    let rendered = template.render(known)?;
 
     if indent == 0 {
         return Ok(rendered);
@@ -143,46 +153,12 @@ fn include_indented(
     }
 }
 
-/// Check if a string contains `MiniJinja` template syntax.
-///
-/// Detects `{% ... %}` block tags and `{{ ... }}` expression tags.
-fn contains_minijinja_syntax(body: &str) -> bool {
-    body.contains("{%") || body.contains("{{")
-}
-
-/// Resolve fragment references in spec bodies by rendering them through `MiniJinja`.
-///
-/// Each spec body is treated as an inline template. Specs that contain no template
-/// syntax pass through unchanged.
-pub fn resolve_fragments(
-    specs: Vec<CanonicalSpec>,
-    env: &Environment<'_>,
-) -> Result<Vec<CanonicalSpec>> {
-    let mut resolved = Vec::with_capacity(specs.len());
-
-    for mut spec in specs {
-        // Only process specs that contain MiniJinja template syntax.
-        // We specifically check for `{%` (block tags like {% include %}, {% with %})
-        // rather than `{{` alone, because `{{` also matches Handlebars syntax
-        // (e.g., `{{> partial}}`) which is present before the Phase 8 migration.
-        if contains_minijinja_syntax(&spec.body) {
-            let tmpl = env
-                .template_from_str(&spec.body)
-                .with_context(|| format!("failed to parse template in {}", spec.path.display()))?;
-            spec.body = tmpl.render(minijinja::context! {}).with_context(|| {
-                format!("failed to resolve fragments in {}", spec.path.display())
-            })?;
-        }
-        resolved.push(spec);
-    }
-
-    Ok(resolved)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::fs;
+
+    use super::*;
+    use crate::spec::{AgentFrontmatter, AgentSpec};
 
     #[test]
     fn test_load_fragments() {
@@ -217,7 +193,7 @@ mod tests {
         let mut fragments = HashMap::new();
         fragments.insert("greeting".to_string(), "Hello, world!".to_string());
 
-        let (env, _warnings) = build_environment(&fragments);
+        let env = build_environment(&fragments).expect("expected value");
         let template = env
             .template_from_str("Before.\n{% include \"greeting.md\" %}\nAfter.")
             .expect("expected value");
@@ -232,13 +208,15 @@ mod tests {
         let mut fragments = HashMap::new();
         fragments.insert("greeting".to_string(), "Hello, {{ name }}!".to_string());
 
-        let (env, _warnings) = build_environment(&fragments);
-        let tmpl = env
+        let env = build_environment(&fragments).expect("expected value");
+        let template = env
             .template_from_str(
                 "{% with name = \"Alice\" %}{% include \"greeting.md\" %}{% endwith %}",
             )
             .expect("expected value");
-        let result = tmpl.render(minijinja::context! {}).expect("expected value");
+        let result = template
+            .render(minijinja::context! {})
+            .expect("expected value");
         assert_eq!(result, "Hello, Alice!");
     }
 
@@ -251,22 +229,24 @@ mod tests {
             "before {% include \"inner.md\" %} after".to_string(),
         );
 
-        let (env, _warnings) = build_environment(&fragments);
-        let tmpl = env
+        let env = build_environment(&fragments).expect("expected value");
+        let template = env
             .template_from_str("start {% include \"outer.md\" %} end")
             .expect("expected value");
-        let result = tmpl.render(minijinja::context! {}).expect("expected value");
+        let result = template
+            .render(minijinja::context! {})
+            .expect("expected value");
         assert_eq!(result, "start before inner content after end");
     }
 
     #[test]
     fn test_missing_fragment_errors() {
         let fragments = HashMap::new();
-        let (env, _warnings) = build_environment(&fragments);
-        let tmpl = env
+        let env = build_environment(&fragments).expect("expected value");
+        let template = env
             .template_from_str("{% include \"nonexistent.md\" %}")
             .expect("expected value");
-        let result = tmpl.render(minijinja::context! {});
+        let result = template.render(minijinja::context! {});
         assert!(result.is_err());
     }
 
@@ -275,29 +255,37 @@ mod tests {
         let mut fragments = HashMap::new();
         fragments.insert("rules".to_string(), "Rule 1\nRule 2\nRule 3".to_string());
 
-        let (env, _warnings) = build_environment(&fragments);
-        let tmpl = env
+        let env = build_environment(&fragments).expect("expected value");
+        let template = env
             .template_from_str("Items:\n   {{ include_indented(\"rules.md\", indent=3) }}")
             .expect("expected value");
-        let result = tmpl.render(minijinja::context! {}).expect("expected value");
+        let result = template
+            .render(minijinja::context! {})
+            .expect("expected value");
         assert_eq!(result, "Items:\n   Rule 1\n   Rule 2\n   Rule 3");
     }
 
     #[test]
     fn test_resolve_fragments_no_syntax() {
         let fragments = HashMap::new();
-        let (env, _warnings) = build_environment(&fragments);
+        let env = build_environment(&fragments).expect("expected value");
 
-        let specs = vec![CanonicalSpec {
+        let specs = vec![Spec::Agent(AgentSpec {
             path: "test.md".into(),
-            fm: serde_json::json!({"id": "test"}),
+            frontmatter: AgentFrontmatter {
+                id: "test".to_string(),
+                description: "test".to_string(),
+                execution: None,
+                capabilities: None,
+            },
             body: "Plain body with no template syntax.".to_string(),
-            kind: crate::types::SpecKind::Agent,
-            supporting_files: vec![],
-        }];
+        })];
 
         let resolved = resolve_fragments(specs, &env).expect("expected value");
-        assert_eq!(resolved[0].body, "Plain body with no template syntax.");
+        let Spec::Agent(ref s) = resolved[0] else {
+            panic!("expected Agent variant")
+        };
+        assert_eq!(s.body, "Plain body with no template syntax.");
     }
 
     #[test]
@@ -305,18 +293,24 @@ mod tests {
         let mut fragments = HashMap::new();
         fragments.insert("footer".to_string(), "-- End --".to_string());
 
-        let (env, _warnings) = build_environment(&fragments);
+        let env = build_environment(&fragments).expect("expected value");
 
-        let specs = vec![CanonicalSpec {
+        let specs = vec![Spec::Agent(AgentSpec {
             path: "test.md".into(),
-            fm: serde_json::json!({"id": "test"}),
+            frontmatter: AgentFrontmatter {
+                id: "test".to_string(),
+                description: "test".to_string(),
+                execution: None,
+                capabilities: None,
+            },
             body: "Body.\n{% include \"footer.md\" %}".to_string(),
-            kind: crate::types::SpecKind::Agent,
-            supporting_files: vec![],
-        }];
+        })];
 
         let resolved = resolve_fragments(specs, &env).expect("expected value");
-        assert_eq!(resolved[0].body, "Body.\n-- End --");
+        let Spec::Agent(ref s) = resolved[0] else {
+            panic!("expected Agent variant")
+        };
+        assert_eq!(s.body, "Body.\n-- End --");
     }
 
     #[test]
@@ -324,13 +318,15 @@ mod tests {
         let mut fragments = HashMap::new();
         fragments.insert("rules".to_string(), "Rule 1\nRule 2\nRule 3".to_string());
 
-        let (env, _warnings) = build_environment(&fragments);
-        let tmpl = env
+        let env = build_environment(&fragments).expect("expected value");
+        let template = env
             .template_from_str(
                 "Items:\n   {% filter indent(3, first=false) %}{% include \"rules.md\" %}{% endfilter %}",
             )
             .expect("expected value");
-        let result = tmpl.render(minijinja::context! {}).expect("expected value");
+        let result = template
+            .render(minijinja::context! {})
+            .expect("expected value");
         assert_eq!(result, "Items:\n   Rule 1\n   Rule 2\n   Rule 3");
     }
 
@@ -342,13 +338,15 @@ mod tests {
             "Hello, {{ name }}!\nWelcome aboard.".to_string(),
         );
 
-        let (env, _warnings) = build_environment(&fragments);
-        let tmpl = env
+        let env = build_environment(&fragments).expect("expected value");
+        let template = env
             .template_from_str(
                 "Message:\n    {% filter indent(4, first=false) %}{% with name = \"Alice\" %}{% include \"greeting.md\" %}{% endwith %}{% endfilter %}",
             )
             .expect("expected value");
-        let result = tmpl.render(minijinja::context! {}).expect("expected value");
+        let result = template
+            .render(minijinja::context! {})
+            .expect("expected value");
         assert_eq!(result, "Message:\n    Hello, Alice!\n    Welcome aboard.");
     }
 }

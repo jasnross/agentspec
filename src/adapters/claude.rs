@@ -1,309 +1,238 @@
 use std::path::Path;
 
-use indexmap::IndexMap;
-use serde_json::Value;
+use anyhow::Result;
+use serde::Serialize;
 
-use crate::format::render_markdown_with_frontmatter;
-use crate::model::resolve_provider_model_config;
-use crate::tools::{ToolMapping, tool_name};
-use crate::types::{
-    CompileWarning, GeneratedFile, NormalizedSpec, PresetsMap, Provider, SpecKind, WarnKind,
+use crate::compile::GeneratedFile;
+use crate::config::Provider;
+use crate::presets::ProviderPresetsMap;
+use crate::spec::{
+    NormalizedAgentSpec, NormalizedRuleSpec, NormalizedSkillSpec, NormalizedSpec, ToolFrontmatter,
 };
 
-/// Map canonical tool IDs to Claude-specific tool names.
-fn map_tools(spec: &NormalizedSpec, warnings: &mut Vec<CompileWarning>) -> Vec<String> {
-    spec.tools
-        .iter()
-        .filter_map(|tool| {
-            match tool_name(tool.as_str(), Provider::Claude) {
-                ToolMapping::Unknown => {
-                    // Unknown canonical tool → warning
-                    warnings.push(CompileWarning {
-                        code: WarnKind::MissingMapping,
-                        provider: Provider::Claude,
-                        spec_id: spec.id.clone(),
-                        field: format!("capabilities.tools.{tool}"),
-                        message: format!("No Claude tool mapping for '{tool}'."),
-                    });
-                    None
-                }
-                ToolMapping::Unsupported => {
-                    // Intentionally unsupported on Claude → silently drop
-                    None
-                }
-                ToolMapping::Mapped(name) => Some(name.to_string()),
-            }
-        })
-        .collect()
+// See: https://code.claude.com/docs/en/sub-agents#supported-frontmatter-fields
+#[derive(Serialize)]
+struct ClaudeAgentFrontmatter {
+    name: String,
+    description: String,
+    model: Option<String>,
+    tools: Option<Vec<ClaudeTool>>,
+}
+
+// See: https://code.claude.com/docs/en/skills#frontmatter-reference
+#[derive(Serialize)]
+struct ClaudeSkillFrontmatter {
+    // FIXME: Is there a way to make skipping None the default for the whole struct?
+    // FIXME: support `agent` in config
+    // FIXME: support `context: fork` via `background` in config: https://code.claude.com/docs/en/skills#run-skills-in-a-subagent
+    name: String,
+    description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    #[serde(rename = "allowed-tools", skip_serializing_if = "Option::is_none")]
+    allowed_tools: Option<Vec<ClaudeTool>>,
+    #[serde(rename = "user-invocable", skip_serializing_if = "Option::is_none")]
+    user_invocable: Option<bool>,
+    #[serde(
+        rename = "disable-model-invocation",
+        skip_serializing_if = "Option::is_none"
+    )]
+    disable_model_invocation: Option<bool>,
+}
+
+// FIXME: Should we consider setting all default Claude tools in the generated file? Otherwise Claude's default behavior is to disallow any unlisted tools.
+// See: https://code.claude.com/docs/en/tools-reference
+#[derive(Serialize)]
+#[allow(dead_code)] // FIXME: Consider removing unused if we figure out something better
+enum ClaudeTool {
+    Agent,
+    AskUserQuestion,
+    Bash, // FIXME: consider merging Bash and PowerShell under one `shell` canonical tool
+    CronCreate,
+    CronDelete,
+    CronList,
+    Edit,
+    EnterPlanMode,
+    EnterWorktree,
+    ExitPlanMode,
+    ExitWorktree,
+    Glob,
+    Grep,
+    ListMcpResourcesTool,
+    Lsp,
+    NotebookEdit,
+    PowerShell,
+    Read,
+    ReadMcpResourceTool,
+    Skill,
+    TaskCreate,
+    TaskGet,
+    TaskList,
+    TaskOutput,
+    TaskStop,
+    TaskUpdate,
+    TodoWrite,
+    ToolSearch,
+    WebFetch,
+    WebSearch,
+    Write,
 }
 
 pub fn adapt_claude(
-    spec: &NormalizedSpec,
-    profiles: &PresetsMap,
-) -> (Vec<GeneratedFile>, Vec<CompileWarning>) {
-    let mut warnings = Vec::new();
-
-    if spec.kind == SpecKind::Rule {
-        let content = if let Some(paths) = &spec.paths {
-            let mut fm = IndexMap::new();
-            fm.insert(
-                "description".to_string(),
-                Value::String(spec.description.clone()),
-            );
-            fm.insert(
-                "paths".to_string(),
-                Value::Array(paths.iter().map(|p| Value::String(p.clone())).collect()),
-            );
-            render_markdown_with_frontmatter(&fm, &spec.body)
-        } else {
-            format!("{}\n", spec.body.trim())
-        };
-        let path = Path::new("generated")
-            .join("claude")
-            .join("rules")
-            .join(format!("{}.md", spec.id));
-        return (
-            vec![GeneratedFile::text(Provider::Claude, path, content)],
-            warnings,
-        );
+    spec: NormalizedSpec,
+    presets: &ProviderPresetsMap,
+) -> Result<Vec<GeneratedFile>> {
+    match spec {
+        NormalizedSpec::Agent(s) => adapt_agent_spec(s, presets),
+        NormalizedSpec::Skill(s) => adapt_skill_spec(s, presets),
+        NormalizedSpec::Rule(s) => adapt_rule_spec(&s),
     }
-
-    if spec.kind == SpecKind::Skill {
-        let mapped_tools = map_tools(spec, &mut warnings);
-
-        let mut fm = IndexMap::new();
-        fm.insert("name".to_string(), Value::String(spec.name.clone()));
-        fm.insert(
-            "description".to_string(),
-            Value::String(spec.description.clone()),
-        );
-
-        if !mapped_tools.is_empty() {
-            fm.insert(
-                "allowed-tools".to_string(),
-                Value::String(mapped_tools.join(", ")),
-            );
-        }
-
-        if let Some(profile) = &spec.execution.preset {
-            let resolved = resolve_provider_model_config(profile, Provider::Claude, profiles);
-            if let Some(model) = resolved.model {
-                fm.insert("model".to_string(), Value::String(model));
-            }
-        }
-
-        if !spec.user_invocable {
-            fm.insert("user-invocable".to_string(), Value::Bool(false));
-        }
-        if !spec.agent_invocable {
-            fm.insert("disable-model-invocation".to_string(), Value::Bool(true));
-        }
-
-        let skill_dir = Path::new("generated")
-            .join("claude")
-            .join("skills")
-            .join(&spec.id);
-
-        let mut files = vec![GeneratedFile::text(
-            Provider::Claude,
-            skill_dir.join("SKILL.md"),
-            render_markdown_with_frontmatter(&fm, &spec.body),
-        )];
-
-        for sf in &spec.supporting_files {
-            files.push(GeneratedFile::binary(
-                Provider::Claude,
-                skill_dir.join(&sf.relative_path),
-                sf.content.clone(),
-                if sf.executable { Some(0o755) } else { None },
-            ));
-        }
-
-        return (files, warnings);
-    }
-
-    // Agents → flat files
-    let mapped_tools = map_tools(spec, &mut warnings);
-
-    let mut fm = IndexMap::new();
-    fm.insert("name".to_string(), Value::String(spec.name.clone()));
-    fm.insert(
-        "description".to_string(),
-        Value::String(spec.description.clone()),
-    );
-
-    if !mapped_tools.is_empty() {
-        fm.insert("tools".to_string(), Value::String(mapped_tools.join(", ")));
-    }
-
-    if let Some(profile) = &spec.execution.preset {
-        let resolved = resolve_provider_model_config(profile, Provider::Claude, profiles);
-        if let Some(model) = resolved.model {
-            fm.insert("model".to_string(), Value::String(model));
-        }
-    }
-
-    let files = vec![GeneratedFile::text(
-        Provider::Claude,
-        Path::new("generated")
-            .join("claude")
-            .join("agents")
-            .join(format!("{}.md", spec.id)),
-        render_markdown_with_frontmatter(&fm, &spec.body),
-    )];
-
-    (files, warnings)
 }
 
-#[cfg(test)]
-mod tests {
-    use std::collections::HashMap;
+fn adapt_agent_spec(
+    spec: NormalizedAgentSpec,
+    presets: &ProviderPresetsMap,
+) -> Result<Vec<GeneratedFile>> {
+    let name = spec.frontmatter.id;
+    let description = spec.frontmatter.description;
 
-    use super::*;
-    use crate::types::Execution;
+    let model = spec
+        .frontmatter
+        .execution
+        .and_then(|x| x.preset)
+        .and_then(|x| presets.get(&x))
+        .and_then(|x| x.claude.clone())
+        .and_then(|x| x.model);
 
-    fn test_skill() -> NormalizedSpec {
-        NormalizedSpec {
-            source_path: "/test/spec.md".into(),
-            id: "commit".to_string(),
-            kind: SpecKind::Skill,
-            paths: None,
-            name: "commit".to_string(),
-            description: "Create commits".to_string(),
-            version: 1,
-            user_invocable: true,
-            agent_invocable: false,
-            body: "# Commit\n\nBody here.".to_string(),
-            execution: Execution::default(),
-            tools: vec!["bash".to_string(), "read".to_string()],
-            skill: None,
-            supporting_files: vec![],
-            targets: vec![Provider::Claude],
-            provider_overrides: HashMap::new(),
-            routing: None,
-        }
+    let tools: Option<Vec<ClaudeTool>> = spec
+        .frontmatter
+        .capabilities
+        .and_then(|x| x.tools)
+        .map(|x| x.iter().flat_map(adapt_tool).collect());
+
+    let path = Path::new("generated")
+        .join("claude")
+        .join("agents")
+        .join(format!("{name}.md"));
+
+    let frontmatter = ClaudeAgentFrontmatter {
+        name,
+        description,
+        model,
+        tools,
+    };
+
+    let frontmatter_str = serde_yml::to_string(&frontmatter)?;
+    let body = spec.body.trim();
+    let content = format!("---\n{frontmatter_str}\n---\n\n{body}");
+
+    Ok(vec![GeneratedFile::text(Provider::Claude, path, content)])
+}
+
+fn adapt_skill_spec(
+    spec: NormalizedSkillSpec,
+    presets: &ProviderPresetsMap,
+) -> Result<Vec<GeneratedFile>> {
+    let name = spec.frontmatter.id;
+    let description = spec.frontmatter.description.unwrap_or_default();
+
+    let model = spec
+        .frontmatter
+        .execution
+        .and_then(|x| x.preset)
+        .and_then(|x| presets.get(&x))
+        .and_then(|x| x.claude.clone())
+        .and_then(|x| x.model);
+
+    let allowed_tools: Option<Vec<ClaudeTool>> = spec
+        .frontmatter
+        .capabilities
+        .and_then(|x| x.tools)
+        .map(|x| x.iter().flat_map(adapt_tool).collect());
+
+    let user_invocable = if spec.frontmatter.user_invocable {
+        None
+    } else {
+        Some(false)
+    };
+
+    let disable_model_invocation = if spec.frontmatter.agent_invocable {
+        None
+    } else {
+        Some(true)
+    };
+
+    let skill_dir = Path::new("generated")
+        .join("claude")
+        .join("skills")
+        .join(&name);
+
+    let frontmatter = ClaudeSkillFrontmatter {
+        name,
+        description,
+        model,
+        allowed_tools,
+        user_invocable,
+        disable_model_invocation,
+    };
+
+    let frontmatter_str = serde_yml::to_string(&frontmatter)?;
+    let body = spec.body.trim();
+    let content = format!("---\n{frontmatter_str}---\n\n{body}");
+
+    // FIXME: we should test what happens if SKILL.md is not present
+    let mut files = vec![GeneratedFile::text(
+        Provider::Claude,
+        skill_dir.join("SKILL.md"),
+        content,
+    )];
+
+    for sf in spec.supporting_files {
+        files.push(GeneratedFile::binary(
+            Provider::Claude,
+            skill_dir.join(&sf.relative_path),
+            sf.content,
+            if sf.executable { Some(0o755) } else { None },
+        ));
     }
 
-    #[test]
-    fn test_skill_generates_correct_path() {
-        let (files, warnings) = adapt_claude(&test_skill(), &PresetsMap::new());
-        assert!(warnings.is_empty());
-        assert_eq!(files.len(), 1);
-        assert_eq!(
-            files[0].path.to_str().expect("expected value"),
-            "generated/claude/skills/commit/SKILL.md"
-        );
-    }
+    Ok(files)
+}
 
-    #[test]
-    fn test_skill_frontmatter_contains_tools() {
-        let (files, _) = adapt_claude(&test_skill(), &PresetsMap::new());
-        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
-        assert!(content.contains("allowed-tools: Bash, Read"));
-    }
+#[allow(clippy::unnecessary_wraps)] // FIXME: decide on return type
+fn adapt_rule_spec(spec: &NormalizedRuleSpec) -> Result<Vec<GeneratedFile>> {
+    let content = format!("{}\n", spec.body.trim()).into_bytes();
+    let path = Path::new("generated")
+        .join("claude")
+        .join("rules")
+        .join(format!("{}.md", spec.frontmatter.id));
 
-    #[test]
-    fn test_skill_not_agent_invocable_adds_disable() {
-        let (files, _) = adapt_claude(&test_skill(), &PresetsMap::new());
-        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
-        assert!(content.contains("disable-model-invocation: true"));
-        // user_invocable is true, so no user-invocable: false
-        assert!(!content.contains("user-invocable: false"));
-    }
+    Ok(vec![GeneratedFile {
+        provider: Provider::Claude,
+        path,
+        content,
+        mode: None,
+    }])
+}
 
-    #[test]
-    fn test_agent_generates_flat_file() {
-        let mut spec = test_skill();
-        spec.kind = SpecKind::Agent;
-        spec.id = "code-reviewer".to_string();
-        spec.name = "code-reviewer".to_string();
-
-        let (files, _) = adapt_claude(&spec, &PresetsMap::new());
-        assert_eq!(
-            files[0].path.to_str().expect("expected value"),
-            "generated/claude/agents/code-reviewer.md"
-        );
-        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
-        // Agents use "tools" not "allowed-tools"
-        assert!(content.contains("tools: Bash, Read"));
-    }
-
-    #[test]
-    fn test_null_tool_mapping_silently_dropped() {
-        let mut spec = test_skill();
-        // ls is Claude-only via tool_name; for cursor it's None — but here we test a
-        // tool that is intentionally dropped: none exist for Claude that aren't supported.
-        // Instead use a tool not in the spec list (no tools produces no allowed-tools key).
-        spec.tools = vec![];
-
-        let (files, warnings) = adapt_claude(&spec, &PresetsMap::new());
-        assert!(warnings.is_empty());
-        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
-        assert!(!content.contains("allowed-tools"));
-    }
-
-    fn test_rule() -> NormalizedSpec {
-        NormalizedSpec {
-            source_path: "/test/rule.md".into(),
-            id: "api-design".to_string(),
-            kind: SpecKind::Rule,
-            paths: None,
-            name: "api-design".to_string(),
-            description: "API design rules".to_string(),
-            version: 1,
-            user_invocable: false,
-            agent_invocable: false,
-            body: "# API Design\n\nValidate inputs.".to_string(),
-            execution: Execution::default(),
-            tools: vec![],
-            skill: None,
-            supporting_files: vec![],
-            targets: vec![Provider::Claude],
-            provider_overrides: HashMap::new(),
-            routing: None,
-        }
-    }
-
-    #[test]
-    fn test_rule_without_paths_no_frontmatter() {
-        let (files, warnings) = adapt_claude(&test_rule(), &PresetsMap::new());
-        assert!(warnings.is_empty());
-        assert_eq!(files.len(), 1);
-        assert_eq!(
-            files[0].path.to_str().expect("expected value"),
-            "generated/claude/rules/api-design.md"
-        );
-        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
-        assert!(
-            !content.contains("---"),
-            "unconditional rule should have no frontmatter"
-        );
-        assert!(content.contains("# API Design"));
-    }
-
-    #[test]
-    fn test_rule_with_paths_has_frontmatter() {
-        let mut spec = test_rule();
-        spec.paths = Some(vec!["src/api/**".to_string()]);
-        let (files, _) = adapt_claude(&spec, &PresetsMap::new());
-        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
-        assert!(
-            content.contains("---"),
-            "path-scoped rule should have frontmatter"
-        );
-        assert!(content.contains("paths:"));
-        assert!(content.contains("src/api/**"));
-        assert!(content.contains("description: API design rules"));
-    }
-
-    #[test]
-    fn test_missing_tool_mapping_warns() {
-        let mut spec = test_skill();
-        spec.tools = vec!["unknown_tool".to_string()];
-
-        let (_, warnings) = adapt_claude(&spec, &PresetsMap::new());
-        assert_eq!(warnings.len(), 1);
-        assert_eq!(warnings[0].code, WarnKind::MissingMapping);
-        assert!(warnings[0].message.contains("unknown_tool"));
+fn adapt_tool(tool: &ToolFrontmatter) -> Vec<ClaudeTool> {
+    match tool {
+        ToolFrontmatter::Read => vec![ClaudeTool::Read],
+        ToolFrontmatter::Write => vec![ClaudeTool::Write],
+        ToolFrontmatter::Edit => vec![ClaudeTool::Edit],
+        ToolFrontmatter::Grep => vec![ClaudeTool::Grep],
+        ToolFrontmatter::Glob => vec![ClaudeTool::Glob],
+        ToolFrontmatter::Bash => vec![ClaudeTool::Bash],
+        ToolFrontmatter::WebFetch => vec![ClaudeTool::WebFetch],
+        ToolFrontmatter::WebSearch => vec![ClaudeTool::WebSearch],
+        ToolFrontmatter::Question => vec![ClaudeTool::AskUserQuestion],
+        ToolFrontmatter::Tasks => vec![
+            ClaudeTool::TaskCreate,
+            ClaudeTool::TaskGet,
+            ClaudeTool::TaskList,
+            ClaudeTool::TaskUpdate,
+            ClaudeTool::TaskStop,
+            ClaudeTool::TodoWrite,
+        ],
     }
 }

@@ -8,7 +8,7 @@ const MANIFEST_FILE: &str = ".agentspec-manifest.json";
 
 /// Tracks files copied by agentspec so we can detect stale entries and avoid clobbering
 /// user-owned files on the first sync.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Manifest {
     pub version: u32,
     /// Relative path (from dest dir) → entry
@@ -16,7 +16,7 @@ pub struct Manifest {
 }
 
 /// Per-file manifest entry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ManifestEntry {
     /// Absolute path to the source file in `generated/`.
     pub source: String,
@@ -58,8 +58,9 @@ impl Manifest {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::TempDir;
+
+    use super::*;
 
     fn tmp() -> TempDir {
         tempfile::tempdir().expect("expected value")

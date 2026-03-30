@@ -3,64 +3,31 @@ mod cli;
 mod compile;
 mod config;
 mod emit;
-mod format;
 mod fragments;
-mod model;
 mod parse;
-mod schema;
+mod presets;
+mod spec;
 mod sync;
-mod tools;
-mod types;
 mod validate;
 
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
-
 use cli::{Cli, Command, CommonArgs};
+use compile::CompileResult;
 use compile::compile_specs;
 use config::AgentspecConfig;
 use emit::{check_generated_state, write_generated_files};
-use fragments::{build_environment, load_fragments, resolve_fragments};
-use parse::load_canonical_specs;
-use schema::load_schemas;
-use types::CompileResult;
-use types::{NormalizedSpec, PresetsMap, Provider};
-use validate::{normalize_specs, validate_schema, validate_semantics};
+use fragments::{build_environment, load_fragments};
+use presets::ProviderPresetsMap;
+use validate::validate_semantics;
 
-/// Runs the compile pipeline, prints warnings, enforces `--strict`, and reports the
-/// compiled file count. Returns the result and the resolved target list so the caller
-/// can decide what to do next (write, check, or sync).
-fn run_compile(
-    specs: &[NormalizedSpec],
-    profiles: &PresetsMap,
-    target_override: &[Provider],
-    config_targets: &[Provider],
-    strict: bool,
-    total_warnings: &mut usize,
-) -> Result<(CompileResult, Vec<Provider>)> {
-    let targets: Vec<Provider> = if target_override.is_empty() {
-        config_targets.to_vec()
-    } else {
-        target_override.to_vec()
-    };
-    let result = compile_specs(specs, profiles, &targets);
-    for w in &result.warnings {
-        eprintln!("warning: {w}");
-    }
-    *total_warnings += result.warnings.len();
-    if strict && *total_warnings > 0 {
-        anyhow::bail!("{total_warnings} warning(s) treated as errors (--strict)");
-    }
-    eprintln!(
-        "compiled {} files for {} provider(s)",
-        result.files.len(),
-        targets.len()
-    );
-    Ok((result, targets))
-}
+use crate::config::Provider;
+use crate::fragments::resolve_fragments;
+use crate::parse::load_specs;
+use crate::spec::NormalizedSpec;
+use crate::validate::normalize_specs;
 
-#[allow(clippy::too_many_lines)]
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -84,48 +51,27 @@ fn main() -> Result<()> {
     let mut config = AgentspecConfig::discover(&cwd)?;
     config.apply_overrides(args);
 
-    // Parse embedded schemas once
-    let schemas = load_schemas().context("failed to parse embedded canonical schema")?;
-
-    // Phase 2: Load specs
-    let specs = load_canonical_specs(&config)?;
+    // Load specs
+    let specs = load_specs(&config)?;
     eprintln!("loaded {} specs", specs.len());
 
-    // Phase 3: Resolve fragments
+    // Resolve fragments
     let fragments_dir = config.resolve(&config.spec.fragments_dir);
     let fragment_map = load_fragments(&fragments_dir)?;
-    let (env, fragment_warnings) = build_environment(&fragment_map);
+    let env = build_environment(&fragment_map)?;
     let specs = resolve_fragments(specs, &env)?;
-    let registered_count = fragment_map.len() - fragment_warnings.len();
-    for w in &fragment_warnings {
-        eprintln!("warning: {w}");
-    }
-    eprintln!("resolved fragments ({registered_count} fragment templates loaded)");
+    eprintln!(
+        "resolved fragments ({} fragment templates loaded)",
+        fragment_map.len()
+    );
 
-    // Validate frontmatter against canonical JSON schema
-    let schema_errors = validate_schema(&specs, &schemas.canonical)?;
-    if !schema_errors.is_empty() {
-        for err in &schema_errors {
-            eprintln!("error: {err}");
-        }
-        anyhow::bail!("{} schema validation error(s)", schema_errors.len());
-    }
-    eprintln!("schema validation passed");
-
-    // Normalize: apply defaults, dedup/sort tools, resolve targets
     let specs = normalize_specs(specs)?;
     eprintln!("normalized {} specs", specs.len());
 
-    // Resolve model presets from config, applying machine profile overlay if set
-    let profiles = config.resolve_presets(args.profile.as_deref());
-    if profiles.is_empty() {
-        eprintln!("no presets configured");
-    } else {
-        eprintln!("loaded {} preset(s)", profiles.len());
-    }
+    let presets = config.presets.clone();
+    eprintln!("loaded {} preset(s)", presets.len());
 
-    // Semantic validation
-    let semantic_errors = validate_semantics(&specs, &profiles);
+    let semantic_errors = validate_semantics(&specs, &presets);
     if !semantic_errors.is_empty() {
         for err in &semantic_errors {
             eprintln!("error: {err}");
@@ -134,55 +80,34 @@ fn main() -> Result<()> {
     }
     eprintln!("semantic validation passed");
 
-    let mut total_warnings = fragment_warnings.len();
-
     match &cli.command {
         Command::Validate(_) => {
-            if args.strict && total_warnings > 0 {
-                anyhow::bail!("{total_warnings} warning(s) treated as errors (--strict)");
-            }
-            if total_warnings > 0 {
-                eprintln!("validation complete ({total_warnings} warning(s))");
-            } else {
-                eprintln!("validation complete");
-            }
+            eprintln!("validation complete");
         }
         Command::Sync(sync_args) => {
             if !sync_args.no_compile {
-                let sync_compile_targets = if sync_args.common.target.is_empty() {
-                    config.configured_sync_providers(sync_args.common.profile.as_deref())?
+                let sync_compile_providers = if sync_args.common.provider.is_empty() {
+                    config.configured_sync_providers()
                 } else {
-                    sync_args.common.target.clone()
+                    sync_args.common.provider.clone()
                 };
 
-                if !sync_compile_targets.is_empty() {
-                    let (result, targets) = run_compile(
-                        &specs,
-                        &profiles,
-                        &sync_compile_targets,
-                        &config.targets,
-                        sync_args.common.strict,
-                        &mut total_warnings,
-                    )?;
+                if !sync_compile_providers.is_empty() {
+                    let (result, providers) =
+                        run_compile(&specs, &presets, &sync_compile_providers, &config.providers)?;
                     let output_dir = config.resolve(&config.output.dir);
-                    write_generated_files(&result.files, &output_dir, &targets)?;
+                    write_generated_files(&result.files, &output_dir, &providers)?;
                 }
             }
             sync::run_sync(&config, sync_args)?;
         }
         Command::Compile(_) | Command::Check(_) => {
-            let (result, targets) = run_compile(
-                &specs,
-                &profiles,
-                &args.target,
-                &config.targets,
-                args.strict,
-                &mut total_warnings,
-            )?;
+            let (result, providers) =
+                run_compile(&specs, &presets, &args.provider, &config.providers)?;
             let output_dir = config.resolve(&config.output.dir);
             match &cli.command {
                 Command::Compile(_) => {
-                    write_generated_files(&result.files, &output_dir, &targets)?;
+                    write_generated_files(&result.files, &output_dir, &providers)?;
                     eprintln!(
                         "wrote {} files to {}",
                         result.files.len(),
@@ -190,7 +115,7 @@ fn main() -> Result<()> {
                     );
                 }
                 Command::Check(_) => {
-                    let check = check_generated_state(&result.files, &config.root_dir, &targets)?;
+                    let check = check_generated_state(&result.files, &config.root_dir, &providers)?;
                     if check.is_clean() {
                         eprintln!("check passed: generated files are up to date");
                     } else {
@@ -215,4 +140,26 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Runs the compile pipeline and reports the compiled file count. Returns the result and the
+/// resolved target list so the caller can decide what to do next (write, check, or sync).
+fn run_compile(
+    specs: &[NormalizedSpec],
+    presets: &ProviderPresetsMap,
+    override_providers: &[Provider],
+    config_providers: &[Provider],
+) -> Result<(CompileResult, Vec<Provider>)> {
+    let providers: Vec<Provider> = if override_providers.is_empty() {
+        config_providers.to_vec()
+    } else {
+        override_providers.to_vec()
+    };
+    let result = compile_specs(specs, presets, &providers)?;
+    eprintln!(
+        "compiled {} files for {} provider(s)",
+        result.files.len(),
+        providers.len()
+    );
+    Ok((result, providers))
 }
