@@ -183,26 +183,17 @@ pub struct ExecutionFrontmatter {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, strum::VariantArray)]
+#[serde(rename_all = "lowercase")]
 pub enum ToolFrontmatter {
-    #[serde(rename = "read")]
     Read,
-    #[serde(rename = "write")]
     Write,
-    #[serde(rename = "edit")]
     Edit,
-    #[serde(rename = "grep")]
     Grep,
-    #[serde(rename = "glob")]
     Glob,
-    #[serde(rename = "bash")]
     Bash,
-    #[serde(rename = "webfetch")]
     WebFetch,
-    #[serde(rename = "websearch")]
     WebSearch,
-    #[serde(rename = "question")]
     Question,
-    #[serde(rename = "tasks")]
     Tasks,
 }
 
