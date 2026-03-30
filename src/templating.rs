@@ -4,9 +4,6 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use crate::compile::{CompileResult, compile_specs};
-use crate::presets::ProviderPresetsMap;
-use crate::provider::Provider;
 use crate::spec::NormalizedSpec;
 use crate::specs::ValidatedSpecs;
 
@@ -22,9 +19,8 @@ pub struct TemplatingConfig {
 
 /// Specs with all template expressions resolved; ready to compile.
 ///
-/// Produced by [`resolve`] from a [`ValidatedSpecs`]. This is the final
-/// stage before compilation — calling [`ResolvedSpecs::compile`] dispatches
-/// each spec to a provider adapter.
+/// Produced by [`resolve`] from a [`ValidatedSpecs`]. Advance to the compile
+/// stage by passing this to [`compile::run`](crate::compile::run).
 pub struct ResolvedSpecs {
     specs: Vec<NormalizedSpec>,
 }
@@ -42,13 +38,11 @@ pub fn resolve(validated: ValidatedSpecs, config: &TemplatingConfig) -> Result<R
 }
 
 impl ResolvedSpecs {
-    /// Compile resolved specs into provider-specific generated files.
-    pub fn compile(
-        &self,
-        presets: &ProviderPresetsMap,
-        providers: &[Provider],
-    ) -> Result<CompileResult> {
-        compile_specs(&self.specs, presets, providers)
+    /// Consume self and return the inner specs.
+    ///
+    /// Used by the compile module to take ownership of the resolved data.
+    pub fn into_specs(self) -> Vec<NormalizedSpec> {
+        self.specs
     }
 
     /// Access the resolved specs directly.

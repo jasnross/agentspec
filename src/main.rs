@@ -3,7 +3,7 @@ mod config;
 mod emit;
 mod sync;
 
-use agentspec::compile::CompileResult;
+use agentspec::compile::{self, CompileResult};
 use agentspec::presets::ProviderPresetsMap;
 use agentspec::provider::Provider;
 use agentspec::specs::{SpecDirs, Specs};
@@ -73,7 +73,7 @@ fn main() -> Result<()> {
 
                 if !sync_compile_providers.is_empty() {
                     let (result, providers) = run_compile(
-                        &resolved,
+                        resolved,
                         &config.presets,
                         &sync_compile_providers,
                         &config.providers,
@@ -86,7 +86,7 @@ fn main() -> Result<()> {
         }
         Command::Compile(_) | Command::Check(_) => {
             let (result, providers) =
-                run_compile(&resolved, &config.presets, &args.provider, &config.providers)?;
+                run_compile(resolved, &config.presets, &args.provider, &config.providers)?;
             let output_dir = config.resolve(&config.output.dir);
             match &cli.command {
                 Command::Compile(_) => {
@@ -128,7 +128,7 @@ fn main() -> Result<()> {
 /// Runs the compile step and reports the compiled file count. Returns the result and the
 /// resolved target list so the caller can decide what to do next (write, check, or sync).
 fn run_compile(
-    resolved: &ResolvedSpecs,
+    resolved: ResolvedSpecs,
     presets: &ProviderPresetsMap,
     override_providers: &[Provider],
     config_providers: &[Provider],
@@ -138,7 +138,7 @@ fn run_compile(
     } else {
         override_providers.to_vec()
     };
-    let result = resolved.compile(presets, &providers)?;
+    let result = compile::run(resolved, presets, &providers)?;
     eprintln!(
         "compiled {} files for {} provider(s)",
         result.files.len(),

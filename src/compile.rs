@@ -3,15 +3,15 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use crate::adapters::{adapt_claude, adapt_cursor, adapt_opencode};
-use crate::provider::Provider;
 use crate::presets::ProviderPresetsMap;
+use crate::provider::Provider;
 use crate::spec::NormalizedSpec;
+use crate::templating::ResolvedSpecs;
 
 /// A single file produced by a provider adapter.
 #[derive(Clone, Debug)]
 pub struct GeneratedFile {
     /// Provider that produced this file
-    #[allow(dead_code)] // FIXME: consider removing if unused
     pub provider: Provider,
     /// Relative path from project root (e.g., "generated/claude/skills/commit/SKILL.md")
     pub path: PathBuf,
@@ -54,8 +54,26 @@ pub struct CompileResult {
     pub files: Vec<GeneratedFile>,
 }
 
-/// Compile normalized specs into provider-specific generated files.
-pub fn compile_specs(
+impl CompileResult {
+    /// Iterate over generated files for a specific provider.
+    pub fn files_for(&self, provider: Provider) -> impl Iterator<Item = &GeneratedFile> {
+        self.files.iter().filter(move |f| f.provider == provider)
+    }
+}
+
+/// Compile resolved specs into provider-specific generated files.
+///
+/// This is the single entry point for the compile stage. Takes ownership of
+/// [`ResolvedSpecs`] — the final stage of the pipeline before output is written.
+pub fn run(
+    resolved: ResolvedSpecs,
+    presets: &ProviderPresetsMap,
+    providers: &[Provider],
+) -> Result<CompileResult> {
+    compile_specs(&resolved.into_specs(), presets, providers)
+}
+
+pub(crate) fn compile_specs(
     specs: &[NormalizedSpec],
     presets: &ProviderPresetsMap,
     providers: &[Provider],
