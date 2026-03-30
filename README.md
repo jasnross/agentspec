@@ -5,7 +5,7 @@ use more than one tool, you end up either duplicating your prompts or leaving
 some tools poorly configured.
 
 `agentspec` lets you define agents, skills, and rules once in a provider-neutral
-format, then compile and sync them to Claude Code, Cursor, Codex, and OpenCode.
+format, then compile and sync them to Claude Code, Cursor, and OpenCode.
 Each tool gets output tailored to its own conventions while you maintain a
 single source of truth.
 
@@ -16,7 +16,7 @@ agentspec sync                   # compile and sync to all configured targets
 agentspec sync --dry-run         # preview without making changes
 agentspec sync --no-compile      # sync from existing generated output
 agentspec sync --force           # allow overwriting user-owned destination files
-agentspec sync --target claude --mode user # CLI-only sync for one provider
+agentspec sync --provider claude --mode user # CLI-only sync for one provider
 agentspec compile                # compile only, writes generated/
 agentspec validate               # validate specs without generating output
 agentspec check                  # verify generated files are up to date
@@ -32,6 +32,7 @@ provider capabilities are embedded in the compiler and require no configuration.
 [spec]
 agents_dir = "spec/agents"
 skills_dir = "spec/skills"
+rules_dir = "spec/rules"
 fragments_dir = "spec/fragments"
 
 [output]
@@ -42,13 +43,11 @@ dir = "generated"
 [presets.deep_review]
 claude = "opus"
 opencode = { model = "anthropic/claude-opus-4-6", variant = "max" }
-codex = { model = "gpt-5.3-codex", reasoning_effort = "xhigh" }
 cursor = "inherit"
 
 [presets.balanced]
 claude = "sonnet"
 opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
-codex = { model = "gpt-5.3-codex", reasoning_effort = "medium" }
 cursor = "fast"
 ```
 
@@ -82,8 +81,8 @@ strategy = "symlink" # symlink | copy
 
 - Default sync scope is providers configured under `[sync.<provider>]`.
 - If no providers are configured, sync fails fast with actionable guidance.
-- `--target` requires either configured sync for that provider or explicit CLI-only intent.
-- CLI-only sync is supported with explicit target plus either:
+- `--provider` requires either configured sync for that provider or explicit CLI-only intent.
+- CLI-only sync is supported with an explicit provider plus either:
   - `--mode user` or `--mode project`, or
   - `--dest <path>` (implies `mode=path`)
 
@@ -94,12 +93,12 @@ Examples:
 agentspec sync
 
 # unconfigured targeted sync fails (no [sync.claude] and no CLI-only mode)
-agentspec sync --target claude
+agentspec sync --provider claude
 
 # CLI-only targeted sync succeeds
-agentspec sync --target claude --mode user
-agentspec sync --target claude --mode project
-agentspec sync --target claude --dest /tmp/agentspec-sync
+agentspec sync --provider claude --mode user
+agentspec sync --provider claude --mode project
+agentspec sync --provider claude --dest /tmp/agentspec-sync
 ```
 
 **Namespace prefix:**
@@ -113,7 +112,6 @@ but not rules.
 | Claude   | Path uses dash prefix (`tw-commit.md` for agents, `tw-commit/` for skills), `name:` frontmatter uses colon prefix (`tw:commit`) | `tw:commit`        |
 | OpenCode | Commands sync under a prefix subdirectory (`commands/tw/commit.md`); agents/skills use dash-prefixed names                      | `/tw/commit`       |
 | Cursor   | Path uses dash prefix (`tw-commit/...`)                                                                                         | `tw-commit`        |
-| Codex    | Path uses dash prefix (`tw-commit/...`)                                                                                         | `tw-commit`        |
 
 Notes:
 
@@ -135,11 +133,8 @@ prefix = "tw"
 [sync.opencode]
 prefix = "tw"
 
-# Cursor/Codex: filename path becomes tw-<name>
+# Cursor: filename path becomes tw-<name>
 [sync.cursor]
-prefix = "tw"
-
-[sync.codex]
 prefix = "tw"
 ```
 
@@ -156,10 +151,6 @@ file manually.
 
 For OpenCode, `agentspec sync` also patches the `instructions` array in
 `opencode.json` with the absolute paths of the synced rule files.
-
-> **Note**: Codex rules are not yet synced — the Codex adapter emits individual
-> `.md` rule files but Codex expects a single `~/.codex/AGENTS.md`. A fix is
-> tracked in `TODO.md`.
 
 ## Release Policy
 

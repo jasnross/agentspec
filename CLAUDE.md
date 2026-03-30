@@ -2,7 +2,7 @@
 
 Rust binary that compiles provider-neutral agent/skill spec files (Markdown
 with YAML frontmatter) into ready-to-use configurations for Claude Code,
-OpenCode, Codex, and Cursor.
+OpenCode, and Cursor.
 
 ## Commands
 
@@ -100,7 +100,7 @@ Notable lints that affect everyday coding:
 - `expect_used` / `panic` — avoid in non-test code; tests are allowed via
   `clippy.toml` (`allow-expect-in-tests`, `allow-panic-in-tests`)
 - `uninlined_format_args` — write `format!("{x}")` not `format!("{}", x)`
-- `doc_markdown` — wrap identifiers like `NormalizedSpecNew`, `MiniJinja`,
+- `doc_markdown` — wrap identifiers like `NormalizedSpec`, `MiniJinja`,
   `OpenCode` in backticks in doc comments
 - `unnecessary_wraps` — don't return `Result<T>` from functions that can't fail
 
@@ -123,13 +123,12 @@ Prefer struct-level attributes over repeating the same attribute on every field:
 - **`#[serde_with::skip_serializing_none]`** — use on the struct instead of
   `#[serde(skip_serializing_if = "Option::is_none")]` on every `Option` field.
   `serde_with` is already a dependency.
-
-These compose cleanly — both can appear on the same struct.
-
 - **`#[serde(deny_unknown_fields)]`** — add to any struct deserialized from
   user-facing input (spec frontmatter, config files). This turns typos and
   unrecognized fields into parse errors instead of silent no-ops. Omit only
   for structs that intentionally allow extension (e.g., pass-through types).
+
+The first two compose cleanly and can appear on the same struct.
 
 ## Module Layout
 
@@ -145,16 +144,19 @@ src/adapters/cursor.rs
 
 ## Pipeline Stages
 
-`main.rs` runs these in order:
+`main.rs` orchestrates these stages in order, each consuming the previous stage's
+output (typestate pattern — passing the wrong stage is a compile error):
 
-1. **Load** — `parse.rs` reads `.md` files from `spec/agents/`, `spec/skills/`, and `spec/rules/`,
-   parses frontmatter via `gray_matter` into typed structs, produces `Vec<Spec>`
-2. **Fragment resolution** — `fragments.rs` renders MiniJinja `{% include %}`
-   and `{% with %}` tags in spec bodies
-3. **Normalization** — `validate.rs` applies defaults → `Vec<NormalizedSpecNew>`
-4. **Semantic validation** — `validate.rs` checks preset references, etc.
-5. **Compile** — `compile.rs` dispatches each `(spec, target)` pair to a provider
-   adapter → `CompileResult { files }`
+1. **Load** — `specs.rs` (`Specs::load`) reads `.md` files from `spec/agents/`,
+   `spec/skills/`, and `spec/rules/`, parses frontmatter via `gray_matter` into
+   typed structs → `Specs`
+2. **Normalize** — `validate.rs` applies defaults → `NormalizedSpecs`
+3. **Validate** — `validate.rs` runs semantic checks (duplicate IDs, unknown
+   presets, etc.) → `ValidatedSpecs`
+4. **Template resolution** — `templating.rs` renders MiniJinja `{% include %}`
+   and `{% with %}` tags in spec bodies → `ResolvedSpecs`
+5. **Compile** — `compile.rs` dispatches each `(spec, provider)` pair to a
+   provider adapter → `CompileResult`
 6. **Emit** — `emit.rs` writes files to disk (`compile`) or diffs against disk
    (`check`)
 7. **Sync** — `sync.rs` distributes generated files to each tool's config directory
@@ -162,7 +164,7 @@ src/adapters/cursor.rs
 
 ## Integration Tests
 
-`tests/dotfiles_spec.rs` runs the real `agentspec` binary against the sibling
+`tests/pipeline.rs` runs the real `agentspec` binary against the sibling
 `agent-config/` directory. These tests:
 
 - Are skipped automatically if `agent-config/` doesn't exist (e.g., in CI without
