@@ -1,16 +1,10 @@
 ---
 id: scripted-skill
 description: A skill with a supporting script in scripts/
-version: 1
 user_invocable: true
+agent_invocable: false
 execution:
   preset: default
-compat:
-  targets:
-    - claude
-    - opencode
-    - codex
-    - cursor
 ---
 # Scripted Skill
 

@@ -7,7 +7,6 @@ fragments_dir = "spec/fragments"
 dir = "generated"
 
 [presets.default]
-claude = "sonnet"
+claude = { model = "sonnet" }
 opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
-codex = { model = "gpt-4o" }
-cursor = "fast"
+cursor = { model = "fast" }
