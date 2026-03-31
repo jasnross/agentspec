@@ -18,10 +18,8 @@ cargo install --path .          # reinstall binary after schema changes (see bel
 # From agent-config/ (the spec library that exercises this compiler)
 agentspec validate              # schema + semantic checks only
 agentspec compile               # full pipeline; writes generated/
-agentspec check                 # verify generated files match compile output
 agentspec sync                  # compile + distribute to tool config dirs
 agentspec sync --dry-run        # preview sync operations without writing
-agentspec sync --no-compile     # sync from existing generated output
 ```
 
 ## Release Runbook
@@ -138,6 +136,7 @@ Prefer the modern Rust module file convention over `mod.rs`:
 src/adapters.rs          ← module root (not src/adapters/mod.rs)
 src/adapters/claude.rs
 src/adapters/cursor.rs
+src/plan.rs              ← WritePlan, FileWrite, WriteMode, ConfigPatch (library)
 ```
 
 `mod.rs` files are harder to navigate in editors (multiple open tabs all named `mod.rs`) and are the older convention. The exception is `main.rs` and `lib.rs`, which are standard entry points.
@@ -157,10 +156,12 @@ output (typestate pattern — passing the wrong stage is a compile error):
    and `{% with %}` tags in spec bodies → `ResolvedSpecs`
 5. **Compile** — `compile.rs` dispatches each `(spec, provider)` pair to a
    provider adapter → `CompileResult`
-6. **Emit** — `emit.rs` writes files to disk (`compile`) or diffs against disk
-   (`check`)
-7. **Sync** — `sync.rs` distributes generated files to each tool's config directory
-   via symlink or copy strategy; patches `opencode.json` for rules (`sync` command only)
+6. **Plan** — `plan.rs` + `sync.rs` build a `WritePlan` from `CompileResult` and
+   config: `compile_plan` (for `compile`) or `sync_plan` (for `sync`)
+7. **Emit** — `emit.rs` executes the `WritePlan`: `CleanSlate` mode for `compile`
+   (delete-and-rewrite `generated/<provider>/`), `ManifestTracked` mode for `sync`
+   (per-file ownership tracking, stale cleanup, direct write to tool config dirs);
+   patches `opencode.json` for rules (`sync` command only)
 
 ## Integration Tests
 

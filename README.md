@@ -14,12 +14,10 @@ single source of truth.
 ```sh
 agentspec sync                   # compile and sync to all configured targets
 agentspec sync --dry-run         # preview without making changes
-agentspec sync --no-compile      # sync from existing generated output
 agentspec sync --force           # allow overwriting user-owned destination files
 agentspec sync --provider claude --mode user # CLI-only sync for one provider
 agentspec compile                # compile only, writes generated/
 agentspec validate               # validate specs without generating output
-agentspec check                  # verify generated files are up to date
 ```
 
 ## Configuration
@@ -58,10 +56,8 @@ tool's config directory in one step. Sync targets are configured in
 `agentspec.toml` under `[sync.<provider>]`:
 
 ```toml
-# Default: user-level symlinks for all providers
 [sync.claude]
 mode = "user"       # user | project | path
-strategy = "symlink" # symlink | copy
 ```
 
 **Modes:**
@@ -70,10 +66,7 @@ strategy = "symlink" # symlink | copy
 - `project` — syncs to a `.claude/` (or equivalent) subdirectory of the current working directory
 - `path` — syncs to explicit per-kind paths; use `agents`, `skills`, `rules`, `commands` fields
 
-**Strategies:**
-
-- `symlink` — creates per-entry symlinks from the destination into `generated/`; stale symlinks are removed automatically
-- `copy` — copies files and tracks ownership via `.agentspec-manifest.json`; stale copies are removed on the next sync
+Sync writes files directly to destinations and tracks ownership via `.agentspec-manifest.json`; stale files are removed on the next sync.
 
 ### Sync target selection
 
@@ -115,7 +108,6 @@ but not rules.
 
 Notes:
 
-- For Claude, prefixing requires `strategy = "copy"` (frontmatter must be rewritten).
 - `prefix` and `strip_name` are mutually exclusive.
 - `agentspec` does not create aliases, so prefixed names are the names you invoke.
 
@@ -123,9 +115,7 @@ Notes:
 # Namespace prefix: avoids collisions with user-owned or cross-library names.
 # Claude: agent file becomes tw-commit.md, skill directory becomes tw-commit/,
 # and name: frontmatter becomes tw:commit.
-# Requires strategy = "copy" for Claude (name: is in frontmatter, not filename).
 [sync.claude]
-strategy = "copy"
 prefix = "tw"
 
 # OpenCode: commands land in a tw/ subdirectory -> invoked as /tw/commit.
@@ -145,8 +135,7 @@ path. To resolve a collision, configure a `prefix` or remove the conflicting
 file manually.
 
 - Set `allow_overwrite = true` in `[sync.<provider>]` to restore overwrite behavior
-  (copy collisions are backed up; symlink strategy backs up regular files/dirs and
-  replaces conflicting symlinks).
+  (collisions are backed up with a timestamp suffix).
 - Use `agentspec sync --force` for a one-time override.
 
 For OpenCode, `agentspec sync` also patches the `instructions` array in
