@@ -1,147 +1,295 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use agentspec::compile::GeneratedFile;
-use agentspec::provider::Provider;
-use anyhow::{Context, Result};
-use walkdir::WalkDir;
+use agentspec::plan::{ConfigPatch, FileWrite, NamePrefixMode, WriteMode, WritePlan};
+use anyhow::{Context, Result, bail};
 
-/// Write all generated files to disk.
+use crate::sync::manifest::{Manifest, ManifestEntry};
+use crate::sync::provider::patch_opencode_instructions;
+use crate::sync::strategy::{
+    SyncAction, apply_strip_name, prefix_frontmatter_name, prefix_rel_path,
+    should_prefix_frontmatter_name,
+};
+
+/// Execute a write plan: write all file batches, then apply config patches.
+pub fn emit(plan: &WritePlan, dry_run: bool) -> Result<()> {
+    for w in &plan.writes {
+        write_batch(w, dry_run)?;
+    }
+    apply_patches(&plan.patches, dry_run)?;
+    Ok(())
+}
+
+fn write_batch(w: &FileWrite, dry_run: bool) -> Result<()> {
+    match w.mode {
+        WriteMode::CleanSlate => {
+            if !dry_run {
+                if w.destination.exists() {
+                    fs::remove_dir_all(&w.destination)
+                        .with_context(|| format!("failed to delete {}", w.destination.display()))?;
+                }
+                for file in &w.files {
+                    let dest_path = w.destination.join(&file.path);
+                    if let Some(parent) = dest_path.parent() {
+                        fs::create_dir_all(parent).with_context(|| {
+                            format!("failed to create directory {}", parent.display())
+                        })?;
+                    }
+                    fs::write(&dest_path, &file.content)
+                        .with_context(|| format!("failed to write {}", dest_path.display()))?;
+
+                    #[cfg(unix)]
+                    if let Some(mode) = file.mode {
+                        use std::os::unix::fs::PermissionsExt;
+                        fs::set_permissions(&dest_path, fs::Permissions::from_mode(mode))
+                            .with_context(|| {
+                                format!("failed to set permissions on {}", dest_path.display())
+                            })?;
+                    }
+                }
+            }
+        }
+        WriteMode::ManifestTracked => {
+            eprintln!(
+                "  {} → {}",
+                if dry_run { "[dry-run] sync" } else { "sync" },
+                w.destination.display()
+            );
+
+            if !dry_run {
+                fs::create_dir_all(&w.destination).with_context(|| {
+                    format!("failed to create dest dir {}", w.destination.display())
+                })?;
+            }
+
+            let mut manifest = Manifest::load(&w.destination)?;
+            let mut current_keys: HashSet<String> = HashSet::new();
+            let mut n_created = 0usize;
+            let mut n_updated = 0usize;
+            let mut n_backed_up = 0usize;
+            let mut n_unchanged = 0usize;
+            let mut n_removed = 0usize;
+
+            for file in &w.files {
+                // Strip the first path component (kind dir: "agents/", "skills/", etc.)
+                // since the destination IS the kind dir.
+                let rel: PathBuf = file.path.components().skip(1).collect();
+                let prefixed_rel = prefix_rel_path(&rel, w.file_prefix.as_deref());
+                let rel_str = prefixed_rel.to_string_lossy().to_string();
+                current_keys.insert(rel_str.clone());
+                let dest = w.destination.join(&prefixed_rel);
+
+                let name_prefix = w.name_prefix.as_ref().map(|(p, m)| (p.as_str(), *m));
+
+                let action = write_content_to_dest(
+                    &file.content,
+                    &dest,
+                    &rel_str,
+                    &mut manifest,
+                    name_prefix,
+                    file.mode,
+                    w.allow_overwrite,
+                    dry_run,
+                )?;
+                match action {
+                    SyncAction::Created => n_created += 1,
+                    SyncAction::Updated => n_updated += 1,
+                    SyncAction::BackedUp => n_backed_up += 1,
+                    SyncAction::Unchanged => n_unchanged += 1,
+                }
+            }
+
+            // Stale cleanup: remove dest files whose key is no longer in the current batch.
+            let stale_keys: Vec<String> = manifest
+                .files
+                .keys()
+                .filter(|k| !current_keys.contains(*k))
+                .cloned()
+                .collect();
+            for key in stale_keys {
+                let dest_file = w.destination.join(&key);
+                if !dry_run {
+                    if dest_file.exists() {
+                        fs::remove_file(&dest_file).with_context(|| {
+                            format!("failed to remove stale file {}", dest_file.display())
+                        })?;
+                    }
+                    manifest.files.remove(&key);
+                }
+                n_removed += 1;
+            }
+
+            // strip_name post-processing on skills
+            if w.strip_name {
+                apply_strip_name(&w.destination, dry_run)?;
+            }
+
+            if !dry_run {
+                manifest.save(&w.destination)?;
+            }
+
+            eprintln!(
+                "    created={n_created} updated={n_updated} removed={n_removed} backed_up={n_backed_up} unchanged={n_unchanged}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Writes `content` to `dest`, applying name prefix transforms and manifest tracking.
 ///
-/// For each provider that appears in `files`, deletes `<output_dir>/<provider>/`
-/// before writing anything (clean slate). Then writes each file, creating
-/// parent directories as needed and setting permissions if specified.
-pub fn write_generated_files(
-    files: &[GeneratedFile],
-    output_dir: &Path,
-    providers: &[Provider],
-) -> Result<()> {
-    // Delete provider directories for all targeted providers (clean slate)
-    for provider in providers {
-        let target_dir = output_dir.join(provider.to_string());
-        if target_dir.exists() {
-            fs::remove_dir_all(&target_dir)
-                .with_context(|| format!("failed to delete {}", target_dir.display()))?;
+/// Behavior:
+/// - `rel_path` in manifest AND content same → `Unchanged` (no write)
+/// - `rel_path` in manifest AND content differs → warn, overwrite, update manifest
+/// - `rel_path` not in manifest AND dest exists AND `allow_overwrite: false` → error
+/// - `rel_path` not in manifest AND dest exists AND `allow_overwrite: true` → back up, write, record
+/// - dest does not exist → write, record
+///
+/// Existing symlinks at `dest` are replaced with real files (upgrading from symlink strategy).
+#[allow(clippy::too_many_arguments)]
+fn write_content_to_dest(
+    content: &[u8],
+    dest: &Path,
+    rel_path: &str,
+    manifest: &mut Manifest,
+    name_prefix: Option<(&str, NamePrefixMode)>,
+    mode: Option<u32>,
+    allow_overwrite: bool,
+    dry_run: bool,
+) -> Result<SyncAction> {
+    // Apply frontmatter name prefix transform if applicable.
+    let mut final_content = content.to_vec();
+    if let Some((prefix, prefix_mode)) = name_prefix {
+        let rel = Path::new(rel_path);
+        if should_prefix_frontmatter_name(rel, prefix_mode)
+            && let Ok(text) = std::str::from_utf8(content)
+        {
+            let prefixed = prefix_frontmatter_name(text, prefix);
+            if prefixed != text {
+                final_content = prefixed.into_bytes();
+            }
         }
     }
 
-    // Write each file
-    for file in files {
-        let full_path = output_dir.join(file.provider.to_string()).join(&file.path);
-        if let Some(parent) = full_path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create directory {}", parent.display()))?;
-        }
-        fs::write(&full_path, &file.content)
-            .with_context(|| format!("failed to write {}", full_path.display()))?;
+    let dest_is_symlink = dest
+        .symlink_metadata()
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false);
 
-        #[cfg(unix)]
-        if let Some(mode) = file.mode {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&full_path, fs::Permissions::from_mode(mode))
-                .with_context(|| format!("failed to set permissions on {}", full_path.display()))?;
+    if manifest.files.contains_key(rel_path) {
+        // We own this file — check if content changed.
+        if dest.exists() || dest_is_symlink {
+            let dest_content = if dest_is_symlink {
+                // Symlink: read through to target; treat dangling symlinks as empty so the
+                // content comparison fails and the file gets replaced with a real copy.
+                fs::read(dest).unwrap_or_default()
+            } else {
+                fs::read(dest)
+                    .with_context(|| format!("failed to read dest file {}", dest.display()))?
+            };
+            if dest_content == final_content && !dest_is_symlink {
+                return Ok(SyncAction::Unchanged);
+            }
+            // Content differs or is a symlink that needs converting to a real file.
+            eprintln!(
+                "warning: overwriting changed file {} (agentspec-managed)",
+                dest.display()
+            );
+            if !dry_run {
+                if dest_is_symlink {
+                    fs::remove_file(dest)
+                        .with_context(|| format!("failed to remove symlink {}", dest.display()))?;
+                }
+                write_file(dest, &final_content, mode)?;
+                manifest
+                    .files
+                    .insert(rel_path.to_string(), ManifestEntry {});
+            }
+            return Ok(SyncAction::Updated);
         }
+    } else if dest.exists() || dest_is_symlink {
+        if !allow_overwrite {
+            bail!(
+                "collision: {} exists and is not managed by agentspec; configure a `prefix` in [sync.<provider>] to avoid conflicts, or pass --force to overwrite",
+                dest.display()
+            );
+        }
+
+        // Back up the user-owned file before overwriting.
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let mut bak_name = dest.as_os_str().to_owned();
+        bak_name.push(format!(".bak.{timestamp}"));
+        let bak = PathBuf::from(bak_name);
+        if !dry_run {
+            if dest_is_symlink {
+                fs::remove_file(dest)
+                    .with_context(|| format!("failed to remove symlink {}", dest.display()))?;
+            } else {
+                fs::rename(dest, &bak).with_context(|| {
+                    format!("failed to back up {} to {}", dest.display(), bak.display())
+                })?;
+            }
+            write_file(dest, &final_content, mode)?;
+            manifest
+                .files
+                .insert(rel_path.to_string(), ManifestEntry {});
+        }
+        return Ok(SyncAction::BackedUp);
+    }
+
+    // dest does not exist — create fresh.
+    if !dry_run {
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create dir {}", parent.display()))?;
+        }
+        write_file(dest, &final_content, mode)?;
+        manifest
+            .files
+            .insert(rel_path.to_string(), ManifestEntry {});
+    }
+    Ok(SyncAction::Created)
+}
+
+/// Writes `content` to `dest` and optionally sets Unix file permissions.
+fn write_file(dest: &Path, content: &[u8], mode: Option<u32>) -> Result<()> {
+    fs::write(dest, content).with_context(|| format!("failed to write {}", dest.display()))?;
+
+    #[cfg(unix)]
+    if let Some(m) = mode {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(dest, fs::Permissions::from_mode(m))
+            .with_context(|| format!("failed to set permissions on {}", dest.display()))?;
     }
 
     Ok(())
 }
 
-/// Differences found when checking generated state against expected output.
-#[derive(Debug, Default)]
-pub struct CheckResult {
-    pub missing: Vec<String>,
-    pub outdated: Vec<String>,
-    pub unexpected: Vec<String>,
-}
-
-impl CheckResult {
-    pub fn is_clean(&self) -> bool {
-        self.missing.is_empty() && self.outdated.is_empty() && self.unexpected.is_empty()
-    }
-
-    pub fn problem_count(&self) -> usize {
-        self.missing.len() + self.outdated.len() + self.unexpected.len()
-    }
-}
-
-/// Compare expected generated files against what's currently on disk.
-///
-/// Checks for three kinds of problems:
-/// - Missing: expected file doesn't exist on disk
-/// - Outdated: file exists but content differs
-/// - Unexpected: file exists on disk but isn't in the expected set
-pub fn check_generated_state(
-    expected: &[GeneratedFile],
-    output_dir: &Path,
-    providers: &[Provider],
-) -> CheckResult {
-    let mut result = CheckResult::default();
-
-    // Build map of "<provider>/<rel_path>" → content
-    let expected_map: HashMap<String, &[u8]> = expected
-        .iter()
-        .map(|f| {
-            let key = std::path::PathBuf::from(f.provider.to_string())
-                .join(&f.path)
-                .to_str()
-                .unwrap_or_default()
-                .to_string();
-            (key, f.content.as_slice())
-        })
-        .collect();
-
-    // Check each expected file
-    for (rel_path, expected_content) in &expected_map {
-        let full_path = output_dir.join(rel_path);
-        match fs::read(&full_path) {
-            Ok(actual) => {
-                if actual != *expected_content {
-                    result.outdated.push(rel_path.clone());
-                }
-            }
-            Err(_) => {
-                result.missing.push(rel_path.clone());
+fn apply_patches(patches: &[ConfigPatch], dry_run: bool) -> Result<()> {
+    for patch in patches {
+        match patch {
+            ConfigPatch::OpenCodeInstructions {
+                rules_dest_dir,
+                config_dir,
+            } => {
+                patch_opencode_instructions(rules_dest_dir, config_dir, dry_run)?;
             }
         }
     }
-
-    // Check for unexpected files on disk
-    for provider in providers {
-        let target_root = output_dir.join(provider.to_string());
-        if !target_root.exists() {
-            continue;
-        }
-
-        let on_disk: HashSet<String> = WalkDir::new(&target_root)
-            .into_iter()
-            .filter_map(Result::ok)
-            .filter(|e| e.file_type().is_file())
-            .filter_map(|e| {
-                e.path()
-                    .strip_prefix(output_dir)
-                    .ok()
-                    .map(|p| p.to_str().unwrap_or_default().to_string())
-            })
-            .collect();
-
-        for disk_path in on_disk {
-            if !expected_map.contains_key(&disk_path) {
-                result.unexpected.push(disk_path);
-            }
-        }
-    }
-
-    // Sort for deterministic output
-    result.missing.sort();
-    result.outdated.sort();
-    result.unexpected.sort();
-
-    result
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
+    use agentspec::compile::GeneratedFile;
+    use agentspec::plan::{FileWrite, WriteMode, WritePlan};
     use agentspec::provider::Provider;
     use tempfile::TempDir;
 
@@ -151,11 +299,30 @@ mod tests {
         GeneratedFile::text(provider, rel_path, content.to_string())
     }
 
+    fn clean_slate_plan(
+        provider: Provider,
+        output_dir: &Path,
+        files: Vec<GeneratedFile>,
+    ) -> WritePlan {
+        WritePlan {
+            writes: vec![FileWrite {
+                provider,
+                destination: output_dir.join(provider.to_string()),
+                files,
+                mode: WriteMode::CleanSlate,
+                allow_overwrite: true,
+                file_prefix: None,
+                name_prefix: None,
+                strip_name: false,
+            }],
+            patches: vec![],
+        }
+    }
+
     #[test]
-    fn test_write_and_check_clean() {
+    fn test_write_and_verify() {
         let tmp = TempDir::new().expect("expected value");
-        let base = tmp.path();
-        let output_dir = base.join("generated");
+        let output_dir = tmp.path().join("generated");
 
         let files = vec![make_file(
             Provider::Claude,
@@ -163,76 +330,16 @@ mod tests {
             "---\nname: test\n---\n\nBody.\n",
         )];
 
-        write_generated_files(&files, &output_dir, &[Provider::Claude]).expect("expected value");
+        let plan = clean_slate_plan(Provider::Claude, &output_dir, files);
+        emit(&plan, false).expect("expected value");
 
-        // Verify file exists
         assert!(output_dir.join("claude/skills/test/SKILL.md").exists());
-
-        let check = check_generated_state(&files, &output_dir, &[Provider::Claude]);
-        assert!(check.is_clean(), "expected clean check: {check:?}");
-    }
-
-    #[test]
-    fn test_check_detects_missing_file() {
-        let tmp = TempDir::new().expect("expected value");
-        let base = tmp.path();
-        let output_dir = base.join("generated");
-
-        let files = vec![make_file(
-            Provider::Claude,
-            "skills/test/SKILL.md",
-            "content",
-        )];
-
-        // Don't write anything — file is missing
-        let check = check_generated_state(&files, &output_dir, &[Provider::Claude]);
-        assert_eq!(check.missing.len(), 1);
-        assert!(check.missing[0].contains("test/SKILL.md"));
-    }
-
-    #[test]
-    fn test_check_detects_outdated_file() {
-        let tmp = TempDir::new().expect("expected value");
-        let base = tmp.path();
-        let output_dir = base.join("generated");
-
-        let dir = output_dir.join("claude/skills/test");
-        fs::create_dir_all(&dir).expect("expected value");
-        fs::write(dir.join("SKILL.md"), "old content").expect("expected value");
-
-        let files = vec![make_file(
-            Provider::Claude,
-            "skills/test/SKILL.md",
-            "new content",
-        )];
-
-        let check = check_generated_state(&files, &output_dir, &[Provider::Claude]);
-        assert_eq!(check.outdated.len(), 1);
-    }
-
-    #[test]
-    fn test_check_detects_unexpected_file() {
-        let tmp = TempDir::new().expect("expected value");
-        let base = tmp.path();
-        let output_dir = base.join("generated");
-
-        // Write an extra file that's not in the expected set
-        let dir = output_dir.join("claude/agents");
-        fs::create_dir_all(&dir).expect("expected value");
-        fs::write(dir.join("stale.md"), "leftover").expect("expected value");
-
-        let files: Vec<GeneratedFile> = vec![];
-
-        let check = check_generated_state(&files, &output_dir, &[Provider::Claude]);
-        assert_eq!(check.unexpected.len(), 1);
-        assert!(check.unexpected[0].contains("stale.md"));
     }
 
     #[test]
     fn test_write_cleans_provider_dir_first() {
         let tmp = TempDir::new().expect("expected value");
-        let base = tmp.path();
-        let output_dir = base.join("generated");
+        let output_dir = tmp.path().join("generated");
 
         // Create a stale file
         let stale_dir = output_dir.join("claude/agents");
@@ -240,13 +347,9 @@ mod tests {
         fs::write(stale_dir.join("old.md"), "stale").expect("expected value");
 
         // Write new files (different path)
-        let files = vec![make_file(
-            Provider::Claude,
-            "skills/new/SKILL.md",
-            "fresh",
-        )];
-
-        write_generated_files(&files, &output_dir, &[Provider::Claude]).expect("expected value");
+        let files = vec![make_file(Provider::Claude, "skills/new/SKILL.md", "fresh")];
+        let plan = clean_slate_plan(Provider::Claude, &output_dir, files);
+        emit(&plan, false).expect("expected value");
 
         // Old file should be gone
         assert!(!stale_dir.join("old.md").exists());
@@ -257,17 +360,28 @@ mod tests {
     #[test]
     fn test_write_executable_permission() {
         let tmp = TempDir::new().expect("expected value");
-        let base = tmp.path();
-        let output_dir = base.join("generated");
+        let output_dir = tmp.path().join("generated");
 
-        let files = vec![GeneratedFile::binary(
-            Provider::Claude,
-            "skills/gh-safe/gh-safe.sh",
-            b"#!/bin/bash\necho hi".to_vec(),
-            Some(0o755),
-        )];
+        let plan = WritePlan {
+            writes: vec![FileWrite {
+                provider: Provider::Claude,
+                destination: output_dir.join("claude"),
+                files: vec![GeneratedFile::binary(
+                    Provider::Claude,
+                    "skills/gh-safe/gh-safe.sh",
+                    b"#!/bin/bash\necho hi".to_vec(),
+                    Some(0o755),
+                )],
+                mode: WriteMode::CleanSlate,
+                allow_overwrite: true,
+                file_prefix: None,
+                name_prefix: None,
+                strip_name: false,
+            }],
+            patches: vec![],
+        };
 
-        write_generated_files(&files, &output_dir, &[Provider::Claude]).expect("expected value");
+        emit(&plan, false).expect("expected value");
 
         #[cfg(unix)]
         {
@@ -279,5 +393,227 @@ mod tests {
                 "should be executable"
             );
         }
+    }
+
+    #[test]
+    fn test_manifest_tracked_creates_file_and_writes_manifest() {
+        let tmp = TempDir::new().expect("expected value");
+        let dest = tmp.path().join("skills");
+
+        let plan = WritePlan {
+            writes: vec![FileWrite {
+                provider: Provider::Claude,
+                destination: dest.clone(),
+                files: vec![make_file(
+                    Provider::Claude,
+                    "skills/basic/SKILL.md",
+                    "---\nname: basic\n---\n\nbody\n",
+                )],
+                mode: WriteMode::ManifestTracked,
+                allow_overwrite: true,
+                file_prefix: None,
+                name_prefix: None,
+                strip_name: false,
+            }],
+            patches: vec![],
+        };
+
+        emit(&plan, false).expect("expected value");
+
+        assert!(dest.join("basic/SKILL.md").exists());
+        assert!(dest.join(".agentspec-manifest.json").exists());
+
+        let manifest = Manifest::load(&dest).expect("expected value");
+        assert!(manifest.files.contains_key("basic/SKILL.md"));
+    }
+
+    #[test]
+    fn test_manifest_tracked_stale_cleanup() {
+        let tmp = TempDir::new().expect("expected value");
+        let dest = tmp.path().join("skills");
+
+        // First sync: write basic/SKILL.md
+        let plan = WritePlan {
+            writes: vec![FileWrite {
+                provider: Provider::Claude,
+                destination: dest.clone(),
+                files: vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "v1")],
+                mode: WriteMode::ManifestTracked,
+                allow_overwrite: true,
+                file_prefix: None,
+                name_prefix: None,
+                strip_name: false,
+            }],
+            patches: vec![],
+        };
+        emit(&plan, false).expect("expected value");
+        assert!(dest.join("basic/SKILL.md").exists());
+
+        // Second sync: empty files list → basic/SKILL.md becomes stale
+        let plan2 = WritePlan {
+            writes: vec![FileWrite {
+                provider: Provider::Claude,
+                destination: dest.clone(),
+                files: vec![],
+                mode: WriteMode::ManifestTracked,
+                allow_overwrite: true,
+                file_prefix: None,
+                name_prefix: None,
+                strip_name: false,
+            }],
+            patches: vec![],
+        };
+        emit(&plan2, false).expect("expected value");
+
+        assert!(
+            !dest.join("basic/SKILL.md").exists(),
+            "stale file should be removed"
+        );
+        let manifest = Manifest::load(&dest).expect("expected value");
+        assert!(
+            !manifest.files.contains_key("basic/SKILL.md"),
+            "stale key should be removed from manifest"
+        );
+    }
+
+    fn manifest_tracked_plan(
+        dest: &Path,
+        files: Vec<GeneratedFile>,
+        allow_overwrite: bool,
+    ) -> WritePlan {
+        WritePlan {
+            writes: vec![FileWrite {
+                provider: Provider::Claude,
+                destination: dest.to_path_buf(),
+                files,
+                mode: WriteMode::ManifestTracked,
+                allow_overwrite,
+                file_prefix: None,
+                name_prefix: None,
+                strip_name: false,
+            }],
+            patches: vec![],
+        }
+    }
+
+    #[test]
+    fn test_manifest_tracked_unchanged_managed_file() {
+        let tmp = TempDir::new().expect("expected value");
+        let dest = tmp.path().join("skills");
+
+        // First sync: write the file.
+        let plan = manifest_tracked_plan(
+            &dest,
+            vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "body")],
+            false,
+        );
+        emit(&plan, false).expect("expected value");
+
+        // Second sync: same content — should be Unchanged (no manifest rewrite needed).
+        let plan2 = manifest_tracked_plan(
+            &dest,
+            vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "body")],
+            false,
+        );
+        emit(&plan2, false).expect("expected value");
+
+        // File still present and unchanged.
+        let content = fs::read_to_string(dest.join("basic/SKILL.md")).expect("expected value");
+        assert_eq!(content, "body");
+    }
+
+    #[test]
+    fn test_manifest_tracked_updated_managed_file() {
+        let tmp = TempDir::new().expect("expected value");
+        let dest = tmp.path().join("skills");
+
+        let plan = manifest_tracked_plan(
+            &dest,
+            vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "v1")],
+            false,
+        );
+        emit(&plan, false).expect("expected value");
+
+        let plan2 = manifest_tracked_plan(
+            &dest,
+            vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "v2")],
+            false,
+        );
+        emit(&plan2, false).expect("expected value");
+
+        let content = fs::read_to_string(dest.join("basic/SKILL.md")).expect("expected value");
+        assert_eq!(content, "v2");
+    }
+
+    #[test]
+    fn test_manifest_tracked_collision_errors_without_overwrite() {
+        let tmp = TempDir::new().expect("expected value");
+        let dest = tmp.path().join("agents");
+        fs::create_dir_all(&dest).expect("expected value");
+        // Pre-existing user-owned file (not in manifest).
+        fs::write(dest.join("foo.md"), "user owned").expect("expected value");
+
+        let plan = manifest_tracked_plan(
+            &dest,
+            vec![make_file(Provider::Claude, "agents/foo.md", "agentspec")],
+            false, // allow_overwrite = false
+        );
+        let err = emit(&plan, false).expect_err("expected collision error");
+        assert!(
+            err.to_string().contains("collision:"),
+            "expected collision error, got: {err}"
+        );
+        // Original file must be untouched.
+        let content = fs::read_to_string(dest.join("foo.md")).expect("expected value");
+        assert_eq!(content, "user owned");
+    }
+
+    #[test]
+    fn test_manifest_tracked_backs_up_unmanaged_file_with_force() {
+        let tmp = TempDir::new().expect("expected value");
+        let dest = tmp.path().join("agents");
+        fs::create_dir_all(&dest).expect("expected value");
+        fs::write(dest.join("foo.md"), "user owned").expect("expected value");
+
+        let plan = manifest_tracked_plan(
+            &dest,
+            vec![make_file(Provider::Claude, "agents/foo.md", "agentspec")],
+            true, // allow_overwrite = true
+        );
+        emit(&plan, false).expect("expected value");
+
+        // New content written.
+        let content = fs::read_to_string(dest.join("foo.md")).expect("expected value");
+        assert_eq!(content, "agentspec");
+        // A backup file was created.
+        let bak_exists = fs::read_dir(&dest)
+            .expect("expected value")
+            .filter_map(Result::ok)
+            .any(|e| e.file_name().to_string_lossy().starts_with("foo.md.bak."));
+        assert!(bak_exists, "expected a .bak. backup file");
+    }
+
+    #[test]
+    fn test_manifest_tracked_dry_run_no_mutations() {
+        let tmp = TempDir::new().expect("expected value");
+        let dest = tmp.path().join("skills");
+
+        let plan = WritePlan {
+            writes: vec![FileWrite {
+                provider: Provider::Claude,
+                destination: dest.clone(),
+                files: vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "body")],
+                mode: WriteMode::ManifestTracked,
+                allow_overwrite: true,
+                file_prefix: None,
+                name_prefix: None,
+                strip_name: false,
+            }],
+            patches: vec![],
+        };
+
+        emit(&plan, true).expect("expected value");
+
+        assert!(!dest.exists(), "dry-run must not create directory");
     }
 }
