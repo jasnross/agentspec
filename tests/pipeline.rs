@@ -227,50 +227,29 @@ fn test_compile_script_is_executable() {
 }
 
 #[test]
-fn test_check_passes_after_compile() {
-    let tmp = TempDir::new().expect("failed to create tmp dir");
-    let dir = setup(&tmp);
-
-    let compile = std::process::Command::new(agentspec())
-        .arg("compile")
-        .current_dir(&dir)
-        .output()
-        .expect("failed to run compile");
-    assert!(
-        compile.status.success(),
-        "compile failed: {}",
-        String::from_utf8_lossy(&compile.stderr)
-    );
-
-    let check = std::process::Command::new(agentspec())
-        .arg("check")
-        .current_dir(&dir)
-        .output()
-        .expect("failed to run check");
-    let stderr = String::from_utf8_lossy(&check.stderr);
-    assert!(
-        check.status.success(),
-        "check failed after compile:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("check passed"),
-        "expected 'check passed': {stderr}"
-    );
-}
-
-#[test]
 fn test_sync_prefix_strip_name_conflict_errors() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
-    let dir = tmp.path();
+    let dir = setup(&tmp);
     std::fs::write(
         dir.join("agentspec.toml"),
-        "[sync.claude]\nprefix = \"tw\"\nstrip_name = true\n",
+        r#"
+[presets.default]
+claude = { model = "sonnet" }
+opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
+cursor = { model = "fast" }
+
+[sync.claude]
+prefix = "tw"
+strip_name = true
+"#,
     )
     .expect("failed to write agentspec.toml");
 
+    let home = dir.join("home");
     let output = std::process::Command::new(agentspec())
-        .args(["sync", "--no-compile", "--provider", "claude"])
-        .current_dir(dir)
+        .args(["sync", "--provider", "claude"])
+        .env("HOME", &home)
+        .current_dir(&dir)
         .output()
         .expect("failed to run agentspec sync");
 
@@ -283,51 +262,30 @@ fn test_sync_prefix_strip_name_conflict_errors() {
 }
 
 #[test]
-fn test_sync_prefix_symlink_conflict_errors() {
-    let tmp = TempDir::new().expect("failed to create tmp dir");
-    let dir = tmp.path();
-    std::fs::write(
-        dir.join("agentspec.toml"),
-        "[sync.claude]\nprefix = \"tw\"\nstrategy = \"symlink\"\n",
-    )
-    .expect("failed to write agentspec.toml");
-
-    let output = std::process::Command::new(agentspec())
-        .args(["sync", "--no-compile", "--provider", "claude"])
-        .current_dir(dir)
-        .output()
-        .expect("failed to run agentspec sync");
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!output.status.success(), "sync should fail:\n{stderr}");
-    assert!(
-        stderr.contains("`prefix` requires `strategy = \"copy\"`"),
-        "stderr: {stderr}"
-    );
-}
-
-#[test]
 fn test_sync_opencode_commands_prefix_subdir() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
-    let dir = tmp.path();
+    let dir = setup(&tmp);
+
     std::fs::write(
         dir.join("agentspec.toml"),
-        "[sync.opencode]\nmode = \"user\"\nprefix = \"tw\"\n",
+        r#"
+[presets.default]
+claude = { model = "sonnet" }
+opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
+cursor = { model = "fast" }
+
+[sync.opencode]
+mode = "user"
+prefix = "tw"
+"#,
     )
     .expect("failed to write agentspec.toml");
-    std::fs::create_dir_all(dir.join("generated/opencode/commands"))
-        .expect("failed to create generated commands dir");
-    std::fs::write(
-        dir.join("generated/opencode/commands/commit.md"),
-        "---\nname: commit\n---\n",
-    )
-    .expect("failed to write generated command");
 
     let home = dir.join("home");
     let output = std::process::Command::new(agentspec())
-        .args(["sync", "--no-compile", "--provider", "open-code"])
+        .args(["sync", "--provider", "open-code"])
         .env("HOME", &home)
-        .current_dir(dir)
+        .current_dir(&dir)
         .output()
         .expect("failed to run agentspec sync");
 
@@ -338,7 +296,8 @@ fn test_sync_opencode_commands_prefix_subdir() {
         "stderr: {stderr}"
     );
     assert!(
-        home.join(".config/opencode/commands/tw/commit.md").exists(),
+        home.join(".config/opencode/commands/tw/basic-skill.md")
+            .exists(),
         "prefixed opencode command file should exist"
     );
 }
@@ -350,11 +309,11 @@ fn test_sync_no_config_errors_with_guidance() {
     let home = dir.join("home");
 
     let output = std::process::Command::new(agentspec())
-        .args(["sync", "--no-compile"])
+        .args(["sync"])
         .env("HOME", &home)
         .current_dir(&dir)
         .output()
-        .expect("failed to run agentspec sync --no-compile");
+        .expect("failed to run agentspec sync");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success(), "sync should fail:\n{stderr}");
@@ -384,17 +343,16 @@ cursor = { model = "fast" }
 
 [sync.cursor]
 mode = "user"
-strategy = "symlink"
 "#,
     )
     .expect("failed to write agentspec.toml");
 
     let output = std::process::Command::new(agentspec())
-        .args(["sync", "--no-compile"])
+        .args(["sync"])
         .env("HOME", &home)
         .current_dir(&dir)
         .output()
-        .expect("failed to run agentspec sync --no-compile");
+        .expect("failed to run agentspec sync");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "sync should succeed:\n{stderr}");
@@ -416,7 +374,7 @@ fn test_sync_provider_unconfigured_errors_without_dest() {
     let home = dir.join("home");
 
     let output = std::process::Command::new(agentspec())
-        .args(["sync", "--no-compile", "--provider", "claude"])
+        .args(["sync", "--provider", "claude"])
         .env("HOME", &home)
         .current_dir(&dir)
         .output()
@@ -440,7 +398,6 @@ fn test_sync_provider_unconfigured_with_dest_allowed() {
     let output = std::process::Command::new(agentspec())
         .args([
             "sync",
-            "--no-compile",
             "--provider",
             "claude",
             "--dest",
@@ -466,14 +423,7 @@ fn test_sync_provider_unconfigured_with_mode_user_allowed() {
     let home = dir.join("home");
 
     let output = std::process::Command::new(agentspec())
-        .args([
-            "sync",
-            "--no-compile",
-            "--provider",
-            "claude",
-            "--mode",
-            "user",
-        ])
+        .args(["sync", "--provider", "claude", "--mode", "user"])
         .env("HOME", &home)
         .current_dir(&dir)
         .output()
@@ -494,14 +444,7 @@ fn test_sync_provider_unconfigured_with_mode_project_allowed() {
     let home = dir.join("home");
 
     let output = std::process::Command::new(agentspec())
-        .args([
-            "sync",
-            "--no-compile",
-            "--provider",
-            "claude",
-            "--mode",
-            "project",
-        ])
+        .args(["sync", "--provider", "claude", "--mode", "project"])
         .env("HOME", &home)
         .current_dir(&dir)
         .output()
@@ -522,7 +465,7 @@ fn test_sync_no_config_mode_user_without_provider_errors() {
     let home = dir.join("home");
 
     let output = std::process::Command::new(agentspec())
-        .args(["sync", "--no-compile", "--mode", "user"])
+        .args(["sync", "--mode", "user"])
         .env("HOME", &home)
         .current_dir(&dir)
         .output()
@@ -561,11 +504,11 @@ invalid_field = "oops"
     .expect("failed to write agentspec.toml");
 
     let output = std::process::Command::new(agentspec())
-        .args(["sync", "--no-compile"])
+        .args(["sync"])
         .env("HOME", &home)
         .current_dir(&dir)
         .output()
-        .expect("failed to run agentspec sync --no-compile");
+        .expect("failed to run agentspec sync");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success(), "sync should fail:\n{stderr}");

@@ -23,9 +23,6 @@ pub enum Command {
     /// Compile spec files into provider-specific configurations
     Compile(CommonArgs),
 
-    /// Check that generated files match what compile would produce
-    Check(CommonArgs),
-
     /// Compile and distribute generated files to each tool's config directory
     Sync(SyncArgs),
 
@@ -48,10 +45,6 @@ pub struct CommonArgs {
 pub struct SyncArgs {
     #[command(flatten)]
     pub common: CommonArgs,
-
-    /// Skip compilation; sync from existing generated output
-    #[arg(long)]
-    pub no_compile: bool,
 
     /// Show what would be synced without making changes
     #[arg(long)]
@@ -77,7 +70,7 @@ pub struct SyncArgs {
 impl Command {
     pub fn args(&self) -> Option<&CommonArgs> {
         match self {
-            Command::Validate(args) | Command::Compile(args) | Command::Check(args) => Some(args),
+            Command::Validate(args) | Command::Compile(args) => Some(args),
             Command::Sync(args) => Some(&args.common),
             Command::Completions { .. } => None,
         }

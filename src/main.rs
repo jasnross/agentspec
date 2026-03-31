@@ -4,6 +4,7 @@ mod emit;
 mod sync;
 
 use agentspec::compile::{self, CompileResult};
+use agentspec::plan::compile_plan;
 use agentspec::presets::ProviderPresetsMap;
 use agentspec::provider::Provider;
 use agentspec::specs::{SpecDirs, Specs};
@@ -13,7 +14,8 @@ use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use cli::{Cli, Command, CommonArgs};
 use config::AgentspecConfig;
-use emit::{check_generated_state, write_generated_files};
+use emit::emit;
+use sync::{resolve_sync_targets, sync_plan};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -64,60 +66,31 @@ fn main() -> Result<()> {
             eprintln!("validation complete");
         }
         Command::Sync(sync_args) => {
-            if !sync_args.no_compile {
-                let sync_compile_providers = if sync_args.common.provider.is_empty() {
-                    config.configured_sync_providers()
-                } else {
-                    sync_args.common.provider.clone()
-                };
+            let targets = resolve_sync_targets(&config, sync_args)?;
+            let sync_providers: Vec<Provider> = targets.iter().map(|(p, _)| *p).collect();
 
-                if !sync_compile_providers.is_empty() {
-                    let (result, providers) = run_compile(
-                        resolved,
-                        &config.presets,
-                        &sync_compile_providers,
-                        &config.providers,
-                    )?;
-                    let output_dir = config.resolve(&config.output.dir);
-                    write_generated_files(&result.files, &output_dir, &providers)?;
-                }
-            }
-            sync::run_sync(&config, sync_args)?;
+            let (result, _) = run_compile(
+                resolved,
+                &config.presets,
+                &sync_providers,
+                &config.providers,
+            )?;
+
+            let home = home_dir()?;
+            let plan = sync_plan(&result, &targets, &home, &cwd)?;
+            emit(&plan, sync_args.dry_run)?;
         }
-        Command::Compile(_) | Command::Check(_) => {
+        Command::Compile(_) => {
             let (result, providers) =
                 run_compile(resolved, &config.presets, &args.provider, &config.providers)?;
             let output_dir = config.resolve(&config.output.dir);
-            match &cli.command {
-                Command::Compile(_) => {
-                    write_generated_files(&result.files, &output_dir, &providers)?;
-                    eprintln!(
-                        "wrote {} files to {}",
-                        result.files.len(),
-                        output_dir.display()
-                    );
-                }
-                Command::Check(_) => {
-                    let check = check_generated_state(&result.files, &output_dir, &providers);
-                    if check.is_clean() {
-                        eprintln!("check passed: generated files are up to date");
-                    } else {
-                        for path in &check.missing {
-                            eprintln!("missing: {path}");
-                        }
-                        for path in &check.outdated {
-                            eprintln!("outdated: {path}");
-                        }
-                        for path in &check.unexpected {
-                            eprintln!("unexpected: {path}");
-                        }
-                        anyhow::bail!("check failed: {} problem(s) found", check.problem_count());
-                    }
-                }
-                Command::Validate(_) | Command::Completions { .. } | Command::Sync(_) => {
-                    unreachable!()
-                }
-            }
+            let plan = compile_plan(&result, &output_dir, &providers);
+            emit(&plan, false)?;
+            eprintln!(
+                "wrote {} files to {}",
+                result.files.len(),
+                output_dir.display()
+            );
         }
         Command::Completions { .. } => unreachable!("handled above"),
     }
@@ -126,7 +99,7 @@ fn main() -> Result<()> {
 }
 
 /// Runs the compile step and reports the compiled file count. Returns the result and the
-/// resolved target list so the caller can decide what to do next (write, check, or sync).
+/// resolved target list so the caller can decide what to do next (write or sync).
 fn run_compile(
     resolved: ResolvedSpecs,
     presets: &ProviderPresetsMap,
@@ -145,4 +118,11 @@ fn run_compile(
         providers.len()
     );
     Ok((result, providers))
+}
+
+/// Returns the home directory from the `HOME` environment variable.
+fn home_dir() -> Result<std::path::PathBuf> {
+    std::env::var("HOME")
+        .context("HOME environment variable not set")
+        .map(std::path::PathBuf::from)
 }

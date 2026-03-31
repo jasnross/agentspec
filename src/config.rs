@@ -22,14 +22,16 @@ pub enum SyncMode {
     Path,
 }
 
-/// How files are distributed from `generated/` to the destination.
+/// How files are distributed to the destination.
+///
+/// Only `Copy` is supported. `"symlink"` is accepted as an alias for backward
+/// compatibility with existing `agentspec.toml` files and is silently treated as `Copy`.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum SyncStrategy {
-    /// Create symlinks from destination into `generated/`
-    #[default]
-    Symlink,
     /// Copy files and track ownership via `.agentspec-manifest.json`
+    #[default]
+    #[serde(alias = "symlink")]
     Copy,
 }
 
@@ -286,17 +288,6 @@ impl SyncTargetConfig {
         if self.prefix.is_some() && self.strip_name {
             bail!("sync config for {provider}: `prefix` and `strip_name` are mutually exclusive");
         }
-
-        if self.prefix.is_some()
-            && provider == Provider::Claude
-            && self.strategy == SyncStrategy::Symlink
-        {
-            bail!(
-                "sync config for {provider}: `prefix` requires `strategy = \"copy\"` \
-                 because Claude skill/agent names come from frontmatter"
-            );
-        }
-
         Ok(())
     }
 }
@@ -469,7 +460,7 @@ cursor = { model = "fast" }
         let cli = SyncOverrides::default();
         let result = config.resolve_sync_target(Provider::Claude, &cli);
         assert_eq!(result.mode, SyncMode::User);
-        assert_eq!(result.strategy, SyncStrategy::Symlink);
+        assert_eq!(result.strategy, SyncStrategy::Copy);
         assert!(!result.strip_name);
         assert!(result.prefix.is_none());
         assert!(!result.allow_overwrite);
@@ -499,6 +490,7 @@ strip_name = true
     #[test]
     fn test_resolve_sync_target_cli_overrides_win() {
         let tmp = tempfile::tempdir().expect("expected value");
+        // "symlink" is accepted as an alias for "copy" via serde alias
         let toml_content = r#"
 [sync.claude]
 strategy = "symlink"
@@ -509,15 +501,15 @@ mode = "user"
 
         let cli = SyncOverrides {
             mode: Some(SyncMode::Project),
-            strategy: Some(SyncStrategy::Symlink),
+            strategy: Some(SyncStrategy::Copy),
             dest: None,
             force: false,
         };
 
-        // CLI overrides base
+        // CLI overrides base; "symlink" in TOML deserializes to Copy
         let result = config.resolve_sync_target(Provider::Claude, &cli);
         assert_eq!(result.mode, SyncMode::Project);
-        assert_eq!(result.strategy, SyncStrategy::Symlink);
+        assert_eq!(result.strategy, SyncStrategy::Copy);
     }
 
     #[test]
@@ -667,30 +659,6 @@ strategy = "copy"
 
         let result = target.validate_for_sync(Provider::Claude);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_validate_prefix_requires_copy_for_claude() {
-        let target = SyncTargetConfig {
-            prefix: Some("tw".to_string()),
-            strategy: SyncStrategy::Symlink,
-            ..SyncTargetConfig::default()
-        };
-
-        let result = target.validate_for_sync(Provider::Claude);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_validate_prefix_symlink_ok_for_opencode() {
-        let target = SyncTargetConfig {
-            prefix: Some("tw".to_string()),
-            strategy: SyncStrategy::Symlink,
-            ..SyncTargetConfig::default()
-        };
-
-        let result = target.validate_for_sync(Provider::OpenCode);
-        assert!(result.is_ok());
     }
 
     #[test]

@@ -1,92 +1,23 @@
 use std::path::{Path, PathBuf};
 
+use agentspec::plan::{FileKind, expand_tilde, project_dest_dir, user_dest_dir};
 use agentspec::provider::Provider;
 use anyhow::{Context, Result};
 use walkdir::WalkDir;
 
 use crate::config::{SyncMode, SyncTargetConfig};
 
-/// The kinds of outputs the sync command distributes, mirroring the `generated/<provider>/`
-/// subdirectories.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SyncKind {
-    Agents,
-    Commands,
-    Rules,
-    Skills,
-}
-
-impl SyncKind {
-    /// Directory name used under `generated/<provider>/` and under tool config dirs.
-    pub fn dir_name(self) -> &'static str {
-        match self {
-            SyncKind::Agents => "agents",
-            SyncKind::Commands => "commands",
-            SyncKind::Rules => "rules",
-            SyncKind::Skills => "skills",
-        }
-    }
-}
-
-/// Returns the sync kinds generated for a given provider.
-pub fn all_sync_kinds(provider: Provider) -> Vec<SyncKind> {
-    match provider {
-        Provider::Claude => vec![SyncKind::Agents, SyncKind::Rules, SyncKind::Skills],
-        Provider::Cursor => vec![SyncKind::Rules, SyncKind::Skills],
-        Provider::OpenCode => vec![
-            SyncKind::Agents,
-            SyncKind::Commands,
-            SyncKind::Rules,
-            SyncKind::Skills,
-        ],
-    }
-}
-
-/// Returns the user-level destination directory for a provider/kind pair.
-///
-/// Implements the hardcoded convention table from the plan's Provider Conventions section.
-pub fn user_dest_dir(provider: Provider, kind: SyncKind, home: &Path) -> PathBuf {
-    match provider {
-        Provider::Claude => home.join(".claude").join(kind.dir_name()),
-        Provider::Cursor => home.join(".cursor").join(kind.dir_name()),
-        Provider::OpenCode => home.join(".config").join("opencode").join(kind.dir_name()),
-    }
-}
-
-/// Returns the project-local destination directory for a provider/kind pair.
-pub fn project_dest_dir(provider: Provider, kind: SyncKind, cwd: &Path) -> PathBuf {
-    let tool_dir = match provider {
-        Provider::Claude => ".claude",
-        Provider::Cursor => ".cursor",
-        Provider::OpenCode => ".opencode",
-    };
-    cwd.join(tool_dir).join(kind.dir_name())
-}
-
-/// Returns the source directory within the generated output for a provider/kind pair.
-pub fn generated_source_dir(provider: Provider, kind: SyncKind, generated_root: &Path) -> PathBuf {
-    generated_root
-        .join(provider.to_string())
-        .join(kind.dir_name())
-}
-
-/// Expands a leading `~/` to the home directory. Returns the path unchanged otherwise.
-pub fn expand_tilde(path: &str, home: &Path) -> PathBuf {
-    if let Some(rest) = path.strip_prefix("~/") {
-        home.join(rest)
-    } else {
-        PathBuf::from(path)
-    }
-}
-
 /// Resolves the destination directory for a provider/kind pair from a `SyncTargetConfig`.
 ///
 /// - `User` → `user_dest_dir`
 /// - `Project` → `project_dest_dir`
 /// - `Path` → per-kind explicit field from `config`; error if the kind's field is `None`
+///
+/// Note: this function stays in the binary crate because it depends on
+/// `SyncTargetConfig` / `SyncMode` which derive `clap::ValueEnum`.
 pub fn resolve_dest_dir(
     provider: Provider,
-    kind: SyncKind,
+    kind: FileKind,
     config: &SyncTargetConfig,
     home: &Path,
     cwd: &Path,
@@ -96,10 +27,10 @@ pub fn resolve_dest_dir(
         SyncMode::Project => Ok(project_dest_dir(provider, kind, cwd)),
         SyncMode::Path => {
             let raw = match kind {
-                SyncKind::Agents => config.agents.as_deref(),
-                SyncKind::Commands => config.commands.as_deref(),
-                SyncKind::Rules => config.rules.as_deref(),
-                SyncKind::Skills => config.skills.as_deref(),
+                FileKind::Agents => config.agents.as_deref(),
+                FileKind::Commands => config.commands.as_deref(),
+                FileKind::Rules => config.rules.as_deref(),
+                FileKind::Skills => config.skills.as_deref(),
             };
             let path_str = raw.with_context(|| {
                 format!(
@@ -225,7 +156,7 @@ mod tests {
     #[test]
     fn test_resolve_dest_user_claude_agents() {
         let config = SyncTargetConfig::default(); // mode = User
-        let result = resolve_dest_dir(Provider::Claude, SyncKind::Agents, &config, &home(), &cwd())
+        let result = resolve_dest_dir(Provider::Claude, FileKind::Agents, &config, &home(), &cwd())
             .expect("expected value");
         assert_eq!(result, PathBuf::from("/home/user/.claude/agents"));
     }
@@ -236,7 +167,7 @@ mod tests {
             mode: SyncMode::Project,
             ..Default::default()
         };
-        let result = resolve_dest_dir(Provider::Cursor, SyncKind::Skills, &config, &home(), &cwd())
+        let result = resolve_dest_dir(Provider::Cursor, FileKind::Skills, &config, &home(), &cwd())
             .expect("expected value");
         assert_eq!(result, PathBuf::from("/work/project/.cursor/skills"));
     }
@@ -248,7 +179,7 @@ mod tests {
             skills: Some("~/foo/skills".to_string()),
             ..Default::default()
         };
-        let result = resolve_dest_dir(Provider::Cursor, SyncKind::Skills, &config, &home(), &cwd())
+        let result = resolve_dest_dir(Provider::Cursor, FileKind::Skills, &config, &home(), &cwd())
             .expect("expected value");
         assert_eq!(result, PathBuf::from("/home/user/foo/skills"));
     }
@@ -259,29 +190,8 @@ mod tests {
             mode: SyncMode::Path,
             ..Default::default()
         };
-        let result = resolve_dest_dir(Provider::Claude, SyncKind::Agents, &config, &home(), &cwd());
+        let result = resolve_dest_dir(Provider::Claude, FileKind::Agents, &config, &home(), &cwd());
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_all_sync_kinds_opencode_all_four() {
-        let kinds = all_sync_kinds(Provider::OpenCode);
-        assert!(kinds.contains(&SyncKind::Agents));
-        assert!(kinds.contains(&SyncKind::Commands));
-        assert!(kinds.contains(&SyncKind::Rules));
-        assert!(kinds.contains(&SyncKind::Skills));
-    }
-
-    #[test]
-    fn test_expand_tilde_replaces_home() {
-        let result = expand_tilde("~/foo/bar", &home());
-        assert_eq!(result, PathBuf::from("/home/user/foo/bar"));
-    }
-
-    #[test]
-    fn test_expand_tilde_absolute_unchanged() {
-        let result = expand_tilde("/absolute/path", &home());
-        assert_eq!(result, PathBuf::from("/absolute/path"));
     }
 
     // patch_opencode_instructions tests
