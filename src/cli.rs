@@ -2,7 +2,7 @@ use agentspec::provider::Provider;
 use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 
-use crate::config::{SyncMode, SyncStrategy};
+use crate::config::SyncMode;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -53,10 +53,6 @@ pub struct SyncArgs {
     /// Allow overwriting user-owned files at sync destinations (disables collision errors).
     #[arg(long)]
     pub force: bool,
-
-    /// Override sync strategy for all providers
-    #[arg(long, value_enum)]
-    pub strategy: Option<SyncStrategy>,
 
     /// Override destination root for all providers (implies --mode=path)
     #[arg(long)]

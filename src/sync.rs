@@ -26,7 +26,6 @@ pub fn resolve_sync_targets(
 ) -> Result<Vec<(Provider, SyncTargetConfig)>> {
     let sync_overrides = SyncOverrides {
         mode: args.mode,
-        strategy: args.strategy,
         dest: args.dest.clone(),
         force: args.force,
     };
@@ -76,10 +75,7 @@ pub fn sync_plan(
     let mut patches = Vec::new();
 
     for (provider, target) in targets {
-        eprintln!(
-            "syncing {provider} (mode={:?}, strategy={:?})",
-            target.mode, target.strategy
-        );
+        eprintln!("syncing {provider} (mode={:?})", target.mode);
 
         for kind in file_kinds(*provider) {
             let mut dest = resolve_dest_dir(*provider, kind, target, home, cwd)?;

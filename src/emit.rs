@@ -146,8 +146,6 @@ fn write_batch(w: &FileWrite, dry_run: bool) -> Result<()> {
 /// - `rel_path` not in manifest AND dest exists AND `allow_overwrite: false` → error
 /// - `rel_path` not in manifest AND dest exists AND `allow_overwrite: true` → back up, write, record
 /// - dest does not exist → write, record
-///
-/// Existing symlinks at `dest` are replaced with real files (upgrading from symlink strategy).
 #[allow(clippy::too_many_arguments)]
 fn write_content_to_dest(
     content: &[u8],
@@ -173,35 +171,19 @@ fn write_content_to_dest(
         }
     }
 
-    let dest_is_symlink = dest
-        .symlink_metadata()
-        .map(|m| m.file_type().is_symlink())
-        .unwrap_or(false);
-
     if manifest.files.contains_key(rel_path) {
         // We own this file — check if content changed.
-        if dest.exists() || dest_is_symlink {
-            let dest_content = if dest_is_symlink {
-                // Symlink: read through to target; treat dangling symlinks as empty so the
-                // content comparison fails and the file gets replaced with a real copy.
-                fs::read(dest).unwrap_or_default()
-            } else {
-                fs::read(dest)
-                    .with_context(|| format!("failed to read dest file {}", dest.display()))?
-            };
-            if dest_content == final_content && !dest_is_symlink {
+        if dest.exists() {
+            let dest_content = fs::read(dest)
+                .with_context(|| format!("failed to read dest file {}", dest.display()))?;
+            if dest_content == final_content {
                 return Ok(SyncAction::Unchanged);
             }
-            // Content differs or is a symlink that needs converting to a real file.
             eprintln!(
                 "warning: overwriting changed file {} (agentspec-managed)",
                 dest.display()
             );
             if !dry_run {
-                if dest_is_symlink {
-                    fs::remove_file(dest)
-                        .with_context(|| format!("failed to remove symlink {}", dest.display()))?;
-                }
                 write_file(dest, &final_content, mode)?;
                 manifest
                     .files
@@ -209,7 +191,7 @@ fn write_content_to_dest(
             }
             return Ok(SyncAction::Updated);
         }
-    } else if dest.exists() || dest_is_symlink {
+    } else if dest.exists() {
         if !allow_overwrite {
             bail!(
                 "collision: {} exists and is not managed by agentspec; configure a `prefix` in [sync.<provider>] to avoid conflicts, or pass --force to overwrite",
@@ -226,14 +208,9 @@ fn write_content_to_dest(
         bak_name.push(format!(".bak.{timestamp}"));
         let bak = PathBuf::from(bak_name);
         if !dry_run {
-            if dest_is_symlink {
-                fs::remove_file(dest)
-                    .with_context(|| format!("failed to remove symlink {}", dest.display()))?;
-            } else {
-                fs::rename(dest, &bak).with_context(|| {
-                    format!("failed to back up {} to {}", dest.display(), bak.display())
-                })?;
-            }
+            fs::rename(dest, &bak).with_context(|| {
+                format!("failed to back up {} to {}", dest.display(), bak.display())
+            })?;
             write_file(dest, &final_content, mode)?;
             manifest
                 .files

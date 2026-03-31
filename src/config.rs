@@ -22,19 +22,6 @@ pub enum SyncMode {
     Path,
 }
 
-/// How files are distributed to the destination.
-///
-/// Only `Copy` is supported. `"symlink"` is accepted as an alias for backward
-/// compatibility with existing `agentspec.toml` files and is silently treated as `Copy`.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, clap::ValueEnum)]
-#[serde(rename_all = "lowercase")]
-pub enum SyncStrategy {
-    /// Copy files and track ownership via `.agentspec-manifest.json`
-    #[default]
-    #[serde(alias = "symlink")]
-    Copy,
-}
-
 /// Top-level config parsed from `agentspec.toml`.
 #[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -120,9 +107,6 @@ impl AgentspecConfig {
         // Apply CLI overrides last (highest precedence)
         if let Some(mode) = cli.mode {
             resolved.mode = mode;
-        }
-        if let Some(strategy) = cli.strategy {
-            resolved.strategy = strategy;
         }
         if let Some(ref dest) = cli.dest {
             resolved.mode = SyncMode::Path;
@@ -257,8 +241,6 @@ impl Default for OutputConfig {
 pub struct SyncTargetConfig {
     /// Where to place synced files (user-level, project-local, or explicit path).
     pub mode: SyncMode,
-    /// How to distribute: symlink or copy with manifest tracking.
-    pub strategy: SyncStrategy,
     /// Whether to strip `name:` lines from `SKILL.md` files after copying
     pub strip_name: bool,
     /// Optional namespace prefix applied to synced skill/agent/command names.
@@ -298,8 +280,6 @@ impl SyncTargetConfig {
 pub struct SyncOverrides {
     /// Override sync mode for all providers.
     pub mode: Option<SyncMode>,
-    /// Override sync strategy for all providers.
-    pub strategy: Option<SyncStrategy>,
     /// Override destination root (implies `mode = Path`).
     pub dest: Option<String>,
     /// Allow overwriting user-owned files at sync destinations.
@@ -460,7 +440,6 @@ cursor = { model = "fast" }
         let cli = SyncOverrides::default();
         let result = config.resolve_sync_target(Provider::Claude, &cli);
         assert_eq!(result.mode, SyncMode::User);
-        assert_eq!(result.strategy, SyncStrategy::Copy);
         assert!(!result.strip_name);
         assert!(result.prefix.is_none());
         assert!(!result.allow_overwrite);
@@ -470,17 +449,15 @@ cursor = { model = "fast" }
     #[test]
     fn test_resolve_sync_target_applies_base_config() {
         let tmp = tempfile::tempdir().expect("expected value");
-        let toml_content = r#"
+        let toml_content = r"
 [sync.claude]
-strategy = "copy"
 strip_name = true
-"#;
+";
         fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
         let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
         let cli = SyncOverrides::default();
 
         let result = config.resolve_sync_target(Provider::Claude, &cli);
-        assert_eq!(result.strategy, SyncStrategy::Copy);
         assert!(result.strip_name);
         assert!(result.prefix.is_none());
         assert!(!result.allow_overwrite);
@@ -490,10 +467,8 @@ strip_name = true
     #[test]
     fn test_resolve_sync_target_cli_overrides_win() {
         let tmp = tempfile::tempdir().expect("expected value");
-        // "symlink" is accepted as an alias for "copy" via serde alias
         let toml_content = r#"
 [sync.claude]
-strategy = "symlink"
 mode = "user"
 "#;
         fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
@@ -501,15 +476,12 @@ mode = "user"
 
         let cli = SyncOverrides {
             mode: Some(SyncMode::Project),
-            strategy: Some(SyncStrategy::Copy),
             dest: None,
             force: false,
         };
 
-        // CLI overrides base; "symlink" in TOML deserializes to Copy
         let result = config.resolve_sync_target(Provider::Claude, &cli);
         assert_eq!(result.mode, SyncMode::Project);
-        assert_eq!(result.strategy, SyncStrategy::Copy);
     }
 
     #[test]
@@ -517,7 +489,6 @@ mode = "user"
         let config = AgentspecConfig::default();
         let cli = SyncOverrides {
             mode: None,
-            strategy: None,
             dest: Some("/tmp/sync-test".to_string()),
             force: false,
         };
@@ -565,7 +536,7 @@ prefix = ""
         let tmp = tempfile::tempdir().expect("expected value");
         let toml_content = r#"
 [sync.claude]
-strategy = "copy"
+mode = "user"
 "#;
         fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
         let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
@@ -618,16 +589,6 @@ strategy = "copy"
     fn test_cli_sync_intent_mode_path_without_dest_is_insufficient() {
         let cli = SyncOverrides {
             mode: Some(SyncMode::Path),
-            ..SyncOverrides::default()
-        };
-
-        assert!(!AgentspecConfig::cli_sync_intent_sufficient(&cli, true));
-    }
-
-    #[test]
-    fn test_cli_sync_intent_strategy_only_is_insufficient() {
-        let cli = SyncOverrides {
-            strategy: Some(SyncStrategy::Copy),
             ..SyncOverrides::default()
         };
 
