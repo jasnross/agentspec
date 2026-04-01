@@ -1,5 +1,3 @@
-1. Figure out how to generate plugin content for Claude and Cursor
-   - In particular, the plugin manifest files
 1. Consider deriving id from path instead of requiring in frontmatter
    - Currently `id` is a required `String` in all frontmatter structs; missing it causes a parse
      error at load time
@@ -11,7 +9,7 @@
      make the path the single source of truth
    - The open question is whether callers ever legitimately want the output filename to differ from
      the source filename; if so, `id` (or a rename field) remains useful as an override
-1. Do we actually need the normalized types?
+2. Do we actually need the normalized types?
    - `NormalizedSpec` / `NormalizedAgentSpec` / etc. are structurally identical to their raw
      counterparts — normalization is a field-by-field pass-through with no defaults, no coercions,
      and no validation applied
@@ -23,3 +21,6 @@
      Specs → ValidatedSpecs with no loss of safety
    - Retain this layer only if we expect real normalization work to arrive (e.g., applying preset
      defaults into spec fields before compilation)
+3. Figure out how to generate plugin content for Claude and Cursor
+   - In particular, the plugin manifest files
+4. Allow specifying one or more configuration files
