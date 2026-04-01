@@ -185,3 +185,124 @@ pub(crate) fn opencode_config_dir(target: &SyncTargetConfig, home: &Path, cwd: &
             .unwrap_or_else(|| home.join(".config").join("opencode")),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use agentspec::compile::{CompileResult, GeneratedFile};
+    use agentspec::plan::{ConfigPatch, FileKind, WriteMode};
+    use agentspec::provider::Provider;
+
+    use crate::config::{SyncMode, SyncTargetConfig};
+
+    use super::{files_for_kind, sync_plan};
+
+    fn make_result(files: Vec<GeneratedFile>) -> CompileResult {
+        CompileResult { files }
+    }
+
+    #[test]
+    fn test_files_for_kind_partitions_by_kind_and_provider() {
+        let result = make_result(vec![
+            GeneratedFile::text(Provider::Claude, "agents/foo.md", "agent".to_string()),
+            GeneratedFile::text(Provider::Claude, "skills/bar/SKILL.md", "skill".to_string()),
+            GeneratedFile::text(Provider::Claude, "rules/baz.md", "rule".to_string()),
+            GeneratedFile::text(
+                Provider::Cursor,
+                "agents/foo.md",
+                "cursor-agent".to_string(),
+            ),
+        ]);
+
+        // Returns only Claude agents, not the Cursor one.
+        let agents = files_for_kind(&result, Provider::Claude, FileKind::Agents);
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].path.to_str(), Some("agents/foo.md"));
+        assert_eq!(agents[0].provider, Provider::Claude);
+
+        // Correct kind partitioning within a single provider.
+        let skills = files_for_kind(&result, Provider::Claude, FileKind::Skills);
+        assert_eq!(skills.len(), 1);
+
+        let rules = files_for_kind(&result, Provider::Claude, FileKind::Rules);
+        assert_eq!(rules.len(), 1);
+
+        // Cursor sees its own agent.
+        let cursor_agents = files_for_kind(&result, Provider::Cursor, FileKind::Agents);
+        assert_eq!(cursor_agents.len(), 1);
+        assert_eq!(cursor_agents[0].provider, Provider::Cursor);
+
+        // No cross-kind contamination.
+        let commands = files_for_kind(&result, Provider::Claude, FileKind::Commands);
+        assert!(commands.is_empty());
+    }
+
+    #[test]
+    fn test_sync_plan_produces_correct_writes_and_patches() {
+        let result = make_result(vec![
+            GeneratedFile::text(Provider::Claude, "agents/agent.md", "a".to_string()),
+            GeneratedFile::text(Provider::Claude, "skills/s/SKILL.md", "s".to_string()),
+            GeneratedFile::text(Provider::Claude, "rules/rule.md", "r".to_string()),
+            GeneratedFile::text(Provider::OpenCode, "agents/agent.md", "a".to_string()),
+            GeneratedFile::text(Provider::OpenCode, "commands/cmd.md", "c".to_string()),
+            GeneratedFile::text(Provider::OpenCode, "rules/rule/AGENTS.md", "r".to_string()),
+            GeneratedFile::text(Provider::OpenCode, "skills/s/SKILL.md", "s".to_string()),
+        ]);
+
+        let claude_target = SyncTargetConfig {
+            mode: SyncMode::Path,
+            agents: Some("/out/claude/agents".to_string()),
+            skills: Some("/out/claude/skills".to_string()),
+            rules: Some("/out/claude/rules".to_string()),
+            ..SyncTargetConfig::default()
+        };
+
+        let opencode_target = SyncTargetConfig {
+            mode: SyncMode::Path,
+            agents: Some("/out/opencode/agents".to_string()),
+            commands: Some("/out/opencode/commands".to_string()),
+            rules: Some("/out/opencode/rules".to_string()),
+            skills: Some("/out/opencode/skills".to_string()),
+            ..SyncTargetConfig::default()
+        };
+
+        let targets = vec![
+            (Provider::Claude, claude_target),
+            (Provider::OpenCode, opencode_target),
+        ];
+
+        let home = Path::new("/tmp");
+        let plan = sync_plan(&result, &targets, home, home).expect("sync_plan should succeed");
+
+        // Claude: 3 kinds (agents, rules, skills); OpenCode: 4 kinds (agents, commands, rules, skills)
+        assert_eq!(plan.writes.len(), 7);
+
+        // Every write uses ManifestTracked mode.
+        for w in &plan.writes {
+            assert!(
+                matches!(w.mode, WriteMode::ManifestTracked),
+                "expected ManifestTracked for {} {:?}",
+                w.provider,
+                w.destination
+            );
+        }
+
+        // Exactly one ConfigPatch: OpenCode instructions for the rules dest.
+        assert_eq!(plan.patches.len(), 1);
+        assert!(matches!(
+            plan.patches[0],
+            ConfigPatch::OpenCodeInstructions { .. }
+        ));
+
+        // Spot-check: the Claude agents write targets the correct destination
+        // and carries the correct file.
+        let claude_agents = plan
+            .writes
+            .iter()
+            .find(|w| w.provider == Provider::Claude && w.destination.ends_with("claude/agents"))
+            .expect("claude agents write should exist");
+        assert_eq!(claude_agents.files.len(), 1);
+        assert!(claude_agents.files[0].path.starts_with("agents/"));
+    }
+}
