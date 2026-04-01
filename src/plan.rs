@@ -35,8 +35,9 @@ impl FileKind {
 /// Returns the file kinds generated for a given provider.
 pub fn file_kinds(provider: Provider) -> Vec<FileKind> {
     match provider {
-        Provider::Claude => vec![FileKind::Agents, FileKind::Rules, FileKind::Skills],
-        Provider::Cursor => vec![FileKind::Rules, FileKind::Skills],
+        Provider::Claude | Provider::Cursor => {
+            vec![FileKind::Agents, FileKind::Rules, FileKind::Skills]
+        }
         Provider::OpenCode => vec![
             FileKind::Agents,
             FileKind::Commands,
@@ -100,13 +101,6 @@ pub fn compile_plan(
     }
 }
 
-/// Returns the source directory within the generated output for a provider/kind pair.
-pub fn generated_source_dir(provider: Provider, kind: FileKind, generated_root: &Path) -> PathBuf {
-    generated_root
-        .join(provider.to_string())
-        .join(kind.dir_name())
-}
-
 /// Expands a leading `~/` to the home directory. Returns the path unchanged otherwise.
 pub fn expand_tilde(path: &str, home: &Path) -> PathBuf {
     if let Some(rest) = path.strip_prefix("~/") {
@@ -132,12 +126,14 @@ pub enum NamePrefixMode {
 ///
 /// Patches always run after all writes (e.g. `OpenCode` patching needs rule files
 /// to exist first), so two separate `Vec`s replace a single `Vec<Op>` enum.
+#[derive(Debug)]
 pub struct WritePlan {
     pub writes: Vec<FileWrite>,
     pub patches: Vec<ConfigPatch>,
 }
 
 /// How the executor treats the destination directory.
+#[derive(Debug)]
 pub enum WriteMode {
     /// agentspec owns this directory exclusively — delete it and rewrite from scratch.
     /// Safe only for directories like `generated/` that agentspec controls entirely.
@@ -152,6 +148,7 @@ pub enum WriteMode {
 /// `kind` is intentionally absent: by the time a `FileWrite` is constructed,
 /// the kind has already been compiled away into `destination` (resolved path)
 /// and `files` (filtered set). The executor needs neither.
+#[derive(Debug)]
 pub struct FileWrite {
     pub provider: Provider,
     pub destination: PathBuf,
@@ -164,6 +161,7 @@ pub struct FileWrite {
 }
 
 /// A post-write config file patch.
+#[derive(Debug)]
 pub enum ConfigPatch {
     /// Patch `opencode.json` `instructions` array with absolute paths to synced rule files.
     OpenCodeInstructions {
