@@ -19,10 +19,11 @@ pub struct Manifest {
 
 /// Per-file manifest entry.
 ///
-/// `source` was removed: the copy executor now works from in-memory `GeneratedFile`
-/// content, so there is no source path to record. Existing manifests on disk that
-/// contain `"source": "..."` are silently ignored on load (no `deny_unknown_fields`).
+/// Currently empty — presence in the `files` map is the ownership signal.
+/// `deny_unknown_fields` ensures stale or malformed manifest entries surface as
+/// parse errors rather than silently succeeding.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ManifestEntry {}
 
 impl Default for Manifest {
@@ -93,16 +94,15 @@ mod tests {
     }
 
     #[test]
-    fn test_load_ignores_stale_source_field() {
-        // Existing manifests on disk may have a "source" field from the old schema.
-        // Since ManifestEntry does not use deny_unknown_fields, serde_json silently ignores it.
+    fn test_load_rejects_unknown_entry_fields() {
+        // Manifests with unknown fields (e.g. old "source" from a prior schema) should
+        // fail to parse — unknown fields surface as errors rather than silently succeeding.
         let t = tmp();
         let stale_json = r#"{"version":1,"files":{"foo.md":{"source":"/generated/foo.md"}}}"#;
         std::fs::write(t.path().join(".agentspec-manifest.json"), stale_json)
             .expect("expected value");
 
-        let loaded = Manifest::load(t.path()).expect("expected value");
-        assert_eq!(loaded.files.len(), 1);
-        assert!(loaded.files.contains_key("foo.md"));
+        let result = Manifest::load(t.path());
+        assert!(result.is_err(), "expected parse error for unknown field");
     }
 }
