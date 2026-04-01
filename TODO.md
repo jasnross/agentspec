@@ -24,3 +24,6 @@
 3. Figure out how to generate plugin content for Claude and Cursor
    - In particular, the plugin manifest files
 4. Allow specifying one or more configuration files
+5. Do we need strip_name if we can set a prefix?
+6. Cleanup
+   - Refactor for clippy::too_many_lines

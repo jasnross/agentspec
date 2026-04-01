@@ -145,6 +145,7 @@ impl AgentspecConfig {
         self.sync.contains_key(&provider_str)
     }
 
+    // COMMENT: it looks like this method is only used within config.rs and doesn't need to be public
     /// Returns whether CLI flags provide sufficient explicit intent for CLI-only sync.
     ///
     /// CLI-only sync always requires explicit provider selection via `--provider`.
