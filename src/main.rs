@@ -120,9 +120,7 @@ fn run_compile(
     Ok((result, providers))
 }
 
-/// Returns the home directory from the `HOME` environment variable.
+/// Returns the current user's home directory.
 fn home_dir() -> Result<std::path::PathBuf> {
-    std::env::var("HOME")
-        .context("HOME environment variable not set")
-        .map(std::path::PathBuf::from)
+    home::home_dir().ok_or_else(|| anyhow::anyhow!("could not determine home directory"))
 }
