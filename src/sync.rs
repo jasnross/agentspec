@@ -80,8 +80,6 @@ pub fn sync_plan(
     let mut patches = Vec::new();
 
     for (provider, target) in targets {
-        eprintln!("syncing {provider} (mode={:?})", target.mode);
-
         for kind in file_kinds(*provider) {
             let mut dest = resolve_dest_dir(*provider, kind, target, home, cwd)?;
             let mut file_prefix: Option<String> = None;
@@ -105,7 +103,7 @@ pub fn sync_plan(
                 allow_overwrite: target.allow_overwrite,
                 file_prefix,
                 name_prefix,
-                strip_name: target.strip_name,
+                strip_name: target.strip_name && kind == FileKind::Skills,
             });
 
             if *provider == Provider::OpenCode && kind == FileKind::Rules {

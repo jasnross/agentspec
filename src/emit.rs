@@ -9,8 +9,8 @@ use anyhow::{Context, Result, bail};
 use crate::sync::manifest::{Manifest, ManifestEntry};
 use crate::sync::provider::patch_opencode_instructions;
 use crate::sync::strategy::{
-    SyncAction, apply_strip_name, prefix_frontmatter_name, prefix_rel_path,
-    should_prefix_frontmatter_name,
+    SyncAction, prefix_frontmatter_name, prefix_rel_path, should_prefix_frontmatter_name,
+    strip_frontmatter_name,
 };
 
 /// Execute a write plan: write all file batches, then apply config patches.
@@ -22,6 +22,9 @@ pub fn emit(plan: &WritePlan, dry_run: bool) -> Result<()> {
     Ok(())
 }
 
+// Two match arms (CleanSlate vs ManifestTracked) with distinct logic; splitting
+// into separate functions would scatter related manifest bookkeeping.
+#[allow(clippy::too_many_lines)]
 fn write_batch(w: &FileWrite, dry_run: bool) -> Result<()> {
     match w.mode {
         WriteMode::CleanSlate => {
@@ -81,10 +84,26 @@ fn write_batch(w: &FileWrite, dry_run: bool) -> Result<()> {
                 current_keys.insert(rel_str.clone());
                 let dest = w.destination.join(&prefixed_rel);
 
+                // Pre-process content: strip `name:` frontmatter before comparison/write
+                // so the on-disk content matches what we'll compare against next sync.
+                // Skip the transform for non-UTF-8 content (matching name_prefix behavior).
+                let content = if w.strip_name
+                    && let Ok(text) = std::str::from_utf8(&file.content)
+                {
+                    let stripped = strip_frontmatter_name(text);
+                    if stripped == text {
+                        std::borrow::Cow::Borrowed(&file.content)
+                    } else {
+                        std::borrow::Cow::Owned(stripped.into_bytes())
+                    }
+                } else {
+                    std::borrow::Cow::Borrowed(&file.content)
+                };
+
                 let name_prefix = w.name_prefix.as_ref().map(|(p, m)| (p.as_str(), *m));
 
                 let action = write_content_to_dest(
-                    &file.content,
+                    &content,
                     &dest,
                     &rel_str,
                     &mut manifest,
@@ -119,11 +138,6 @@ fn write_batch(w: &FileWrite, dry_run: bool) -> Result<()> {
                     manifest.files.remove(&key);
                 }
                 n_removed += 1;
-            }
-
-            // strip_name post-processing on skills
-            if w.strip_name {
-                apply_strip_name(&w.destination, dry_run)?;
             }
 
             if !dry_run {
@@ -179,10 +193,6 @@ fn write_content_to_dest(
             if dest_content == final_content {
                 return Ok(SyncAction::Unchanged);
             }
-            eprintln!(
-                "warning: overwriting changed file {} (agentspec-managed)",
-                dest.display()
-            );
             if !dry_run {
                 write_file(dest, &final_content, mode)?;
                 manifest

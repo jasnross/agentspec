@@ -356,14 +356,19 @@ mode = "user"
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "sync should succeed:\n{stderr}");
-    assert!(stderr.contains("syncing cursor"), "stderr: {stderr}");
+    // Cursor is the only configured provider — its destination should be written.
     assert!(
-        !stderr.contains("syncing claude"),
-        "claude should not be synced by default: {stderr}"
+        home.join(".cursor/agents").exists(),
+        "cursor agents dir should be created"
+    );
+    // Claude and OpenCode are not configured and should not be synced.
+    assert!(
+        !home.join(".claude").exists(),
+        "claude dir should not be created: {stderr}"
     );
     assert!(
-        !stderr.contains("syncing opencode"),
-        "opencode should not be synced by default: {stderr}"
+        !home.join(".config/opencode").exists(),
+        "opencode dir should not be created: {stderr}"
     );
 }
 
@@ -410,9 +415,10 @@ fn test_sync_provider_unconfigured_with_dest_allowed() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "sync should succeed:\n{stderr}");
+    // --dest should route files to the specified directory.
     assert!(
-        stderr.contains("syncing claude (mode=Path"),
-        "stderr: {stderr}"
+        dest.join("agents").exists(),
+        "agents dir should be created under --dest"
     );
 }
 
@@ -431,9 +437,10 @@ fn test_sync_provider_unconfigured_with_mode_user_allowed() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "sync should succeed:\n{stderr}");
+    // mode=user should write to ~/.claude/
     assert!(
-        stderr.contains("syncing claude (mode=User"),
-        "stderr: {stderr}"
+        home.join(".claude/agents").exists(),
+        "user-mode sync should write to ~/.claude/agents: {stderr}"
     );
 }
 
@@ -452,9 +459,10 @@ fn test_sync_provider_unconfigured_with_mode_project_allowed() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "sync should succeed:\n{stderr}");
+    // mode=project should write to ./.claude/ relative to cwd
     assert!(
-        stderr.contains("syncing claude (mode=Project"),
-        "stderr: {stderr}"
+        dir.join(".claude/agents").exists(),
+        "project-mode sync should write to .claude/agents: {stderr}"
     );
 }
 

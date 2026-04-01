@@ -1,9 +1,5 @@
 use std::ffi::OsString;
-use std::fs;
 use std::path::{Path, PathBuf};
-
-use anyhow::{Context, Result};
-use walkdir::WalkDir;
 
 pub use agentspec::plan::NamePrefixMode;
 
@@ -91,121 +87,68 @@ pub(crate) fn prefix_frontmatter_name(content: &str, prefix: &str) -> String {
     })
 }
 
-/// Removes `name:` lines from all `SKILL.md` files under `dest_dir`.
-// FIXME: this isn't needed once we are using structs
-pub fn apply_strip_name(dest_dir: &Path, dry_run: bool) -> Result<()> {
-    for entry in WalkDir::new(dest_dir)
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter(|e| e.file_type().is_file() && e.file_name() == "SKILL.md")
-    {
-        let path = entry.path();
-        let content = fs::read_to_string(path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
-
-        // Strip `name:` only from within the YAML frontmatter block (between `---` delimiters)
-        // to avoid removing matching lines from the Markdown body.
-        // Assumes `name:` is always a single-line scalar — multi-line (block/folded) values
-        // would require a YAML parser. This is safe because the compiler always emits
-        // single-line `name:` values in generated frontmatter.
-        let stripped: String = {
-            let mut in_frontmatter = false;
-            let mut frontmatter_done = false;
-            let mut first = true;
-            content
-                .lines()
-                .filter(|line| {
-                    if first && *line == "---" {
-                        first = false;
-                        in_frontmatter = true;
-                        return true;
-                    }
-                    first = false;
-                    if in_frontmatter && !frontmatter_done {
-                        if *line == "---" {
-                            frontmatter_done = true;
-                            in_frontmatter = false;
-                            return true;
-                        }
-                        return !line.starts_with("name:");
-                    }
-                    true
-                })
-                .fold(String::new(), |mut out, line| {
-                    out.push_str(line);
-                    out.push('\n');
-                    out
-                })
-        };
-
-        if stripped != content {
-            if dry_run {
-                eprintln!("would strip name: from {}", path.display());
-            } else {
-                fs::write(path, stripped)
-                    .with_context(|| format!("failed to write {}", path.display()))?;
+/// Strips `name:` lines from YAML frontmatter in the given content string.
+///
+/// Only removes `name:` lines within the frontmatter block (between `---` delimiters),
+/// leaving any `name:` occurrences in the Markdown body untouched.
+/// Assumes `name:` is always a single-line scalar — the compiler always emits
+/// single-line `name:` values in generated frontmatter.
+pub(crate) fn strip_frontmatter_name(content: &str) -> String {
+    let mut in_frontmatter = false;
+    let mut frontmatter_done = false;
+    let mut first = true;
+    content
+        .lines()
+        .filter(|line| {
+            if first && *line == "---" {
+                first = false;
+                in_frontmatter = true;
+                return true;
             }
-        }
-    }
-    Ok(())
+            first = false;
+            if in_frontmatter && !frontmatter_done {
+                if *line == "---" {
+                    frontmatter_done = true;
+                    in_frontmatter = false;
+                    return true;
+                }
+                return !line.starts_with("name:");
+            }
+            true
+        })
+        .fold(String::new(), |mut out, line| {
+            out.push_str(line);
+            out.push('\n');
+            out
+        })
 }
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
-    use tempfile::TempDir;
-
     use super::*;
 
-    fn tmp() -> TempDir {
-        tempfile::tempdir().expect("expected value")
-    }
-
     #[test]
-    fn test_apply_strip_name_removes_name_lines() {
-        let t = tmp();
-        let skill_dir = t.path().join("skill-foo");
-        fs::create_dir_all(&skill_dir).expect("expected value");
-        let skill_file = skill_dir.join("SKILL.md");
-        fs::write(
-            &skill_file,
-            "---\nname: my-skill\ndescription: test\n---\n\nbody\n",
-        )
-        .expect("expected value");
-
-        apply_strip_name(t.path(), false).expect("expected value");
-
-        let content = fs::read_to_string(&skill_file).expect("expected value");
-        assert!(!content.contains("name:"), "name: line should be removed");
+    fn test_strip_frontmatter_name_removes_name_lines() {
+        let input = "---\nname: my-skill\ndescription: test\n---\n\nbody\n";
+        let result = strip_frontmatter_name(input);
+        assert!(!result.contains("name:"), "name: line should be removed");
         assert!(
-            content.contains("description: test"),
+            result.contains("description: test"),
             "other lines preserved"
         );
     }
 
     #[test]
-    fn test_apply_strip_name_preserves_body_name_lines() {
-        let t = tmp();
-        let skill_dir = t.path().join("skill-foo");
-        fs::create_dir_all(&skill_dir).expect("expected value");
-        let skill_file = skill_dir.join("SKILL.md");
+    fn test_strip_frontmatter_name_preserves_body_name_lines() {
         // `name:` appears both in frontmatter and in the Markdown body — only frontmatter should be stripped.
-        fs::write(
-            &skill_file,
-            "---\nname: my-skill\ndescription: test\n---\n\nname: example\n",
-        )
-        .expect("expected value");
-
-        apply_strip_name(t.path(), false).expect("expected value");
-
-        let content = fs::read_to_string(&skill_file).expect("expected value");
+        let input = "---\nname: my-skill\ndescription: test\n---\n\nname: example\n";
+        let result = strip_frontmatter_name(input);
         assert!(
-            content.contains("name: example"),
+            result.contains("name: example"),
             "body name: line should be preserved"
         );
         assert!(
-            !content.contains("name: my-skill"),
+            !result.contains("name: my-skill"),
             "frontmatter name: line should be removed"
         );
     }
