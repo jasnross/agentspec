@@ -322,8 +322,8 @@ fn test_sync_no_config_errors_with_guidance() {
         "stderr: {stderr}"
     );
     assert!(
-        stderr.contains("--target") || stderr.contains("--provider"),
-        "should suggest explicit target: {stderr}"
+        stderr.contains("--provider"),
+        "should suggest explicit provider: {stderr}"
     );
 }
 
@@ -478,8 +478,8 @@ fn test_sync_no_config_mode_user_without_provider_errors() {
         "stderr: {stderr}"
     );
     assert!(
-        stderr.contains("explicit target") || stderr.contains("explicit provider"),
-        "should suggest explicit target: {stderr}"
+        stderr.contains("--provider"),
+        "should suggest explicit provider: {stderr}"
     );
 }
 
@@ -514,4 +514,30 @@ invalid_field = "oops"
     assert!(!output.status.success(), "sync should fail:\n{stderr}");
     assert!(stderr.contains("failed to parse"), "stderr: {stderr}");
     assert!(stderr.contains("unknown field"), "stderr: {stderr}");
+}
+
+#[test]
+fn test_sync_dest_without_provider_errors() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let home = dir.join("home");
+    let dest = dir.join("sync-out");
+
+    let output = std::process::Command::new(agentspec())
+        .args([
+            "sync",
+            "--dest",
+            dest.to_str().expect("dest path should be valid utf-8"),
+        ])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync --dest without --provider");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "sync should fail:\n{stderr}");
+    assert!(
+        stderr.contains("--dest requires an explicit --provider"),
+        "stderr: {stderr}"
+    );
 }

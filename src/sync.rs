@@ -31,6 +31,11 @@ pub fn resolve_sync_targets(
     };
 
     let has_explicit_provider_selection = !args.common.provider.is_empty();
+
+    if args.dest.is_some() && !has_explicit_provider_selection {
+        bail!("--dest requires an explicit --provider; use --provider <provider> --dest <path>");
+    }
+
     let providers = if has_explicit_provider_selection {
         args.common.provider.clone()
     } else {
@@ -39,7 +44,7 @@ pub fn resolve_sync_targets(
 
     if providers.is_empty() {
         bail!(
-            "no sync providers are configured; add [sync.<provider>] in agentspec.toml, or run CLI-only sync with an explicit target (for example: --target claude --mode user|project or --target claude --dest <path>)"
+            "no sync providers are configured; add [sync.<provider>] in agentspec.toml, or run CLI-only sync with an explicit provider (for example: --provider claude --mode user|project or --provider claude --dest <path>)"
         );
     }
 
@@ -50,7 +55,7 @@ pub fn resolve_sync_targets(
 
         if !intent.has_explicit_config && !intent.cli_only_allowed {
             bail!(
-                "sync config for {provider} is not configured; add [sync.{provider}] in agentspec.toml, or pass explicit CLI-only sync arguments with --target {provider} and --mode user|project, or --target {provider} --dest <path>"
+                "sync config for {provider} is not configured; add [sync.{provider}] in agentspec.toml, or pass explicit CLI-only sync arguments with --provider {provider} and --mode user|project, or --provider {provider} --dest <path>"
             );
         }
 
