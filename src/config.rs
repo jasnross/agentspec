@@ -145,11 +145,10 @@ impl AgentspecConfig {
         self.sync.contains_key(&provider_str)
     }
 
-    // COMMENT: it looks like this method is only used within config.rs and doesn't need to be public
     /// Returns whether CLI flags provide sufficient explicit intent for CLI-only sync.
     ///
     /// CLI-only sync always requires explicit provider selection via `--provider`.
-    pub fn cli_sync_intent_sufficient(
+    fn cli_sync_intent_sufficient(
         cli: &SyncOverrides,
         has_explicit_target_selection: bool,
     ) -> bool {
@@ -164,24 +163,29 @@ impl AgentspecConfig {
         matches!(cli.mode, Some(SyncMode::User | SyncMode::Project))
     }
 
-    /// Resolves effective sync intent metadata for a provider.
-    /// FIXME: Does this belong in the sync module?
-    pub fn resolve_sync_intent(
+    /// Resolves the effective sync target for a provider, returning an error if the
+    /// invocation is not authorized.
+    ///
+    /// Authorization requires either explicit sync config in `agentspec.toml` for
+    /// the provider, or an explicit `--provider` selection combined with sufficient
+    /// CLI flags (`--mode user|project` or `--dest`).
+    pub fn validated_sync_target(
         &self,
         provider: Provider,
         cli: &SyncOverrides,
-        has_explicit_provider_selection: bool, // FIXME: Can we remove boolean by passing something more structured somehow?
-    ) -> SyncIntent {
+        has_explicit_provider_selection: bool,
+    ) -> Result<SyncTargetConfig> {
         let has_explicit_config = self.has_explicit_sync_config(provider);
         let cli_only_allowed =
             Self::cli_sync_intent_sufficient(cli, has_explicit_provider_selection);
-        let target = self.resolve_sync_target(provider, cli);
 
-        SyncIntent {
-            target,
-            has_explicit_config,
-            cli_only_allowed,
+        if !has_explicit_config && !cli_only_allowed {
+            bail!(
+                "sync config for {provider} is not configured; add [sync.{provider}] in agentspec.toml, or run CLI-only sync with an explicit provider (for example: --provider {provider} --mode user|project or --provider {provider} --dest <path>)"
+            );
         }
+
+        Ok(self.resolve_sync_target(provider, cli))
     }
 }
 
@@ -285,19 +289,6 @@ pub struct SyncOverrides {
     pub dest: Option<String>,
     /// Allow overwriting user-owned files at sync destinations.
     pub force: bool,
-}
-
-/// Effective sync intent for a provider after config/CLI evaluation.
-#[derive(Clone, Debug)]
-pub struct SyncIntent {
-    /// Final sync target after applying base -> CLI precedence.
-    pub target: SyncTargetConfig,
-    /// Whether this provider has explicit sync config in base.
-    /// FIXME: Do we really need this boolean or can we do something more structured?
-    pub has_explicit_config: bool,
-    /// Whether CLI-only sync is allowed for this provider in this invocation.
-    /// FIXME: Do we really need this boolean or can we do something more structured?
-    pub cli_only_allowed: bool,
 }
 
 #[cfg(test)]
@@ -597,7 +588,7 @@ mode = "user"
     }
 
     #[test]
-    fn test_resolve_sync_intent_reports_config_and_cli_metadata() {
+    fn test_validated_sync_target_succeeds_with_cli_only() {
         let tmp = tempfile::tempdir().expect("expected value");
         let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
         let cli = SyncOverrides {
@@ -605,10 +596,25 @@ mode = "user"
             ..SyncOverrides::default()
         };
 
-        let intent = config.resolve_sync_intent(Provider::Cursor, &cli, true);
-        assert!(!intent.has_explicit_config); // no agentspec.toml → no explicit sync config
-        assert!(intent.cli_only_allowed);
-        assert_eq!(intent.target.mode, SyncMode::Project);
+        // No agentspec.toml config for cursor, but explicit --provider + --mode is sufficient.
+        let target = config
+            .validated_sync_target(Provider::Cursor, &cli, true)
+            .expect("cli-only sync should be allowed with explicit provider and mode");
+        assert_eq!(target.mode, SyncMode::Project);
+    }
+
+    #[test]
+    fn test_validated_sync_target_errors_without_config_or_cli() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+        let cli = SyncOverrides::default();
+
+        // No agentspec.toml config and no useful CLI flags — should fail.
+        let result = config.validated_sync_target(Provider::Cursor, &cli, false);
+        assert!(
+            result.is_err(),
+            "should error when provider has no config and CLI is insufficient"
+        );
     }
 
     #[test]

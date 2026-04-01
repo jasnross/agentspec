@@ -50,17 +50,13 @@ pub fn resolve_sync_targets(
 
     let mut resolved_targets: Vec<(Provider, SyncTargetConfig)> = Vec::new();
     for provider in providers {
-        let intent =
-            config.resolve_sync_intent(provider, &sync_overrides, has_explicit_provider_selection);
-
-        if !intent.has_explicit_config && !intent.cli_only_allowed {
-            bail!(
-                "sync config for {provider} is not configured; add [sync.{provider}] in agentspec.toml, or pass explicit CLI-only sync arguments with --provider {provider} and --mode user|project, or --provider {provider} --dest <path>"
-            );
-        }
-
-        intent.target.validate_for_sync(provider)?;
-        resolved_targets.push((provider, intent.target));
+        let target = config.validated_sync_target(
+            provider,
+            &sync_overrides,
+            has_explicit_provider_selection,
+        )?;
+        target.validate_for_sync(provider)?;
+        resolved_targets.push((provider, target));
     }
 
     Ok(resolved_targets)
