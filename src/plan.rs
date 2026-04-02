@@ -89,9 +89,6 @@ pub fn compile_plan(
                 files,
                 mode: WriteMode::CleanSlate,
                 allow_overwrite: true,
-                file_prefix: None,
-                name_prefix: None,
-                strip_name: false,
             }
         })
         .collect();
@@ -111,16 +108,6 @@ pub fn expand_tilde(path: &str, home: &Path) -> PathBuf {
 }
 
 // ── Plan types ──────────────────────────────────────────────────────────────
-
-/// Which `name:` frontmatter field format to use when applying a namespace prefix.
-///
-/// Previously defined in `sync/strategy.rs`; moved here so library consumers can
-/// reference it in plan types without depending on binary-only modules.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum NamePrefixMode {
-    Agents,
-    Skills,
-}
 
 /// A complete write plan: files to write followed by config patches to apply.
 ///
@@ -155,9 +142,6 @@ pub struct FileWrite {
     pub files: Vec<GeneratedFile>,
     pub mode: WriteMode,
     pub allow_overwrite: bool,
-    pub file_prefix: Option<String>,
-    pub name_prefix: Option<(String, NamePrefixMode)>,
-    pub strip_name: bool,
 }
 
 /// A post-write config file patch.
@@ -229,9 +213,6 @@ mod tests {
                 files: vec![],
                 mode: WriteMode::CleanSlate,
                 allow_overwrite: false,
-                file_prefix: None,
-                name_prefix: None,
-                strip_name: false,
             }],
             patches: vec![ConfigPatch::OpenCodeInstructions {
                 rules_dest_dir: PathBuf::from("/tmp/rules"),

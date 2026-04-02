@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::Result;
 use serde::Serialize;
 
-use crate::compile::GeneratedFile;
+use crate::compile::{AdapterConfig, GeneratedFile};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
 use crate::spec::{
@@ -25,7 +25,7 @@ struct ClaudeAgentFrontmatter {
 #[serde(rename_all = "kebab-case")]
 struct ClaudeSkillFrontmatter {
     // FIXME: Support executing skills in forked subagents
-    name: String,
+    name: Option<String>,
     description: String,
     model: Option<String>,
     user_invocable: Option<bool>,
@@ -74,10 +74,11 @@ enum ClaudeTool {
 pub fn adapt_claude(
     spec: NormalizedSpec,
     presets: &ProviderPresetsMap,
+    cfg: Option<&AdapterConfig>,
 ) -> Result<Vec<GeneratedFile>> {
     match spec {
-        NormalizedSpec::Agent(s) => adapt_agent_spec(s, presets),
-        NormalizedSpec::Skill(s) => adapt_skill_spec(s, presets),
+        NormalizedSpec::Agent(s) => adapt_agent_spec(s, presets, cfg),
+        NormalizedSpec::Skill(s) => adapt_skill_spec(s, presets, cfg),
         NormalizedSpec::Rule(s) => Ok(adapt_rule_spec(&s)),
     }
 }
@@ -85,8 +86,9 @@ pub fn adapt_claude(
 fn adapt_agent_spec(
     spec: NormalizedAgentSpec,
     presets: &ProviderPresetsMap,
+    cfg: Option<&AdapterConfig>,
 ) -> Result<Vec<GeneratedFile>> {
-    let name = spec.frontmatter.id;
+    let id = spec.frontmatter.id;
     let description = spec.frontmatter.description;
 
     let model = spec
@@ -113,7 +115,14 @@ fn adapt_agent_spec(
         })
         .transpose()?;
 
-    let path = Path::new("agents").join(format!("{name}.md"));
+    let file_prefix = cfg.and_then(AdapterConfig::file_prefix).unwrap_or_default();
+    let path = Path::new("agents").join(format!("{file_prefix}{id}.md"));
+
+    // Claude agents get frontmatter name prefix with ":" delimiter
+    let name = match cfg.and_then(|c| c.prefix.as_deref()) {
+        Some(prefix) => format!("{prefix}:{id}"),
+        None => id,
+    };
 
     let frontmatter = ClaudeAgentFrontmatter {
         name,
@@ -132,8 +141,9 @@ fn adapt_agent_spec(
 fn adapt_skill_spec(
     spec: NormalizedSkillSpec,
     presets: &ProviderPresetsMap,
+    cfg: Option<&AdapterConfig>,
 ) -> Result<Vec<GeneratedFile>> {
-    let name = spec.frontmatter.id;
+    let id = spec.frontmatter.id;
     let description = spec.frontmatter.description.unwrap_or_default();
 
     let model = spec
@@ -162,7 +172,18 @@ fn adapt_skill_spec(
         Some(true)
     };
 
-    let skill_dir = Path::new("skills").join(&name);
+    let file_prefix = cfg.and_then(AdapterConfig::file_prefix).unwrap_or_default();
+    let skill_dir = Path::new("skills").join(format!("{file_prefix}{id}"));
+
+    // Claude skills: strip name entirely, prefix with ":" delimiter, or plain
+    let name = match cfg {
+        Some(c) if c.strip_name => None,
+        Some(c) => Some(match c.prefix.as_deref() {
+            Some(prefix) => format!("{prefix}:{id}"),
+            None => id.clone(),
+        }),
+        None => Some(id.clone()),
+    };
 
     let frontmatter = ClaudeSkillFrontmatter {
         name,
@@ -236,7 +257,10 @@ mod tests {
     use serde::Deserialize;
 
     use super::*;
-    use crate::spec::{CapabilitiesFrontmatter, NormalizedAgentFrontmatter, NormalizedAgentSpec};
+    use crate::spec::{
+        CapabilitiesFrontmatter, NormalizedAgentFrontmatter, NormalizedAgentSpec,
+        NormalizedSkillFrontmatter, NormalizedSkillSpec,
+    };
 
     #[test]
     fn test_adapt_agent_tools_are_sorted() {
@@ -263,7 +287,7 @@ mod tests {
             body: "Body.".to_string(),
         });
 
-        let files = adapt_claude(spec, &HashMap::new()).expect("expected value");
+        let files = adapt_claude(spec, &HashMap::new(), None).expect("expected value");
         let content = String::from_utf8(files[0].content.clone()).expect("expected value");
 
         // Parse the tools list back out of the generated YAML frontmatter.
@@ -297,7 +321,7 @@ mod tests {
             body: "Body.".to_string(),
         });
 
-        let files = adapt_claude(spec, &HashMap::new()).expect("expected value");
+        let files = adapt_claude(spec, &HashMap::new(), None).expect("expected value");
         let content = String::from_utf8(files[0].content.clone()).expect("expected value");
 
         let expected = concat!(
@@ -311,5 +335,63 @@ mod tests {
             "Body.",
         );
         assert_eq!(content, expected);
+    }
+
+    #[test]
+    fn test_adapt_agent_with_prefix() {
+        let cfg = AdapterConfig {
+            prefix: Some("tw".to_string()),
+            strip_name: false,
+        };
+        let spec = NormalizedSpec::Agent(NormalizedAgentSpec {
+            path: "test.md".into(),
+            frontmatter: NormalizedAgentFrontmatter {
+                id: "test-agent".to_string(),
+                description: "Test agent".to_string(),
+                execution: None,
+                capabilities: None,
+            },
+            body: "Body.".to_string(),
+        });
+
+        let files = adapt_claude(spec, &HashMap::new(), Some(&cfg)).expect("expected value");
+        assert_eq!(files[0].path.to_str(), Some("agents/tw-test-agent.md"));
+
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
+        assert!(
+            content.contains("name: tw:test-agent"),
+            "frontmatter should contain prefixed name, got: {content}"
+        );
+    }
+
+    #[test]
+    fn test_adapt_skill_with_strip_name() {
+        let cfg = AdapterConfig {
+            prefix: None,
+            strip_name: true,
+        };
+        let spec = NormalizedSpec::Skill(NormalizedSkillSpec {
+            path: "test.md".into(),
+            frontmatter: NormalizedSkillFrontmatter {
+                id: "test-skill".to_string(),
+                description: Some("A test skill".to_string()),
+                execution: None,
+                capabilities: None,
+                user_invocable: true,
+                agent_invocable: true,
+            },
+            body: "Body.".to_string(),
+            supporting_files: vec![],
+        });
+
+        let files = adapt_claude(spec, &HashMap::new(), Some(&cfg)).expect("expected value");
+        // Path should NOT be prefixed (no prefix configured)
+        assert_eq!(files[0].path.to_str(), Some("skills/test-skill/SKILL.md"));
+
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
+        assert!(
+            !content.contains("name:"),
+            "frontmatter should not contain name: when strip_name is true, got: {content}"
+        );
     }
 }

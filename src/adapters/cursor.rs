@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::Result;
 use serde::Serialize;
 
-use crate::compile::GeneratedFile;
+use crate::compile::{AdapterConfig, GeneratedFile};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
 use crate::spec::{NormalizedAgentSpec, NormalizedRuleSpec, NormalizedSkillSpec, NormalizedSpec};
@@ -34,10 +34,11 @@ struct CursorRuleFrontmatter {
 pub fn adapt_cursor(
     spec: NormalizedSpec,
     presets: &ProviderPresetsMap,
+    cfg: Option<&AdapterConfig>,
 ) -> Result<Vec<GeneratedFile>> {
     match spec {
-        NormalizedSpec::Agent(s) => adapt_agent_spec(s, presets),
-        NormalizedSpec::Skill(s) => adapt_skill_spec(s),
+        NormalizedSpec::Agent(s) => adapt_agent_spec(s, presets, cfg),
+        NormalizedSpec::Skill(s) => adapt_skill_spec(s, cfg),
         NormalizedSpec::Rule(s) => adapt_rule_spec(s),
     }
 }
@@ -45,6 +46,7 @@ pub fn adapt_cursor(
 fn adapt_agent_spec(
     spec: NormalizedAgentSpec,
     presets: &ProviderPresetsMap,
+    cfg: Option<&AdapterConfig>,
 ) -> Result<Vec<GeneratedFile>> {
     let name = spec.frontmatter.id;
     let description = spec.frontmatter.description;
@@ -57,7 +59,8 @@ fn adapt_agent_spec(
         .and_then(|x| x.cursor.clone())
         .and_then(|x| x.model);
 
-    let path = Path::new("agents").join(format!("{name}.md"));
+    let file_prefix = cfg.and_then(AdapterConfig::file_prefix).unwrap_or_default();
+    let path = Path::new("agents").join(format!("{file_prefix}{name}.md"));
 
     let frontmatter = CursorAgentFrontmatter {
         name,
@@ -72,10 +75,14 @@ fn adapt_agent_spec(
     Ok(vec![GeneratedFile::text(Provider::Cursor, path, content)])
 }
 
-fn adapt_skill_spec(spec: NormalizedSkillSpec) -> Result<Vec<GeneratedFile>> {
+fn adapt_skill_spec(
+    spec: NormalizedSkillSpec,
+    cfg: Option<&AdapterConfig>,
+) -> Result<Vec<GeneratedFile>> {
     let id = spec.frontmatter.id;
     let description = spec.frontmatter.description.unwrap_or_default();
 
+    // Cursor requires `name` — strip_name is a no-op for this provider
     let frontmatter = CursorSkillFrontmatter {
         name: id.clone(),
         description,
@@ -85,7 +92,8 @@ fn adapt_skill_spec(spec: NormalizedSkillSpec) -> Result<Vec<GeneratedFile>> {
     let body = spec.body.trim();
     let content = format!("---\n{frontmatter_str}---\n\n{body}");
 
-    let skill_dir = Path::new("skills").join(&id);
+    let file_prefix = cfg.and_then(AdapterConfig::file_prefix).unwrap_or_default();
+    let skill_dir = Path::new("skills").join(format!("{file_prefix}{id}"));
 
     let mut files = vec![GeneratedFile::text(
         Provider::Cursor,
@@ -127,7 +135,10 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::spec::{NormalizedAgentFrontmatter, NormalizedAgentSpec};
+    use crate::spec::{
+        NormalizedAgentFrontmatter, NormalizedAgentSpec, NormalizedSkillFrontmatter,
+        NormalizedSkillSpec,
+    };
 
     #[test]
     fn test_adapt_agent_output_format() {
@@ -142,7 +153,7 @@ mod tests {
             body: "Body.".to_string(),
         });
 
-        let files = adapt_cursor(spec, &HashMap::new()).expect("expected value");
+        let files = adapt_cursor(spec, &HashMap::new(), None).expect("expected value");
         let content = String::from_utf8(files[0].content.clone()).expect("expected value");
 
         let expected = concat!(
@@ -155,5 +166,34 @@ mod tests {
             "Body.",
         );
         assert_eq!(content, expected);
+    }
+
+    #[test]
+    fn test_adapt_skill_strip_name_is_noop() {
+        let cfg = AdapterConfig {
+            prefix: None,
+            strip_name: true,
+        };
+        let spec = NormalizedSpec::Skill(NormalizedSkillSpec {
+            path: "test.md".into(),
+            frontmatter: NormalizedSkillFrontmatter {
+                id: "test-skill".to_string(),
+                description: Some("A test skill".to_string()),
+                execution: None,
+                capabilities: None,
+                user_invocable: true,
+                agent_invocable: true,
+            },
+            body: "Body.".to_string(),
+            supporting_files: vec![],
+        });
+
+        let files = adapt_cursor(spec, &HashMap::new(), Some(&cfg)).expect("expected value");
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
+        // Cursor requires `name` — strip_name should be ignored
+        assert!(
+            content.contains("name: test-skill"),
+            "Cursor should keep name field even with strip_name=true, got: {content}"
+        );
     }
 }

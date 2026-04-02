@@ -5,7 +5,7 @@ use indexmap::IndexMap;
 use serde::Serialize;
 use strum::VariantArray as _;
 
-use crate::compile::GeneratedFile;
+use crate::compile::{AdapterConfig, GeneratedFile};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
 use crate::spec::{
@@ -46,10 +46,11 @@ struct OpenCodeSkillFrontmatter {
 pub fn adapt_opencode(
     spec: NormalizedSpec,
     presets: &ProviderPresetsMap,
+    cfg: Option<&AdapterConfig>,
 ) -> Result<Vec<GeneratedFile>> {
     match spec {
-        NormalizedSpec::Agent(s) => adapt_agent_spec(s, presets),
-        NormalizedSpec::Skill(s) => adapt_skill_spec(s, presets),
+        NormalizedSpec::Agent(s) => adapt_agent_spec(s, presets, cfg),
+        NormalizedSpec::Skill(s) => adapt_skill_spec(s, presets, cfg),
         NormalizedSpec::Rule(s) => Ok(adapt_rule_spec(&s)),
     }
 }
@@ -57,6 +58,7 @@ pub fn adapt_opencode(
 fn adapt_agent_spec(
     spec: NormalizedAgentSpec,
     presets: &ProviderPresetsMap,
+    cfg: Option<&AdapterConfig>,
 ) -> Result<Vec<GeneratedFile>> {
     let id = spec.frontmatter.id;
     let description = spec.frontmatter.description;
@@ -92,9 +94,11 @@ fn adapt_agent_spec(
     let body = spec.body;
     let content = format!("---\n{frontmatter_str}---\n\n{}", body.trim());
 
+    let file_prefix = cfg.and_then(AdapterConfig::file_prefix).unwrap_or_default();
+
     Ok(vec![GeneratedFile::text(
         Provider::OpenCode,
-        Path::new("agents").join(format!("{id}.md")),
+        Path::new("agents").join(format!("{file_prefix}{id}.md")),
         content,
     )])
 }
@@ -102,6 +106,7 @@ fn adapt_agent_spec(
 fn adapt_skill_spec(
     spec: NormalizedSkillSpec,
     presets: &ProviderPresetsMap,
+    cfg: Option<&AdapterConfig>,
 ) -> Result<Vec<GeneratedFile>> {
     let id = spec.frontmatter.id;
     let description = spec.frontmatter.description.unwrap_or_default();
@@ -133,20 +138,25 @@ fn adapt_skill_spec(
     let mut files = Vec::new();
 
     if user_invocable {
+        // OpenCode commands: prefix becomes a subdirectory, not a file prefix
+        let cmd_path = match cfg.and_then(|c| c.prefix.as_deref()) {
+            Some(prefix) => Path::new("commands").join(prefix).join(format!("{id}.md")),
+            None => Path::new("commands").join(format!("{id}.md")),
+        };
+
         let frontmatter = OpenCodeCommandFrontmatter {
             description: description.clone(),
             model: model.clone(),
         };
         let frontmatter_str = serde_yml::to_string(&frontmatter)?;
         let content = format!("---\n{frontmatter_str}---\n\n{}", body.trim());
-        files.push(GeneratedFile::text(
-            Provider::OpenCode,
-            Path::new("commands").join(format!("{id}.md")),
-            content,
-        ));
+        files.push(GeneratedFile::text(Provider::OpenCode, cmd_path, content));
     }
 
     if agent_invocable {
+        let file_prefix = cfg.and_then(AdapterConfig::file_prefix).unwrap_or_default();
+
+        // OpenCode requires `name` — strip_name is a no-op for this provider
         let frontmatter = OpenCodeSkillFrontmatter {
             name: id.clone(),
             description,
@@ -157,7 +167,7 @@ fn adapt_skill_spec(
         let frontmatter_str = serde_yml::to_string(&frontmatter)?;
         let content = format!("---\n{frontmatter_str}---\n\n{}", body.trim());
 
-        let skill_dir = Path::new("skills").join(&id);
+        let skill_dir = Path::new("skills").join(format!("{file_prefix}{id}"));
 
         files.push(GeneratedFile::text(
             Provider::OpenCode,
@@ -228,7 +238,10 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::spec::{NormalizedAgentFrontmatter, NormalizedAgentSpec};
+    use crate::spec::{
+        NormalizedAgentFrontmatter, NormalizedAgentSpec, NormalizedSkillFrontmatter,
+        NormalizedSkillSpec,
+    };
 
     #[test]
     fn test_build_tool_map_keys_are_sorted() {
@@ -256,7 +269,7 @@ mod tests {
             body: "Body.".to_string(),
         });
 
-        let files = adapt_opencode(spec, &HashMap::new()).expect("expected value");
+        let files = adapt_opencode(spec, &HashMap::new(), None).expect("expected value");
         let content = String::from_utf8(files[0].content.clone()).expect("expected value");
 
         let expected = concat!(
@@ -279,5 +292,34 @@ mod tests {
             "Body.",
         );
         assert_eq!(content, expected);
+    }
+
+    #[test]
+    fn test_adapt_skill_command_with_prefix_uses_subdirectory() {
+        let cfg = AdapterConfig {
+            prefix: Some("tw".to_string()),
+            strip_name: false,
+        };
+        let spec = NormalizedSpec::Skill(NormalizedSkillSpec {
+            path: "test.md".into(),
+            frontmatter: NormalizedSkillFrontmatter {
+                id: "basic-skill".to_string(),
+                description: Some("A basic skill".to_string()),
+                execution: None,
+                capabilities: None,
+                user_invocable: true,
+                agent_invocable: false,
+            },
+            body: "Body.".to_string(),
+            supporting_files: vec![],
+        });
+
+        let files = adapt_opencode(spec, &HashMap::new(), Some(&cfg)).expect("expected value");
+        assert_eq!(files.len(), 1);
+        assert_eq!(
+            files[0].path.to_str(),
+            Some("commands/tw/basic-skill.md"),
+            "OpenCode commands should use prefix as subdirectory"
+        );
     }
 }

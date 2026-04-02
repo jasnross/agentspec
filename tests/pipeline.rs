@@ -292,7 +292,7 @@ prefix = "tw"
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "sync failed:\n{stderr}");
     assert!(
-        stderr.contains(".config/opencode/commands/tw"),
+        stderr.contains(".config/opencode/commands"),
         "stderr: {stderr}"
     );
     assert!(

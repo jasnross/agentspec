@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -7,6 +8,27 @@ use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
 use crate::spec::NormalizedSpec;
 use crate::templating::ResolvedSpecs;
+
+/// Per-provider configuration passed to adapters at compile time.
+///
+/// Adapters use this to apply prefix/strip transforms to output paths and
+/// frontmatter fields. When `None` is passed, adapters produce canonical
+/// (unprefixed, unstripped) output.
+#[derive(Clone, Debug, Default)]
+pub struct AdapterConfig {
+    /// Namespace prefix for file paths and frontmatter names.
+    pub prefix: Option<String>,
+    /// Whether to strip `name:` from skill frontmatter.
+    pub strip_name: bool,
+}
+
+impl AdapterConfig {
+    /// Returns the file path prefix string (e.g., `"tw-"`), if a prefix is configured.
+    /// This is shared across all providers — the file path convention is the same.
+    pub fn file_prefix(&self) -> Option<String> {
+        self.prefix.as_ref().map(|p| format!("{p}-"))
+    }
+}
 
 /// A single file produced by a provider adapter.
 #[derive(Clone, Debug)]
@@ -69,14 +91,16 @@ pub fn run(
     resolved: ResolvedSpecs,
     presets: &ProviderPresetsMap,
     providers: &[Provider],
+    adapter_configs: &HashMap<Provider, AdapterConfig>,
 ) -> Result<CompileResult> {
-    compile_specs(&resolved.into_specs(), presets, providers)
+    compile_specs(&resolved.into_specs(), presets, providers, adapter_configs)
 }
 
 pub(crate) fn compile_specs(
     specs: &[NormalizedSpec],
     presets: &ProviderPresetsMap,
     providers: &[Provider],
+    adapter_configs: &HashMap<Provider, AdapterConfig>,
 ) -> Result<CompileResult> {
     let mut files: Vec<GeneratedFile> = Vec::new();
 
@@ -85,10 +109,11 @@ pub(crate) fn compile_specs(
 
     for spec in specs {
         for &provider in &sorted_providers {
+            let adapter_config = adapter_configs.get(&provider);
             let mut adapter_files = match provider {
-                Provider::Claude => adapt_claude(spec.clone(), presets)?,
-                Provider::Cursor => adapt_cursor(spec.clone(), presets)?,
-                Provider::OpenCode => adapt_opencode(spec.clone(), presets)?,
+                Provider::Claude => adapt_claude(spec.clone(), presets, adapter_config)?,
+                Provider::Cursor => adapt_cursor(spec.clone(), presets, adapter_config)?,
+                Provider::OpenCode => adapt_opencode(spec.clone(), presets, adapter_config)?,
             };
 
             files.append(&mut adapter_files);

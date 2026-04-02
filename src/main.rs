@@ -3,7 +3,9 @@ mod config;
 mod emit;
 mod sync;
 
-use agentspec::compile::{self, CompileResult};
+use std::collections::HashMap;
+
+use agentspec::compile::{self, AdapterConfig, CompileResult};
 use agentspec::plan::compile_plan;
 use agentspec::presets::ProviderPresetsMap;
 use agentspec::provider::Provider;
@@ -55,11 +57,14 @@ fn main() -> Result<()> {
             let targets = resolve_sync_targets(&config, sync_args)?;
             let sync_providers: Vec<Provider> = targets.iter().map(|(p, _)| *p).collect();
 
+            let adapter_configs = config.adapter_configs();
+
             let (result, _) = run_compile(
                 resolved,
                 &config.presets,
                 &sync_providers,
                 &config.providers,
+                &adapter_configs,
             )?;
 
             let home = home_dir()?;
@@ -68,8 +73,16 @@ fn main() -> Result<()> {
         }
         Command::Compile(_) => {
             let resolved = load_specs(&config, &dirs)?;
-            let (result, providers) =
-                run_compile(resolved, &config.presets, &args.provider, &config.providers)?;
+
+            let adapter_configs = config.adapter_configs();
+
+            let (result, providers) = run_compile(
+                resolved,
+                &config.presets,
+                &args.provider,
+                &config.providers,
+                &adapter_configs,
+            )?;
             let output_dir = config.resolve(&config.output.dir);
             let plan = compile_plan(&result, &output_dir, &providers);
             emit(&plan, false)?;
@@ -112,13 +125,14 @@ fn run_compile(
     presets: &ProviderPresetsMap,
     override_providers: &[Provider],
     config_providers: &[Provider],
+    adapter_configs: &HashMap<Provider, AdapterConfig>,
 ) -> Result<(CompileResult, Vec<Provider>)> {
     let providers: Vec<Provider> = if override_providers.is_empty() {
         config_providers.to_vec()
     } else {
         override_providers.to_vec()
     };
-    let result = compile::run(resolved, presets, &providers)?;
+    let result = compile::run(resolved, presets, &providers, adapter_configs)?;
     eprintln!(
         "compiled {} files for {} provider(s)",
         result.files.len(),

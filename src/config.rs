@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use agentspec::compile::AdapterConfig;
 use agentspec::presets::ProviderPresets;
 use agentspec::provider::Provider;
 use anyhow::{Context, Result, anyhow, bail};
@@ -137,6 +138,28 @@ impl AgentspecConfig {
                 }
                 acc
             })
+    }
+
+    /// Builds per-provider `AdapterConfig` from sync settings.
+    ///
+    /// Only providers with explicit `[sync.<provider>]` config are included.
+    /// Providers without sync config are absent from the map, causing adapters
+    /// to produce canonical (unprefixed, unstripped) output.
+    pub fn adapter_configs(&self) -> HashMap<Provider, AdapterConfig> {
+        self.configured_sync_providers()
+            .into_iter()
+            .filter_map(|p| {
+                self.sync.get(&p.to_string()).map(|t| {
+                    (
+                        p,
+                        AdapterConfig {
+                            prefix: t.prefix.clone(),
+                            strip_name: t.strip_name,
+                        },
+                    )
+                })
+            })
+            .collect()
     }
 
     /// Returns whether a provider has explicit sync config.

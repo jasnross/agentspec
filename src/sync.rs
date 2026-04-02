@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use agentspec::compile::{CompileResult, GeneratedFile};
 use agentspec::plan::{
-    ConfigPatch, FileKind, FileWrite, NamePrefixMode, WriteMode, WritePlan, expand_tilde,
-    file_kinds, project_dest_dir, user_dest_dir,
+    ConfigPatch, FileKind, FileWrite, WriteMode, WritePlan, expand_tilde, file_kinds,
+    project_dest_dir, user_dest_dir,
 };
 use agentspec::provider::Provider;
 use anyhow::{Context, Result, bail};
@@ -28,19 +28,8 @@ pub fn sync_plan(
 
     for (provider, target) in targets {
         for kind in file_kinds(*provider) {
-            let mut dest = resolve_dest_dir(*provider, kind, target, home, cwd)?;
-            let mut file_prefix: Option<String> = None;
-
-            if let Some(prefix) = target.prefix.as_deref() {
-                if *provider == Provider::OpenCode && kind == FileKind::Commands {
-                    dest = dest.join(prefix);
-                } else if kind != FileKind::Rules {
-                    file_prefix = Some(format!("{prefix}-"));
-                }
-            }
-
+            let dest = resolve_dest_dir(*provider, kind, target, home, cwd)?;
             let files = files_for_kind(result, *provider, kind);
-            let name_prefix = resolve_name_prefix(target, *provider, kind);
 
             writes.push(FileWrite {
                 provider: *provider,
@@ -48,9 +37,6 @@ pub fn sync_plan(
                 files,
                 mode: WriteMode::ManifestTracked,
                 allow_overwrite: target.allow_overwrite,
-                file_prefix,
-                name_prefix,
-                strip_name: target.strip_name && kind == FileKind::Skills,
             });
 
             if *provider == Provider::OpenCode && kind == FileKind::Rules {
@@ -175,25 +161,6 @@ fn files_for_kind(
         .collect()
 }
 
-/// Resolves the `name_prefix` for a `FileWrite` from target config, provider, and kind.
-///
-/// Only Claude agents and skills receive frontmatter name prefixes; all other
-/// combinations return `None`.
-fn resolve_name_prefix(
-    target: &SyncTargetConfig,
-    provider: Provider,
-    kind: FileKind,
-) -> Option<(String, NamePrefixMode)> {
-    if provider != Provider::Claude {
-        return None;
-    }
-    target.prefix.as_deref().and_then(|prefix| match kind {
-        FileKind::Agents => Some((prefix.to_string(), NamePrefixMode::Agents)),
-        FileKind::Skills => Some((prefix.to_string(), NamePrefixMode::Skills)),
-        FileKind::Commands | FileKind::Rules => None,
-    })
-}
-
 /// Resolves the `OpenCode` config directory for a sync target.
 ///
 /// In `Path` mode, derives the config dir from the rules path's parent (convention:
@@ -219,9 +186,8 @@ mod tests {
     use agentspec::plan::{ConfigPatch, FileKind, WriteMode};
     use agentspec::provider::Provider;
 
-    use crate::config::{SyncMode, SyncTargetConfig};
-
     use super::{files_for_kind, resolve_dest_dir, sync_plan};
+    use crate::config::{SyncMode, SyncTargetConfig};
 
     fn make_result(files: Vec<GeneratedFile>) -> CompileResult {
         CompileResult { files }
