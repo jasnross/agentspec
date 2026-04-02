@@ -141,6 +141,56 @@ src/plan.rs              ← WritePlan, FileWrite, WriteMode, ConfigPatch (libra
 
 `mod.rs` files are harder to navigate in editors (multiple open tabs all named `mod.rs`) and are the older convention. The exception is `main.rs` and `lib.rs`, which are standard entry points.
 
+## Design Principles
+
+### Colocate code with its consumer
+
+Place functions in the module that calls them, not in a module named after an
+abstract category. If a function has one caller, it belongs next to that caller
+— even if it "sounds like" it belongs elsewhere. A function called
+`resolve_dest_dir` that's only used by `sync_plan` belongs in `sync.rs`, not in
+a separate `provider.rs`.
+
+When a function is private to its module, colocating it also minimizes the
+public API surface — fewer `pub` items, fewer cross-module imports, less
+indirection to discover.
+
+### Provider-specific logic belongs in adapters
+
+Adapters own all provider-specific content decisions: which frontmatter fields
+to set, how to serialize them, how to construct output paths, and how to apply
+transforms like name prefixing or stripping. Emit should never need to know
+about provider-specific frontmatter structure.
+
+If adding support for a new provider, implement one adapter — no changes to
+emit, plan, or sync should be needed.
+
+### Operate on structs, not serialized strings
+
+Never parse or transform YAML/frontmatter by manipulating serialized strings
+(line-by-line scanning, regex, etc.). Instead, modify typed structs before
+serialization. If a field needs to be conditionally included, make it
+`Option<T>` on the struct and let serde handle it via
+`#[serde_with::skip_serializing_none]`.
+
+### Use config structs at module boundaries
+
+When passing configuration across module boundaries (especially from the binary
+crate into the library crate), use a named struct — not loose parameters, tuples,
+or the raw `AgentspecConfig`. This pattern is established by `TemplatingConfig`,
+`SpecDirs`, and `AdapterConfig`.
+
+Key conventions:
+
+- **Library-side structs** (`TemplatingConfig`, `SpecDirs`, `AdapterConfig`) have
+  no dependency on clap, serde, or the binary crate's config types. The binary
+  constructs them from `AgentspecConfig`.
+- **`Option<&Config>` means "use defaults"** — when a config is optional (like
+  `AdapterConfig` for adapters), pass `Option<&Config>` where `None` produces
+  canonical/default output.
+- **Centralize construction** — if multiple call sites build the same config from
+  the same source, extract a helper (e.g., `config.adapter_configs()`).
+
 ## Pipeline Stages
 
 `main.rs` orchestrates these stages in order, each consuming the previous stage's
@@ -155,13 +205,16 @@ output (typestate pattern — passing the wrong stage is a compile error):
 4. **Template resolution** — `templating.rs` renders MiniJinja `{% include %}`
    and `{% with %}` tags in spec bodies → `ResolvedSpecs`
 5. **Compile** — `compile.rs` dispatches each `(spec, provider)` pair to a
-   provider adapter → `CompileResult`
+   provider adapter, passing `Option<&AdapterConfig>` for prefix/strip
+   transforms → `CompileResult`. Adapters produce fully-formed output
+   (paths, frontmatter, content) — no post-hoc transforms downstream.
 6. **Plan** — `plan.rs` + `sync.rs` build a `WritePlan` from `CompileResult` and
    config: `compile_plan` (for `compile`) or `sync_plan` (for `sync`)
 7. **Emit** — `emit.rs` executes the `WritePlan`: `CleanSlate` mode for `compile`
    (delete-and-rewrite `generated/<provider>/`), `ManifestTracked` mode for `sync`
    (per-file ownership tracking, stale cleanup, direct write to tool config dirs);
-   patches `opencode.json` for rules (`sync` command only)
+   patches `opencode.json` for rules (`sync` command only). Emit is purely file
+   I/O and manifest tracking — no content transformation.
 
 ## Integration Tests
 
