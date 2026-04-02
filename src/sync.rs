@@ -1,66 +1,17 @@
 pub(crate) mod manifest;
-pub mod provider;
-pub(crate) mod strategy;
 
 use std::path::{Path, PathBuf};
 
 use agentspec::compile::{CompileResult, GeneratedFile};
 use agentspec::plan::{
     ConfigPatch, FileKind, FileWrite, NamePrefixMode, WriteMode, WritePlan, expand_tilde,
-    file_kinds,
+    file_kinds, project_dest_dir, user_dest_dir,
 };
 use agentspec::provider::Provider;
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 
 use crate::cli::SyncArgs;
 use crate::config::{AgentspecConfig, SyncMode, SyncOverrides, SyncTargetConfig};
-use provider::resolve_dest_dir;
-
-/// Validates and resolves sync targets from config and CLI args.
-///
-/// Returns the resolved `(provider, target)` pairs ready for plan construction.
-/// Errors early if no providers are configured or if any provider's config is invalid.
-pub fn resolve_sync_targets(
-    config: &AgentspecConfig,
-    args: &SyncArgs,
-) -> Result<Vec<(Provider, SyncTargetConfig)>> {
-    let sync_overrides = SyncOverrides {
-        mode: args.mode,
-        dest: args.dest.clone(),
-        force: args.force,
-    };
-
-    let has_explicit_provider_selection = !args.common.provider.is_empty();
-
-    if args.dest.is_some() && !has_explicit_provider_selection {
-        bail!("--dest requires an explicit --provider; use --provider <provider> --dest <path>");
-    }
-
-    let providers = if has_explicit_provider_selection {
-        args.common.provider.clone()
-    } else {
-        config.configured_sync_providers()
-    };
-
-    if providers.is_empty() {
-        bail!(
-            "no sync providers are configured; add [sync.<provider>] in agentspec.toml, or run CLI-only sync with an explicit provider (for example: --provider claude --mode user|project or --provider claude --dest <path>)"
-        );
-    }
-
-    let mut resolved_targets: Vec<(Provider, SyncTargetConfig)> = Vec::new();
-    for provider in providers {
-        let target = config.validated_sync_target(
-            provider,
-            &sync_overrides,
-            has_explicit_provider_selection,
-        )?;
-        target.validate_for_sync(provider)?;
-        resolved_targets.push((provider, target));
-    }
-
-    Ok(resolved_targets)
-}
 
 /// Builds a `WritePlan` that writes compiled files directly to tool config destinations.
 ///
@@ -112,6 +63,86 @@ pub fn sync_plan(
     }
 
     Ok(WritePlan { writes, patches })
+}
+
+/// Validates and resolves sync targets from config and CLI args.
+///
+/// Returns the resolved `(provider, target)` pairs ready for plan construction.
+/// Errors early if no providers are configured or if any provider's config is invalid.
+pub fn resolve_sync_targets(
+    config: &AgentspecConfig,
+    args: &SyncArgs,
+) -> Result<Vec<(Provider, SyncTargetConfig)>> {
+    let sync_overrides = SyncOverrides {
+        mode: args.mode,
+        dest: args.dest.clone(),
+        force: args.force,
+    };
+
+    let has_explicit_provider_selection = !args.common.provider.is_empty();
+
+    if args.dest.is_some() && !has_explicit_provider_selection {
+        bail!("--dest requires an explicit --provider; use --provider <provider> --dest <path>");
+    }
+
+    let providers = if has_explicit_provider_selection {
+        args.common.provider.clone()
+    } else {
+        config.configured_sync_providers()
+    };
+
+    if providers.is_empty() {
+        bail!(
+            "no sync providers are configured; add [sync.<provider>] in agentspec.toml, or run CLI-only sync with an explicit provider (for example: --provider claude --mode user|project or --provider claude --dest <path>)"
+        );
+    }
+
+    let mut resolved_targets: Vec<(Provider, SyncTargetConfig)> = Vec::new();
+    for provider in providers {
+        let target = config.validated_sync_target(
+            provider,
+            &sync_overrides,
+            has_explicit_provider_selection,
+        )?;
+        target.validate_for_sync(provider)?;
+        resolved_targets.push((provider, target));
+    }
+
+    Ok(resolved_targets)
+}
+
+/// Resolves the destination directory for a provider/kind pair from a `SyncTargetConfig`.
+///
+/// - `User` → `user_dest_dir`
+/// - `Project` → `project_dest_dir`
+/// - `Path` → per-kind explicit field from `config`; error if the kind's field is `None`
+fn resolve_dest_dir(
+    provider: Provider,
+    kind: FileKind,
+    config: &SyncTargetConfig,
+    home: &Path,
+    cwd: &Path,
+) -> Result<PathBuf> {
+    match config.mode {
+        SyncMode::User => Ok(user_dest_dir(provider, kind, home)),
+        SyncMode::Project => Ok(project_dest_dir(provider, kind, cwd)),
+        SyncMode::Path => {
+            let raw = match kind {
+                FileKind::Agents => config.agents.as_deref(),
+                FileKind::Commands => config.commands.as_deref(),
+                FileKind::Rules => config.rules.as_deref(),
+                FileKind::Skills => config.skills.as_deref(),
+            };
+            let path_str = raw.with_context(|| {
+                format!(
+                    "sync mode is 'path' but no explicit path configured for \
+                     provider '{provider}' kind '{}'",
+                    kind.dir_name()
+                )
+            })?;
+            Ok(expand_tilde(path_str, home))
+        }
+    }
 }
 
 /// Extracts files from `result` that belong to the given provider and kind.
@@ -190,7 +221,7 @@ mod tests {
 
     use crate::config::{SyncMode, SyncTargetConfig};
 
-    use super::{files_for_kind, sync_plan};
+    use super::{files_for_kind, resolve_dest_dir, sync_plan};
 
     fn make_result(files: Vec<GeneratedFile>) -> CompileResult {
         CompileResult { files }
@@ -298,5 +329,60 @@ mod tests {
             .expect("claude agents write should exist");
         assert_eq!(claude_agents.files.len(), 1);
         assert!(claude_agents.files[0].path.starts_with("agents/"));
+    }
+
+    fn home() -> std::path::PathBuf {
+        std::path::PathBuf::from("/home/user")
+    }
+
+    fn cwd() -> std::path::PathBuf {
+        std::path::PathBuf::from("/work/project")
+    }
+
+    #[test]
+    fn test_resolve_dest_user_claude_agents() {
+        let config = SyncTargetConfig::default(); // mode = User
+        let result = resolve_dest_dir(Provider::Claude, FileKind::Agents, &config, &home(), &cwd())
+            .expect("expected value");
+        assert_eq!(
+            result,
+            std::path::PathBuf::from("/home/user/.claude/agents")
+        );
+    }
+
+    #[test]
+    fn test_resolve_dest_project_cursor_skills() {
+        let config = SyncTargetConfig {
+            mode: SyncMode::Project,
+            ..Default::default()
+        };
+        let result = resolve_dest_dir(Provider::Cursor, FileKind::Skills, &config, &home(), &cwd())
+            .expect("expected value");
+        assert_eq!(
+            result,
+            std::path::PathBuf::from("/work/project/.cursor/skills")
+        );
+    }
+
+    #[test]
+    fn test_resolve_dest_path_explicit_skills() {
+        let config = SyncTargetConfig {
+            mode: SyncMode::Path,
+            skills: Some("~/foo/skills".to_string()),
+            ..Default::default()
+        };
+        let result = resolve_dest_dir(Provider::Cursor, FileKind::Skills, &config, &home(), &cwd())
+            .expect("expected value");
+        assert_eq!(result, std::path::PathBuf::from("/home/user/foo/skills"));
+    }
+
+    #[test]
+    fn test_resolve_dest_path_missing_agents_errors() {
+        let config = SyncTargetConfig {
+            mode: SyncMode::Path,
+            ..Default::default()
+        };
+        let result = resolve_dest_dir(Provider::Claude, FileKind::Agents, &config, &home(), &cwd());
+        assert!(result.is_err());
     }
 }

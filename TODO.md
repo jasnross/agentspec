@@ -27,3 +27,11 @@
 5. Do we need strip_name if we can set a prefix?
 6. Cleanup
    - Refactor for clippy::too_many_lines
+7. Refactor frontmatter transformations to operate on structs instead of strings
+   - `prefix_frontmatter_name` and `strip_frontmatter_name` in `emit.rs` do line-by-line string
+     surgery on already-serialized content to modify or remove the `name:` field
+   - These should instead operate on structured data before serialization — either by carrying
+     frontmatter metadata on `GeneratedFile` so emit can re-serialize with modifications, or by
+     applying prefixing/stripping during compilation in the adapters
+   - Design question: is name prefixing a compile-time concern (adapters know the prefix) or an
+     emit-time concern (prefix comes from sync config, not known at compile time)?

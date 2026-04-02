@@ -11,7 +11,6 @@ use agentspec::specs::{SpecDirs, Specs};
 use agentspec::templating::{self, ResolvedSpecs, TemplatingConfig};
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
-use clap_complete::generate;
 use cli::{Cli, Command, CommonArgs};
 use config::AgentspecConfig;
 use emit::emit;
@@ -22,7 +21,7 @@ fn main() -> Result<()> {
 
     // Handle completions before any I/O — no config or spec loading needed.
     if let Command::Completions { shell } = cli.command {
-        generate(
+        clap_complete::generate(
             shell,
             &mut Cli::command(),
             "agentspec",
@@ -46,26 +45,13 @@ fn main() -> Result<()> {
         rules: config.resolve(&config.spec.rules_dir),
     };
 
-    let validated = Specs::load(&dirs)?
-        .normalize()
-        .validate(&config.presets)
-        .map_err(|errors| {
-            for e in &errors {
-                eprintln!("error: {e}");
-            }
-            anyhow::anyhow!("{} semantic validation error(s)", errors.len())
-        })?;
-
-    let templating_config = TemplatingConfig {
-        fragments_dir: config.resolve(&config.spec.fragments_dir),
-    };
-    let resolved = templating::resolve(validated, &templating_config)?;
-
     match &cli.command {
         Command::Validate(_) => {
+            load_specs(&config, &dirs)?;
             eprintln!("validation complete");
         }
         Command::Sync(sync_args) => {
+            let resolved = load_specs(&config, &dirs)?;
             let targets = resolve_sync_targets(&config, sync_args)?;
             let sync_providers: Vec<Provider> = targets.iter().map(|(p, _)| *p).collect();
 
@@ -81,6 +67,7 @@ fn main() -> Result<()> {
             emit(&plan, sync_args.dry_run)?;
         }
         Command::Compile(_) => {
+            let resolved = load_specs(&config, &dirs)?;
             let (result, providers) =
                 run_compile(resolved, &config.presets, &args.provider, &config.providers)?;
             let output_dir = config.resolve(&config.output.dir);
@@ -96,6 +83,26 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn load_specs(config: &AgentspecConfig, dirs: &SpecDirs) -> Result<ResolvedSpecs> {
+    let validated = Specs::load(dirs)?
+        .normalize()
+        .validate(&config.presets)
+        .map_err(|errors| {
+            for e in &errors {
+                eprintln!("error: {e}");
+            }
+            anyhow::anyhow!("{} semantic validation error(s)", errors.len())
+        })?;
+
+    let templating_config = TemplatingConfig {
+        fragments_dir: config.resolve(&config.spec.fragments_dir),
+    };
+
+    let resolved = templating::resolve(validated, &templating_config)?;
+
+    Ok(resolved)
 }
 
 /// Runs the compile step and reports the compiled file count. Returns the result and the
