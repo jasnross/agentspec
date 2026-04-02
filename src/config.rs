@@ -98,7 +98,6 @@ impl AgentspecConfig {
     /// Resolve the sync target config for a provider, merging base → CLI overrides.
     ///
     /// Precedence (highest wins): CLI `SyncOverrides` → base `[sync.<provider>]`.
-    /// FIXME: Does this belong in the sync module?
     pub fn resolve_sync_target(&self, provider: Provider, cli: &SyncOverrides) -> SyncTargetConfig {
         let provider_str = provider.to_string();
 

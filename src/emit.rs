@@ -11,7 +11,7 @@ use crate::sync::manifest::{Manifest, ManifestEntry};
 
 /// The outcome of a single file sync operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum SyncAction {
+pub(crate) enum SyncAction {
     /// File was newly created.
     Created,
     /// An existing file was overwritten with updated content.
@@ -273,7 +273,7 @@ fn patch_opencode_instructions(
     let mut new_rule_paths: Vec<String> = if rules_dest_dir.is_dir() {
         WalkDir::new(rules_dest_dir)
             .min_depth(1)
-            .follow_links(true) // dest entries may be directory-level symlinks (symlink strategy)
+            .follow_links(true)
             .into_iter()
             .filter_map(Result::ok)
             .filter(|e| e.file_type().is_file() && e.file_name() == "AGENTS.md")

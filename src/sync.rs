@@ -166,7 +166,7 @@ fn files_for_kind(
 /// In `Path` mode, derives the config dir from the rules path's parent (convention:
 /// `opencode.json` lives one level above `rules/`). Falls back to the user-level
 /// config dir if the rules path is absent or has no parent.
-pub(crate) fn opencode_config_dir(target: &SyncTargetConfig, home: &Path, cwd: &Path) -> PathBuf {
+fn opencode_config_dir(target: &SyncTargetConfig, home: &Path, cwd: &Path) -> PathBuf {
     match target.mode {
         SyncMode::User => home.join(".config").join("opencode"),
         SyncMode::Project => cwd.join(".opencode"),
