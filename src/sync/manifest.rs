@@ -20,10 +20,9 @@ pub struct Manifest {
 /// Per-file manifest entry.
 ///
 /// Currently empty — presence in the `files` map is the ownership signal.
-/// `deny_unknown_fields` ensures stale or malformed manifest entries surface as
-/// parse errors rather than silently succeeding.
+/// Older manifests may contain additional fields (e.g., `source`); these are
+/// silently ignored on deserialization.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct ManifestEntry {}
 
 impl Default for Manifest {
@@ -94,15 +93,15 @@ mod tests {
     }
 
     #[test]
-    fn test_load_rejects_unknown_entry_fields() {
+    fn test_load_ignores_unknown_entry_fields() {
         // Manifests with unknown fields (e.g. old "source" from a prior schema) should
-        // fail to parse — unknown fields surface as errors rather than silently succeeding.
+        // parse successfully — unknown fields are silently ignored for backward compat.
         let t = tmp();
         let stale_json = r#"{"version":1,"files":{"foo.md":{"source":"/generated/foo.md"}}}"#;
         std::fs::write(t.path().join(".agentspec-manifest.json"), stale_json)
             .expect("expected value");
 
-        let result = Manifest::load(t.path());
-        assert!(result.is_err(), "expected parse error for unknown field");
+        let manifest = Manifest::load(t.path()).expect("old manifest should parse");
+        assert!(manifest.files.contains_key("foo.md"));
     }
 }
