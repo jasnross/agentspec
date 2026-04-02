@@ -23,12 +23,19 @@
      defaults into spec fields before compilation)
 3. Figure out how to generate plugin content for Claude and Cursor
    - In particular, the plugin manifest files
-4. Allow specifying one or more configuration files
+4. Allow specifying path to configuration file
 5. Do we need strip_name if we can set a prefix?
-6. Cleanup
-   - Refactor for clippy::too_many_lines
-7. Add frontmatter name prefixing for Cursor agents and skills
-   - Currently only Claude agents/skills get frontmatter `name:` prefixed; Cursor only gets
-     file path prefixing
-   - Cursor should use `-` as the delimiter (e.g., `name: tw-my-agent`) vs Claude's `:`
-   - Easy to add now that frontmatter transforms live in adapters
+6. Cleanup: Refactor methods with clippy::too_many_lines
+7. Move post-write patching logic out of emit into adapters
+   - `patch_opencode_instructions` in `emit.rs` is ~90 lines of OpenCode-specific logic that
+     patches `opencode.json` with rule file paths after sync writes
+   - This violates the principle that provider-specific logic belongs in adapters, but it can't
+     simply move to compile time because it depends on destination paths (known only at plan time)
+   - The `ConfigPatch` enum in `plan.rs` is also OpenCode-specific — adding another provider
+     with post-write needs would require a new variant in the library crate
+   - Possible approach: adapters produce a `PostWriteAction` at compile time describing what
+     needs to happen ("patch opencode.json instructions with rule paths"), the plan stage
+     resolves concrete paths, and emit executes the action generically without knowing it's
+     OpenCode-specific
+   - This would also set up the pattern for other providers that may need post-write hooks
+     (e.g., Cursor plugin manifests)

@@ -48,7 +48,7 @@ fn adapt_agent_spec(
     presets: &ProviderPresetsMap,
     cfg: Option<&AdapterConfig>,
 ) -> Result<Vec<GeneratedFile>> {
-    let name = spec.frontmatter.id;
+    let id = spec.frontmatter.id;
     let description = spec.frontmatter.description;
 
     let model = spec
@@ -60,7 +60,13 @@ fn adapt_agent_spec(
         .and_then(|x| x.model);
 
     let file_prefix = cfg.and_then(AdapterConfig::file_prefix).unwrap_or_default();
-    let path = Path::new("agents").join(format!("{file_prefix}{name}.md"));
+    let path = Path::new("agents").join(format!("{file_prefix}{id}.md"));
+
+    // Cursor agents get frontmatter name prefix with "-" delimiter
+    let name = match cfg.and_then(|c| c.prefix.as_deref()) {
+        Some(prefix) => format!("{prefix}-{id}"),
+        None => id,
+    };
 
     let frontmatter = CursorAgentFrontmatter {
         name,
@@ -82,11 +88,14 @@ fn adapt_skill_spec(
     let id = spec.frontmatter.id;
     let description = spec.frontmatter.description.unwrap_or_default();
 
-    // Cursor requires `name` — strip_name is a no-op for this provider
-    let frontmatter = CursorSkillFrontmatter {
-        name: id.clone(),
-        description,
+    // Cursor requires `name` — strip_name is a no-op for this provider.
+    // Cursor skills get frontmatter name prefix with "-" delimiter.
+    let name = match cfg.and_then(|c| c.prefix.as_deref()) {
+        Some(prefix) => format!("{prefix}-{id}"),
+        None => id.clone(),
     };
+
+    let frontmatter = CursorSkillFrontmatter { name, description };
 
     let frontmatter_str = serde_yml::to_string(&frontmatter)?;
     let body = spec.body.trim();
@@ -194,6 +203,64 @@ mod tests {
         assert!(
             content.contains("name: test-skill"),
             "Cursor should keep name field even with strip_name=true, got: {content}"
+        );
+    }
+
+    #[test]
+    fn test_adapt_agent_with_prefix() {
+        let cfg = AdapterConfig {
+            prefix: Some("tw".to_string()),
+            strip_name: false,
+        };
+        let spec = NormalizedSpec::Agent(NormalizedAgentSpec {
+            path: "test.md".into(),
+            frontmatter: NormalizedAgentFrontmatter {
+                id: "test-agent".to_string(),
+                description: "Test agent".to_string(),
+                execution: None,
+                capabilities: None,
+            },
+            body: "Body.".to_string(),
+        });
+
+        let files = adapt_cursor(spec, &HashMap::new(), Some(&cfg)).expect("expected value");
+        assert_eq!(files[0].path.to_string_lossy(), "agents/tw-test-agent.md");
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
+        assert!(
+            content.contains("name: tw-test-agent"),
+            "expected prefixed name with '-' delimiter, got: {content}"
+        );
+    }
+
+    #[test]
+    fn test_adapt_skill_with_prefix() {
+        let cfg = AdapterConfig {
+            prefix: Some("tw".to_string()),
+            strip_name: false,
+        };
+        let spec = NormalizedSpec::Skill(NormalizedSkillSpec {
+            path: "test.md".into(),
+            frontmatter: NormalizedSkillFrontmatter {
+                id: "test-skill".to_string(),
+                description: Some("A test skill".to_string()),
+                execution: None,
+                capabilities: None,
+                user_invocable: true,
+                agent_invocable: true,
+            },
+            body: "Body.".to_string(),
+            supporting_files: vec![],
+        });
+
+        let files = adapt_cursor(spec, &HashMap::new(), Some(&cfg)).expect("expected value");
+        assert_eq!(
+            files[0].path.to_string_lossy(),
+            "skills/tw-test-skill/SKILL.md"
+        );
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
+        assert!(
+            content.contains("name: tw-test-skill"),
+            "expected prefixed name with '-' delimiter, got: {content}"
         );
     }
 }
