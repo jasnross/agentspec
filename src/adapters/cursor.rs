@@ -32,17 +32,6 @@ struct CursorRuleFrontmatter {
     always_apply: bool,
 }
 
-/// Returns a post-write hook for the given file kind, if one is needed.
-///
-/// Cursor does not require any post-write actions.
-pub fn post_write_hook(
-    _kind: FileKind,
-    _dest: &Path,
-    _config_dir: &Path,
-) -> Option<Box<dyn PostWriteHook>> {
-    None
-}
-
 pub fn adapt_cursor(
     spec: NormalizedSpec,
     presets: &ProviderPresetsMap,
@@ -153,6 +142,14 @@ fn adapt_rule_spec(
     let path = Path::new("rules").join(format!("{file_prefix}{}.mdc", spec.frontmatter.id));
 
     Ok(vec![GeneratedFile::text(Provider::Cursor, path, content)])
+}
+
+pub fn post_write_hook(
+    _kind: FileKind,
+    _dest: &Path,
+    _config_dir: &Path,
+) -> Option<Box<dyn PostWriteHook>> {
+    None
 }
 
 #[cfg(test)]

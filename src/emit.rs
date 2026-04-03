@@ -21,7 +21,7 @@ pub(crate) enum SyncAction {
     BackedUp,
 }
 
-/// Execute a write plan: write all file batches, then apply config patches.
+/// Execute a write plan: write all file batches, then run post-write hooks.
 pub fn emit(plan: &WritePlan, dry_run: bool) -> Result<()> {
     for w in &plan.writes {
         write_batch(w, dry_run)?;

@@ -201,6 +201,33 @@ fn adapt_rule_spec(spec: &NormalizedRuleSpec, cfg: Option<&AdapterConfig>) -> Ve
     vec![GeneratedFile::text(Provider::OpenCode, path, content)]
 }
 
+/// Post-write hook that patches `opencode.json` instructions with rule file paths.
+#[derive(Debug)]
+pub struct OpenCodeInstructionsPatch {
+    rules_dest_dir: PathBuf,
+    config_dir: PathBuf,
+}
+
+impl PostWriteHook for OpenCodeInstructionsPatch {
+    fn run(&self, dry_run: bool) -> Result<()> {
+        patch_opencode_instructions(&self.rules_dest_dir, &self.config_dir, dry_run)
+    }
+}
+
+pub fn post_write_hook(
+    kind: FileKind,
+    dest: &Path,
+    config_dir: &Path,
+) -> Option<Box<dyn PostWriteHook>> {
+    if kind != FileKind::Rules {
+        return None;
+    }
+    Some(Box::new(OpenCodeInstructionsPatch {
+        rules_dest_dir: dest.to_path_buf(),
+        config_dir: config_dir.to_path_buf(),
+    }))
+}
+
 /// Map a canonical tool to its `OpenCode` tool name.
 fn opencode_tool_name(tool: &ToolFrontmatter) -> &'static str {
     match tool {
@@ -235,39 +262,6 @@ fn build_tool_map(tools: &[ToolFrontmatter]) -> IndexMap<String, bool> {
     map.sort_keys();
 
     map
-}
-
-// ── Post-write hook ────────────────────────────────────────────────────────
-
-/// Post-write hook that patches `opencode.json` instructions with rule file paths.
-#[derive(Debug)]
-pub struct OpenCodeInstructionsPatch {
-    rules_dest_dir: PathBuf,
-    config_dir: PathBuf,
-}
-
-impl PostWriteHook for OpenCodeInstructionsPatch {
-    fn run(&self, dry_run: bool) -> Result<()> {
-        patch_opencode_instructions(&self.rules_dest_dir, &self.config_dir, dry_run)
-    }
-}
-
-/// Returns a post-write hook for the given file kind, if one is needed.
-///
-/// Only `OpenCode` rules require a post-write hook (to patch `opencode.json`
-/// instructions). All other kinds return `None`.
-pub fn post_write_hook(
-    kind: FileKind,
-    rules_dest_dir: &Path,
-    config_dir: &Path,
-) -> Option<Box<dyn PostWriteHook>> {
-    if kind != FileKind::Rules {
-        return None;
-    }
-    Some(Box::new(OpenCodeInstructionsPatch {
-        rules_dest_dir: rules_dest_dir.to_path_buf(),
-        config_dir: config_dir.to_path_buf(),
-    }))
 }
 
 /// Patches the `instructions` array in `opencode_config_dir/opencode.json`.

@@ -72,17 +72,6 @@ enum ClaudeTool {
     Write,
 }
 
-/// Returns a post-write hook for the given file kind, if one is needed.
-///
-/// Claude does not require any post-write actions.
-pub fn post_write_hook(
-    _kind: FileKind,
-    _dest: &Path,
-    _config_dir: &Path,
-) -> Option<Box<dyn PostWriteHook>> {
-    None
-}
-
 pub fn adapt_claude(
     spec: NormalizedSpec,
     presets: &ProviderPresetsMap,
@@ -261,6 +250,14 @@ fn adapt_tool(tool: &ToolFrontmatter) -> Vec<ClaudeTool> {
             ClaudeTool::TodoWrite,
         ],
     }
+}
+
+pub fn post_write_hook(
+    _kind: FileKind,
+    _dest: &Path,
+    _config_dir: &Path,
+) -> Option<Box<dyn PostWriteHook>> {
+    None
 }
 
 #[cfg(test)]
