@@ -51,7 +51,7 @@ pub fn adapt_opencode(
     match spec {
         NormalizedSpec::Agent(s) => adapt_agent_spec(s, presets, cfg),
         NormalizedSpec::Skill(s) => adapt_skill_spec(s, presets, cfg),
-        NormalizedSpec::Rule(s) => Ok(adapt_rule_spec(&s)),
+        NormalizedSpec::Rule(s) => Ok(adapt_rule_spec(&s, cfg)),
     }
 }
 
@@ -188,10 +188,11 @@ fn adapt_skill_spec(
     Ok(files)
 }
 
-fn adapt_rule_spec(spec: &NormalizedRuleSpec) -> Vec<GeneratedFile> {
+fn adapt_rule_spec(spec: &NormalizedRuleSpec, cfg: Option<&AdapterConfig>) -> Vec<GeneratedFile> {
     let content = format!("{}\n", spec.body.trim());
+    let file_prefix = cfg.and_then(AdapterConfig::file_prefix).unwrap_or_default();
     let path = Path::new("rules")
-        .join(&spec.frontmatter.id)
+        .join(format!("{file_prefix}{}", spec.frontmatter.id))
         .join("AGENTS.md");
 
     vec![GeneratedFile::text(Provider::OpenCode, path, content)]

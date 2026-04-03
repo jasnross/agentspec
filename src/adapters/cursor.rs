@@ -39,7 +39,7 @@ pub fn adapt_cursor(
     match spec {
         NormalizedSpec::Agent(s) => adapt_agent_spec(s, presets, cfg),
         NormalizedSpec::Skill(s) => adapt_skill_spec(s, cfg),
-        NormalizedSpec::Rule(s) => adapt_rule_spec(s),
+        NormalizedSpec::Rule(s) => adapt_rule_spec(s, cfg),
     }
 }
 
@@ -122,7 +122,10 @@ fn adapt_skill_spec(
     Ok(files)
 }
 
-fn adapt_rule_spec(spec: NormalizedRuleSpec) -> Result<Vec<GeneratedFile>> {
+fn adapt_rule_spec(
+    spec: NormalizedRuleSpec,
+    cfg: Option<&AdapterConfig>,
+) -> Result<Vec<GeneratedFile>> {
     let description = spec.frontmatter.description.unwrap_or_default();
 
     let frontmatter = CursorRuleFrontmatter {
@@ -134,7 +137,8 @@ fn adapt_rule_spec(spec: NormalizedRuleSpec) -> Result<Vec<GeneratedFile>> {
     let body = spec.body.trim();
     let content = format!("---\n{frontmatter_str}---\n\n{body}");
 
-    let path = Path::new("rules").join(format!("{}.mdc", spec.frontmatter.id));
+    let file_prefix = cfg.and_then(AdapterConfig::file_prefix).unwrap_or_default();
+    let path = Path::new("rules").join(format!("{file_prefix}{}.mdc", spec.frontmatter.id));
 
     Ok(vec![GeneratedFile::text(Provider::Cursor, path, content)])
 }
@@ -145,8 +149,8 @@ mod tests {
 
     use super::*;
     use crate::spec::{
-        NormalizedAgentFrontmatter, NormalizedAgentSpec, NormalizedSkillFrontmatter,
-        NormalizedSkillSpec,
+        NormalizedAgentFrontmatter, NormalizedAgentSpec, NormalizedRuleFrontmatter,
+        NormalizedRuleSpec, NormalizedSkillFrontmatter, NormalizedSkillSpec,
     };
 
     #[test]
@@ -262,5 +266,24 @@ mod tests {
             content.contains("name: tw-test-skill"),
             "expected prefixed name with '-' delimiter, got: {content}"
         );
+    }
+
+    #[test]
+    fn test_adapt_rule_with_prefix() {
+        let cfg = AdapterConfig {
+            prefix: Some("tw".to_string()),
+            strip_name: false,
+        };
+        let spec = NormalizedSpec::Rule(NormalizedRuleSpec {
+            path: "test.md".into(),
+            frontmatter: NormalizedRuleFrontmatter {
+                id: "test-rule".to_string(),
+                description: Some("A test rule".to_string()),
+            },
+            body: "Rule body.".to_string(),
+        });
+
+        let files = adapt_cursor(spec, &HashMap::new(), Some(&cfg)).expect("expected value");
+        assert_eq!(files[0].path.to_str(), Some("rules/tw-test-rule.mdc"));
     }
 }

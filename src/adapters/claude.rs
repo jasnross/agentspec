@@ -79,7 +79,7 @@ pub fn adapt_claude(
     match spec {
         NormalizedSpec::Agent(s) => adapt_agent_spec(s, presets, cfg),
         NormalizedSpec::Skill(s) => adapt_skill_spec(s, presets, cfg),
-        NormalizedSpec::Rule(s) => Ok(adapt_rule_spec(&s)),
+        NormalizedSpec::Rule(s) => Ok(adapt_rule_spec(&s, cfg)),
     }
 }
 
@@ -216,9 +216,10 @@ fn adapt_skill_spec(
     Ok(files)
 }
 
-fn adapt_rule_spec(spec: &NormalizedRuleSpec) -> Vec<GeneratedFile> {
+fn adapt_rule_spec(spec: &NormalizedRuleSpec, cfg: Option<&AdapterConfig>) -> Vec<GeneratedFile> {
     let content = format!("{}\n", spec.body.trim()).into_bytes();
-    let path = Path::new("rules").join(format!("{}.md", spec.frontmatter.id));
+    let file_prefix = cfg.and_then(AdapterConfig::file_prefix).unwrap_or_default();
+    let path = Path::new("rules").join(format!("{file_prefix}{}.md", spec.frontmatter.id));
 
     vec![GeneratedFile {
         provider: Provider::Claude,
@@ -259,7 +260,8 @@ mod tests {
     use super::*;
     use crate::spec::{
         CapabilitiesFrontmatter, NormalizedAgentFrontmatter, NormalizedAgentSpec,
-        NormalizedSkillFrontmatter, NormalizedSkillSpec,
+        NormalizedRuleFrontmatter, NormalizedRuleSpec, NormalizedSkillFrontmatter,
+        NormalizedSkillSpec,
     };
 
     #[test]
@@ -393,5 +395,24 @@ mod tests {
             !content.contains("name:"),
             "frontmatter should not contain name: when strip_name is true, got: {content}"
         );
+    }
+
+    #[test]
+    fn test_adapt_rule_with_prefix() {
+        let cfg = AdapterConfig {
+            prefix: Some("tw".to_string()),
+            strip_name: false,
+        };
+        let spec = NormalizedSpec::Rule(NormalizedRuleSpec {
+            path: "test.md".into(),
+            frontmatter: NormalizedRuleFrontmatter {
+                id: "test-rule".to_string(),
+                description: Some("A test rule".to_string()),
+            },
+            body: "Rule body.".to_string(),
+        });
+
+        let files = adapt_claude(spec, &HashMap::new(), Some(&cfg)).expect("expected value");
+        assert_eq!(files[0].path.to_str(), Some("rules/tw-test-rule.md"));
     }
 }
