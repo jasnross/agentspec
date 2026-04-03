@@ -2,10 +2,13 @@ pub(crate) mod manifest;
 
 use std::path::{Path, PathBuf};
 
+use agentspec::adapters::{
+    claude_post_write_hook, cursor_post_write_hook, opencode_post_write_hook,
+};
 use agentspec::compile::{CompileResult, GeneratedFile};
 use agentspec::plan::{
-    ConfigPatch, FileKind, FileWrite, WriteMode, WritePlan, expand_tilde, file_kinds,
-    project_dest_dir, user_dest_dir,
+    FileKind, FileWrite, WriteMode, WritePlan, expand_tilde, file_kinds, project_dest_dir,
+    user_dest_dir,
 };
 use agentspec::provider::Provider;
 use anyhow::{Context, Result, bail};
@@ -16,7 +19,7 @@ use crate::config::{AgentspecConfig, SyncMode, SyncOverrides, SyncTargetConfig};
 /// Builds a `WritePlan` that writes compiled files directly to tool config destinations.
 ///
 /// One `FileWrite` (with `WriteMode::ManifestTracked`) is produced per (provider, kind) pair.
-/// `OpenCode` rules additionally generate a `ConfigPatch::OpenCodeInstructions` entry.
+/// Each adapter may optionally provide a post-write hook for specific kinds.
 pub fn sync_plan(
     result: &CompileResult,
     targets: &[(Provider, SyncTargetConfig)],
@@ -24,7 +27,7 @@ pub fn sync_plan(
     cwd: &Path,
 ) -> Result<WritePlan> {
     let mut writes = Vec::new();
-    let mut patches = Vec::new();
+    let mut post_write_hooks = Vec::new();
 
     for (provider, target) in targets {
         for kind in file_kinds(*provider) {
@@ -39,16 +42,26 @@ pub fn sync_plan(
                 allow_overwrite: target.allow_overwrite,
             });
 
-            if *provider == Provider::OpenCode && kind == FileKind::Rules {
-                patches.push(ConfigPatch::OpenCodeInstructions {
-                    rules_dest_dir: dest,
-                    config_dir: opencode_config_dir(target, home, cwd),
-                });
+            // Every adapter gets a chance to provide a post-write hook.
+            // Only OpenCode needs a config_dir; Claude/Cursor pass a dummy path.
+            let hook = match *provider {
+                Provider::Claude => claude_post_write_hook(kind, &dest, Path::new("")),
+                Provider::Cursor => cursor_post_write_hook(kind, &dest, Path::new("")),
+                Provider::OpenCode => {
+                    let config_dir = opencode_config_dir(target, home, cwd);
+                    opencode_post_write_hook(kind, &dest, &config_dir)
+                }
+            };
+            if let Some(h) = hook {
+                post_write_hooks.push(h);
             }
         }
     }
 
-    Ok(WritePlan { writes, patches })
+    Ok(WritePlan {
+        writes,
+        post_write_hooks,
+    })
 }
 
 /// Validates and resolves sync targets from config and CLI args.
@@ -183,7 +196,7 @@ mod tests {
     use std::path::Path;
 
     use agentspec::compile::{CompileResult, GeneratedFile};
-    use agentspec::plan::{ConfigPatch, FileKind, WriteMode};
+    use agentspec::plan::{FileKind, WriteMode};
     use agentspec::provider::Provider;
 
     use super::{files_for_kind, resolve_dest_dir, sync_plan};
@@ -279,12 +292,8 @@ mod tests {
             );
         }
 
-        // Exactly one ConfigPatch: OpenCode instructions for the rules dest.
-        assert_eq!(plan.patches.len(), 1);
-        assert!(matches!(
-            plan.patches[0],
-            ConfigPatch::OpenCodeInstructions { .. }
-        ));
+        // Exactly one post-write hook: OpenCode instructions patching.
+        assert_eq!(plan.post_write_hooks.len(), 1);
 
         // Spot-check: the Claude agents write targets the correct destination
         // and carries the correct file.

@@ -3,9 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use agentspec::plan::{ConfigPatch, FileWrite, WriteMode, WritePlan};
+use agentspec::plan::{FileWrite, WriteMode, WritePlan};
 use anyhow::{Context, Result, bail};
-use walkdir::WalkDir;
 
 use crate::sync::manifest::{Manifest, ManifestEntry};
 
@@ -27,7 +26,9 @@ pub fn emit(plan: &WritePlan, dry_run: bool) -> Result<()> {
     for w in &plan.writes {
         write_batch(w, dry_run)?;
     }
-    apply_patches(&plan.patches, dry_run)?;
+    for hook in &plan.post_write_hooks {
+        hook.run(dry_run)?;
+    }
     Ok(())
 }
 
@@ -227,115 +228,6 @@ fn write_file(dest: &Path, content: &[u8], mode: Option<u32>) -> Result<()> {
     Ok(())
 }
 
-/// Patches the `instructions` array in `opencode_config_dir/opencode.json`.
-///
-/// Ownership contract: agentspec owns any entry whose path falls under `rules_dest_dir`.
-/// On each sync those entries are replaced wholesale; all other entries are preserved.
-///
-/// If `opencode.json` does not exist, it is created with just the `instructions` key.
-///
-/// When `dry_run` is true, prints the planned diff but does not write the file.
-fn patch_opencode_instructions(
-    rules_dest_dir: &Path,
-    opencode_config_dir: &Path,
-    dry_run: bool,
-) -> Result<()> {
-    let config_path = opencode_config_dir.join("opencode.json");
-
-    // Read existing config (or start with empty object)
-    let mut config: serde_json::Value = if config_path.exists() {
-        let content = fs::read_to_string(&config_path)
-            .with_context(|| format!("failed to read {}", config_path.display()))?;
-        serde_json::from_str(&content)
-            .with_context(|| format!("failed to parse {}", config_path.display()))?
-    } else {
-        serde_json::Value::Object(serde_json::Map::new())
-    };
-
-    // Get the existing instructions array (default to [])
-    let existing: Vec<String> = config
-        .get("instructions")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(str::to_owned))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    // Split into user-owned and agentspec-owned
-    let user_entries: Vec<String> = existing
-        .into_iter()
-        .filter(|p| !Path::new(p).starts_with(rules_dest_dir))
-        .collect();
-
-    // Enumerate current rule files in rules_dest_dir
-    let mut new_rule_paths: Vec<String> = if rules_dest_dir.is_dir() {
-        WalkDir::new(rules_dest_dir)
-            .min_depth(1)
-            .follow_links(true)
-            .into_iter()
-            .filter_map(Result::ok)
-            .filter(|e| e.file_type().is_file() && e.file_name() == "AGENTS.md")
-            .map(|e| e.path().to_string_lossy().into_owned())
-            .collect()
-    } else {
-        Vec::new()
-    };
-    new_rule_paths.sort();
-
-    let mut updated_instructions = user_entries;
-    updated_instructions.extend(new_rule_paths);
-
-    // Skip writing entirely when the file doesn't exist yet and there's nothing to record.
-    // This avoids creating a spurious `opencode.json` when no rules have ever been synced.
-    if !config_path.exists() && updated_instructions.is_empty() {
-        return Ok(());
-    }
-
-    if dry_run {
-        eprintln!(
-            "would write {} instructions to {}",
-            updated_instructions.len(),
-            config_path.display()
-        );
-        return Ok(());
-    }
-
-    // Update the instructions key
-    let instructions_value: Vec<serde_json::Value> = updated_instructions
-        .into_iter()
-        .map(serde_json::Value::String)
-        .collect();
-    if let Some(obj) = config.as_object_mut() {
-        obj.insert(
-            "instructions".to_string(),
-            serde_json::Value::Array(instructions_value),
-        );
-    }
-
-    let content =
-        serde_json::to_string_pretty(&config).context("failed to serialize opencode.json")?;
-    fs::write(&config_path, format!("{content}\n"))
-        .with_context(|| format!("failed to write {}", config_path.display()))?;
-
-    Ok(())
-}
-
-fn apply_patches(patches: &[ConfigPatch], dry_run: bool) -> Result<()> {
-    for patch in patches {
-        match patch {
-            ConfigPatch::OpenCodeInstructions {
-                rules_dest_dir,
-                config_dir,
-            } => {
-                patch_opencode_instructions(rules_dest_dir, config_dir, dry_run)?;
-            }
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -364,7 +256,7 @@ mod tests {
                 mode: WriteMode::CleanSlate,
                 allow_overwrite: true,
             }],
-            patches: vec![],
+            post_write_hooks: vec![],
         }
     }
 
@@ -424,7 +316,7 @@ mod tests {
                 mode: WriteMode::CleanSlate,
                 allow_overwrite: true,
             }],
-            patches: vec![],
+            post_write_hooks: vec![],
         };
 
         emit(&plan, false).expect("expected value");
@@ -458,7 +350,7 @@ mod tests {
                 mode: WriteMode::ManifestTracked,
                 allow_overwrite: true,
             }],
-            patches: vec![],
+            post_write_hooks: vec![],
         };
 
         emit(&plan, false).expect("expected value");
@@ -484,7 +376,7 @@ mod tests {
                 mode: WriteMode::ManifestTracked,
                 allow_overwrite: true,
             }],
-            patches: vec![],
+            post_write_hooks: vec![],
         };
         emit(&plan, false).expect("expected value");
         assert!(dest.join("basic/SKILL.md").exists());
@@ -498,7 +390,7 @@ mod tests {
                 mode: WriteMode::ManifestTracked,
                 allow_overwrite: true,
             }],
-            patches: vec![],
+            post_write_hooks: vec![],
         };
         emit(&plan2, false).expect("expected value");
 
@@ -526,7 +418,7 @@ mod tests {
                 mode: WriteMode::ManifestTracked,
                 allow_overwrite,
             }],
-            patches: vec![],
+            post_write_hooks: vec![],
         }
     }
 
@@ -640,157 +532,11 @@ mod tests {
                 mode: WriteMode::ManifestTracked,
                 allow_overwrite: true,
             }],
-            patches: vec![],
+            post_write_hooks: vec![],
         };
 
         emit(&plan, true).expect("expected value");
 
         assert!(!dest.exists(), "dry-run must not create directory");
-    }
-
-    // patch_opencode_instructions tests
-
-    #[test]
-    fn test_patch_no_prior_config_creates_file() {
-        let tmp = TempDir::new().expect("expected value");
-        let rules_dir = tmp.path().join("rules");
-        fs::create_dir_all(rules_dir.join("my-rule")).expect("expected value");
-        fs::write(rules_dir.join("my-rule/AGENTS.md"), "rule").expect("expected value");
-
-        patch_opencode_instructions(&rules_dir, tmp.path(), false).expect("expected value");
-
-        let config_path = tmp.path().join("opencode.json");
-        assert!(config_path.exists());
-        let content = fs::read_to_string(&config_path).expect("expected value");
-        let parsed: serde_json::Value = serde_json::from_str(&content).expect("expected value");
-        let instructions = parsed["instructions"].as_array().expect("expected array");
-        assert_eq!(instructions.len(), 1);
-        assert!(
-            instructions[0]
-                .as_str()
-                .expect("expected str")
-                .contains("my-rule")
-        );
-    }
-
-    #[test]
-    fn test_patch_preserves_user_entries() {
-        let tmp = TempDir::new().expect("expected value");
-        let rules_dir = tmp.path().join("rules");
-        fs::create_dir_all(rules_dir.join("my-rule")).expect("expected value");
-        fs::write(rules_dir.join("my-rule/AGENTS.md"), "rule").expect("expected value");
-
-        // Pre-populate with a user entry
-        let config_path = tmp.path().join("opencode.json");
-        fs::write(
-            &config_path,
-            r#"{"instructions": ["/user/custom/AGENTS.md"]}"#,
-        )
-        .expect("expected value");
-
-        patch_opencode_instructions(&rules_dir, tmp.path(), false).expect("expected value");
-
-        let content = fs::read_to_string(&config_path).expect("expected value");
-        let parsed: serde_json::Value = serde_json::from_str(&content).expect("expected value");
-        let instructions = parsed["instructions"].as_array().expect("expected array");
-        let paths: Vec<&str> = instructions
-            .iter()
-            .map(|v| v.as_str().expect("expected str"))
-            .collect();
-        assert!(
-            paths.contains(&"/user/custom/AGENTS.md"),
-            "user entry preserved"
-        );
-        assert!(
-            paths.iter().any(|p| p.contains("my-rule")),
-            "agentspec entry added"
-        );
-    }
-
-    #[test]
-    fn test_patch_replaces_stale_agentspec_entries() {
-        let tmp = TempDir::new().expect("expected value");
-        let rules_dir = tmp.path().join("rules");
-        fs::create_dir_all(rules_dir.join("new-rule")).expect("expected value");
-        fs::write(rules_dir.join("new-rule/AGENTS.md"), "rule").expect("expected value");
-
-        // Pre-populate with a stale agentspec entry AND a user entry
-        let config_path = tmp.path().join("opencode.json");
-        let stale_path = rules_dir.join("old-rule/AGENTS.md");
-        let existing = serde_json::json!({
-            "instructions": [
-                stale_path.to_string_lossy(),
-                "/user/AGENTS.md"
-            ]
-        });
-        fs::write(
-            &config_path,
-            serde_json::to_string(&existing).expect("expected value"),
-        )
-        .expect("expected value");
-
-        patch_opencode_instructions(&rules_dir, tmp.path(), false).expect("expected value");
-
-        let content = fs::read_to_string(&config_path).expect("expected value");
-        let parsed: serde_json::Value = serde_json::from_str(&content).expect("expected value");
-        let instructions = parsed["instructions"].as_array().expect("expected array");
-        let paths: Vec<&str> = instructions
-            .iter()
-            .map(|v| v.as_str().expect("expected str"))
-            .collect();
-        // Stale entry removed
-        assert!(
-            !paths.iter().any(|p| p.contains("old-rule")),
-            "stale entry removed"
-        );
-        // New entry present
-        assert!(
-            paths.iter().any(|p| p.contains("new-rule")),
-            "new entry present"
-        );
-        // User entry preserved
-        assert!(paths.contains(&"/user/AGENTS.md"), "user entry preserved");
-    }
-
-    #[test]
-    fn test_patch_empty_rules_dir_removes_agentspec_entries() {
-        let tmp = TempDir::new().expect("expected value");
-        let rules_dir = tmp.path().join("rules");
-        fs::create_dir_all(&rules_dir).expect("expected value");
-
-        let config_path = tmp.path().join("opencode.json");
-        let stale_path = rules_dir.join("old-rule/AGENTS.md");
-        let existing = serde_json::json!({
-            "instructions": [stale_path.to_string_lossy(), "/user/AGENTS.md"]
-        });
-        fs::write(
-            &config_path,
-            serde_json::to_string(&existing).expect("expected value"),
-        )
-        .expect("expected value");
-
-        patch_opencode_instructions(&rules_dir, tmp.path(), false).expect("expected value");
-
-        let content = fs::read_to_string(&config_path).expect("expected value");
-        let parsed: serde_json::Value = serde_json::from_str(&content).expect("expected value");
-        let instructions = parsed["instructions"].as_array().expect("expected array");
-        assert_eq!(instructions.len(), 1); // only user entry remains
-        assert_eq!(
-            instructions[0].as_str().expect("expected str"),
-            "/user/AGENTS.md"
-        );
-    }
-
-    #[test]
-    fn test_patch_dry_run_no_file_written() {
-        let tmp = TempDir::new().expect("expected value");
-        let rules_dir = tmp.path().join("rules");
-
-        patch_opencode_instructions(&rules_dir, tmp.path(), true).expect("expected value");
-
-        assert!(
-            !tmp.path().join("opencode.json").exists(),
-            "dry_run must not create file"
-        );
     }
 }

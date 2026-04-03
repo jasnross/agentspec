@@ -4,6 +4,7 @@ use anyhow::Result;
 use serde::Serialize;
 
 use crate::compile::{AdapterConfig, GeneratedFile};
+use crate::plan::{FileKind, PostWriteHook};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
 use crate::spec::{NormalizedAgentSpec, NormalizedRuleSpec, NormalizedSkillSpec, NormalizedSpec};
@@ -29,6 +30,17 @@ struct CursorSkillFrontmatter {
 struct CursorRuleFrontmatter {
     description: String,
     always_apply: bool,
+}
+
+/// Returns a post-write hook for the given file kind, if one is needed.
+///
+/// Cursor does not require any post-write actions.
+pub fn post_write_hook(
+    _kind: FileKind,
+    _dest: &Path,
+    _config_dir: &Path,
+) -> Option<Box<dyn PostWriteHook>> {
+    None
 }
 
 pub fn adapt_cursor(

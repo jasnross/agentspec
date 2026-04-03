@@ -94,7 +94,7 @@ pub fn compile_plan(
         .collect();
     WritePlan {
         writes,
-        patches: vec![],
+        post_write_hooks: vec![],
     }
 }
 
@@ -109,14 +109,22 @@ pub fn expand_tilde(path: &str, home: &Path) -> PathBuf {
 
 // ── Plan types ──────────────────────────────────────────────────────────────
 
-/// A complete write plan: files to write followed by config patches to apply.
+/// A post-write action that runs after all file writes complete.
 ///
-/// Patches always run after all writes (e.g. `OpenCode` patching needs rule files
-/// to exist first), so two separate `Vec`s replace a single `Vec<Op>` enum.
+/// Hooks capture their own context (paths, config) when constructed.
+/// Emit calls `run(dry_run)` without knowing what the hook does.
+pub trait PostWriteHook: std::fmt::Debug {
+    fn run(&self, dry_run: bool) -> anyhow::Result<()>;
+}
+
+/// A complete write plan: files to write followed by post-write hooks to run.
+///
+/// Hooks always run after all writes (e.g. `OpenCode` patching needs rule files
+/// to exist first).
 #[derive(Debug)]
 pub struct WritePlan {
     pub writes: Vec<FileWrite>,
-    pub patches: Vec<ConfigPatch>,
+    pub post_write_hooks: Vec<Box<dyn PostWriteHook>>,
 }
 
 /// How the executor treats the destination directory.
@@ -142,16 +150,6 @@ pub struct FileWrite {
     pub files: Vec<GeneratedFile>,
     pub mode: WriteMode,
     pub allow_overwrite: bool,
-}
-
-/// A post-write config file patch.
-#[derive(Debug)]
-pub enum ConfigPatch {
-    /// Patch `opencode.json` `instructions` array with absolute paths to synced rule files.
-    OpenCodeInstructions {
-        rules_dest_dir: PathBuf,
-        config_dir: PathBuf,
-    },
 }
 
 #[cfg(test)]
@@ -214,12 +212,9 @@ mod tests {
                 mode: WriteMode::CleanSlate,
                 allow_overwrite: false,
             }],
-            patches: vec![ConfigPatch::OpenCodeInstructions {
-                rules_dest_dir: PathBuf::from("/tmp/rules"),
-                config_dir: PathBuf::from("/tmp/config"),
-            }],
+            post_write_hooks: vec![],
         };
         assert_eq!(plan.writes.len(), 1);
-        assert_eq!(plan.patches.len(), 1);
+        assert!(plan.post_write_hooks.is_empty());
     }
 }
