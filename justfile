@@ -23,11 +23,12 @@ fmt-check:
 lint:
     cargo clippy --all-targets
 
-# Format + lint (fmt writes, then lint checks)
+# Format + lint + test
 check:
     cargo build
     cargo +nightly fmt
     cargo clippy --all-targets
+    cargo test
 
 # CI check: fmt + lint without writing
 check-ci:
