@@ -213,8 +213,9 @@ output (typestate pattern — passing the wrong stage is a compile error):
 7. **Emit** — `emit.rs` executes the `WritePlan`: `CleanSlate` mode for `compile`
    (delete-and-rewrite `generated/<provider>/`), `ManifestTracked` mode for `sync`
    (per-file ownership tracking, stale cleanup, direct write to tool config dirs);
-   patches `opencode.json` for rules (`sync` command only). Emit is purely file
-   I/O and manifest tracking — no content transformation.
+   runs adapter-provided post-write hooks (e.g., `OpenCode` `opencode.json`
+   patching). Emit is purely file I/O, manifest tracking, and hook execution —
+   no content transformation or provider-specific logic of its own.
 
 ## Integration Tests
 
