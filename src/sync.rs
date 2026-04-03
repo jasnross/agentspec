@@ -103,7 +103,6 @@ pub fn resolve_sync_targets(
             &sync_overrides,
             has_explicit_provider_selection,
         )?;
-        target.validate_for_sync(provider)?;
         resolved_targets.push((provider, target));
     }
 

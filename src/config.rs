@@ -291,16 +291,6 @@ pub struct SyncTargetConfig {
     pub commands: Option<String>,
 }
 
-impl SyncTargetConfig {
-    /// Validate sync settings for provider-specific constraints.
-    pub fn validate_for_sync(&self, provider: Provider) -> Result<()> {
-        if self.prefix.is_some() && self.strip_name {
-            bail!("sync config for {provider}: `prefix` and `strip_name` are mutually exclusive");
-        }
-        Ok(())
-    }
-}
-
 /// CLI flag overrides for sync target resolution (highest precedence).
 /// FIXME: Consider if other sync flags should be allowed here
 #[derive(Clone, Debug, Default)]
@@ -637,26 +627,5 @@ mode = "user"
             result.is_err(),
             "should error when provider has no config and CLI is insufficient"
         );
-    }
-
-    #[test]
-    fn test_validate_prefix_strip_name_conflict() {
-        let target = SyncTargetConfig {
-            prefix: Some("tw".to_string()),
-            strip_name: true,
-            ..SyncTargetConfig::default()
-        };
-
-        let result = target.validate_for_sync(Provider::Claude);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_validate_prefix_none_no_error() {
-        let target = SyncTargetConfig::default();
-
-        for &provider in Provider::VARIANTS {
-            assert!(target.validate_for_sync(provider).is_ok());
-        }
     }
 }

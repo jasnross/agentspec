@@ -22,9 +22,8 @@
    - Retain this layer only if we expect real normalization work to arrive (e.g., applying preset
      defaults into spec fields before compilation)
 3. Allow specifying path to configuration file
-4. Do we need strip_name if we can set a prefix?
-5. Cleanup: Refactor methods with clippy::too_many_lines
-6. Extract an adapter trait
+4. Cleanup: Refactor methods with clippy::too_many_lines
+5. Extract an adapter trait
    - Adapters currently share a common shape: `adapt_*` (compile), `post_write_hook`
      (sync), same parameter patterns (`Option<&AdapterConfig>`, `&ProviderPresetsMap`)
    - A formal trait would make adding a new provider a matter of implementing one trait

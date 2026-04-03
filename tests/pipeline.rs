@@ -227,7 +227,7 @@ fn test_compile_script_is_executable() {
 }
 
 #[test]
-fn test_sync_prefix_strip_name_conflict_errors() {
+fn test_sync_prefix_and_strip_name_together() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     std::fs::write(
@@ -239,6 +239,7 @@ opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
 cursor = { model = "fast" }
 
 [sync.claude]
+mode = "user"
 prefix = "tw"
 strip_name = true
 "#,
@@ -254,10 +255,14 @@ strip_name = true
         .expect("failed to run agentspec sync");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!output.status.success(), "sync should fail:\n{stderr}");
     assert!(
-        stderr.contains("`prefix` and `strip_name` are mutually exclusive"),
-        "stderr: {stderr}"
+        output.status.success(),
+        "sync should succeed with both prefix and strip_name:\n{stderr}"
+    );
+    // Skills should have prefixed paths
+    assert!(
+        home.join(".claude/skills").exists(),
+        "skills directory should exist"
     );
 }
 
