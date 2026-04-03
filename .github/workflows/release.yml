@@ -298,9 +298,8 @@ jobs:
 
           TMP_FILE=$(mktemp)
           awk -v version="${VERSION}" -v arm_sha="${ARM_SHA}" -v mac_sha="${MAC_SHA}" -v linux_sha="${LINUX_SHA}" '
-            /^  version "/ {
-              print "  version \"" version "\""
-              next
+            /releases\/download\/v[0-9]/ {
+              gsub(/v[0-9]+\.[0-9]+\.[0-9]+/, "v" version)
             }
             /aarch64-apple-darwin\.tar\.gz/ {
               print
