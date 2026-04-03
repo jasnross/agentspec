@@ -90,15 +90,18 @@ jobs:
           merge-multiple: true
           path: dist
 
-      - name: Verify install using temporary formula
+      - name: Verify install using temporary tap
         run: |
           VERSION="${RELEASE_TAG#v}"
           TARGET="aarch64-apple-darwin"
           ARCHIVE="agentspec-v${VERSION}-${TARGET}.tar.gz"
           read -r SHA _ < <(shasum -a 256 "dist/${ARCHIVE}")
 
-          cat > agentspec-ci.rb <<EOF
-          class AgentspecCi < Formula
+          brew tap-new --no-git agentspec-ci/tap
+          TAP_FORMULA="$(brew --repository agentspec-ci/tap)/Formula/agentspec.rb"
+
+          cat > "${TAP_FORMULA}" <<EOF
+          class Agentspec < Formula
             desc "agentspec release verification formula"
             homepage "https://github.com/${GITHUB_REPOSITORY}"
             version "${VERSION}"
@@ -111,7 +114,7 @@ jobs:
           end
           EOF
 
-          brew install --formula ./agentspec-ci.rb
+          brew install agentspec-ci/tap/agentspec
           OUTPUT=$(agentspec --version)
           case "${OUTPUT}" in
             *"${VERSION}"*) ;;
