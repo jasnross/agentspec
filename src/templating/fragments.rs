@@ -3,8 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use minijinja::value::Kwargs;
-use minijinja::{Environment, State};
+use minijinja::Environment;
 use walkdir::WalkDir;
 
 use crate::spec::NormalizedSpec;
@@ -43,8 +42,8 @@ pub fn resolve_fragments(
 
 /// Load fragment files from a directory. Returns a map of fragment name to content.
 ///
-/// Fragment names are paths relative to the fragments directory with `.md` stripped.
-/// For example, `spec/fragments/review/prompt-contract.md` becomes `review/prompt-contract`.
+/// Fragment names are relative paths including the `.md` extension, matching the
+/// `{% include "review/prompt-contract.md" %}` syntax used in spec bodies.
 pub fn load_fragments(fragments_dir: &Path) -> Result<HashMap<String, String>> {
     let mut fragments = HashMap::new();
 
@@ -63,8 +62,7 @@ pub fn load_fragments(fragments_dir: &Path) -> Result<HashMap<String, String>> {
             .strip_prefix(fragments_dir)
             .context("failed to compute relative path for fragment")?;
 
-        // Key = relative path with .md stripped (e.g., "review/prompt-contract")
-        let name = relative.with_extension("").to_string_lossy().to_string();
+        let name = relative.to_string_lossy().to_string();
 
         let content = fs::read_to_string(path)
             .with_context(|| format!("failed to read fragment {}", path.display()))?;
@@ -77,12 +75,7 @@ pub fn load_fragments(fragments_dir: &Path) -> Result<HashMap<String, String>> {
 
 /// Build a `MiniJinja` environment with all fragments available as templates.
 ///
-/// Templates are keyed with `.md` suffix appended to the fragment name
-/// (e.g., fragment "review/prompt-contract" → template "review/prompt-contract.md").
-/// This matches the `{% include "review/prompt-contract.md" %}` syntax used in specs.
-///
-/// A custom `include_indented` function is registered to support
-/// indentation-aware includes.
+/// Enables `{% include "review/prompt-contract.md" %}` syntax in specs.
 pub fn build_environment(fragments: &HashMap<String, String>) -> Result<Environment<'static>> {
     let mut env = Environment::new();
     // Lenient: undefined variables evaluate as falsy rather than erroring,
@@ -90,69 +83,11 @@ pub fn build_environment(fragments: &HashMap<String, String>) -> Result<Environm
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
 
     for (name, content) in fragments {
-        let template_name = format!("{name}.md");
-        env.add_template_owned(template_name.clone(), content.clone())
-            .with_context(|| format!("failed to parse fragment '{template_name}'"))?;
+        env.add_template_owned(name.clone(), content.clone())
+            .with_context(|| format!("failed to parse fragment '{name}'"))?;
     }
-
-    // Register the include_indented custom function for indentation-aware includes.
-    // Usage: {{ include_indented("fragment/name.md", indent=4) }}
-    env.add_function("include_indented", include_indented);
 
     Ok(env)
-}
-
-/// Custom function that renders a template and indents every line by the specified amount.
-///
-/// Signature: `{{ include_indented("template.md", indent=N) }}`
-///
-/// Reconstructs the caller's variable scope via `State::lookup` so that
-/// `{% with %}` variables are available inside the included template.
-#[allow(clippy::needless_pass_by_value)] // MiniJinja custom functions receive owned args (`String`, `Kwargs`) by API design.
-fn include_indented(
-    state: &State,
-    template_name: String,
-    kwargs: Kwargs,
-) -> Result<String, minijinja::Error> {
-    let indent: usize = kwargs.get::<usize>("indent").unwrap_or(0);
-    kwargs.assert_all_used()?;
-
-    let template = state.env().get_template(&template_name)?;
-
-    // Pass the caller's known variables as context so {% with %} vars propagate.
-    let known: std::collections::BTreeMap<String, minijinja::Value> = state
-        .exports()
-        .iter()
-        .filter_map(|name| state.lookup(name).map(|v| (name.to_string(), v)))
-        .collect();
-    let rendered = template.render(known)?;
-
-    if indent == 0 {
-        return Ok(rendered);
-    }
-
-    let prefix = " ".repeat(indent);
-    let indented = rendered
-        .lines()
-        .enumerate()
-        .map(|(i, line)| {
-            if i == 0 || line.is_empty() {
-                // First line is already at the call site's indentation;
-                // empty lines don't get indented
-                line.to_string()
-            } else {
-                format!("{prefix}{line}")
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    // Preserve trailing newline if the original had one
-    if rendered.ends_with('\n') && !indented.ends_with('\n') {
-        Ok(format!("{indented}\n"))
-    } else {
-        Ok(indented)
-    }
 }
 
 #[cfg(test)]
@@ -177,10 +112,10 @@ mod tests {
         let fragments = load_fragments(&frag_dir).expect("expected value");
         assert_eq!(fragments.len(), 2);
         assert_eq!(
-            fragments["review/prompt-contract"],
+            fragments["review/prompt-contract.md"],
             "You must follow these rules."
         );
-        assert_eq!(fragments["simple"], "Simple fragment.");
+        assert_eq!(fragments["simple.md"], "Simple fragment.");
     }
 
     #[test]
@@ -193,7 +128,7 @@ mod tests {
     #[test]
     fn test_simple_include() {
         let mut fragments = HashMap::new();
-        fragments.insert("greeting".to_string(), "Hello, world!".to_string());
+        fragments.insert("greeting.md".to_string(), "Hello, world!".to_string());
 
         let env = build_environment(&fragments).expect("expected value");
         let template = env
@@ -208,7 +143,7 @@ mod tests {
     #[test]
     fn test_include_with_variables() {
         let mut fragments = HashMap::new();
-        fragments.insert("greeting".to_string(), "Hello, {{ name }}!".to_string());
+        fragments.insert("greeting.md".to_string(), "Hello, {{ name }}!".to_string());
 
         let env = build_environment(&fragments).expect("expected value");
         let template = env
@@ -225,9 +160,9 @@ mod tests {
     #[test]
     fn test_nested_includes() {
         let mut fragments = HashMap::new();
-        fragments.insert("inner".to_string(), "inner content".to_string());
+        fragments.insert("inner.md".to_string(), "inner content".to_string());
         fragments.insert(
-            "outer".to_string(),
+            "outer.md".to_string(),
             "before {% include \"inner.md\" %} after".to_string(),
         );
 
@@ -250,21 +185,6 @@ mod tests {
             .expect("expected value");
         let result = template.render(minijinja::context! {});
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_include_indented() {
-        let mut fragments = HashMap::new();
-        fragments.insert("rules".to_string(), "Rule 1\nRule 2\nRule 3".to_string());
-
-        let env = build_environment(&fragments).expect("expected value");
-        let template = env
-            .template_from_str("Items:\n   {{ include_indented(\"rules.md\", indent=3) }}")
-            .expect("expected value");
-        let result = template
-            .render(minijinja::context! {})
-            .expect("expected value");
-        assert_eq!(result, "Items:\n   Rule 1\n   Rule 2\n   Rule 3");
     }
 
     #[test]
@@ -293,7 +213,7 @@ mod tests {
     #[test]
     fn test_resolve_fragments_with_include() {
         let mut fragments = HashMap::new();
-        fragments.insert("footer".to_string(), "-- End --".to_string());
+        fragments.insert("footer.md".to_string(), "-- End --".to_string());
 
         let env = build_environment(&fragments).expect("expected value");
 
@@ -318,7 +238,7 @@ mod tests {
     #[test]
     fn test_filter_indent_with_include() {
         let mut fragments = HashMap::new();
-        fragments.insert("rules".to_string(), "Rule 1\nRule 2\nRule 3".to_string());
+        fragments.insert("rules.md".to_string(), "Rule 1\nRule 2\nRule 3".to_string());
 
         let env = build_environment(&fragments).expect("expected value");
         let template = env
@@ -336,7 +256,7 @@ mod tests {
     fn test_filter_indent_with_variables() {
         let mut fragments = HashMap::new();
         fragments.insert(
-            "greeting".to_string(),
+            "greeting.md".to_string(),
             "Hello, {{ name }}!\nWelcome aboard.".to_string(),
         );
 

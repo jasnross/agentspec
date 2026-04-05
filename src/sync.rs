@@ -14,7 +14,7 @@ use agentspec::provider::Provider;
 use anyhow::{Context, Result, bail};
 
 use crate::cli::SyncArgs;
-use crate::config::{AgentspecConfig, SyncMode, SyncOverrides, SyncTargetConfig};
+use crate::config::{AgentspecConfig, SyncFlags, SyncMode, SyncTargetConfig};
 
 /// Builds a `WritePlan` that writes compiled files directly to tool config destinations.
 ///
@@ -39,7 +39,7 @@ pub fn sync_plan(
                 destination: dest.clone(),
                 files,
                 mode: WriteMode::ManifestTracked,
-                allow_overwrite: target.allow_overwrite,
+                overwrite: target.overwrite,
             });
 
             // Every adapter gets a chance to provide a post-write hook.
@@ -72,19 +72,20 @@ pub fn resolve_sync_targets(
     config: &AgentspecConfig,
     args: &SyncArgs,
 ) -> Result<Vec<(Provider, SyncTargetConfig)>> {
-    let sync_overrides = SyncOverrides {
-        mode: args.mode,
-        dest: args.dest.clone(),
+    let sync_flags = SyncFlags {
         force: args.force,
+        dest: args.dest.clone(),
+        mode: args.mode,
+        prefix: args.prefix.clone(),
     };
 
-    let has_explicit_provider_selection = !args.common.provider.is_empty();
+    let has_provider = !args.common.provider.is_empty();
 
-    if args.dest.is_some() && !has_explicit_provider_selection {
+    if args.dest.is_some() && !has_provider {
         bail!("--dest requires an explicit --provider; use --provider <provider> --dest <path>");
     }
 
-    let providers = if has_explicit_provider_selection {
+    let providers = if has_provider {
         args.common.provider.clone()
     } else {
         config.configured_sync_providers()
@@ -98,11 +99,7 @@ pub fn resolve_sync_targets(
 
     let mut resolved_targets: Vec<(Provider, SyncTargetConfig)> = Vec::new();
     for provider in providers {
-        let target = config.validated_sync_target(
-            provider,
-            &sync_overrides,
-            has_explicit_provider_selection,
-        )?;
+        let target = config.validated_sync_target(provider, &sync_flags, has_provider)?;
         resolved_targets.push((provider, target));
     }
 
@@ -125,20 +122,10 @@ fn resolve_dest_dir(
         SyncMode::User => Ok(user_dest_dir(provider, kind, home)),
         SyncMode::Project => Ok(project_dest_dir(provider, kind, cwd)),
         SyncMode::Path => {
-            let raw = match kind {
-                FileKind::Agents => config.agents.as_deref(),
-                FileKind::Commands => config.commands.as_deref(),
-                FileKind::Rules => config.rules.as_deref(),
-                FileKind::Skills => config.skills.as_deref(),
-            };
-            let path_str = raw.with_context(|| {
-                format!(
-                    "sync mode is 'path' but no explicit path configured for \
-                     provider '{provider}' kind '{}'",
-                    kind.dir_name()
-                )
+            let base = config.dir.as_deref().with_context(|| {
+                format!("sync mode is 'path' but no `dir` configured for provider '{provider}'")
             })?;
-            Ok(expand_tilde(path_str, home))
+            Ok(expand_tilde(base, home).join(kind.dir_name()))
         }
     }
 }
@@ -182,11 +169,10 @@ fn opencode_config_dir(target: &SyncTargetConfig, home: &Path, cwd: &Path) -> Pa
     match target.mode {
         SyncMode::User => home.join(".config").join("opencode"),
         SyncMode::Project => cwd.join(".opencode"),
-        SyncMode::Path => target
-            .rules
-            .as_deref()
-            .and_then(|r| expand_tilde(r, home).parent().map(Path::to_path_buf))
-            .unwrap_or_else(|| home.join(".config").join("opencode")),
+        SyncMode::Path => target.dir.as_deref().map_or_else(
+            || home.join(".config").join("opencode"),
+            |d| expand_tilde(d, home),
+        ),
     }
 }
 
@@ -255,18 +241,13 @@ mod tests {
 
         let claude_target = SyncTargetConfig {
             mode: SyncMode::Path,
-            agents: Some("/out/claude/agents".to_string()),
-            skills: Some("/out/claude/skills".to_string()),
-            rules: Some("/out/claude/rules".to_string()),
+            dir: Some("/out/claude".to_string()),
             ..SyncTargetConfig::default()
         };
 
         let opencode_target = SyncTargetConfig {
             mode: SyncMode::Path,
-            agents: Some("/out/opencode/agents".to_string()),
-            commands: Some("/out/opencode/commands".to_string()),
-            rules: Some("/out/opencode/rules".to_string()),
-            skills: Some("/out/opencode/skills".to_string()),
+            dir: Some("/out/opencode".to_string()),
             ..SyncTargetConfig::default()
         };
 
@@ -339,10 +320,10 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_dest_path_explicit_skills() {
+    fn test_resolve_dest_path_explicit_dir() {
         let config = SyncTargetConfig {
             mode: SyncMode::Path,
-            skills: Some("~/foo/skills".to_string()),
+            dir: Some("~/foo".to_string()),
             ..Default::default()
         };
         let result = resolve_dest_dir(Provider::Cursor, FileKind::Skills, &config, &home(), &cwd())
@@ -351,7 +332,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_dest_path_missing_agents_errors() {
+    fn test_resolve_dest_path_missing_dir_errors() {
         let config = SyncTargetConfig {
             mode: SyncMode::Path,
             ..Default::default()

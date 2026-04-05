@@ -19,9 +19,11 @@ struct CursorAgentFrontmatter {
 
 // See: https://cursor.com/docs/skills#frontmatter-fields
 #[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
 struct CursorSkillFrontmatter {
     name: String,
     description: String,
+    disable_model_invocation: bool,
 }
 
 // See: https://cursor.com/docs/rules#rule-file-format
@@ -89,14 +91,16 @@ fn adapt_skill_spec(
     let id = spec.frontmatter.id;
     let description = spec.frontmatter.description.unwrap_or_default();
 
-    // Cursor requires `name` — strip_name is a no-op for this provider.
-    // Cursor skills get frontmatter name prefix with "-" delimiter.
     let name = match cfg.and_then(|c| c.prefix.as_deref()) {
         Some(prefix) => format!("{prefix}-{id}"),
         None => id.clone(),
     };
 
-    let frontmatter = CursorSkillFrontmatter { name, description };
+    let frontmatter = CursorSkillFrontmatter {
+        name,
+        description,
+        disable_model_invocation: !spec.frontmatter.agent_invocable,
+    };
 
     let frontmatter_str = serde_yml::to_string(&frontmatter)?;
     let body = spec.body.trim();
@@ -191,39 +195,9 @@ mod tests {
     }
 
     #[test]
-    fn test_adapt_skill_strip_name_is_noop() {
-        let cfg = AdapterConfig {
-            prefix: None,
-            strip_name: true,
-        };
-        let spec = NormalizedSpec::Skill(NormalizedSkillSpec {
-            path: "test.md".into(),
-            frontmatter: NormalizedSkillFrontmatter {
-                id: "test-skill".to_string(),
-                description: Some("A test skill".to_string()),
-                execution: None,
-                capabilities: None,
-                user_invocable: true,
-                agent_invocable: true,
-            },
-            body: "Body.".to_string(),
-            supporting_files: vec![],
-        });
-
-        let files = adapt_cursor(spec, &HashMap::new(), Some(&cfg)).expect("expected value");
-        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
-        // Cursor requires `name` — strip_name should be ignored
-        assert!(
-            content.contains("name: test-skill"),
-            "Cursor should keep name field even with strip_name=true, got: {content}"
-        );
-    }
-
-    #[test]
     fn test_adapt_agent_with_prefix() {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
-            strip_name: false,
         };
         let spec = NormalizedSpec::Agent(NormalizedAgentSpec {
             path: "test.md".into(),
@@ -249,7 +223,6 @@ mod tests {
     fn test_adapt_skill_with_prefix() {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
-            strip_name: false,
         };
         let spec = NormalizedSpec::Skill(NormalizedSkillSpec {
             path: "test.md".into(),
@@ -281,7 +254,6 @@ mod tests {
     fn test_adapt_rule_with_prefix() {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
-            strip_name: false,
         };
         let spec = NormalizedSpec::Rule(NormalizedRuleSpec {
             path: "test.md".into(),

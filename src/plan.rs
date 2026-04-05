@@ -88,7 +88,7 @@ pub fn compile_plan(
                 destination: output_dir.join(provider.to_string()),
                 files,
                 mode: WriteMode::CleanSlate,
-                allow_overwrite: true,
+                overwrite: true,
             }
         })
         .collect();
@@ -149,7 +149,7 @@ pub struct FileWrite {
     pub destination: PathBuf,
     pub files: Vec<GeneratedFile>,
     pub mode: WriteMode,
-    pub allow_overwrite: bool,
+    pub overwrite: bool,
 }
 
 #[cfg(test)]
@@ -210,7 +210,7 @@ mod tests {
                 destination: PathBuf::from("/tmp/test"),
                 files: vec![],
                 mode: WriteMode::CleanSlate,
-                allow_overwrite: false,
+                overwrite: false,
             }],
             post_write_hooks: vec![],
         };

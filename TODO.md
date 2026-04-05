@@ -31,3 +31,11 @@
      dispatch to them
    - All adapters now share the same interface: `adapt_*` (compile) and
      `post_write_hook` (sync) — ready for trait extraction
+6. Consider merging `bash` and `powershell` under a single `shell` canonical tool
+   - `ToolFrontmatter::Bash` currently maps to `Bash` in Claude and `bash` in OpenCode
+   - A `shell` abstraction could map to the platform-appropriate tool (Bash on
+     Unix, PowerShell on Windows)
+7. Support executing skills in forked subagents
+   - Claude supports running skills in forked subprocesses via frontmatter fields
+   - OpenCode has a similar concept for command execution
+   - Currently neither adapter emits the relevant frontmatter to enable this

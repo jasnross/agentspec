@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
     strum::Display,
     strum::VariantArray,
 )]
+#[clap(rename_all = "lower")]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
 pub enum Provider {

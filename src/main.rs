@@ -16,6 +16,7 @@ use clap::{CommandFactory, Parser};
 use cli::{Cli, Command, CommonArgs};
 use config::AgentspecConfig;
 use emit::emit;
+use strum::VariantArray;
 use sync::{resolve_sync_targets, sync_plan};
 
 fn main() -> Result<()> {
@@ -38,13 +39,13 @@ fn main() -> Result<()> {
     };
 
     let cwd = std::env::current_dir().context("failed to determine current directory")?;
-    let mut config = AgentspecConfig::discover(&cwd)?;
-    config.apply_overrides(args);
+    let config = AgentspecConfig::discover(&cwd)?;
 
+    let sources = config.resolve(&config.spec.sources_dir);
     let dirs = SpecDirs {
-        agents: config.resolve(&config.spec.agents_dir),
-        skills: config.resolve(&config.spec.skills_dir),
-        rules: config.resolve(&config.spec.rules_dir),
+        agents: sources.join("agents"),
+        skills: sources.join("skills"),
+        rules: sources.join("rules"),
     };
 
     match &cli.command {
@@ -57,15 +58,10 @@ fn main() -> Result<()> {
             let targets = resolve_sync_targets(&config, sync_args)?;
             let sync_providers: Vec<Provider> = targets.iter().map(|(p, _)| *p).collect();
 
-            let adapter_configs = config.adapter_configs();
+            let adapter_configs = AgentspecConfig::adapter_configs(&targets);
 
-            let (result, _) = run_compile(
-                resolved,
-                &config.presets,
-                &sync_providers,
-                &config.providers,
-                &adapter_configs,
-            )?;
+            let (result, _) =
+                run_compile(resolved, &config.presets, &sync_providers, &adapter_configs)?;
 
             let home = home_dir()?;
             let plan = sync_plan(&result, &targets, &home, &cwd)?;
@@ -74,16 +70,17 @@ fn main() -> Result<()> {
         Command::Compile(_) => {
             let resolved = load_specs(&config, &dirs)?;
 
-            let adapter_configs = config.adapter_configs();
+            let adapter_configs = AgentspecConfig::adapter_configs(&config.sync_targets());
 
-            let (result, providers) = run_compile(
-                resolved,
-                &config.presets,
-                &args.provider,
-                &config.providers,
-                &adapter_configs,
-            )?;
-            let output_dir = config.resolve(&config.output.dir);
+            let providers: Vec<Provider> = if args.provider.is_empty() {
+                Provider::VARIANTS.to_vec()
+            } else {
+                args.provider.clone()
+            };
+
+            let (result, providers) =
+                run_compile(resolved, &config.presets, &providers, &adapter_configs)?;
+            let output_dir = config.resolve(&config.compile.output_dir);
             let plan = compile_plan(&result, &output_dir, &providers);
             emit(&plan, false)?;
             eprintln!(
@@ -109,8 +106,9 @@ fn load_specs(config: &AgentspecConfig, dirs: &SpecDirs) -> Result<ResolvedSpecs
             anyhow::anyhow!("{} semantic validation error(s)", errors.len())
         })?;
 
+    let sources = config.resolve(&config.spec.sources_dir);
     let templating_config = TemplatingConfig {
-        fragments_dir: config.resolve(&config.spec.fragments_dir),
+        fragments_dir: sources.join("fragments"),
     };
 
     let resolved = templating::resolve(validated, &templating_config)?;
@@ -119,19 +117,14 @@ fn load_specs(config: &AgentspecConfig, dirs: &SpecDirs) -> Result<ResolvedSpecs
 }
 
 /// Runs the compile step and reports the compiled file count. Returns the result and the
-/// resolved target list so the caller can decide what to do next (write or sync).
+/// provider list so the caller can decide what to do next (write or sync).
 fn run_compile(
     resolved: ResolvedSpecs,
     presets: &ProviderPresetsMap,
-    override_providers: &[Provider],
-    config_providers: &[Provider],
+    providers: &[Provider],
     adapter_configs: &HashMap<Provider, AdapterConfig>,
 ) -> Result<(CompileResult, Vec<Provider>)> {
-    let providers: Vec<Provider> = if override_providers.is_empty() {
-        config_providers.to_vec()
-    } else {
-        override_providers.to_vec()
-    };
+    let providers = providers.to_vec();
     let result = compile::run(resolved, presets, &providers, adapter_configs)?;
     eprintln!(
         "compiled {} files for {} provider(s)",

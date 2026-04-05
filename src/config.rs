@@ -8,28 +8,12 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 use strum::VariantArray;
 
-use crate::cli::CommonArgs;
-
-/// Where synced files should be placed.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, clap::ValueEnum)]
-#[serde(rename_all = "lowercase")]
-pub enum SyncMode {
-    /// Sync to user-level config dirs (`~/.claude/`, `~/.config/opencode/`, etc.)
-    #[default]
-    User,
-    /// Sync to project-local config dirs (`.claude/`, `.cursor/`, etc.)
-    Project,
-    /// Sync to explicit paths specified per-kind in `SyncTargetConfig`
-    Path,
-}
-
 /// Top-level config parsed from `agentspec.toml`.
 #[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AgentspecConfig {
     pub spec: SpecConfig,
-    pub output: OutputConfig,
-    pub providers: Vec<Provider>,
+    pub compile: CompileConfig,
 
     /// Model presets: preset name → per-provider model config.
     ///
@@ -83,13 +67,6 @@ impl AgentspecConfig {
         })
     }
 
-    /// Apply CLI flag overrides to this config.
-    pub fn apply_overrides(&mut self, args: &CommonArgs) {
-        if !args.provider.is_empty() {
-            self.providers.clone_from(&args.provider);
-        }
-    }
-
     /// Resolve a config-relative path to an absolute path.
     pub fn resolve(&self, relative: &Path) -> PathBuf {
         self.root_dir.join(relative)
@@ -98,7 +75,7 @@ impl AgentspecConfig {
     /// Resolve the sync target config for a provider, merging base → CLI overrides.
     ///
     /// Precedence (highest wins): CLI `SyncOverrides` → base `[sync.<provider>]`.
-    pub fn resolve_sync_target(&self, provider: Provider, cli: &SyncOverrides) -> SyncTargetConfig {
+    pub fn resolve_sync_target(&self, provider: Provider, cli: &SyncFlags) -> SyncTargetConfig {
         let provider_str = provider.to_string();
 
         // Start with base config (or default if not configured)
@@ -110,13 +87,14 @@ impl AgentspecConfig {
         }
         if let Some(ref dest) = cli.dest {
             resolved.mode = SyncMode::Path;
-            resolved.agents = Some(format!("{dest}/agents"));
-            resolved.skills = Some(format!("{dest}/skills"));
-            resolved.rules = Some(format!("{dest}/rules"));
-            resolved.commands = Some(format!("{dest}/commands"));
+            resolved.dir = Some(dest.clone());
         }
         if cli.force {
-            resolved.allow_overwrite = true;
+            resolved.overwrite = true;
+        }
+
+        if let Some(prefix) = cli.prefix.as_deref() {
+            resolved.prefix = Some(prefix.to_string());
         }
 
         if resolved.prefix.as_deref() == Some("") {
@@ -132,37 +110,46 @@ impl AgentspecConfig {
             .iter()
             .copied()
             .fold(Vec::new(), |mut acc, provider| {
-                if self.has_explicit_sync_config(provider) {
+                if self.has_sync_config(provider) {
                     acc.push(provider);
                 }
                 acc
             })
     }
 
-    /// Builds per-provider `AdapterConfig` from sync settings.
+    /// Returns `(provider, target)` pairs for providers with explicit `[sync.<provider>]` config.
     ///
-    /// Only providers with explicit `[sync.<provider>]` config are included.
-    /// Providers without sync config are absent from the map, causing adapters
-    /// to produce canonical (unprefixed, unstripped) output.
-    pub fn adapter_configs(&self) -> HashMap<Provider, AdapterConfig> {
+    /// These are the raw TOML values without CLI overrides. Used by the compile command
+    /// to apply `prefix` transforms to `generated/` output.
+    pub fn sync_targets(&self) -> Vec<(Provider, SyncTargetConfig)> {
         self.configured_sync_providers()
             .into_iter()
-            .filter_map(|p| {
-                self.sync.get(&p.to_string()).map(|t| {
-                    (
-                        p,
-                        AdapterConfig {
-                            prefix: t.prefix.clone(),
-                            strip_name: t.strip_name,
-                        },
-                    )
-                })
+            .filter_map(|p| self.sync.get(&p.to_string()).map(|t| (p, t.clone())))
+            .collect()
+    }
+
+    /// Builds per-provider `AdapterConfig` from resolved sync targets.
+    ///
+    /// Providers absent from `targets` are absent from the map, causing adapters
+    /// to produce canonical (unprefixed) output.
+    pub fn adapter_configs(
+        targets: &[(Provider, SyncTargetConfig)],
+    ) -> HashMap<Provider, AdapterConfig> {
+        targets
+            .iter()
+            .map(|(p, t)| {
+                (
+                    *p,
+                    AdapterConfig {
+                        prefix: t.prefix.clone(),
+                    },
+                )
             })
             .collect()
     }
 
     /// Returns whether a provider has explicit sync config.
-    pub fn has_explicit_sync_config(&self, provider: Provider) -> bool {
+    pub fn has_sync_config(&self, provider: Provider) -> bool {
         let provider_str = provider.to_string();
         self.sync.contains_key(&provider_str)
     }
@@ -170,11 +157,8 @@ impl AgentspecConfig {
     /// Returns whether CLI flags provide sufficient explicit intent for CLI-only sync.
     ///
     /// CLI-only sync always requires explicit provider selection via `--provider`.
-    fn cli_sync_intent_sufficient(
-        cli: &SyncOverrides,
-        has_explicit_target_selection: bool,
-    ) -> bool {
-        if !has_explicit_target_selection {
+    fn cli_sync_intent_sufficient(cli: &SyncFlags, has_target_selection: bool) -> bool {
+        if !has_target_selection {
             return false;
         }
 
@@ -186,24 +170,24 @@ impl AgentspecConfig {
     }
 
     /// Resolves the effective sync target for a provider, returning an error if the
-    /// invocation is not authorized.
+    /// invocation is not valid.
     ///
-    /// Authorization requires either explicit sync config in `agentspec.toml` for
+    /// Validation requires either explicit sync config in `agentspec.toml` for
     /// the provider, or an explicit `--provider` selection combined with sufficient
     /// CLI flags (`--mode user|project` or `--dest`).
     pub fn validated_sync_target(
         &self,
         provider: Provider,
-        cli: &SyncOverrides,
+        cli: &SyncFlags,
         has_explicit_provider_selection: bool,
     ) -> Result<SyncTargetConfig> {
-        let has_explicit_config = self.has_explicit_sync_config(provider);
+        let has_explicit_config = self.has_sync_config(provider);
         let cli_only_allowed =
             Self::cli_sync_intent_sufficient(cli, has_explicit_provider_selection);
 
         if !has_explicit_config && !cli_only_allowed {
             bail!(
-                "sync config for {provider} is not configured; add [sync.{provider}] in agentspec.toml, or run CLI-only sync with an explicit provider (for example: --provider {provider} --mode user|project or --provider {provider} --dest <path>)"
+                "sync is not configured for {provider}. Configure [sync.{provider}] in agentspec.toml or specify additional arguments (--mode user|project or --dest <path>)"
             );
         }
 
@@ -215,8 +199,7 @@ impl Default for AgentspecConfig {
     fn default() -> Self {
         Self {
             spec: SpecConfig::default(),
-            output: OutputConfig::default(),
-            providers: Provider::VARIANTS.to_vec(),
+            compile: CompileConfig::default(),
             presets: HashMap::new(),
             sync: HashMap::new(),
             root_dir: PathBuf::new(),
@@ -227,33 +210,29 @@ impl Default for AgentspecConfig {
 #[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SpecConfig {
-    pub agents_dir: PathBuf,
-    pub skills_dir: PathBuf,
-    pub rules_dir: PathBuf,
-    pub fragments_dir: PathBuf,
+    /// Base directory containing spec subdirectories (`agents/`, `skills/`,
+    /// `rules/`, `fragments/`).
+    pub sources_dir: PathBuf,
 }
 
 impl Default for SpecConfig {
     fn default() -> Self {
         Self {
-            agents_dir: PathBuf::from("spec/agents"),
-            skills_dir: PathBuf::from("spec/skills"),
-            rules_dir: PathBuf::from("spec/rules"),
-            fragments_dir: PathBuf::from("spec/fragments"),
+            sources_dir: PathBuf::from("spec"),
         }
     }
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct OutputConfig {
-    pub dir: PathBuf,
+pub struct CompileConfig {
+    pub output_dir: PathBuf,
 }
 
-impl Default for OutputConfig {
+impl Default for CompileConfig {
     fn default() -> Self {
         Self {
-            dir: PathBuf::from("generated"),
+            output_dir: PathBuf::from("generated"),
         }
     }
 }
@@ -268,39 +247,44 @@ impl Default for OutputConfig {
 pub struct SyncTargetConfig {
     /// Where to place synced files (user-level, project-local, or explicit path).
     pub mode: SyncMode,
-    /// Whether to strip `name:` lines from `SKILL.md` files after copying
-    pub strip_name: bool,
-    /// Optional namespace prefix applied to synced skill/agent/command names.
-    /// For Claude: filesystem dir uses `{prefix}-{name}`, `name:` frontmatter uses `{prefix}:{name}`.
+    /// Optional namespace prefix applied to synced file names.
+    /// For Claude: filesystem dir uses `{prefix}-{name}`.
     /// For `OpenCode`: synced into a `{prefix}/` subdirectory.
-    /// For Cursor/Codex: filename becomes `{prefix}-{name}`.
-    /// Rules are never prefixed.
-    /// FIXME: prefix rules too
+    /// For Cursor: filename becomes `{prefix}-{name}`.
     pub prefix: Option<String>,
     /// Permit overwriting user-owned files at the destination.
     /// When false (default), sync errors on collision. Overridden by `--force`.
-    #[serde(default)]
-    pub allow_overwrite: bool,
-    /// Explicit destination for agent specs (used when `mode = "path"`).
-    pub agents: Option<String>,
-    /// Explicit destination for skill specs.
-    pub skills: Option<String>,
-    /// Explicit destination for rule specs.
-    pub rules: Option<String>,
-    /// Explicit destination for command specs.
-    pub commands: Option<String>,
+    pub overwrite: bool,
+    /// Base directory for synced output when `mode = Path`.
+    /// Subdirectories (`agents/`, `skills/`, `rules/`, `commands/`) are derived
+    /// automatically from `FileKind::dir_name()`.
+    pub dir: Option<String>,
 }
 
-/// CLI flag overrides for sync target resolution (highest precedence).
-/// FIXME: Consider if other sync flags should be allowed here
+/// Where synced files should be placed.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum SyncMode {
+    /// Sync to user-level config dirs (`~/.claude/`, `~/.config/opencode/`, etc.)
+    #[default]
+    User,
+    /// Sync to project-local config dirs (`.claude/`, `.cursor/`, etc.)
+    Project,
+    /// Sync to an explicit base directory specified by `SyncTargetConfig::dir`
+    Path,
+}
+
+/// CLI flag overrides for sync target resolution.
 #[derive(Clone, Debug, Default)]
-pub struct SyncOverrides {
-    /// Override sync mode for all providers.
-    pub mode: Option<SyncMode>,
-    /// Override destination root (implies `mode = Path`).
-    pub dest: Option<String>,
+pub struct SyncFlags {
     /// Allow overwriting user-owned files at sync destinations.
     pub force: bool,
+    /// Override destination root (implies `mode = Path`).
+    pub dest: Option<String>,
+    /// Override sync mode.
+    pub mode: Option<SyncMode>,
+    /// Override `prefix` setting.
+    pub prefix: Option<String>,
 }
 
 #[cfg(test)]
@@ -314,11 +298,8 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = AgentspecConfig::default();
-        assert_eq!(config.spec.agents_dir, PathBuf::from("spec/agents"));
-        assert_eq!(config.spec.skills_dir, PathBuf::from("spec/skills"));
-        assert_eq!(config.spec.fragments_dir, PathBuf::from("spec/fragments"));
-        assert_eq!(config.output.dir, PathBuf::from("generated"));
-        assert_eq!(config.providers.len(), 3);
+        assert_eq!(config.spec.sources_dir, PathBuf::from("spec"));
+        assert_eq!(config.compile.output_dir, PathBuf::from("generated"));
         assert!(config.presets.is_empty());
         assert!(config.sync.is_empty());
     }
@@ -328,17 +309,15 @@ mod tests {
         let tmp = tempfile::tempdir().expect("expected value");
         let toml_content = r#"
 [spec]
-agents_dir = "my/agents"
+sources_dir = "my/specs"
 
-[output]
-dir = "out"
+[compile]
+output_dir = "out"
 "#;
         fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
         let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
-        assert_eq!(config.spec.agents_dir, PathBuf::from("my/agents"));
-        assert_eq!(config.output.dir, PathBuf::from("out"));
-        // skills_dir should use default
-        assert_eq!(config.spec.skills_dir, PathBuf::from("spec/skills"));
+        assert_eq!(config.spec.sources_dir, PathBuf::from("my/specs"));
+        assert_eq!(config.compile.output_dir, PathBuf::from("out"));
         assert_eq!(config.root_dir, tmp.path());
     }
 
@@ -346,7 +325,7 @@ dir = "out"
     fn test_discover_without_toml() {
         let tmp = tempfile::tempdir().expect("expected value");
         let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
-        assert_eq!(config.spec.agents_dir, PathBuf::from("spec/agents"));
+        assert_eq!(config.spec.sources_dir, PathBuf::from("spec"));
         assert_eq!(config.root_dir, tmp.path());
     }
 
@@ -441,30 +420,28 @@ cursor = { model = "fast" }
     #[test]
     fn test_resolve_sync_target_default_when_no_sync_configured() {
         let config = AgentspecConfig::default();
-        let cli = SyncOverrides::default();
+        let cli = SyncFlags::default();
         let result = config.resolve_sync_target(Provider::Claude, &cli);
         assert_eq!(result.mode, SyncMode::User);
-        assert!(!result.strip_name);
         assert!(result.prefix.is_none());
-        assert!(!result.allow_overwrite);
-        assert!(result.agents.is_none());
+        assert!(!result.overwrite);
+        assert!(result.dir.is_none());
     }
 
     #[test]
     fn test_resolve_sync_target_applies_base_config() {
         let tmp = tempfile::tempdir().expect("expected value");
-        let toml_content = r"
+        let toml_content = r#"
 [sync.claude]
-strip_name = true
-";
+prefix = "tw"
+"#;
         fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
         let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
-        let cli = SyncOverrides::default();
+        let cli = SyncFlags::default();
 
         let result = config.resolve_sync_target(Provider::Claude, &cli);
-        assert!(result.strip_name);
-        assert!(result.prefix.is_none());
-        assert!(!result.allow_overwrite);
+        assert_eq!(result.prefix.as_deref(), Some("tw"));
+        assert!(!result.overwrite);
         assert_eq!(result.mode, SyncMode::User); // default
     }
 
@@ -478,10 +455,11 @@ mode = "user"
         fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
         let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
 
-        let cli = SyncOverrides {
+        let cli = SyncFlags {
             mode: Some(SyncMode::Project),
             dest: None,
             force: false,
+            ..Default::default()
         };
 
         let result = config.resolve_sync_target(Provider::Claude, &cli);
@@ -491,18 +469,16 @@ mode = "user"
     #[test]
     fn test_resolve_sync_target_cli_dest_implies_path_mode() {
         let config = AgentspecConfig::default();
-        let cli = SyncOverrides {
+        let cli = SyncFlags {
             mode: None,
             dest: Some("/tmp/sync-test".to_string()),
             force: false,
+            ..Default::default()
         };
 
         let result = config.resolve_sync_target(Provider::Claude, &cli);
         assert_eq!(result.mode, SyncMode::Path);
-        assert_eq!(result.agents.as_deref(), Some("/tmp/sync-test/agents"));
-        assert_eq!(result.skills.as_deref(), Some("/tmp/sync-test/skills"));
-        assert_eq!(result.rules.as_deref(), Some("/tmp/sync-test/rules"));
-        assert_eq!(result.commands.as_deref(), Some("/tmp/sync-test/commands"));
+        assert_eq!(result.dir.as_deref(), Some("/tmp/sync-test"));
     }
 
     #[test]
@@ -515,20 +491,63 @@ prefix = ""
         fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
         let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
 
-        let result = config.resolve_sync_target(Provider::Claude, &SyncOverrides::default());
+        let result = config.resolve_sync_target(Provider::Claude, &SyncFlags::default());
         assert!(result.prefix.is_none());
     }
 
     #[test]
-    fn test_resolve_sync_target_cli_force_sets_allow_overwrite() {
+    fn test_resolve_sync_target_cli_force_sets_overwrite() {
         let config = AgentspecConfig::default();
-        let cli = SyncOverrides {
+        let cli = SyncFlags {
             force: true,
-            ..SyncOverrides::default()
+            ..SyncFlags::default()
         };
 
         let result = config.resolve_sync_target(Provider::Claude, &cli);
-        assert!(result.allow_overwrite);
+        assert!(result.overwrite);
+    }
+
+    #[test]
+    fn test_resolve_sync_target_cli_prefix_overrides_base() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[sync.claude]
+prefix = "base"
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+
+        let cli = SyncFlags {
+            prefix: Some("cli-override".to_string()),
+            ..SyncFlags::default()
+        };
+
+        let result = config.resolve_sync_target(Provider::Claude, &cli);
+        assert_eq!(result.prefix.as_deref(), Some("cli-override"));
+    }
+
+    #[test]
+    fn test_resolve_sync_target_cli_prefix_sets_when_no_base() {
+        let config = AgentspecConfig::default();
+        let cli = SyncFlags {
+            prefix: Some("from-cli".to_string()),
+            ..SyncFlags::default()
+        };
+
+        let result = config.resolve_sync_target(Provider::Claude, &cli);
+        assert_eq!(result.prefix.as_deref(), Some("from-cli"));
+    }
+
+    #[test]
+    fn test_resolve_sync_target_cli_empty_prefix_normalized_to_none() {
+        let config = AgentspecConfig::default();
+        let cli = SyncFlags {
+            prefix: Some(String::new()),
+            ..SyncFlags::default()
+        };
+
+        let result = config.resolve_sync_target(Provider::Claude, &cli);
+        assert!(result.prefix.is_none());
     }
 
     // -----------------------------------------------------------------------
@@ -545,15 +564,15 @@ mode = "user"
         fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
         let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
 
-        assert!(config.has_explicit_sync_config(Provider::Claude));
-        assert!(!config.has_explicit_sync_config(Provider::Cursor));
+        assert!(config.has_sync_config(Provider::Claude));
+        assert!(!config.has_sync_config(Provider::Cursor));
     }
 
     #[test]
     fn test_cli_sync_intent_requires_explicit_target_selection() {
-        let cli = SyncOverrides {
+        let cli = SyncFlags {
             mode: Some(SyncMode::User),
-            ..SyncOverrides::default()
+            ..SyncFlags::default()
         };
 
         assert!(!AgentspecConfig::cli_sync_intent_sufficient(&cli, false));
@@ -561,9 +580,9 @@ mode = "user"
 
     #[test]
     fn test_cli_sync_intent_dest_with_target_is_sufficient() {
-        let cli = SyncOverrides {
+        let cli = SyncFlags {
             dest: Some("/tmp/out".to_string()),
-            ..SyncOverrides::default()
+            ..SyncFlags::default()
         };
 
         assert!(AgentspecConfig::cli_sync_intent_sufficient(&cli, true));
@@ -571,9 +590,9 @@ mode = "user"
 
     #[test]
     fn test_cli_sync_intent_mode_user_with_target_is_sufficient() {
-        let cli = SyncOverrides {
+        let cli = SyncFlags {
             mode: Some(SyncMode::User),
-            ..SyncOverrides::default()
+            ..SyncFlags::default()
         };
 
         assert!(AgentspecConfig::cli_sync_intent_sufficient(&cli, true));
@@ -581,9 +600,9 @@ mode = "user"
 
     #[test]
     fn test_cli_sync_intent_mode_project_with_target_is_sufficient() {
-        let cli = SyncOverrides {
+        let cli = SyncFlags {
             mode: Some(SyncMode::Project),
-            ..SyncOverrides::default()
+            ..SyncFlags::default()
         };
 
         assert!(AgentspecConfig::cli_sync_intent_sufficient(&cli, true));
@@ -591,9 +610,9 @@ mode = "user"
 
     #[test]
     fn test_cli_sync_intent_mode_path_without_dest_is_insufficient() {
-        let cli = SyncOverrides {
+        let cli = SyncFlags {
             mode: Some(SyncMode::Path),
-            ..SyncOverrides::default()
+            ..SyncFlags::default()
         };
 
         assert!(!AgentspecConfig::cli_sync_intent_sufficient(&cli, true));
@@ -603,9 +622,9 @@ mode = "user"
     fn test_validated_sync_target_succeeds_with_cli_only() {
         let tmp = tempfile::tempdir().expect("expected value");
         let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
-        let cli = SyncOverrides {
+        let cli = SyncFlags {
             mode: Some(SyncMode::Project),
-            ..SyncOverrides::default()
+            ..SyncFlags::default()
         };
 
         // No agentspec.toml config for cursor, but explicit --provider + --mode is sufficient.
@@ -619,7 +638,7 @@ mode = "user"
     fn test_validated_sync_target_errors_without_config_or_cli() {
         let tmp = tempfile::tempdir().expect("expected value");
         let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
-        let cli = SyncOverrides::default();
+        let cli = SyncFlags::default();
 
         // No agentspec.toml config and no useful CLI flags — should fail.
         let result = config.validated_sync_target(Provider::Cursor, &cli, false);

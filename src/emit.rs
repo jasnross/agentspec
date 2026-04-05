@@ -96,7 +96,7 @@ fn write_batch(w: &FileWrite, dry_run: bool) -> Result<()> {
                     &rel_str,
                     &mut manifest,
                     file.mode,
-                    w.allow_overwrite,
+                    w.overwrite,
                     dry_run,
                 )?;
                 match action {
@@ -144,8 +144,8 @@ fn write_batch(w: &FileWrite, dry_run: bool) -> Result<()> {
 /// Behavior:
 /// - `rel_path` in manifest AND content same → `Unchanged` (no write)
 /// - `rel_path` in manifest AND content differs → overwrite, update manifest
-/// - `rel_path` not in manifest AND dest exists AND `allow_overwrite: false` → error
-/// - `rel_path` not in manifest AND dest exists AND `allow_overwrite: true` → back up, write, record
+/// - `rel_path` not in manifest AND dest exists AND `overwrite: false` → error
+/// - `rel_path` not in manifest AND dest exists AND `overwrite: true` → back up, write, record
 /// - dest does not exist → write, record
 fn write_content_to_dest(
     content: &[u8],
@@ -153,7 +153,7 @@ fn write_content_to_dest(
     rel_path: &str,
     manifest: &mut Manifest,
     mode: Option<u32>,
-    allow_overwrite: bool,
+    overwrite: bool,
     dry_run: bool,
 ) -> Result<SyncAction> {
     if manifest.files.contains_key(rel_path) {
@@ -173,7 +173,7 @@ fn write_content_to_dest(
             return Ok(SyncAction::Updated);
         }
     } else if dest.exists() {
-        if !allow_overwrite {
+        if !overwrite {
             bail!(
                 "collision: {} exists and is not managed by agentspec; configure a `prefix` in [sync.<provider>] to avoid conflicts, or pass --force to overwrite",
                 dest.display()
@@ -254,7 +254,7 @@ mod tests {
                 destination: output_dir.join(provider.to_string()),
                 files,
                 mode: WriteMode::CleanSlate,
-                allow_overwrite: true,
+                overwrite: true,
             }],
             post_write_hooks: vec![],
         }
@@ -314,7 +314,7 @@ mod tests {
                     Some(0o755),
                 )],
                 mode: WriteMode::CleanSlate,
-                allow_overwrite: true,
+                overwrite: true,
             }],
             post_write_hooks: vec![],
         };
@@ -348,7 +348,7 @@ mod tests {
                     "---\nname: basic\n---\n\nbody\n",
                 )],
                 mode: WriteMode::ManifestTracked,
-                allow_overwrite: true,
+                overwrite: true,
             }],
             post_write_hooks: vec![],
         };
@@ -374,7 +374,7 @@ mod tests {
                 destination: dest.clone(),
                 files: vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "v1")],
                 mode: WriteMode::ManifestTracked,
-                allow_overwrite: true,
+                overwrite: true,
             }],
             post_write_hooks: vec![],
         };
@@ -388,7 +388,7 @@ mod tests {
                 destination: dest.clone(),
                 files: vec![],
                 mode: WriteMode::ManifestTracked,
-                allow_overwrite: true,
+                overwrite: true,
             }],
             post_write_hooks: vec![],
         };
@@ -405,18 +405,14 @@ mod tests {
         );
     }
 
-    fn manifest_tracked_plan(
-        dest: &Path,
-        files: Vec<GeneratedFile>,
-        allow_overwrite: bool,
-    ) -> WritePlan {
+    fn manifest_tracked_plan(dest: &Path, files: Vec<GeneratedFile>, overwrite: bool) -> WritePlan {
         WritePlan {
             writes: vec![FileWrite {
                 provider: Provider::Claude,
                 destination: dest.to_path_buf(),
                 files,
                 mode: WriteMode::ManifestTracked,
-                allow_overwrite,
+                overwrite,
             }],
             post_write_hooks: vec![],
         }
@@ -482,7 +478,7 @@ mod tests {
         let plan = manifest_tracked_plan(
             &dest,
             vec![make_file(Provider::Claude, "agents/foo.md", "agentspec")],
-            false, // allow_overwrite = false
+            false, // overwrite = false
         );
         let err = emit(&plan, false).expect_err("expected collision error");
         assert!(
@@ -504,7 +500,7 @@ mod tests {
         let plan = manifest_tracked_plan(
             &dest,
             vec![make_file(Provider::Claude, "agents/foo.md", "agentspec")],
-            true, // allow_overwrite = true
+            true, // overwrite = true
         );
         emit(&plan, false).expect("expected value");
 
@@ -530,7 +526,7 @@ mod tests {
                 destination: dest.clone(),
                 files: vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "body")],
                 mode: WriteMode::ManifestTracked,
-                allow_overwrite: true,
+                overwrite: true,
             }],
             post_write_hooks: vec![],
         };

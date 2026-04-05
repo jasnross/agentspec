@@ -25,8 +25,6 @@ struct ClaudeAgentFrontmatter {
 #[derive(Serialize)]
 #[serde(rename_all = "kebab-case")]
 struct ClaudeSkillFrontmatter {
-    // FIXME: Support executing skills in forked subagents
-    name: Option<String>,
     description: String,
     model: Option<String>,
     user_invocable: Option<bool>,
@@ -37,11 +35,11 @@ struct ClaudeSkillFrontmatter {
 // FIXME: Should we consider setting all default Claude tools in the generated file? Otherwise Claude's default behavior is to disallow any unlisted tools.
 // See: https://code.claude.com/docs/en/tools-reference
 #[derive(Serialize)]
-#[allow(dead_code)] // FIXME: Consider removing unused if we figure out something better
+#[allow(dead_code)] // FIXME: Consider removing unused tools if we figure out something better
 enum ClaudeTool {
     Agent,
     AskUserQuestion,
-    Bash, // FIXME: consider merging Bash and PowerShell under one `shell` canonical tool
+    Bash,
     CronCreate,
     CronDelete,
     CronList,
@@ -119,9 +117,8 @@ fn adapt_agent_spec(
     let file_prefix = cfg.and_then(AdapterConfig::file_prefix).unwrap_or_default();
     let path = Path::new("agents").join(format!("{file_prefix}{id}.md"));
 
-    // Claude agents get frontmatter name prefix with ":" delimiter
     let name = match cfg.and_then(|c| c.prefix.as_deref()) {
-        Some(prefix) => format!("{prefix}:{id}"),
+        Some(prefix) => format!("{prefix}-{id}"),
         None => id,
     };
 
@@ -176,18 +173,7 @@ fn adapt_skill_spec(
     let file_prefix = cfg.and_then(AdapterConfig::file_prefix).unwrap_or_default();
     let skill_dir = Path::new("skills").join(format!("{file_prefix}{id}"));
 
-    // Claude skills: strip name entirely, prefix with ":" delimiter, or plain
-    let name = match cfg {
-        Some(c) if c.strip_name => None,
-        Some(c) => Some(match c.prefix.as_deref() {
-            Some(prefix) => format!("{prefix}:{id}"),
-            None => id.clone(),
-        }),
-        None => Some(id.clone()),
-    };
-
     let frontmatter = ClaudeSkillFrontmatter {
-        name,
         description,
         model,
         user_invocable,
@@ -269,8 +255,7 @@ mod tests {
     use super::*;
     use crate::spec::{
         CapabilitiesFrontmatter, NormalizedAgentFrontmatter, NormalizedAgentSpec,
-        NormalizedRuleFrontmatter, NormalizedRuleSpec, NormalizedSkillFrontmatter,
-        NormalizedSkillSpec,
+        NormalizedRuleFrontmatter, NormalizedRuleSpec,
     };
 
     #[test]
@@ -352,7 +337,6 @@ mod tests {
     fn test_adapt_agent_with_prefix() {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
-            strip_name: false,
         };
         let spec = NormalizedSpec::Agent(NormalizedAgentSpec {
             path: "test.md".into(),
@@ -370,39 +354,8 @@ mod tests {
 
         let content = String::from_utf8(files[0].content.clone()).expect("expected value");
         assert!(
-            content.contains("name: tw:test-agent"),
+            content.contains("name: tw-test-agent"),
             "frontmatter should contain prefixed name, got: {content}"
-        );
-    }
-
-    #[test]
-    fn test_adapt_skill_with_strip_name() {
-        let cfg = AdapterConfig {
-            prefix: None,
-            strip_name: true,
-        };
-        let spec = NormalizedSpec::Skill(NormalizedSkillSpec {
-            path: "test.md".into(),
-            frontmatter: NormalizedSkillFrontmatter {
-                id: "test-skill".to_string(),
-                description: Some("A test skill".to_string()),
-                execution: None,
-                capabilities: None,
-                user_invocable: true,
-                agent_invocable: true,
-            },
-            body: "Body.".to_string(),
-            supporting_files: vec![],
-        });
-
-        let files = adapt_claude(spec, &HashMap::new(), Some(&cfg)).expect("expected value");
-        // Path should NOT be prefixed (no prefix configured)
-        assert_eq!(files[0].path.to_str(), Some("skills/test-skill/SKILL.md"));
-
-        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
-        assert!(
-            !content.contains("name:"),
-            "frontmatter should not contain name: when strip_name is true, got: {content}"
         );
     }
 
@@ -410,7 +363,6 @@ mod tests {
     fn test_adapt_rule_with_prefix() {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
-            strip_name: false,
         };
         let spec = NormalizedSpec::Rule(NormalizedRuleSpec {
             path: "test.md".into(),

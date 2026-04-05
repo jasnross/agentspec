@@ -1,10 +1,8 @@
 [spec]
-agents_dir = "spec/agents"
-skills_dir = "spec/skills"
-fragments_dir = "spec/fragments"
+sources_dir = "spec"
 
-[output]
-dir = "generated"
+[compile]
+output_dir = "generated"
 
 [presets.default]
 claude = { model = "sonnet" }

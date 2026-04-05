@@ -30,7 +30,6 @@ struct OpenCodeAgentFrontmatter {
 #[serde_with::skip_serializing_none]
 #[derive(Serialize)]
 struct OpenCodeCommandFrontmatter {
-    // FIXME: Support executing commands in forked subagents
     description: String,
     model: Option<String>,
 }
@@ -159,7 +158,6 @@ fn adapt_skill_spec(
     if agent_invocable {
         let file_prefix = cfg.and_then(AdapterConfig::file_prefix).unwrap_or_default();
 
-        // OpenCode requires `name` — strip_name is a no-op for this provider
         let frontmatter = OpenCodeSkillFrontmatter {
             name: id.clone(),
             description,
@@ -425,7 +423,6 @@ mod tests {
     fn test_adapt_skill_command_with_prefix_uses_subdirectory() {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
-            strip_name: false,
         };
         let spec = NormalizedSpec::Skill(NormalizedSkillSpec {
             path: "test.md".into(),

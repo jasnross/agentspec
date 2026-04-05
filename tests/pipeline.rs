@@ -1,5 +1,4 @@
 //! Integration tests using a self-contained fixture under `tests/fixtures/agent-config/`.
-//! These tests always run — no external dotfiles checkout required.
 
 use std::path::{Path, PathBuf};
 
@@ -227,7 +226,7 @@ fn test_compile_script_is_executable() {
 }
 
 #[test]
-fn test_sync_prefix_and_strip_name_together() {
+fn test_sync_prefix() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     std::fs::write(
@@ -241,7 +240,6 @@ cursor = { model = "fast" }
 [sync.claude]
 mode = "user"
 prefix = "tw"
-strip_name = true
 "#,
     )
     .expect("failed to write agentspec.toml");
@@ -257,12 +255,15 @@ strip_name = true
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "sync should succeed with both prefix and strip_name:\n{stderr}"
+        "sync with prefix should succeed:\n{stderr}"
     );
-    // Skills should have prefixed paths
     assert!(
-        home.join(".claude/skills").exists(),
-        "skills directory should exist"
+        home.join(".claude/agents/tw-test-agent.md").exists(),
+        "prefixed agent file should exist"
+    );
+    assert!(
+        home.join(".claude/skills/tw-basic-skill/SKILL.md").exists(),
+        "prefixed skill directory should exist"
     );
 }
 
@@ -288,7 +289,7 @@ prefix = "tw"
 
     let home = dir.join("home");
     let output = std::process::Command::new(agentspec())
-        .args(["sync", "--provider", "open-code"])
+        .args(["sync", "--provider", "opencode"])
         .env("HOME", &home)
         .current_dir(&dir)
         .output()
@@ -393,7 +394,7 @@ fn test_sync_provider_unconfigured_errors_without_dest() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success(), "sync should fail:\n{stderr}");
     assert!(
-        stderr.contains("sync config for claude is not configured"),
+        stderr.contains("sync is not configured for claude"),
         "stderr: {stderr}"
     );
 }
@@ -552,5 +553,90 @@ fn test_sync_dest_without_provider_errors() {
     assert!(
         stderr.contains("--dest requires an explicit --provider"),
         "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn test_sync_cli_prefix_overrides_config() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        r#"
+[presets.default]
+claude = { model = "sonnet" }
+opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
+cursor = { model = "fast" }
+
+[sync.claude]
+mode = "user"
+prefix = "original"
+"#,
+    )
+    .expect("failed to write agentspec.toml");
+
+    let home = dir.join("home");
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--provider", "claude", "--prefix", "cli-pfx"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync --prefix");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "sync with --prefix should succeed:\n{stderr}"
+    );
+    // CLI prefix should win over config prefix — agent file should use "cli-pfx-" prefix.
+    assert!(
+        home.join(".claude/agents/cli-pfx-test-agent.md").exists(),
+        "expected cli-pfx-prefixed agent file, ls: {:?}",
+        std::fs::read_dir(home.join(".claude/agents")).map(|d| d
+            .filter_map(Result::ok)
+            .map(|e| e.file_name())
+            .collect::<Vec<_>>())
+    );
+}
+
+#[test]
+fn test_sync_cli_prefix_without_config_prefix() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        r#"
+[presets.default]
+claude = { model = "sonnet" }
+opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
+cursor = { model = "fast" }
+
+[sync.claude]
+mode = "user"
+"#,
+    )
+    .expect("failed to write agentspec.toml");
+
+    let home = dir.join("home");
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--provider", "claude", "--prefix", "ns"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync --prefix");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "sync with --prefix should succeed:\n{stderr}"
+    );
+    // --prefix applied even when config has no prefix
+    assert!(
+        home.join(".claude/agents/ns-test-agent.md").exists(),
+        "expected ns-prefixed agent file, ls: {:?}",
+        std::fs::read_dir(home.join(".claude/agents")).map(|d| d
+            .filter_map(Result::ok)
+            .map(|e| e.file_name())
+            .collect::<Vec<_>>())
     );
 }

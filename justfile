@@ -14,26 +14,14 @@ test:
 fmt:
     cargo fix
     cargo +nightly fmt
-
-# Check formatting without writing (CI)
-fmt-check:
-    cargo +nightly fmt --check
+    cargo sort-derives
 
 # Run clippy on all targets
 lint:
     cargo clippy --all-targets
 
 # Format + lint + test
-check:
-    cargo build
-    cargo +nightly fmt
-    cargo clippy --all-targets
-    cargo test
-
-# CI check: fmt + lint without writing
-check-ci:
-    cargo +nightly fmt --check
-    cargo clippy --all-targets
+check: fmt lint build test
 
 # Reinstall binary (required after schema changes)
 install:

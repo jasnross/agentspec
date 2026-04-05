@@ -18,8 +18,6 @@ use crate::templating::ResolvedSpecs;
 pub struct AdapterConfig {
     /// Namespace prefix for file paths and frontmatter names.
     pub prefix: Option<String>,
-    /// Whether to strip `name:` from skill frontmatter.
-    pub strip_name: bool,
 }
 
 impl AdapterConfig {

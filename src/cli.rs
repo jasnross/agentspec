@@ -46,21 +46,25 @@ pub struct SyncArgs {
     #[command(flatten)]
     pub common: CommonArgs,
 
-    /// Show what would be synced without making changes
+    /// Shows what would be synced without making changes
     #[arg(long)]
     pub dry_run: bool,
 
-    /// Allow overwriting user-owned files at sync destinations (disables collision errors).
+    /// Allow overwriting user-owned files at sync destinations (disables collision errors)
     #[arg(long)]
     pub force: bool,
 
-    /// Override destination root for all providers (implies --mode=path)
+    /// Output destination (implies --mode=path)
     #[arg(long)]
     pub dest: Option<String>,
 
-    /// Override sync mode for all providers
+    /// Specify sync mode
     #[arg(long, value_enum)]
     pub mode: Option<SyncMode>,
+
+    /// Add a prefix to synced file names (can help avoid naming collisions with other commands)
+    #[arg(long)]
+    pub prefix: Option<String>,
 }
 
 impl Command {
