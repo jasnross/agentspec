@@ -1,245 +1,357 @@
 # agentspec
 
-Every AI coding tool has its own format for agents, skills, and rules. If you
-use more than one tool, you end up either duplicating your prompts or leaving
-some tools poorly configured.
+`agentspec` is a utility for managing skills, rules, and custom subagents for
+AI coding applications.
 
-`agentspec` lets you define agents, skills, and rules once in a provider-neutral
-format, then compile and sync them to Claude Code, Cursor, and OpenCode.
-Each tool gets output tailored to its own conventions while you maintain a
-single source of truth.
+Every AI coding tool has its own format for defining agents, skills, and rules,
+which means that if you use more than one tool you'll end up duplicating your
+prompts for each tool. Inevitably this results in drift, leaving prompts for
+outdated or poorly configured.
 
-## Usage
+`agentspec` fills this gap by providing a single provider-neutral format which
+can be compiled to provider-specific formats. It currently supports Claude Code,
+Cursor, and OpenCode. Each tool gets output tailored to its own conventions
+while you maintain a single source of truth.
 
-```sh
-agentspec sync                   # compile and sync to all configured targets
-agentspec sync --dry-run         # preview without making changes
-agentspec sync --force           # allow overwriting user-owned destination files
-agentspec sync --provider claude --mode user # CLI-only sync for one provider
-agentspec compile                # compile only, writes generated/
-agentspec validate               # validate specs without generating output
-```
+## Installation
 
-## Configuration
-
-Place an `agentspec.toml` in your project root (or any parent directory).
-All sections are optional — omit what you don't need. Tool name mappings and
-provider capabilities are embedded in the compiler and require no configuration.
-
-```toml
-[spec]
-agents_dir = "spec/agents"
-skills_dir = "spec/skills"
-rules_dir = "spec/rules"
-fragments_dir = "spec/fragments"
-
-[output]
-dir = "generated"
-
-# Model presets: preset name → per-provider model config.
-# Values are either a string shorthand or an object with model/variant/reasoning_effort.
-[presets.deep_review]
-claude = "opus"
-opencode = { model = "anthropic/claude-opus-4-6", variant = "max" }
-cursor = "inherit"
-
-[presets.balanced]
-claude = "sonnet"
-opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
-cursor = "fast"
-```
-
-## Sync
-
-`agentspec sync` compiles specs and distributes the generated output to each
-tool's config directory in one step. Sync targets are configured in
-`agentspec.toml` under `[sync.<provider>]`:
-
-```toml
-[sync.claude]
-mode = "user"       # user | project | path
-```
-
-**Modes:**
-
-- `user` — syncs to the tool's standard user-level config directory (e.g. `~/.claude/`)
-- `project` — syncs to a `.claude/` (or equivalent) subdirectory of the current working directory
-- `path` — syncs to explicit per-kind paths; use `agents`, `skills`, `rules`, `commands` fields
-
-Sync writes files directly to destinations and tracks ownership via `.agentspec-manifest.json`; stale files are removed on the next sync.
-
-### Sync target selection
-
-`agentspec sync` selects providers from explicit sync configuration only:
-
-- Default sync scope is providers configured under `[sync.<provider>]`.
-- If no providers are configured, sync fails fast with actionable guidance.
-- `--provider` requires either configured sync for that provider or explicit CLI-only intent.
-- CLI-only sync is supported with an explicit provider plus either:
-  - `--mode user` or `--mode project`, or
-  - `--dest <path>` (implies `mode=path`)
-
-Examples:
-
-```sh
-# configured-only default sync (syncs only configured providers)
-agentspec sync
-
-# unconfigured targeted sync fails (no [sync.claude] and no CLI-only mode)
-agentspec sync --provider claude
-
-# CLI-only targeted sync succeeds
-agentspec sync --provider claude --mode user
-agentspec sync --provider claude --mode project
-agentspec sync --provider claude --dest /tmp/agentspec-sync
-```
-
-**Namespace prefix:**
-
-Set `prefix = "<name>"` in `[sync.<provider>]` to avoid collisions with user-owned
-files or other spec libraries. Prefixing applies to agents, skills, and commands,
-but not rules.
-
-| Provider | Prefix behavior                                                                                                                 | Invocation example |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
-| Claude   | Path uses dash prefix (`tw-commit.md` for agents, `tw-commit/` for skills), `name:` frontmatter uses colon prefix (`tw:commit`) | `tw:commit`        |
-| OpenCode | Commands sync under a prefix subdirectory (`commands/tw/commit.md`); agents/skills use dash-prefixed names                      | `/tw/commit`       |
-| Cursor   | Path uses dash prefix (`tw-commit/...`)                                                                                         | `tw-commit`        |
-
-Notes:
-
-- `prefix` and `strip_name` are mutually exclusive.
-- `agentspec` does not create aliases, so prefixed names are the names you invoke.
-
-```toml
-# Namespace prefix: avoids collisions with user-owned or cross-library names.
-# Claude: agent file becomes tw-commit.md, skill directory becomes tw-commit/,
-# and name: frontmatter becomes tw:commit.
-[sync.claude]
-prefix = "tw"
-
-# OpenCode: commands land in a tw/ subdirectory -> invoked as /tw/commit.
-# OpenCode agents/skills also use tw-<name> path prefixing.
-[sync.opencode]
-prefix = "tw"
-
-# Cursor: filename path becomes tw-<name>
-[sync.cursor]
-prefix = "tw"
-```
-
-**Collision detection:**
-
-By default, sync errors when a user-owned file already exists at a destination
-path. To resolve a collision, configure a `prefix` or remove the conflicting
-file manually.
-
-- Set `allow_overwrite = true` in `[sync.<provider>]` to restore overwrite behavior
-  (collisions are backed up with a timestamp suffix).
-- Use `agentspec sync --force` for a one-time override.
-
-For OpenCode, `agentspec sync` also patches the `instructions` array in
-`opencode.json` with the absolute paths of the synced rule files.
-
-## Release Policy
-
-- Version tags use `vX.Y.Z` and must match the `Cargo.toml` package version.
-- Standard releases follow the `release-please` PR flow into protected `main`.
-- Manual hotfix publication is an exception path and uses `release.yml`
-  `workflow_dispatch` with an explicit tag.
-- Supported versions: latest release and previous minor release.
-
-## Install and Update
-
-### Homebrew (shared org tap)
+### Homebrew
 
 ```sh
 brew tap jasnross/tap
 brew install agentspec
-brew upgrade agentspec
-brew uninstall agentspec
 ```
 
-The formula lives in the separate tap repository (`jasnross/homebrew-tap`) so
-source-repo ACLs, formula CI, and release automation boundaries stay decoupled.
-
-### mise (`github:` backend)
+### Cargo
 
 ```sh
-mise use -g github:jasnross/agentspec@latest
-agentspec --version
+cargo install --git https://github.com/jasnross/agentspec
 ```
 
-To pin a specific version:
+## Quick start
+
+1. Create a spec file at `spec/agents/my-agent.md`:
+
+   ```markdown
+   ---
+   id: my-agent
+   description: A helpful assistant
+   ---
+
+   You are a helpful assistant.
+   ```
+
+2. Run `agentspec compile`
+3. Check `generated/` for provider-specific output (one subdirectory per provider)
+
+## Spec format
+
+Specs are Markdown files with YAML frontmatter. The Markdown body contains the
+instructions that get delivered to the AI tool. There are three spec types, each
+stored in a subdirectory under `spec/`:
+
+### Agents
+
+Agents are subagents that can be dispatched for focused tasks. Each agent is a
+single `.md` file in `spec/agents/`.
+
+`spec/agents/code-reviewer.md`:
+
+```yaml
+---
+id: code-reviewer
+description: Reviews code changes and provides actionable feedback.
+execution:
+  preset: architect
+capabilities:
+  tools:
+    - bash
+    - glob
+    - grep
+    - read
+---
+Review the proposed changes for correctness, security, and maintainability.
+```
+
+### Skills
+
+Skills are reusable prompts that can be invoked by users or agents. Each skill
+is a directory in `spec/skills/` containing exactly one `.md` file and any
+supporting files (scripts, templates, etc.).
+
+`spec/skills/commit/SKILL.md`:
+
+```yaml
+---
+id: commit
+description: Create git commits with user approval.
+user_invocable: true
+agent_invocable: true
+execution:
+  preset: balanced
+capabilities:
+  tools:
+    - bash
+---
+Create a git commit for the current changes.
+```
+
+#### Supporting files
+
+Any non-`.md` files in a skill directory are bundled as supporting files and
+synced alongside the skill. This is useful for scripts that the skill references
+in its instructions. For example:
+
+```
+spec/skills/deploy/
+├── SKILL.md            # skill spec (the .md file)
+└── scripts/
+    └── deploy.sh       # supporting file
+```
+
+Supporting files preserve their relative paths and executable permissions in the
+compiled output. The skill's instructions can then reference the script by its
+relative path (e.g., `scripts/deploy.sh`).
+
+### Rules
+
+Rules are always-on instructions injected into every conversation. Each rule is
+a single `.md` file in `spec/rules/`.
+
+`spec/rules/cli-tools.md`:
+
+```yaml
+---
+id: cli-tools
+description: Prefer dedicated CLI tools over inline scripts
+---
+Use `jq` for JSON, `yq` for YAML, and purpose-built CLI tools over inline
+Python or Ruby scripts.
+```
+
+### Frontmatter reference
+
+| Field                | Agent    | Skill    | Rule     | Description                                                                                                 |
+| -------------------- | -------- | -------- | -------- | ----------------------------------------------------------------------------------------------------------- |
+| `id`                 | required | required | required | Unique identifier. Must be unique across all spec types.                                                    |
+| `description`        | required | optional | optional | Short description of what this spec does.                                                                   |
+| `user_invocable`     | —        | required | —        | Whether users can invoke this skill directly (e.g., via `/commit`).                                         |
+| `agent_invocable`    | —        | required | —        | Whether agents can invoke this skill. At least one of `user_invocable` or `agent_invocable` must be `true`. |
+| `execution.preset`   | optional | optional | —        | Name of a model preset defined in `agentspec.toml`. See [Model presets](#model-presets).                    |
+| `capabilities.tools` | optional | optional | —        | List of tools the agent/skill can use. See [Tools reference](#tools-reference) below.                       |
+
+### Tools reference
+
+| Tool        | Description                                   |
+| ----------- | --------------------------------------------- |
+| `read`      | Read file contents                            |
+| `write`     | Create or overwrite files                     |
+| `edit`      | Make targeted edits to existing files         |
+| `grep`      | Search file contents with regex patterns      |
+| `glob`      | Find files by name patterns                   |
+| `bash`      | Run shell commands                            |
+| `webfetch`  | Fetch content from a URL                      |
+| `websearch` | Search the web                                |
+| `question`  | Ask the user a question                       |
+| `tasks`     | Create and manage tasks for tracking progress |
+
+### Templating
+
+Spec bodies support [MiniJinja](https://docs.rs/minijinja/latest/minijinja/syntax/index.html)
+template syntax. This is primarily useful for including shared fragments across
+specs, but the full syntax is available (`{% if %}`, `{% for %}`, filters, etc.).
+
+#### Fragments
+
+Fragments are reusable Markdown snippets stored in `spec/fragments/`. They help
+avoid duplicating instructions across multiple skills or agents.
+
+A fragment is a `.md` file referenced by its path relative to `spec/fragments/`:
+
+```
+spec/fragments/
+├── review-guidelines.md          → {% include "review-guidelines.md" %}
+└── review/
+    └── prompt-contract.md        → {% include "review/prompt-contract.md" %}
+```
+
+Include a fragment in any spec body with:
+
+```
+{% include "review-guidelines.md" %}
+```
+
+#### Variables
+
+Use `{% with %}` to pass variables into a fragment. The fragment references
+them with `{{ variable_name }}`:
+
+Fragment (`spec/fragments/review/prompt-contract.md`):
+
+```
+Review scope: {{ scope }}
+Base reference: {{ base_reference }}
+{% if focus %}Focus on: {{ focus }}{% endif %}
+```
+
+Spec body:
+
+```
+{% with scope = "changes against main", base_reference = "main" %}
+{% include "review/prompt-contract.md" %}
+{% endwith %}
+```
+
+#### Indented include
+
+When including a fragment inside an indented context (e.g., a numbered list),
+use `{% filter indent() %}` to preserve the surrounding indentation:
+
+```
+1. First step
+
+2. Review the changes:
+
+   {% filter indent(3, first=false) %}
+   {%- include "review-guidelines.md" %}
+   {%- endfilter %}
+
+3. Next step
+```
+
+The `first=false` parameter skips indenting the first line (since it's already
+at the correct indentation from the call site). The `{%-` trim markers prevent
+extra whitespace around the included content.
+
+Fragments can include other fragments (nesting is supported).
+
+## Usage
 
 ```sh
-mise use -g github:jasnross/agentspec@0.1.0
+agentspec compile                # compile only
+agentspec validate               # validate specs without generating output
+agentspec sync                   # compile and sync to all configured targets
+agentspec sync --dry-run         # preview without making changes
+agentspec sync --force           # allow overwriting user-owned destination files
+agentspec sync --provider claude --mode user # CLI-only sync for one provider
 ```
 
-To remove it:
+## Configuration
 
-```sh
-mise uninstall github:jasnross/agentspec
+Place an `agentspec.toml` in your project root.
+
+```toml
+# All sections are optional. Defaults shown where applicable.
+
+[spec]
+sources_dir = "spec" # Directory where your spec sources are located. Can use relative or absolute paths.
+
+[compile]
+output_dir = "generated" # Output for the compile command. Can be a relative or absolute path.
+
+[presets.architect] # See "Model presets" documentation below
+claude = { model = "opus" }
+opencode = { model = "openai/gpt-5.3-codex", variant = "xhigh" }
+cursor = { model = "claude-opus-4-6" }
+
+[sync.<claude|cursor|opencode>] # See "Sync" documentation below
+mode = "user"
+# prefix = "tw"             # namespace prefix for synced file names
+# overwrite = false         # allow overwriting user-owned files
+# dir = "/path/to/output"   # base directory (only used with mode = "path")
 ```
 
-## Artifact Compatibility Contract
+## Model presets
 
-- Release archives are published as `agentspec-vX.Y.Z-<target>.tar.gz`.
-- Supported release targets:
-  - `aarch64-apple-darwin`
-  - `x86_64-apple-darwin`
-  - `x86_64-unknown-linux-gnu`
-- Every release publishes `SHA256SUMS`, SPDX JSON SBOM (`*.spdx.json`), and
-  GitHub OIDC attestations.
-- Homebrew and `mise` consumers rely on this naming contract as stable API.
+Model presets allow you to specify models in your specs in a provider-neutral way.
+Rather than hard-coding a specific model name you define "presets" for each of
+your use-cases in `agentspec.toml`:
 
-## Verify Release Integrity
+```toml
+[presets.architect]
+claude = { model = "opus" }
+opencode = { model = "openai/gpt-5.3-codex", variant = "xhigh" }
+cursor = { model = "claude-opus-4-6" }
 
-Download release assets and verify checksums:
+[presets.balanced]
+claude = { model = "sonnet" }
+opencode = { model = "openai/gpt-5.3-codex", variant = "medium" }
+cursor = { model = "claude-sonnet-4-5" }
 
-```sh
-shasum -a 256 -c SHA256SUMS
+[presets.fast]
+claude = { model = "haiku" }
+opencode = { model = "openai/gpt-5.3-codex", variant = "low" }
+cursor = { model = "fast" }
 ```
 
-Verify provenance attestations with GitHub CLI:
+Then refer to a preset in your specs. For example, in `spec/agents/example-agent.md`:
 
-```sh
-gh attestation verify agentspec-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz --repo jasnross/agentspec
-gh attestation verify agentspec-vX.Y.Z-sbom.spdx.json --repo jasnross/agentspec
+```
+id: example-agent
+description: Example agent
+execution:
+  preset: architect # Refers to a preset in your `agentspec.toml`
 ```
 
-## Distribution Support
+## Sync
 
-- Primary install channels are Homebrew custom tap and `mise` GitHub releases.
-- `asdf` support is intentionally deferred until a named long-term owner commits
-  to maintaining the plugin.
+`agentspec sync` compiles specs and distributes the generated output to the
+appropriate location for each provider. Sync targets are configured in
+`agentspec.toml` under `[sync.<provider>]`.
 
-## Tap Update Procedure (manual path)
+```toml
+# All fields are optional. Only mode is shown; the rest default to off/absent.
 
-Tap PR automation is currently deferred. After each release:
+[sync.claude]
+mode = "user"
+# prefix = "tw"
+# overwrite = false
+# dir = "/path/to/output"
+```
 
-1. Update `Formula/agentspec.rb` in `jasnross/homebrew-tap` to the new tag.
-2. Update SHA256 values from the release `SHA256SUMS` asset.
-3. Run tap CI (`brew audit` and `brew test`) and merge with required approvals.
+| Field       | Default  | Description                                                                                                                                                                                               |
+| ----------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mode`      | `"user"` | `"user"` syncs to the tool's user-level config dir (e.g. `~/.claude/`).<br>`"project"` syncs to the project-local config dir (e.g. `.claude/`).<br> `"path"` syncs to an explicit directory set by `dir`. |
+| `prefix`    | `null`   | Namespace prefix applied to synced file names. Can be useful for avoiding collisions with user-owned files or specs from plugins. See [Prefix behavior](#prefix-behavior) below.                          |
+| `overwrite` | `false`  | When `true`, allows overwriting user-owned files at sync destinations (with backup). Can also be set per-invocation with `--force`.                                                                       |
+| `dir`       | `null`   | Base directory for synced output when `mode = "path"`. Subdirectories (`agents/`, `skills/`, `rules/`, `commands/`) are created automatically.                                                            |
 
-## Troubleshooting
+### Prefix behavior
 
-- `brew install agentspec` fails with checksum mismatch: refresh the tap,
-  verify formula SHA entries match release `SHA256SUMS`, then retry.
-- `mise` selects the wrong asset: configure explicit `asset_pattern` in
-  `mise.toml` for your platform.
-- Attestation verification fails: confirm you are verifying a file downloaded
-  from the matching `jasnross/agentspec` release tag.
+When `prefix` is set, the naming convention varies by provider:
 
-## Rollback Guidance
+| Provider | Prefix behavior                                                                                            | Invocation example |
+| -------- | ---------------------------------------------------------------------------------------------------------- | ------------------ |
+| Claude   | Dash prefix on paths (`tw-commit.md` for agents, `tw-commit/` for skills)                                  | `tw-commit`        |
+| OpenCode | Commands sync under a prefix subdirectory (`commands/tw/commit.md`); agents/skills use dash-prefixed names | `/tw/commit`       |
+| Cursor   | Path uses dash prefix (`tw-commit/...`)                                                                    | `tw-commit`        |
 
-If a bad release is published:
+### Collision detection
 
-1. Mark the broken release in team comms and ask users to pin to the last known
-   good version.
-2. Revert or supersede the corresponding Homebrew tap formula update so
-   `brew upgrade` does not move users onto the broken release.
-3. Cut a replacement patch release (`vX.Y.Z+1`) through the standard
-   `release-please` flow when possible.
-4. If emergency timing requires `workflow_dispatch`, document the incident and
-   follow up with a normal release PR to restore the default process.
+By default, `sync` will error when a user-owned file already exists at a
+destination path. To resolve a collision you can choose one of:
+
+- Use `--force` to overwrite the file
+- Set a `prefix` so the synced files will have a different name
+- Enable `overwrite` in your `agentspec.toml` (with backup)
+- Remove the conflicting file manually
+
+#### Manifest tracking
+
+`sync` writes a `.agentspec-manifest.json` file in each destination directory it
+manages (e.g. `~/.claude/agents/.agentspec-manifest.json`). This manifest tracks
+which files agentspec owns so it can distinguish them from your hand-written
+files.
+
+On each sync, the manifest enables:
+
+- **Stale cleanup** — files that were previously synced but are no longer
+  produced by the current compile are automatically deleted.
+- **Collision detection** — if a file exists at a destination path but isn't in
+  the manifest, sync treats it as user-owned and errors rather than overwriting
+  it (unless `--force` is used).
+- **Skip unchanged** — files whose content hasn't changed since the last sync
+  are left untouched.
+
+When `--force` overwrites a user-owned file, the original is backed up as
+`<filename>.bak.<timestamp>` in the same directory before being replaced.
