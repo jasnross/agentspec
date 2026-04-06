@@ -175,7 +175,7 @@ fn write_content_to_dest(
     } else if dest.exists() {
         if !overwrite {
             bail!(
-                "collision: {} exists and is not managed by agentspec; configure a `prefix` in [sync.<provider>] to avoid conflicts, or pass --force to overwrite",
+                "collision: {} exists and is not managed by agentspec; pass --force to overwrite",
                 dest.display()
             );
         }
