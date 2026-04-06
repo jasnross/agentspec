@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -14,7 +14,7 @@ pub struct Manifest {
     /// Relative path (from dest dir) → entry
     // ManifestEntry is intentionally empty: presence in the map is the ownership signal.
     #[allow(clippy::zero_sized_map_values)]
-    pub files: HashMap<String, ManifestEntry>,
+    pub files: BTreeMap<String, ManifestEntry>,
 }
 
 /// Per-file manifest entry.
@@ -29,7 +29,7 @@ impl Default for Manifest {
     fn default() -> Self {
         Self {
             version: 1,
-            files: HashMap::new(),
+            files: BTreeMap::new(),
         }
     }
 }
