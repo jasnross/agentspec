@@ -79,13 +79,13 @@ pub fn resolve_sync_targets(
         prefix: args.prefix.clone(),
     };
 
-    let has_provider = !args.common.provider.is_empty();
+    let has_provider_arg = !args.common.provider.is_empty();
 
-    if args.dest.is_some() && !has_provider {
+    if args.dest.is_some() && !has_provider_arg {
         bail!("--dest requires an explicit --provider; use --provider <provider> --dest <path>");
     }
 
-    let providers = if has_provider {
+    let providers = if has_provider_arg {
         args.common.provider.clone()
     } else {
         config.configured_sync_providers()
@@ -99,7 +99,7 @@ pub fn resolve_sync_targets(
 
     let mut resolved_targets: Vec<(Provider, SyncTargetConfig)> = Vec::new();
     for provider in providers {
-        let target = config.validated_sync_target(provider, &sync_flags, has_provider)?;
+        let target = config.validated_sync_target(provider, &sync_flags, has_provider_arg)?;
         resolved_targets.push((provider, target));
     }
 
