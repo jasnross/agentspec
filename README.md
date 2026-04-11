@@ -138,6 +138,7 @@ Python or Ruby scripts.
 | `user_invocable`     | —        | required | —        | Whether users can invoke this skill directly (e.g., via `/commit`).                                         |
 | `agent_invocable`    | —        | required | —        | Whether agents can invoke this skill. At least one of `user_invocable` or `agent_invocable` must be `true`. |
 | `execution.preset`   | optional | optional | —        | Name of a model preset defined in `agentspec.toml`. See [Model presets](#model-presets).                    |
+| `tags`               | optional | optional | optional | List of string tags for categorization. Exposed in the `specs` template variable.                           |
 | `capabilities.tools` | optional | optional | —        | List of tools the agent/skill can use. See [Tools reference](#tools-reference) below.                       |
 
 ### Tools reference
@@ -232,9 +233,10 @@ variables that expose metadata about all specs in the library.
 
 ##### `specs`
 
-The `specs` variable contains all specs grouped by type and as a flat list.
-Each entry exposes `name`, `description`, and `type` fields. Lists are sorted
-alphabetically by name.
+The `specs` variable contains all specs in the library, accessible as sorted
+lists (for iteration) and as keyed maps (for direct lookup by ID).
+
+**Lists** (for iteration):
 
 | Field          | Type            | Description                  |
 | -------------- | --------------- | ---------------------------- |
@@ -243,13 +245,46 @@ alphabetically by name.
 | `specs.rules`  | list of entries | All rule specs               |
 | `specs.all`    | list of entries | All specs regardless of type |
 
+**Keyed maps** (for direct lookup):
+
+| Field          | Type                | Description                              |
+| -------------- | ------------------- | ---------------------------------------- |
+| `specs.agent`  | map of key → entry  | Agents keyed by underscore-normalized ID |
+| `specs.skill`  | map of key → entry  | Skills keyed by underscore-normalized ID |
+| `specs.rule`   | map of key → entry  | Rules keyed by underscore-normalized ID  |
+
+**Key normalization**: hyphens in spec IDs are replaced with underscores for
+keyed access. A spec with `id: gh-safe` is accessed as `specs.skill.gh_safe`.
+
 Each entry has:
 
-| Field         | Description                                      |
-| ------------- | ------------------------------------------------ |
-| `name`        | The spec's `id` field                            |
-| `description` | The spec's description (empty string if not set) |
-| `type`        | One of `agent`, `skill`, or `rule`               |
+| Field         | Description                                                    |
+| ------------- | -------------------------------------------------------------- |
+| `name`        | The spec's name as the model sees it (may include sync prefix) |
+| `description` | The spec's description (empty string if not set)               |
+| `type`        | One of `agent`, `skill`, or `rule`                             |
+| `tags`        | List of tags from frontmatter (empty list if not set)          |
+
+When compiled with a sync prefix (e.g., `prefix = "tw"`), the `name` field
+resolves to the prefixed model-facing name (e.g., `tw-gh-safe` for Claude).
+Without a prefix, `name` is the canonical ID.
+
+> **Best practice**: Use keyed references (`{{ specs.skill.gh_safe.name }}`)
+> instead of hardcoding spec names in body text. This ensures references stay
+> correct when the sync prefix changes, and produces a compile error if the
+> referenced spec is renamed or removed.
+
+Example — referencing a specific skill by name:
+
+```
+Load the '{{ specs.skill.gh_safe.name }}' skill before proceeding.
+```
+
+This also applies to `subagent_type` values in tool-call examples:
+
+```
+subagent_type: "{{ specs.agent.code_reviewer.name }}"
+```
 
 Example — listing all available agents in a rule:
 
