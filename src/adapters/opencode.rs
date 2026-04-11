@@ -357,6 +357,28 @@ fn patch_opencode_instructions(
     Ok(())
 }
 
+/// Returns the name the AI model uses to reference this spec.
+///
+/// - **Agents**: identity comes from the filename (`{prefix}-{id}.md`), so
+///   the model-facing name is prefixed.
+/// - **Skills**: the frontmatter `name` field uses the unprefixed canonical ID
+///   (the prefix only appears in the directory path). User-invocable skills
+///   (commands) are also derived from `NormalizedSpec::Skill` — there is no
+///   separate `Command` variant — and follow the same unprefixed convention.
+/// - **Rules**: have no model-facing name (auto-loaded content). Returns the
+///   canonical ID as a best-effort fallback; spec authors should not typically
+///   reference rules by name.
+pub fn model_facing_name(spec: &NormalizedSpec, cfg: Option<&AdapterConfig>) -> String {
+    let id = spec.id();
+    match spec {
+        NormalizedSpec::Agent(_) => match cfg.and_then(|c| c.prefix.as_deref()) {
+            Some(prefix) => format!("{prefix}-{id}"),
+            None => id.to_owned(),
+        },
+        NormalizedSpec::Skill(_) | NormalizedSpec::Rule(_) => id.to_owned(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;

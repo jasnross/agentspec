@@ -1,11 +1,18 @@
+use std::collections::BTreeMap;
+
 use serde::Serialize;
 
+use crate::adapters::{
+    claude_model_facing_name, cursor_model_facing_name, opencode_model_facing_name,
+};
+use crate::compile::AdapterConfig;
+use crate::provider::Provider;
 use crate::spec::NormalizedSpec;
 
 /// A single spec entry exposed to templates.
 #[derive(Clone, Debug, Serialize)]
 pub struct SpecEntry {
-    /// The spec's `id` field, exposed as `name` in templates for readability.
+    /// The spec's name as the model sees it (may be prefixed).
     pub name: String,
     pub description: String,
     #[serde(rename = "type")]
@@ -13,13 +20,24 @@ pub struct SpecEntry {
     pub tags: Vec<String>,
 }
 
-/// The `specs` variable available in templates — grouped by type and as a flat list.
+/// The `specs` variable available in templates.
+///
+/// Provides both list access (for iteration) and keyed access (for direct
+/// lookup by underscore-normalized ID):
+///
+/// - List: `{% for agent in specs.agents %}{{ agent.name }}{% endfor %}`
+/// - Keyed: `{{ specs.skill.gh_safe.name }}`
 #[derive(Clone, Debug, Serialize)]
 pub struct SpecsContext {
+    // List access (for iteration)
     pub agents: Vec<SpecEntry>,
     pub skills: Vec<SpecEntry>,
     pub rules: Vec<SpecEntry>,
     pub all: Vec<SpecEntry>,
+    // Keyed access (for `{{ specs.skill.gh_safe.name }}`)
+    pub agent: BTreeMap<String, SpecEntry>,
+    pub skill: BTreeMap<String, SpecEntry>,
+    pub rule: BTreeMap<String, SpecEntry>,
 }
 
 /// Top-level template context injected into every render call.
@@ -30,48 +48,103 @@ pub struct TemplateContext {
     pub specs: SpecsContext,
 }
 
-impl TemplateContext {
-    /// Build the template context from validated specs.
-    ///
-    /// Entries are sorted alphabetically by name within each group and in `all`.
-    pub fn from_specs(specs: &[NormalizedSpec]) -> Self {
-        let mut agents = Vec::new();
-        let mut skills = Vec::new();
-        let mut rules = Vec::new();
+/// Replace hyphens with underscores for `MiniJinja` dot-access compatibility.
+fn normalize_key(id: &str) -> String {
+    id.replace('-', "_")
+}
 
-        for spec in specs {
-            let entry = SpecEntry {
-                name: spec.id().to_owned(),
-                description: spec.description().to_owned(),
-                r#type: spec.spec_type().to_owned(),
-                tags: spec.tags().to_vec(),
-            };
-            match spec {
-                NormalizedSpec::Agent(_) => agents.push(entry),
-                NormalizedSpec::Skill(_) => skills.push(entry),
-                NormalizedSpec::Rule(_) => rules.push(entry),
+/// Shared logic for building a [`SpecsContext`] from specs.
+///
+/// `name_fn` determines how each entry's `name` is computed: canonical ID for
+/// unprefixed contexts, or the model-facing name for provider-specific contexts.
+fn build_context(
+    specs: &[NormalizedSpec],
+    name_fn: impl Fn(&NormalizedSpec) -> String,
+) -> SpecsContext {
+    let mut agents_list = Vec::new();
+    let mut skills_list = Vec::new();
+    let mut rules_list = Vec::new();
+    let mut agent_map = BTreeMap::new();
+    let mut skill_map = BTreeMap::new();
+    let mut rule_map = BTreeMap::new();
+
+    for spec in specs {
+        let entry = SpecEntry {
+            name: name_fn(spec),
+            description: spec.description().to_owned(),
+            r#type: spec.spec_type().to_owned(),
+            tags: spec.tags().to_vec(),
+        };
+        let key = normalize_key(spec.id());
+
+        match spec {
+            NormalizedSpec::Agent(_) => {
+                agent_map.insert(key, entry.clone());
+                agents_list.push(entry);
+            }
+            NormalizedSpec::Skill(_) => {
+                skill_map.insert(key, entry.clone());
+                skills_list.push(entry);
+            }
+            NormalizedSpec::Rule(_) => {
+                rule_map.insert(key, entry.clone());
+                rules_list.push(entry);
             }
         }
+    }
 
-        agents.sort_unstable_by(|a, b| a.name.cmp(&b.name));
-        skills.sort_unstable_by(|a, b| a.name.cmp(&b.name));
-        rules.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+    agents_list.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+    skills_list.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+    rules_list.sort_unstable_by(|a, b| a.name.cmp(&b.name));
 
-        let mut all: Vec<SpecEntry> = agents
-            .iter()
-            .chain(skills.iter())
-            .chain(rules.iter())
-            .cloned()
-            .collect();
-        all.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+    let mut all: Vec<SpecEntry> = agents_list
+        .iter()
+        .chain(skills_list.iter())
+        .chain(rules_list.iter())
+        .cloned()
+        .collect();
+    all.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+
+    SpecsContext {
+        agents: agents_list,
+        skills: skills_list,
+        rules: rules_list,
+        all,
+        agent: agent_map,
+        skill: skill_map,
+        rule: rule_map,
+    }
+}
+
+impl TemplateContext {
+    /// Build the template context from validated specs using canonical
+    /// (unprefixed) IDs. Used by the `validate` command and as the default
+    /// when no provider context is available.
+    pub fn from_specs(specs: &[NormalizedSpec]) -> Self {
+        Self {
+            specs: build_context(specs, |s| s.id().to_owned()),
+        }
+    }
+
+    /// Build a provider-specific template context with prefix-aware names
+    /// and keyed access maps.
+    ///
+    /// The `name` field in each [`SpecEntry`] is the model-facing name for
+    /// the target provider (e.g., `tw-gh-safe` for Claude, `gh-safe` for
+    /// `OpenCode` skills).
+    pub fn from_specs_for_provider(
+        specs: &[NormalizedSpec],
+        provider: Provider,
+        adapter_config: Option<&AdapterConfig>,
+    ) -> Self {
+        let name_fn: fn(&NormalizedSpec, Option<&AdapterConfig>) -> String = match provider {
+            Provider::Claude => claude_model_facing_name,
+            Provider::Cursor => cursor_model_facing_name,
+            Provider::OpenCode => opencode_model_facing_name,
+        };
 
         Self {
-            specs: SpecsContext {
-                agents,
-                skills,
-                rules,
-                all,
-            },
+            specs: build_context(specs, |s| name_fn(s, adapter_config)),
         }
     }
 }
@@ -210,5 +283,106 @@ mod tests {
         let ctx = TemplateContext::from_specs(&specs);
 
         assert!(ctx.specs.agents[0].tags.is_empty());
+    }
+
+    // --- Keyed access tests ---
+
+    #[test]
+    fn test_from_specs_populates_keyed_maps() {
+        let specs = vec![
+            make_agent("my-agent", "Agent desc"),
+            make_skill("gh-safe", Some("Skill desc")),
+            make_rule("git-conventions", Some("Rule desc")),
+        ];
+
+        let ctx = TemplateContext::from_specs(&specs);
+
+        // Keyed maps use underscore-normalized keys
+        assert_eq!(
+            ctx.specs.agent.get("my_agent").map(|e| &*e.name),
+            Some("my-agent")
+        );
+        assert_eq!(
+            ctx.specs.skill.get("gh_safe").map(|e| &*e.name),
+            Some("gh-safe")
+        );
+        assert_eq!(
+            ctx.specs.rule.get("git_conventions").map(|e| &*e.name),
+            Some("git-conventions")
+        );
+
+        // Hyphenated keys should not exist
+        assert!(!ctx.specs.agent.contains_key("my-agent"));
+    }
+
+    #[test]
+    fn test_from_specs_for_provider_claude_with_prefix() {
+        let specs = vec![
+            make_agent("my-agent", "Agent desc"),
+            make_skill("gh-safe", Some("Skill desc")),
+        ];
+
+        let cfg = AdapterConfig {
+            prefix: Some("tw".to_owned()),
+        };
+        let ctx = TemplateContext::from_specs_for_provider(&specs, Provider::Claude, Some(&cfg));
+
+        // Claude: all types get prefixed names
+        assert_eq!(
+            ctx.specs.agent.get("my_agent").map(|e| &*e.name),
+            Some("tw-my-agent")
+        );
+        assert_eq!(
+            ctx.specs.skill.get("gh_safe").map(|e| &*e.name),
+            Some("tw-gh-safe")
+        );
+
+        // Lists also have prefixed names
+        assert_eq!(ctx.specs.agents[0].name, "tw-my-agent");
+        assert_eq!(ctx.specs.skills[0].name, "tw-gh-safe");
+    }
+
+    #[test]
+    fn test_from_specs_for_provider_opencode_skills_unprefixed() {
+        let specs = vec![
+            make_agent("my-agent", "Agent desc"),
+            make_skill("gh-safe", Some("Skill desc")),
+        ];
+
+        let cfg = AdapterConfig {
+            prefix: Some("tw".to_owned()),
+        };
+        let ctx = TemplateContext::from_specs_for_provider(&specs, Provider::OpenCode, Some(&cfg));
+
+        // OpenCode agents: prefixed (identity from filename)
+        assert_eq!(
+            ctx.specs.agent.get("my_agent").map(|e| &*e.name),
+            Some("tw-my-agent")
+        );
+        // OpenCode skills: unprefixed (identity from frontmatter name)
+        assert_eq!(
+            ctx.specs.skill.get("gh_safe").map(|e| &*e.name),
+            Some("gh-safe")
+        );
+    }
+
+    #[test]
+    fn test_from_specs_for_provider_no_prefix() {
+        let specs = vec![
+            make_agent("my-agent", "Agent desc"),
+            make_skill("gh-safe", Some("Skill desc")),
+        ];
+
+        let ctx = TemplateContext::from_specs_for_provider(&specs, Provider::Claude, None);
+
+        // No prefix: names are canonical IDs
+        assert_eq!(
+            ctx.specs.agent.get("my_agent").map(|e| &*e.name),
+            Some("my-agent")
+        );
+        assert_eq!(
+            ctx.specs.skill.get("gh_safe").map(|e| &*e.name),
+            Some("gh-safe")
+        );
     }
 }

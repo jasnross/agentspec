@@ -468,4 +468,69 @@ mod tests {
         };
         assert_eq!(s.body, "Plain body with no template syntax.");
     }
+
+    #[test]
+    fn test_keyed_access_resolves_prefixed_name() {
+        use crate::compile::AdapterConfig;
+        use crate::provider::Provider;
+
+        let all_specs = vec![
+            NormalizedSpec::Agent(NormalizedAgentSpec {
+                path: "agent.md".into(),
+                frontmatter: NormalizedAgentFrontmatter {
+                    id: "test-agent".to_owned(),
+                    description: "An agent".to_owned(),
+                    tags: None,
+                    execution: None,
+                    capabilities: None,
+                },
+                body: String::new(),
+            }),
+            NormalizedSpec::Skill(NormalizedSkillSpec {
+                path: "skill.md".into(),
+                frontmatter: NormalizedSkillFrontmatter {
+                    id: "my-skill".to_owned(),
+                    description: Some("A skill".to_owned()),
+                    tags: None,
+                    user_invocable: false,
+                    agent_invocable: false,
+                    execution: None,
+                    capabilities: None,
+                },
+                body: String::new(),
+                supporting_files: Vec::new(),
+            }),
+        ];
+
+        let cfg = AdapterConfig {
+            prefix: Some("tw".to_owned()),
+        };
+        let ctx =
+            TemplateContext::from_specs_for_provider(&all_specs, Provider::Claude, Some(&cfg));
+
+        let fragments = HashMap::new();
+        let env = build_environment(&fragments).expect("expected value");
+
+        // A spec body that references another spec by keyed access
+        let specs = vec![NormalizedSpec::Skill(NormalizedSkillSpec {
+            path: "referrer.md".into(),
+            frontmatter: NormalizedSkillFrontmatter {
+                id: "referrer".to_owned(),
+                description: Some("Referrer".to_owned()),
+                tags: None,
+                user_invocable: false,
+                agent_invocable: false,
+                execution: None,
+                capabilities: None,
+            },
+            body: "Agent: {{ specs.agent.test_agent.name }}".to_owned(),
+            supporting_files: Vec::new(),
+        })];
+
+        let resolved = resolve_fragments(specs, &env, &ctx).expect("expected value");
+        let NormalizedSpec::Skill(ref s) = resolved[0] else {
+            panic!("expected Skill variant")
+        };
+        assert_eq!(s.body, "Agent: tw-test-agent");
+    }
 }

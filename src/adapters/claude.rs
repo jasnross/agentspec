@@ -246,6 +246,17 @@ pub fn post_write_hook(
     None
 }
 
+/// Returns the name the AI model uses to reference this spec.
+///
+/// For Claude, all spec types use `{prefix}-{id}` when a prefix is configured.
+pub fn model_facing_name(spec: &NormalizedSpec, cfg: Option<&AdapterConfig>) -> String {
+    let id = spec.id();
+    match cfg.and_then(|c| c.prefix.as_deref()) {
+        Some(prefix) => format!("{prefix}-{id}"),
+        None => id.to_owned(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
