@@ -177,12 +177,12 @@ serialization. If a field needs to be conditionally included, make it
 
 When passing configuration across module boundaries (especially from the binary
 crate into the library crate), use a named struct — not loose parameters, tuples,
-or the raw `AgentspecConfig`. This pattern is established by `TemplatingConfig`,
+or the raw `AgentspecConfig`. This pattern is established by `TemplatingResources`,
 `SpecDirs`, and `AdapterConfig`.
 
 Key conventions:
 
-- **Library-side structs** (`TemplatingConfig`, `SpecDirs`, `AdapterConfig`) have
+- **Library-side structs** (`TemplatingResources`, `SpecDirs`, `AdapterConfig`) have
   no dependency on clap, serde, or the binary crate's config types. The binary
   constructs them from `AgentspecConfig`.
 - **`Option<&Config>` means "use defaults"** — when a config is optional (like
@@ -202,16 +202,16 @@ output (typestate pattern — passing the wrong stage is a compile error):
 2. **Normalize** — `validate.rs` applies defaults → `NormalizedSpecs`
 3. **Validate** — `validate.rs` runs semantic checks (duplicate IDs, unknown
    presets, etc.) → `ValidatedSpecs`
-4. **Template resolution** — `templating.rs` renders MiniJinja templates in
-   spec bodies with a context containing built-in variables (e.g., `specs`)
-   and resolves `{% include %}` fragment references → `ResolvedSpecs`
-5. **Compile** — `compile.rs` dispatches each `(spec, provider)` pair to a
-   provider adapter, passing `Option<&AdapterConfig>` for prefix/strip
-   transforms → `CompileResult`. Adapters produce fully-formed output
-   (paths, frontmatter, content) — no post-hoc transforms downstream.
-6. **Plan** — `plan.rs` + `sync.rs` build a `WritePlan` from `CompileResult` and
+4. **Compile** — `compile.rs` resolves MiniJinja templates (rendering built-in
+   variables like `specs` and `{% include %}` fragment references) and then
+   dispatches each `(provider, spec)` pair to a provider adapter, passing
+   `Option<&AdapterConfig>` for prefix/strip transforms → `CompileResult`.
+   Template resolution is an internal step of compilation, not a separate
+   pipeline stage. Adapters produce fully-formed output (paths, frontmatter,
+   content) — no post-hoc transforms downstream.
+5. **Plan** — `plan.rs` + `sync.rs` build a `WritePlan` from `CompileResult` and
    config: `compile_plan` (for `compile`) or `sync_plan` (for `sync`)
-7. **Emit** — `emit.rs` executes the `WritePlan`: `CleanSlate` mode for `compile`
+6. **Emit** — `emit.rs` executes the `WritePlan`: `CleanSlate` mode for `compile`
    (delete-and-rewrite `generated/<provider>/`), `ManifestTracked` mode for `sync`
    (per-file ownership tracking, stale cleanup, direct write to tool config dirs);
    runs adapter-provided post-write hooks (e.g., `OpenCode` `opencode.json`

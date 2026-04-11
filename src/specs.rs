@@ -79,10 +79,10 @@ impl NormalizedSpecs {
     }
 }
 
-/// Stage 3: all checks passed; ready for template resolution.
+/// Stage 3: all checks passed; ready for compilation.
 ///
-/// Advance to [`ResolvedSpecs`](crate::templating::ResolvedSpecs) by passing
-/// through [`templating::resolve`](crate::templating::resolve).
+/// Pass to [`compile::run`](crate::compile::run), which handles template
+/// resolution internally before dispatching to provider adapters.
 pub struct ValidatedSpecs {
     specs: Vec<NormalizedSpec>,
 }

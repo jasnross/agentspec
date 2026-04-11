@@ -7,7 +7,8 @@ use crate::adapters::{adapt_claude, adapt_cursor, adapt_opencode};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
 use crate::spec::NormalizedSpec;
-use crate::templating::ResolvedSpecs;
+use crate::specs::ValidatedSpecs;
+use crate::templating::{TemplateContext, TemplatingResources, resolve_fragments};
 
 /// Per-provider configuration passed to adapters at compile time.
 ///
@@ -81,39 +82,54 @@ impl CompileResult {
     }
 }
 
-/// Compile resolved specs into provider-specific generated files.
+/// Compile validated specs into provider-specific generated files.
 ///
-/// This is the single entry point for the compile stage. Takes ownership of
-/// [`ResolvedSpecs`] — the final stage of the pipeline before output is written.
+/// Template resolution is performed internally: the `MiniJinja` environment is
+/// built from `templating`, the context is constructed from the specs, and each
+/// spec body is rendered before being handed to the provider adapters.
 pub fn run(
-    resolved: ResolvedSpecs,
+    validated: &ValidatedSpecs,
+    templating: &TemplatingResources,
     presets: &ProviderPresetsMap,
     providers: &[Provider],
     adapter_configs: &HashMap<Provider, AdapterConfig>,
 ) -> Result<CompileResult> {
-    compile_specs(&resolved.into_specs(), presets, providers, adapter_configs)
+    compile_specs(
+        validated.specs(),
+        templating,
+        presets,
+        providers,
+        adapter_configs,
+    )
 }
 
+/// Takes `&[NormalizedSpec]` (borrowed) even though `resolve_fragments` needs
+/// ownership — the slice is cloned once per provider so that each provider gets
+/// its own template-resolved copy with the correct prefix-aware names.
 pub(crate) fn compile_specs(
     specs: &[NormalizedSpec],
+    templating: &TemplatingResources,
     presets: &ProviderPresetsMap,
     providers: &[Provider],
     adapter_configs: &HashMap<Provider, AdapterConfig>,
 ) -> Result<CompileResult> {
+    let env = templating.build_environment()?;
     let mut files: Vec<GeneratedFile> = Vec::new();
 
     let mut sorted_providers: Vec<Provider> = providers.to_vec();
     sorted_providers.sort_by_key(ToString::to_string);
 
-    for spec in specs {
-        for &provider in &sorted_providers {
-            let adapter_config = adapter_configs.get(&provider);
+    for &provider in &sorted_providers {
+        let adapter_config = adapter_configs.get(&provider);
+        let context = TemplateContext::from_specs_for_provider(specs, provider, adapter_config);
+        let resolved = resolve_fragments(specs.to_vec(), &env, &context)?;
+
+        for spec in &resolved {
             let mut adapter_files = match provider {
                 Provider::Claude => adapt_claude(spec.clone(), presets, adapter_config)?,
                 Provider::Cursor => adapt_cursor(spec.clone(), presets, adapter_config)?,
                 Provider::OpenCode => adapt_opencode(spec.clone(), presets, adapter_config)?,
             };
-
             files.append(&mut adapter_files);
         }
     }

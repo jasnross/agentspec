@@ -9,8 +9,8 @@ use agentspec::compile::{self, AdapterConfig, CompileResult};
 use agentspec::plan::compile_plan;
 use agentspec::presets::ProviderPresetsMap;
 use agentspec::provider::Provider;
-use agentspec::specs::{SpecDirs, Specs};
-use agentspec::templating::{self, ResolvedSpecs, TemplateContext, TemplatingConfig};
+use agentspec::specs::{SpecDirs, Specs, ValidatedSpecs};
+use agentspec::templating::{TemplateContext, TemplatingResources, resolve_fragments};
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use cli::{Cli, Command, CommonArgs};
@@ -50,25 +50,37 @@ fn main() -> Result<()> {
 
     match &cli.command {
         Command::Validate(_) => {
-            load_specs(&config, &dirs)?;
+            let validated = load_and_validate(&config, &dirs)?;
+            let templating = load_templating(&config)?;
+            // Check template syntax by resolving with unprefixed context
+            let env = templating.build_environment()?;
+            let context = TemplateContext::from_specs(validated.specs());
+            resolve_fragments(validated.into_specs(), &env, &context)?;
             eprintln!("validation complete");
         }
         Command::Sync(sync_args) => {
-            let resolved = load_specs(&config, &dirs)?;
+            let validated = load_and_validate(&config, &dirs)?;
+            let templating = load_templating(&config)?;
             let targets = resolve_sync_targets(&config, sync_args)?;
             let sync_providers: Vec<Provider> = targets.iter().map(|(p, _)| *p).collect();
 
             let adapter_configs = AgentspecConfig::adapter_configs(&targets);
 
-            let (result, _) =
-                run_compile(resolved, &config.presets, &sync_providers, &adapter_configs)?;
+            let (result, _) = run_compile(
+                &validated,
+                &templating,
+                &config.presets,
+                &sync_providers,
+                &adapter_configs,
+            )?;
 
             let home = home_dir()?;
             let plan = sync_plan(&result, &targets, &home, &cwd)?;
             emit(&plan, sync_args.dry_run)?;
         }
         Command::Compile(_) => {
-            let resolved = load_specs(&config, &dirs)?;
+            let validated = load_and_validate(&config, &dirs)?;
+            let templating = load_templating(&config)?;
 
             let adapter_configs = AgentspecConfig::adapter_configs(&config.sync_targets());
 
@@ -78,8 +90,13 @@ fn main() -> Result<()> {
                 args.provider.clone()
             };
 
-            let (result, providers) =
-                run_compile(resolved, &config.presets, &providers, &adapter_configs)?;
+            let (result, providers) = run_compile(
+                &validated,
+                &templating,
+                &config.presets,
+                &providers,
+                &adapter_configs,
+            )?;
             let output_dir = config.resolve(&config.compile.output_dir);
             let plan = compile_plan(&result, &output_dir, &providers);
             emit(&plan, false)?;
@@ -95,8 +112,8 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn load_specs(config: &AgentspecConfig, dirs: &SpecDirs) -> Result<ResolvedSpecs> {
-    let validated = Specs::load(dirs)?
+fn load_and_validate(config: &AgentspecConfig, dirs: &SpecDirs) -> Result<ValidatedSpecs> {
+    Specs::load(dirs)?
         .normalize()
         .validate(&config.presets)
         .map_err(|errors| {
@@ -104,30 +121,25 @@ fn load_specs(config: &AgentspecConfig, dirs: &SpecDirs) -> Result<ResolvedSpecs
                 eprintln!("error: {e}");
             }
             anyhow::anyhow!("{} semantic validation error(s)", errors.len())
-        })?;
+        })
+}
 
-    let context = TemplateContext::from_specs(validated.specs());
+fn load_templating(config: &AgentspecConfig) -> Result<TemplatingResources> {
     let sources = config.resolve(&config.spec.sources_dir);
-    let templating_config = TemplatingConfig {
-        fragments_dir: sources.join("fragments"),
-        context,
-    };
-
-    let resolved = templating::resolve(validated, &templating_config)?;
-
-    Ok(resolved)
+    TemplatingResources::load(&sources.join("fragments"))
 }
 
 /// Runs the compile step and reports the compiled file count. Returns the result and the
 /// provider list so the caller can decide what to do next (write or sync).
 fn run_compile(
-    resolved: ResolvedSpecs,
+    validated: &ValidatedSpecs,
+    templating: &TemplatingResources,
     presets: &ProviderPresetsMap,
     providers: &[Provider],
     adapter_configs: &HashMap<Provider, AdapterConfig>,
 ) -> Result<(CompileResult, Vec<Provider>)> {
     let providers = providers.to_vec();
-    let result = compile::run(resolved, presets, &providers, adapter_configs)?;
+    let result = compile::run(validated, templating, presets, &providers, adapter_configs)?;
     eprintln!(
         "compiled {} files for {} provider(s)",
         result.files.len(),

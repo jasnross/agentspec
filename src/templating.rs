@@ -1,54 +1,38 @@
 mod context;
 mod fragments;
 
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::Path;
 
 use anyhow::Result;
 pub use context::TemplateContext;
-use fragments::{build_environment, load_fragments, resolve_fragments};
+pub use fragments::resolve_fragments;
+use fragments::{build_environment, load_fragments};
+use minijinja::Environment;
 
-use crate::spec::NormalizedSpec;
-use crate::specs::ValidatedSpecs;
-
-/// Configuration for the template resolution pass.
+/// Reusable templating infrastructure: owns the fragment map and builds
+/// `MiniJinja` environments on demand.
 ///
-/// Kept separate from the binary's `AgentspecConfig` so the library crate
-/// has no dependency on binary-specific config types.
-pub struct TemplatingConfig {
-    pub fragments_dir: PathBuf,
-    pub context: TemplateContext,
+/// This replaces the former `TemplatingConfig` struct. Unlike `TemplatingConfig`,
+/// which bundled fragments with a pre-built context, `TemplatingResources` owns
+/// only the reusable fragment data. The `TemplateContext` is built at the point
+/// of use (inside the compile loop) where provider-specific information is
+/// available.
+pub struct TemplatingResources {
+    fragment_map: HashMap<String, String>,
 }
 
-/// Specs with all template expressions resolved; ready to compile.
-///
-/// Produced by [`resolve`] from a [`ValidatedSpecs`]. Advance to the compile
-/// stage by passing this to [`compile::run`](crate::compile::run).
-pub struct ResolvedSpecs {
-    specs: Vec<NormalizedSpec>,
-}
-
-/// Resolve all template expressions in validated specs.
-///
-/// This is the single entry point for the templating pipeline. Currently
-/// handles fragment includes via `MiniJinja`; designed to accommodate
-/// additional templating capabilities in the future.
-pub fn resolve(validated: ValidatedSpecs, config: &TemplatingConfig) -> Result<ResolvedSpecs> {
-    let fragment_map = load_fragments(&config.fragments_dir)?;
-    let env = build_environment(&fragment_map)?;
-    let specs = resolve_fragments(validated.into_specs(), &env, &config.context)?;
-    Ok(ResolvedSpecs { specs })
-}
-
-impl ResolvedSpecs {
-    /// Consume self and return the inner specs.
-    ///
-    /// Used by the compile module to take ownership of the resolved data.
-    pub fn into_specs(self) -> Vec<NormalizedSpec> {
-        self.specs
+impl TemplatingResources {
+    /// Load fragment files from the given directory.
+    pub fn load(fragments_dir: &Path) -> Result<Self> {
+        let fragment_map = load_fragments(fragments_dir)?;
+        Ok(Self { fragment_map })
     }
 
-    /// Access the resolved specs directly.
-    pub fn specs(&self) -> &[NormalizedSpec] {
-        &self.specs
+    /// Build a `MiniJinja` environment with all loaded fragments available as
+    /// templates. The returned environment borrows from `self`, so it cannot
+    /// outlive the `TemplatingResources`.
+    pub fn build_environment(&self) -> Result<Environment<'_>> {
+        build_environment(&self.fragment_map)
     }
 }
