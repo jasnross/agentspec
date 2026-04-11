@@ -1,5 +1,6 @@
+use std::collections::HashMap;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::presets::ProviderPresetsMap;
 use crate::spec::{
@@ -144,6 +145,43 @@ pub fn validate_semantics(
                         message: format!("unknown preset '{preset_name}'"),
                     });
                 }
+            }
+        }
+    }
+
+    // Per-type underscore-normalization collision check.
+    // Keyed template access normalizes hyphens to underscores, so IDs that
+    // differ only in hyphen/underscore placement would collide within the same map.
+    // Key: (spec_type, normalized_id) → list of (original_id, path).
+    let mut normalized_groups: HashMap<(&str, String), Vec<(&str, &Path)>> = HashMap::new();
+    for spec in specs {
+        let normalized = spec.id().replace('-', "_");
+        normalized_groups
+            .entry((spec.spec_type(), normalized))
+            .or_default()
+            .push((spec.id(), spec.path()));
+    }
+    for ((spec_type, normalized), entries) in &normalized_groups {
+        if entries.len() > 1 {
+            let names: Vec<&str> = entries.iter().map(|(id, _)| *id).collect();
+            // Skip if all entries share the same original ID — that case is
+            // already caught by the duplicate-ID check above.
+            if names.iter().all(|n| *n == names[0]) {
+                continue;
+            }
+            for (_, path) in entries {
+                errors.push(SemanticError {
+                    path: path.to_path_buf(),
+                    message: format!(
+                        "{spec_type} IDs {} all normalize to '{normalized}' \
+                         (hyphens \u{2192} underscores) and would collide in template keyed access",
+                        names
+                            .iter()
+                            .map(|n| format!("'{n}'"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                });
             }
         }
     }
@@ -436,5 +474,59 @@ mod tests {
         let specs = vec![make_rule("my-rule", "body")];
         let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
         assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
+    }
+
+    // -- Underscore-normalization collision tests --
+
+    #[test]
+    fn test_semantics_underscore_collision_same_type() {
+        let specs = vec![
+            make_skill("gh-safe", "body one"),
+            make_skill("gh_safe", "body two"),
+        ];
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        let collision_errors: Vec<_> = errors
+            .iter()
+            .filter(|e| e.message.contains("normalize"))
+            .collect();
+        assert_eq!(
+            collision_errors.len(),
+            2,
+            "expected 2 collision errors (one per spec), got: {collision_errors:?}"
+        );
+        assert!(collision_errors[0].message.contains("'gh-safe'"));
+        assert!(collision_errors[0].message.contains("'gh_safe'"));
+        assert!(collision_errors[0].message.contains("skill"));
+    }
+
+    #[test]
+    fn test_semantics_underscore_collision_cross_type_no_error() {
+        let specs = vec![
+            make_agent("gh-safe", "body one"),
+            make_skill("gh_safe", "body two"),
+        ];
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        let collision_errors: Vec<_> = errors
+            .iter()
+            .filter(|e| e.message.contains("normalize"))
+            .collect();
+        assert!(
+            collision_errors.is_empty(),
+            "cross-type collision should not error, got: {collision_errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_semantics_underscore_no_collision_single_spec() {
+        let specs = vec![make_skill("foo-bar", "body")];
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        let collision_errors: Vec<_> = errors
+            .iter()
+            .filter(|e| e.message.contains("normalize"))
+            .collect();
+        assert!(
+            collision_errors.is_empty(),
+            "single spec should not collide, got: {collision_errors:?}"
+        );
     }
 }
