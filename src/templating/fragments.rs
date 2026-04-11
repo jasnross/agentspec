@@ -207,6 +207,7 @@ mod tests {
             frontmatter: NormalizedAgentFrontmatter {
                 id: "test".to_string(),
                 description: "test".to_string(),
+                tags: None,
                 execution: None,
                 capabilities: None,
             },
@@ -232,6 +233,7 @@ mod tests {
             frontmatter: NormalizedAgentFrontmatter {
                 id: "test".to_string(),
                 description: "test".to_string(),
+                tags: None,
                 execution: None,
                 capabilities: None,
             },
@@ -293,6 +295,7 @@ mod tests {
                 frontmatter: NormalizedAgentFrontmatter {
                     id: "zeta-agent".to_owned(),
                     description: "Zeta description".to_owned(),
+                    tags: None,
                     execution: None,
                     capabilities: None,
                 },
@@ -303,6 +306,7 @@ mod tests {
                 frontmatter: NormalizedAgentFrontmatter {
                     id: "alpha-agent".to_owned(),
                     description: "Alpha description".to_owned(),
+                    tags: None,
                     execution: None,
                     capabilities: None,
                 },
@@ -313,6 +317,7 @@ mod tests {
                 frontmatter: NormalizedSkillFrontmatter {
                     id: "my-skill".to_owned(),
                     description: Some("Skill description".to_owned()),
+                    tags: None,
                     user_invocable: false,
                     agent_invocable: false,
                     execution: None,
@@ -326,6 +331,7 @@ mod tests {
                 frontmatter: NormalizedRuleFrontmatter {
                     id: "my-rule".to_owned(),
                     description: Some("Rule description".to_owned()),
+                    tags: None,
                 },
                 body: String::new(),
             }),
@@ -345,6 +351,7 @@ mod tests {
             frontmatter: NormalizedAgentFrontmatter {
                 id: "test".to_owned(),
                 description: "test".to_owned(),
+                tags: None,
                 execution: None,
                 capabilities: None,
             },
@@ -369,6 +376,7 @@ mod tests {
             frontmatter: NormalizedAgentFrontmatter {
                 id: "test".to_owned(),
                 description: "test".to_owned(),
+                tags: None,
                 execution: None,
                 capabilities: None,
             },
@@ -393,6 +401,7 @@ mod tests {
             frontmatter: NormalizedAgentFrontmatter {
                 id: "test".to_owned(),
                 description: "test".to_owned(),
+                tags: None,
                 execution: None,
                 capabilities: None,
             },
@@ -421,6 +430,7 @@ mod tests {
             frontmatter: NormalizedAgentFrontmatter {
                 id: "test".to_owned(),
                 description: "test".to_owned(),
+                tags: None,
                 execution: None,
                 capabilities: None,
             },
@@ -445,6 +455,7 @@ mod tests {
             frontmatter: NormalizedAgentFrontmatter {
                 id: "test".to_owned(),
                 description: "test".to_owned(),
+                tags: None,
                 execution: None,
                 capabilities: None,
             },

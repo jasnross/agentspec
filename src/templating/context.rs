@@ -10,6 +10,7 @@ pub struct SpecEntry {
     pub description: String,
     #[serde(rename = "type")]
     pub r#type: String,
+    pub tags: Vec<String>,
 }
 
 /// The `specs` variable available in templates — grouped by type and as a flat list.
@@ -43,6 +44,7 @@ impl TemplateContext {
                 name: spec.id().to_owned(),
                 description: spec.description().to_owned(),
                 r#type: spec.spec_type().to_owned(),
+                tags: spec.tags().to_vec(),
             };
             match spec {
                 NormalizedSpec::Agent(_) => agents.push(entry),
@@ -83,11 +85,20 @@ mod tests {
     };
 
     fn make_agent(id: &str, description: &str) -> NormalizedSpec {
+        make_agent_with_tags(id, description, None)
+    }
+
+    fn make_agent_with_tags(
+        id: &str,
+        description: &str,
+        tags: Option<Vec<String>>,
+    ) -> NormalizedSpec {
         NormalizedSpec::Agent(NormalizedAgentSpec {
             path: format!("{id}.md").into(),
             frontmatter: NormalizedAgentFrontmatter {
                 id: id.to_owned(),
                 description: description.to_owned(),
+                tags,
                 execution: None,
                 capabilities: None,
             },
@@ -101,6 +112,7 @@ mod tests {
             frontmatter: NormalizedSkillFrontmatter {
                 id: id.to_owned(),
                 description: description.map(ToOwned::to_owned),
+                tags: None,
                 user_invocable: false,
                 agent_invocable: false,
                 execution: None,
@@ -117,6 +129,7 @@ mod tests {
             frontmatter: NormalizedRuleFrontmatter {
                 id: id.to_owned(),
                 description: description.map(ToOwned::to_owned),
+                tags: None,
             },
             body: String::new(),
         })
@@ -175,5 +188,27 @@ mod tests {
         assert_eq!(ctx.specs.all[0].r#type, "agent");
         assert_eq!(ctx.specs.all[1].r#type, "skill");
         assert_eq!(ctx.specs.all[2].r#type, "rule");
+    }
+
+    #[test]
+    fn test_tags_exposed_in_spec_entry() {
+        let specs = vec![make_agent_with_tags(
+            "tagged",
+            "desc",
+            Some(vec!["research".to_string(), "codebase".to_string()]),
+        )];
+
+        let ctx = TemplateContext::from_specs(&specs);
+
+        assert_eq!(ctx.specs.agents[0].tags, vec!["research", "codebase"]);
+    }
+
+    #[test]
+    fn test_no_tags_produces_empty_vec() {
+        let specs = vec![make_agent("untagged", "desc")];
+
+        let ctx = TemplateContext::from_specs(&specs);
+
+        assert!(ctx.specs.agents[0].tags.is_empty());
     }
 }

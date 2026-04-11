@@ -67,6 +67,14 @@ impl NormalizedSpec {
         }
     }
 
+    pub fn tags(&self) -> &[String] {
+        match self {
+            NormalizedSpec::Agent(s) => s.frontmatter.tags.as_deref().unwrap_or_default(),
+            NormalizedSpec::Skill(s) => s.frontmatter.tags.as_deref().unwrap_or_default(),
+            NormalizedSpec::Rule(s) => s.frontmatter.tags.as_deref().unwrap_or_default(),
+        }
+    }
+
     pub fn spec_type(&self) -> &'static str {
         match self {
             NormalizedSpec::Agent(_) => "agent",
@@ -145,6 +153,7 @@ pub struct NormalizedRuleSpec {
 pub struct AgentFrontmatter {
     pub id: String,
     pub description: String,
+    pub tags: Option<Vec<String>>,
     pub execution: Option<ExecutionFrontmatter>,
     pub capabilities: Option<CapabilitiesFrontmatter>,
 }
@@ -153,6 +162,7 @@ pub struct AgentFrontmatter {
 pub struct NormalizedAgentFrontmatter {
     pub id: String,
     pub description: String,
+    pub tags: Option<Vec<String>>,
     pub execution: Option<ExecutionFrontmatter>,
     pub capabilities: Option<CapabilitiesFrontmatter>,
 }
@@ -162,6 +172,7 @@ pub struct NormalizedAgentFrontmatter {
 pub struct SkillFrontmatter {
     pub id: String,
     pub description: Option<String>,
+    pub tags: Option<Vec<String>>,
     pub user_invocable: bool,
     pub agent_invocable: bool,
     pub execution: Option<ExecutionFrontmatter>,
@@ -172,6 +183,7 @@ pub struct SkillFrontmatter {
 pub struct NormalizedSkillFrontmatter {
     pub id: String,
     pub description: Option<String>,
+    pub tags: Option<Vec<String>>,
     pub user_invocable: bool,
     pub agent_invocable: bool,
     pub execution: Option<ExecutionFrontmatter>,
@@ -183,12 +195,14 @@ pub struct NormalizedSkillFrontmatter {
 pub struct RuleFrontmatter {
     pub id: String,
     pub description: Option<String>,
+    pub tags: Option<Vec<String>>,
 }
 
 #[derive(Clone)]
 pub struct NormalizedRuleFrontmatter {
     pub id: String,
     pub description: Option<String>,
+    pub tags: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

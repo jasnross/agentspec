@@ -323,6 +323,25 @@ mod tests {
     }
 
     #[test]
+    fn test_load_agent_specs_with_tags() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let agents_dir = tmp.path().join("agents");
+        fs::create_dir(&agents_dir).expect("expected value");
+
+        let spec_content = "---\nid: tagged\ndescription: A tagged agent\ntags:\n  - research\n  - codebase\n---\nBody.\n";
+        fs::write(agents_dir.join("tagged.md"), spec_content).expect("expected value");
+
+        let specs = load_agent_specs(&agents_dir).expect("expected value");
+        let Spec::Agent(ref s) = specs[0] else {
+            panic!("expected Agent variant")
+        };
+        assert_eq!(
+            s.frontmatter.tags.as_deref(),
+            Some(["research".to_string(), "codebase".to_string()].as_slice())
+        );
+    }
+
+    #[test]
     fn test_load_agent_specs_parse_error_includes_file_path() {
         let tmp = tempfile::tempdir().expect("expected value");
         let agents_dir = tmp.path().join("agents");

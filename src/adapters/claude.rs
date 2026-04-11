@@ -271,6 +271,7 @@ mod tests {
             frontmatter: NormalizedAgentFrontmatter {
                 id: "test-agent".to_string(),
                 description: "Test agent".to_string(),
+                tags: None,
                 execution: None,
                 capabilities: Some(CapabilitiesFrontmatter {
                     tools: Some(vec![
@@ -311,6 +312,7 @@ mod tests {
             frontmatter: NormalizedAgentFrontmatter {
                 id: "test-agent".to_string(),
                 description: "Test agent".to_string(),
+                tags: None,
                 execution: None,
                 capabilities: None,
             },
@@ -343,6 +345,7 @@ mod tests {
             frontmatter: NormalizedAgentFrontmatter {
                 id: "test-agent".to_string(),
                 description: "Test agent".to_string(),
+                tags: None,
                 execution: None,
                 capabilities: None,
             },
@@ -369,6 +372,7 @@ mod tests {
             frontmatter: NormalizedRuleFrontmatter {
                 id: "test-rule".to_string(),
                 description: Some("A test rule".to_string()),
+                tags: None,
             },
             body: "Rule body.".to_string(),
         });

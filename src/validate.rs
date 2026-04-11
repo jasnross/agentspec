@@ -39,6 +39,7 @@ fn normalize_agent_spec(spec: AgentSpec) -> NormalizedAgentSpec {
     let frontmatter = NormalizedAgentFrontmatter {
         id: spec.frontmatter.id,
         description: spec.frontmatter.description,
+        tags: spec.frontmatter.tags,
         execution: spec.frontmatter.execution,
         capabilities: spec.frontmatter.capabilities,
     };
@@ -54,6 +55,7 @@ fn normalize_skill_spec(spec: SkillSpec) -> NormalizedSkillSpec {
     let frontmatter = NormalizedSkillFrontmatter {
         id: spec.frontmatter.id,
         description: spec.frontmatter.description,
+        tags: spec.frontmatter.tags,
         user_invocable: spec.frontmatter.user_invocable,
         agent_invocable: spec.frontmatter.agent_invocable,
         execution: spec.frontmatter.execution,
@@ -72,6 +74,7 @@ fn normalize_rule_spec(spec: RuleSpec) -> NormalizedRuleSpec {
     let frontmatter = NormalizedRuleFrontmatter {
         id: spec.frontmatter.id,
         description: spec.frontmatter.description,
+        tags: spec.frontmatter.tags,
     };
 
     NormalizedRuleSpec {
@@ -167,6 +170,7 @@ mod tests {
             frontmatter: NormalizedAgentFrontmatter {
                 id: id.to_string(),
                 description: "test description".to_string(),
+                tags: None,
                 execution: None,
                 capabilities: None,
             },
@@ -180,6 +184,7 @@ mod tests {
             frontmatter: NormalizedSkillFrontmatter {
                 id: id.to_string(),
                 description: None,
+                tags: None,
                 user_invocable: true,
                 agent_invocable: false,
                 execution: None,
@@ -196,6 +201,7 @@ mod tests {
             frontmatter: NormalizedRuleFrontmatter {
                 id: id.to_string(),
                 description: None,
+                tags: None,
             },
             body: body.to_string(),
         })
@@ -210,6 +216,7 @@ mod tests {
             frontmatter: AgentFrontmatter {
                 id: "my-agent".to_string(),
                 description: "An agent".to_string(),
+                tags: None,
                 execution: None,
                 capabilities: None,
             },
@@ -233,6 +240,7 @@ mod tests {
             frontmatter: SkillFrontmatter {
                 id: "my-skill".to_string(),
                 description: Some("A skill".to_string()),
+                tags: None,
                 user_invocable: true,
                 agent_invocable: false,
                 execution: None,
@@ -259,6 +267,7 @@ mod tests {
             frontmatter: RuleFrontmatter {
                 id: "my-rule".to_string(),
                 description: None,
+                tags: None,
             },
             body: "body".to_string(),
         });
@@ -278,6 +287,7 @@ mod tests {
             frontmatter: AgentFrontmatter {
                 id: "test".to_string(),
                 description: "desc".to_string(),
+                tags: None,
                 execution: Some(ExecutionFrontmatter {
                     preset: Some("fast".to_string()),
                 }),
@@ -296,6 +306,51 @@ mod tests {
             .as_ref()
             .expect("expected execution");
         assert_eq!(exec.preset.as_deref(), Some("fast"));
+    }
+
+    #[test]
+    fn test_normalize_agent_tags() {
+        let spec = Spec::Agent(AgentSpec {
+            path: PathBuf::from("test.md"),
+            frontmatter: AgentFrontmatter {
+                id: "tagged".to_string(),
+                description: "desc".to_string(),
+                tags: Some(vec!["research".to_string(), "codebase".to_string()]),
+                execution: None,
+                capabilities: None,
+            },
+            body: "body".to_string(),
+        });
+
+        let normalized = normalize_specs(vec![spec]);
+        let NormalizedSpec::Agent(ref n) = normalized[0] else {
+            panic!("expected Agent variant")
+        };
+        assert_eq!(
+            n.frontmatter.tags.as_deref(),
+            Some(["research".to_string(), "codebase".to_string()].as_slice())
+        );
+    }
+
+    #[test]
+    fn test_normalize_agent_no_tags() {
+        let spec = Spec::Agent(AgentSpec {
+            path: PathBuf::from("test.md"),
+            frontmatter: AgentFrontmatter {
+                id: "untagged".to_string(),
+                description: "desc".to_string(),
+                tags: None,
+                execution: None,
+                capabilities: None,
+            },
+            body: "body".to_string(),
+        });
+
+        let normalized = normalize_specs(vec![spec]);
+        let NormalizedSpec::Agent(ref n) = normalized[0] else {
+            panic!("expected Agent variant")
+        };
+        assert_eq!(n.frontmatter.tags, None);
     }
 
     // -- Semantic validation tests --

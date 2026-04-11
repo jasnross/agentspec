@@ -173,6 +173,7 @@ mod tests {
             frontmatter: NormalizedAgentFrontmatter {
                 id: "test-agent".to_string(),
                 description: "Test agent".to_string(),
+                tags: None,
                 execution: None,
                 capabilities: None,
             },
@@ -204,6 +205,7 @@ mod tests {
             frontmatter: NormalizedAgentFrontmatter {
                 id: "test-agent".to_string(),
                 description: "Test agent".to_string(),
+                tags: None,
                 execution: None,
                 capabilities: None,
             },
@@ -229,6 +231,7 @@ mod tests {
             frontmatter: NormalizedSkillFrontmatter {
                 id: "test-skill".to_string(),
                 description: Some("A test skill".to_string()),
+                tags: None,
                 execution: None,
                 capabilities: None,
                 user_invocable: true,
@@ -260,6 +263,7 @@ mod tests {
             frontmatter: NormalizedRuleFrontmatter {
                 id: "test-rule".to_string(),
                 description: Some("A test rule".to_string()),
+                tags: None,
             },
             body: "Rule body.".to_string(),
         });
