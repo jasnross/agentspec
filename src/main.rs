@@ -10,7 +10,7 @@ use agentspec::plan::compile_plan;
 use agentspec::presets::ProviderPresetsMap;
 use agentspec::provider::Provider;
 use agentspec::specs::{SpecDirs, Specs};
-use agentspec::templating::{self, ResolvedSpecs, TemplatingConfig};
+use agentspec::templating::{self, ResolvedSpecs, TemplateContext, TemplatingConfig};
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use cli::{Cli, Command, CommonArgs};
@@ -106,9 +106,11 @@ fn load_specs(config: &AgentspecConfig, dirs: &SpecDirs) -> Result<ResolvedSpecs
             anyhow::anyhow!("{} semantic validation error(s)", errors.len())
         })?;
 
+    let context = TemplateContext::from_specs(validated.specs());
     let sources = config.resolve(&config.spec.sources_dir);
     let templating_config = TemplatingConfig {
         fragments_dir: sources.join("fragments"),
+        context,
     };
 
     let resolved = templating::resolve(validated, &templating_config)?;

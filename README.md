@@ -225,6 +225,51 @@ extra whitespace around the included content.
 
 Fragments can include other fragments (nesting is supported).
 
+#### Built-in variables
+
+In addition to user-defined `{% with %}` variables, agentspec provides built-in
+variables that expose metadata about all specs in the library.
+
+##### `specs`
+
+The `specs` variable contains all specs grouped by type and as a flat list.
+Each entry exposes `name`, `description`, and `type` fields. Lists are sorted
+alphabetically by name.
+
+| Field          | Type            | Description                  |
+| -------------- | --------------- | ---------------------------- |
+| `specs.agents` | list of entries | All agent specs              |
+| `specs.skills` | list of entries | All skill specs              |
+| `specs.rules`  | list of entries | All rule specs               |
+| `specs.all`    | list of entries | All specs regardless of type |
+
+Each entry has:
+
+| Field         | Description                                      |
+| ------------- | ------------------------------------------------ |
+| `name`        | The spec's `id` field                            |
+| `description` | The spec's description (empty string if not set) |
+| `type`        | One of `agent`, `skill`, or `rule`               |
+
+Example — listing all available agents in a rule:
+
+```
+{% for agent in specs.agents %}
+- **{{ agent.name }}**: {{ agent.description }}
+{% endfor %}
+```
+
+Example — listing all specs with their type:
+
+```
+{% for spec in specs.all %}
+- [{{ spec.type }}] {{ spec.name }}
+{% endfor %}
+```
+
+Built-in variables are available in both spec bodies and included fragments.
+Additional built-in variables may be added in future versions.
+
 ## Usage
 
 ```sh

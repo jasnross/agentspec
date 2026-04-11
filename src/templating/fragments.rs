@@ -3,9 +3,10 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use minijinja::Environment;
+use minijinja::{Environment, Value};
 use walkdir::WalkDir;
 
+use super::context::TemplateContext;
 use crate::spec::NormalizedSpec;
 
 /// Resolve fragment references in spec bodies by rendering them through `MiniJinja`.
@@ -16,7 +17,9 @@ use crate::spec::NormalizedSpec;
 pub fn resolve_fragments(
     specs: Vec<NormalizedSpec>,
     env: &Environment<'_>,
+    context: &TemplateContext,
 ) -> Result<Vec<NormalizedSpec>> {
+    let ctx = Value::from_serialize(context);
     let mut resolved = Vec::with_capacity(specs.len());
 
     for mut spec in specs {
@@ -25,7 +28,7 @@ pub fn resolve_fragments(
             .with_context(|| format!("failed to parse template in {}", spec.path().display()))?;
 
         let body = template
-            .render(minijinja::context! {})
+            .render(&ctx)
             .with_context(|| format!("failed to resolve fragments in {}", spec.path().display()))?;
 
         match &mut spec {
@@ -95,7 +98,14 @@ mod tests {
     use std::fs;
 
     use super::*;
-    use crate::spec::{NormalizedAgentFrontmatter, NormalizedAgentSpec};
+    use crate::spec::{
+        NormalizedAgentFrontmatter, NormalizedAgentSpec, NormalizedRuleFrontmatter,
+        NormalizedRuleSpec, NormalizedSkillFrontmatter, NormalizedSkillSpec,
+    };
+
+    fn empty_context() -> TemplateContext {
+        TemplateContext::from_specs(&[])
+    }
 
     #[test]
     fn test_load_fragments() {
@@ -203,7 +213,7 @@ mod tests {
             body: "Plain body with no template syntax.".to_string(),
         })];
 
-        let resolved = resolve_fragments(specs, &env).expect("expected value");
+        let resolved = resolve_fragments(specs, &env, &empty_context()).expect("expected value");
         let NormalizedSpec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
@@ -228,7 +238,7 @@ mod tests {
             body: "Body.\n{% include \"footer.md\" %}".to_string(),
         })];
 
-        let resolved = resolve_fragments(specs, &env).expect("expected value");
+        let resolved = resolve_fragments(specs, &env, &empty_context()).expect("expected value");
         let NormalizedSpec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
@@ -270,5 +280,181 @@ mod tests {
             .render(minijinja::context! {})
             .expect("expected value");
         assert_eq!(result, "Message:\n    Hello, Alice!\n    Welcome aboard.");
+    }
+
+    // --- Template variable tests ---
+
+    fn test_context() -> TemplateContext {
+        use crate::spec::NormalizedSpec;
+
+        let specs = vec![
+            NormalizedSpec::Agent(NormalizedAgentSpec {
+                path: "zeta.md".into(),
+                frontmatter: NormalizedAgentFrontmatter {
+                    id: "zeta-agent".to_owned(),
+                    description: "Zeta description".to_owned(),
+                    execution: None,
+                    capabilities: None,
+                },
+                body: String::new(),
+            }),
+            NormalizedSpec::Agent(NormalizedAgentSpec {
+                path: "alpha.md".into(),
+                frontmatter: NormalizedAgentFrontmatter {
+                    id: "alpha-agent".to_owned(),
+                    description: "Alpha description".to_owned(),
+                    execution: None,
+                    capabilities: None,
+                },
+                body: String::new(),
+            }),
+            NormalizedSpec::Skill(NormalizedSkillSpec {
+                path: "my-skill.md".into(),
+                frontmatter: NormalizedSkillFrontmatter {
+                    id: "my-skill".to_owned(),
+                    description: Some("Skill description".to_owned()),
+                    user_invocable: false,
+                    agent_invocable: false,
+                    execution: None,
+                    capabilities: None,
+                },
+                body: String::new(),
+                supporting_files: Vec::new(),
+            }),
+            NormalizedSpec::Rule(NormalizedRuleSpec {
+                path: "my-rule.md".into(),
+                frontmatter: NormalizedRuleFrontmatter {
+                    id: "my-rule".to_owned(),
+                    description: Some("Rule description".to_owned()),
+                },
+                body: String::new(),
+            }),
+        ];
+
+        TemplateContext::from_specs(&specs)
+    }
+
+    #[test]
+    fn test_specs_agents_length() {
+        let ctx = test_context();
+        let fragments = HashMap::new();
+        let env = build_environment(&fragments).expect("expected value");
+
+        let specs = vec![NormalizedSpec::Agent(NormalizedAgentSpec {
+            path: "test.md".into(),
+            frontmatter: NormalizedAgentFrontmatter {
+                id: "test".to_owned(),
+                description: "test".to_owned(),
+                execution: None,
+                capabilities: None,
+            },
+            body: "{{ specs.agents | length }}".to_owned(),
+        })];
+
+        let resolved = resolve_fragments(specs, &env, &ctx).expect("expected value");
+        let NormalizedSpec::Agent(ref s) = resolved[0] else {
+            panic!("expected Agent variant")
+        };
+        assert_eq!(s.body, "2");
+    }
+
+    #[test]
+    fn test_specs_agents_sorted_names() {
+        let ctx = test_context();
+        let fragments = HashMap::new();
+        let env = build_environment(&fragments).expect("expected value");
+
+        let specs = vec![NormalizedSpec::Agent(NormalizedAgentSpec {
+            path: "test.md".into(),
+            frontmatter: NormalizedAgentFrontmatter {
+                id: "test".to_owned(),
+                description: "test".to_owned(),
+                execution: None,
+                capabilities: None,
+            },
+            body: "{% for agent in specs.agents %}{{ agent.name }}\n{% endfor %}".to_owned(),
+        })];
+
+        let resolved = resolve_fragments(specs, &env, &ctx).expect("expected value");
+        let NormalizedSpec::Agent(ref s) = resolved[0] else {
+            panic!("expected Agent variant")
+        };
+        assert_eq!(s.body, "alpha-agent\nzeta-agent\n");
+    }
+
+    #[test]
+    fn test_specs_all_type_field() {
+        let ctx = test_context();
+        let fragments = HashMap::new();
+        let env = build_environment(&fragments).expect("expected value");
+
+        let specs = vec![NormalizedSpec::Agent(NormalizedAgentSpec {
+            path: "test.md".into(),
+            frontmatter: NormalizedAgentFrontmatter {
+                id: "test".to_owned(),
+                description: "test".to_owned(),
+                execution: None,
+                capabilities: None,
+            },
+            body: "{{ specs.all[0].type }}".to_owned(),
+        })];
+
+        let resolved = resolve_fragments(specs, &env, &ctx).expect("expected value");
+        let NormalizedSpec::Agent(ref s) = resolved[0] else {
+            panic!("expected Agent variant")
+        };
+        assert_eq!(s.body, "agent");
+    }
+
+    #[test]
+    fn test_fragments_can_access_specs_variable() {
+        let ctx = test_context();
+        let mut fragments = HashMap::new();
+        fragments.insert(
+            "listing.md".to_owned(),
+            "Skills: {{ specs.skills | length }}".to_owned(),
+        );
+        let env = build_environment(&fragments).expect("expected value");
+
+        let specs = vec![NormalizedSpec::Agent(NormalizedAgentSpec {
+            path: "test.md".into(),
+            frontmatter: NormalizedAgentFrontmatter {
+                id: "test".to_owned(),
+                description: "test".to_owned(),
+                execution: None,
+                capabilities: None,
+            },
+            body: "{% include \"listing.md\" %}".to_owned(),
+        })];
+
+        let resolved = resolve_fragments(specs, &env, &ctx).expect("expected value");
+        let NormalizedSpec::Agent(ref s) = resolved[0] else {
+            panic!("expected Agent variant")
+        };
+        assert_eq!(s.body, "Skills: 1");
+    }
+
+    #[test]
+    fn test_no_variable_usage_unchanged() {
+        let ctx = test_context();
+        let fragments = HashMap::new();
+        let env = build_environment(&fragments).expect("expected value");
+
+        let specs = vec![NormalizedSpec::Agent(NormalizedAgentSpec {
+            path: "test.md".into(),
+            frontmatter: NormalizedAgentFrontmatter {
+                id: "test".to_owned(),
+                description: "test".to_owned(),
+                execution: None,
+                capabilities: None,
+            },
+            body: "Plain body with no template syntax.".to_owned(),
+        })];
+
+        let resolved = resolve_fragments(specs, &env, &ctx).expect("expected value");
+        let NormalizedSpec::Agent(ref s) = resolved[0] else {
+            panic!("expected Agent variant")
+        };
+        assert_eq!(s.body, "Plain body with no template syntax.");
     }
 }

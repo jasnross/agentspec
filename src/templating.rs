@@ -1,3 +1,4 @@
+mod context;
 mod fragments;
 
 use std::path::PathBuf;
@@ -7,6 +8,7 @@ use fragments::{build_environment, load_fragments, resolve_fragments};
 
 use crate::spec::NormalizedSpec;
 use crate::specs::ValidatedSpecs;
+pub use context::TemplateContext;
 
 /// Configuration for the template resolution pass.
 ///
@@ -14,6 +16,7 @@ use crate::specs::ValidatedSpecs;
 /// has no dependency on binary-specific config types.
 pub struct TemplatingConfig {
     pub fragments_dir: PathBuf,
+    pub context: TemplateContext,
 }
 
 /// Specs with all template expressions resolved; ready to compile.
@@ -32,7 +35,7 @@ pub struct ResolvedSpecs {
 pub fn resolve(validated: ValidatedSpecs, config: &TemplatingConfig) -> Result<ResolvedSpecs> {
     let fragment_map = load_fragments(&config.fragments_dir)?;
     let env = build_environment(&fragment_map)?;
-    let specs = resolve_fragments(validated.into_specs(), &env)?;
+    let specs = resolve_fragments(validated.into_specs(), &env, &config.context)?;
     Ok(ResolvedSpecs { specs })
 }
 

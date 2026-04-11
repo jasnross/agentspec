@@ -58,6 +58,22 @@ impl NormalizedSpec {
             NormalizedSpec::Rule(rule_spec) => &rule_spec.path,
         }
     }
+
+    pub fn description(&self) -> &str {
+        match self {
+            NormalizedSpec::Agent(s) => &s.frontmatter.description,
+            NormalizedSpec::Skill(s) => s.frontmatter.description.as_deref().unwrap_or_default(),
+            NormalizedSpec::Rule(s) => s.frontmatter.description.as_deref().unwrap_or_default(),
+        }
+    }
+
+    pub fn spec_type(&self) -> &'static str {
+        match self {
+            NormalizedSpec::Agent(_) => "agent",
+            NormalizedSpec::Skill(_) => "skill",
+            NormalizedSpec::Rule(_) => "rule",
+        }
+    }
 }
 
 #[derive(Debug)]

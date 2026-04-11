@@ -202,8 +202,9 @@ output (typestate pattern — passing the wrong stage is a compile error):
 2. **Normalize** — `validate.rs` applies defaults → `NormalizedSpecs`
 3. **Validate** — `validate.rs` runs semantic checks (duplicate IDs, unknown
    presets, etc.) → `ValidatedSpecs`
-4. **Template resolution** — `templating.rs` renders MiniJinja `{% include %}`
-   and `{% with %}` tags in spec bodies → `ResolvedSpecs`
+4. **Template resolution** — `templating.rs` renders MiniJinja templates in
+   spec bodies with a context containing built-in variables (e.g., `specs`)
+   and resolves `{% include %}` fragment references → `ResolvedSpecs`
 5. **Compile** — `compile.rs` dispatches each `(spec, provider)` pair to a
    provider adapter, passing `Option<&AdapterConfig>` for prefix/strip
    transforms → `CompileResult`. Adapters produce fully-formed output
