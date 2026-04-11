@@ -640,3 +640,120 @@ mode = "user"
             .collect::<Vec<_>>())
     );
 }
+
+#[test]
+fn test_sync_prefix_resolves_spec_references() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        r#"
+[presets.default]
+claude = { model = "sonnet" }
+opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
+cursor = { model = "fast" }
+
+[sync.claude]
+mode = "user"
+prefix = "tw"
+"#,
+    )
+    .expect("failed to write agentspec.toml");
+
+    let home = dir.join("home");
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--provider", "claude"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "sync with prefix should succeed:\n{stderr}"
+    );
+
+    // basic-skill body references test-agent via {{ specs.agent.test_agent.name }}.
+    // With prefix "tw" for Claude, the resolved name should be "tw-test-agent".
+    let skill_path = home.join(".claude/skills/tw-basic-skill/SKILL.md");
+    let content = std::fs::read_to_string(&skill_path).expect("failed to read basic-skill");
+    assert!(
+        content.contains("Agent: tw-test-agent"),
+        "expected prefixed agent reference 'tw-test-agent' in body, got:\n{content}"
+    );
+}
+
+#[test]
+fn test_sync_opencode_spec_references_agent_prefixed() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        r#"
+[presets.default]
+claude = { model = "sonnet" }
+opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
+cursor = { model = "fast" }
+
+[sync.opencode]
+mode = "user"
+prefix = "tw"
+"#,
+    )
+    .expect("failed to write agentspec.toml");
+
+    let home = dir.join("home");
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--provider", "opencode"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "sync failed:\n{stderr}");
+
+    // basic-skill body references test-agent via {{ specs.agent.test_agent.name }}.
+    // For OpenCode, agents ARE prefixed (identity from filename), so the resolved
+    // name should be "tw-test-agent".
+    let cmd_path = home.join(".config/opencode/commands/tw/basic-skill.md");
+    let content = std::fs::read_to_string(&cmd_path).expect("failed to read basic-skill command");
+    assert!(
+        content.contains("Agent: tw-test-agent"),
+        "expected prefixed agent reference 'tw-test-agent' in OpenCode command body, got:\n{content}"
+    );
+}
+
+#[test]
+fn test_compile_nonexistent_spec_reference_errors() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    // Create a spec that references a nonexistent spec via keyed access.
+    // The chained attribute access (.name on undefined) should error under
+    // MiniJinja's Lenient mode.
+    let skill_dir = dir.join("spec/skills/bad-ref");
+    std::fs::create_dir_all(&skill_dir).expect("failed to create skill dir");
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nid: bad-ref\ndescription: References a nonexistent spec\nuser_invocable: true\n---\n{{ specs.skill.nonexistent_skill.name }}\n",
+    )
+    .expect("failed to write bad-ref skill");
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+
+    assert!(
+        !output.status.success(),
+        "compile should fail when referencing nonexistent spec"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("bad-ref"),
+        "error should mention the spec with the bad reference, got:\n{stderr}"
+    );
+}

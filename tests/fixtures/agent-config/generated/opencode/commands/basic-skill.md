@@ -7,3 +7,5 @@ description: A basic skill with no supporting files
 > This instruction is shared via fragment inclusion.
 
 Skill instructions here.
+
+Agent: test-agent

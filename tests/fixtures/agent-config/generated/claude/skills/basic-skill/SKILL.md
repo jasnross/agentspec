@@ -9,3 +9,5 @@ disable-model-invocation: true
 > This instruction is shared via fragment inclusion.
 
 Skill instructions here.
+
+Agent: test-agent

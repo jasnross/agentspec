@@ -9,3 +9,5 @@ agent_invocable: false
 {% include "shared-note.md" %}
 
 Skill instructions here.
+
+Agent: {{ specs.agent.test_agent.name }}
