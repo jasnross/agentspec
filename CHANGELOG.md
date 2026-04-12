@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.2.0](https://github.com/jasnross/agentspec/compare/v0.1.0...v0.2.0) (2026-04-12)
+
+
+### Features
+
+* **spec:** add optional tags field to all spec types ([aaa02c2](https://github.com/jasnross/agentspec/commit/aaa02c2980bd4fadf8ef859af7d0b17adac04d1a))
+* **templating:** add built-in specs template variable ([997b68f](https://github.com/jasnross/agentspec/commit/997b68f1aaaed4e9da8040dda9efc0e0a281bd93))
+* **templating:** add prefix-aware keyed spec access in templates ([a662802](https://github.com/jasnross/agentspec/commit/a662802e1523299708aed01184bebe3734aeb691))
+* **validate:** detect underscore-normalization collisions ([8ba26bd](https://github.com/jasnross/agentspec/commit/8ba26bd00018285f4f10ac0da392d87b6e649a68))
+
+
+### Bug Fixes
+
+* **config:** allow prefix and strip_name to be used together ([16d38f6](https://github.com/jasnross/agentspec/commit/16d38f60d8319c36423647f053a069763dc9f88e))
+* **emit:** simplify collision error message ([8b2c6dd](https://github.com/jasnross/agentspec/commit/8b2c6dde3dc3fc577feb3a98ab5c7d73a236c47b))
+* **manifest:** sort manifest keys for deterministic output ([41982c8](https://github.com/jasnross/agentspec/commit/41982c853fd00322dde32522faeabc774225dfbf))
+* **release:** drop component prefix from release tags ([19f4530](https://github.com/jasnross/agentspec/commit/19f453094b7cb5f835f4b7c75eb8c144abcfe4a9))
+* **release:** run checksum verification from dist directory to match generated paths ([e5e7a05](https://github.com/jasnross/agentspec/commit/e5e7a05eb78fb22940c14adc1bbac97b079b8cbc))
+* **release:** update tap automation to patch URLs instead of version line ([7dad772](https://github.com/jasnross/agentspec/commit/7dad77232b5d66905f6da54f6c574bb658b6f3ce))
+* **release:** use macos-14 for x86_64 cross-compile after macos-13 retirement ([6d98da8](https://github.com/jasnross/agentspec/commit/6d98da82debe44c4133b7aaa715c10e17c92acc8))
+* **release:** use temporary tap for homebrew gate after standalone formula rejection ([cc6e7b4](https://github.com/jasnross/agentspec/commit/cc6e7b4f2e103facaf1affd91b210932d07a72c1))
+
+
+### Refactoring
+
+* **compile:** move template resolution into compile loop ([3c53c9c](https://github.com/jasnross/agentspec/commit/3c53c9ca13c4fd12a7fdc5cc73927ff87436b50a))
+* simplify config schema, remove strip_name, add --prefix CLI flag ([ad892d7](https://github.com/jasnross/agentspec/commit/ad892d755105e7448559b6c391b3df1547927b8c))
+* **sync:** rename has_provider to has_provider_arg for clarity ([b2f5390](https://github.com/jasnross/agentspec/commit/b2f53904886c7b50f2467838bfbe1b457b625c86))
+
+
+### Documentation
+
+* document keyed spec access and tags frontmatter field ([ed17026](https://github.com/jasnross/agentspec/commit/ed1702689ac1e0e33e6eaa7abc9e287af3d6926b))
+* expand README with quick start, spec format, and configuration reference ([d71551f](https://github.com/jasnross/agentspec/commit/d71551fb34ca9b0d03b706151d0c5e1eeac555f8))
+
+
+### Tests
+
+* add integration tests and fixture for spec references ([fb555e2](https://github.com/jasnross/agentspec/commit/fb555e2adf4ff8327485002e814052f5c9f69d5d))
+
+
+### Miscellaneous Chores
+
+* add git-town.toml ([cea5581](https://github.com/jasnross/agentspec/commit/cea5581ad16cd2ef3e4a201244ab6bed8df9a385))
+* formatting ([8ae5727](https://github.com/jasnross/agentspec/commit/8ae57277f221d2dee499672adc23f4d3005eb648))
+
 ## 0.1.0 (2026-04-03)
 
 ### Features
