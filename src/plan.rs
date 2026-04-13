@@ -32,6 +32,12 @@ impl FileKind {
     }
 }
 
+impl std::fmt::Display for FileKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.dir_name())
+    }
+}
+
 /// Returns the file kinds generated for a given provider.
 pub fn file_kinds(provider: Provider) -> Vec<FileKind> {
     match provider {
@@ -85,6 +91,7 @@ pub fn compile_plan(
             let files: Vec<_> = result.files_for(provider).cloned().collect();
             FileWrite {
                 provider,
+                kind: None,
                 destination: output_dir.join(provider.to_string()),
                 files,
                 mode: WriteMode::CleanSlate,
@@ -139,13 +146,11 @@ pub enum WriteMode {
 }
 
 /// A batch of files to write to a single destination directory.
-///
-/// `kind` is intentionally absent: by the time a `FileWrite` is constructed,
-/// the kind has already been compiled away into `destination` (resolved path)
-/// and `files` (filtered set). The executor needs neither.
 #[derive(Debug)]
 pub struct FileWrite {
     pub provider: Provider,
+    /// Present for `ManifestTracked` writes (sync); `None` for `CleanSlate` (compile).
+    pub kind: Option<FileKind>,
     pub destination: PathBuf,
     pub files: Vec<GeneratedFile>,
     pub mode: WriteMode,
@@ -203,10 +208,19 @@ mod tests {
     }
 
     #[test]
+    fn test_file_kind_display() {
+        assert_eq!(FileKind::Skills.to_string(), "skills");
+        assert_eq!(FileKind::Agents.to_string(), "agents");
+        assert_eq!(FileKind::Commands.to_string(), "commands");
+        assert_eq!(FileKind::Rules.to_string(), "rules");
+    }
+
+    #[test]
     fn test_plan_types_construct() {
         let plan = WritePlan {
             writes: vec![FileWrite {
                 provider: Provider::Claude,
+                kind: None,
                 destination: PathBuf::from("/tmp/test"),
                 files: vec![],
                 mode: WriteMode::CleanSlate,

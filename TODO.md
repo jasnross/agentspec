@@ -35,7 +35,14 @@
    - `ToolFrontmatter::Bash` currently maps to `Bash` in Claude and `bash` in OpenCode
    - A `shell` abstraction could map to the platform-appropriate tool (Bash on
      Unix, PowerShell on Windows)
-7. Support executing skills in forked subagents
+7. Separate `FileWrite` into typed variants for `CleanSlate` vs `ManifestTracked`
+   - `FileWrite` uses `kind: Option<FileKind>` where `None` means `CleanSlate` (compile)
+     and `Some` means `ManifestTracked` (sync) — this is a runtime invariant enforced
+     via `anyhow::Context`
+   - Separate structs (or an enum with per-variant fields) would make this compile-time safe
+   - Would also let `emit()` accept sync-specific params (like `verbose`) only for
+     the sync path, rather than threading them through the shared signature
+8. Support executing skills in forked subagents
    - Claude supports running skills in forked subprocesses via frontmatter fields
    - OpenCode has a similar concept for command execution
    - Currently neither adapter emits the relevant frontmatter to enable this

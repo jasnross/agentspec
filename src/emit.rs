@@ -3,10 +3,29 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use agentspec::plan::{FileWrite, WriteMode, WritePlan};
+use agentspec::plan::{FileKind, FileWrite, WriteMode, WritePlan};
+use agentspec::provider::Provider;
 use anyhow::{Context, Result, bail};
 
 use crate::sync::manifest::{Manifest, ManifestEntry};
+
+/// Aggregated sync stats for a single (provider, kind) destination.
+pub(crate) struct BatchStats {
+    pub provider: Provider,
+    pub kind: FileKind,
+    pub created: usize,
+    pub updated: usize,
+    pub removed: usize,
+    pub backed_up: usize,
+    pub unchanged: usize,
+}
+
+impl BatchStats {
+    /// Returns true if every action count is zero except unchanged.
+    pub(crate) fn is_unchanged_only(&self) -> bool {
+        self.created == 0 && self.updated == 0 && self.removed == 0 && self.backed_up == 0
+    }
+}
 
 /// The outcome of a single file sync operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -251,6 +270,7 @@ mod tests {
         WritePlan {
             writes: vec![FileWrite {
                 provider,
+                kind: None,
                 destination: output_dir.join(provider.to_string()),
                 files,
                 mode: WriteMode::CleanSlate,
@@ -306,6 +326,7 @@ mod tests {
         let plan = WritePlan {
             writes: vec![FileWrite {
                 provider: Provider::Claude,
+                kind: None,
                 destination: output_dir.join("claude"),
                 files: vec![GeneratedFile::binary(
                     Provider::Claude,
@@ -341,6 +362,7 @@ mod tests {
         let plan = WritePlan {
             writes: vec![FileWrite {
                 provider: Provider::Claude,
+                kind: None,
                 destination: dest.clone(),
                 files: vec![make_file(
                     Provider::Claude,
@@ -371,6 +393,7 @@ mod tests {
         let plan = WritePlan {
             writes: vec![FileWrite {
                 provider: Provider::Claude,
+                kind: None,
                 destination: dest.clone(),
                 files: vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "v1")],
                 mode: WriteMode::ManifestTracked,
@@ -385,6 +408,7 @@ mod tests {
         let plan2 = WritePlan {
             writes: vec![FileWrite {
                 provider: Provider::Claude,
+                kind: None,
                 destination: dest.clone(),
                 files: vec![],
                 mode: WriteMode::ManifestTracked,
@@ -409,6 +433,7 @@ mod tests {
         WritePlan {
             writes: vec![FileWrite {
                 provider: Provider::Claude,
+                kind: None,
                 destination: dest.to_path_buf(),
                 files,
                 mode: WriteMode::ManifestTracked,
@@ -516,6 +541,59 @@ mod tests {
     }
 
     #[test]
+    fn test_batch_stats_is_unchanged_only() {
+        use agentspec::plan::FileKind;
+
+        let unchanged = BatchStats {
+            provider: Provider::Claude,
+            kind: FileKind::Skills,
+            created: 0,
+            updated: 0,
+            removed: 0,
+            backed_up: 0,
+            unchanged: 5,
+        };
+        assert!(unchanged.is_unchanged_only());
+
+        let with_created = BatchStats {
+            created: 1,
+            ..unchanged
+        };
+        assert!(!with_created.is_unchanged_only());
+
+        let with_updated = BatchStats {
+            created: 0,
+            updated: 1,
+            ..unchanged
+        };
+        assert!(!with_updated.is_unchanged_only());
+
+        let with_removed = BatchStats {
+            created: 0,
+            updated: 0,
+            removed: 1,
+            ..unchanged
+        };
+        assert!(!with_removed.is_unchanged_only());
+
+        let with_backed_up = BatchStats {
+            created: 0,
+            updated: 0,
+            removed: 0,
+            backed_up: 1,
+            ..unchanged
+        };
+        assert!(!with_backed_up.is_unchanged_only());
+
+        // All zeros including unchanged is also "unchanged only"
+        let all_zero = BatchStats {
+            unchanged: 0,
+            ..unchanged
+        };
+        assert!(all_zero.is_unchanged_only());
+    }
+
+    #[test]
     fn test_manifest_tracked_dry_run_no_mutations() {
         let tmp = TempDir::new().expect("expected value");
         let dest = tmp.path().join("skills");
@@ -523,6 +601,7 @@ mod tests {
         let plan = WritePlan {
             writes: vec![FileWrite {
                 provider: Provider::Claude,
+                kind: None,
                 destination: dest.clone(),
                 files: vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "body")],
                 mode: WriteMode::ManifestTracked,

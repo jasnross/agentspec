@@ -36,6 +36,7 @@ pub fn sync_plan(
 
             writes.push(FileWrite {
                 provider: *provider,
+                kind: Some(kind),
                 destination: dest.clone(),
                 files,
                 mode: WriteMode::ManifestTracked,
@@ -262,11 +263,17 @@ mod tests {
         // Claude: 3 kinds (agents, rules, skills); OpenCode: 4 kinds (agents, commands, rules, skills)
         assert_eq!(plan.writes.len(), 7);
 
-        // Every write uses ManifestTracked mode.
+        // Every write uses ManifestTracked mode and has a kind set.
         for w in &plan.writes {
             assert!(
                 matches!(w.mode, WriteMode::ManifestTracked),
                 "expected ManifestTracked for {} {:?}",
+                w.provider,
+                w.destination
+            );
+            assert!(
+                w.kind.is_some(),
+                "expected kind to be set for {} {:?}",
                 w.provider,
                 w.destination
             );
