@@ -50,6 +50,10 @@ pub struct SyncArgs {
     #[arg(long)]
     pub dry_run: bool,
 
+    /// Show all sync destinations including unchanged ones
+    #[arg(long, short = 'v')]
+    pub verbose: bool,
+
     /// Allow overwriting user-owned files at sync destinations (disables collision errors)
     #[arg(long)]
     pub force: bool,

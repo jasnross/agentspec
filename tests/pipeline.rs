@@ -298,8 +298,8 @@ prefix = "tw"
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "sync failed:\n{stderr}");
     assert!(
-        stderr.contains(".config/opencode/commands"),
-        "stderr: {stderr}"
+        stderr.contains("OpenCode") && stderr.contains("commands"),
+        "expected sync report to mention OpenCode and commands, stderr: {stderr}"
     );
     assert!(
         home.join(".config/opencode/commands/tw/basic-skill.md")

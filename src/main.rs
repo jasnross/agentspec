@@ -66,6 +66,9 @@ fn main() -> Result<()> {
 
             let adapter_configs = AgentspecConfig::adapter_configs(&targets);
 
+            if sync_args.dry_run {
+                eprint!("[dry-run] ");
+            }
             let (result, _) = run_compile(
                 &validated,
                 &templating,
@@ -76,7 +79,7 @@ fn main() -> Result<()> {
 
             let home = home_dir()?;
             let plan = sync_plan(&result, &targets, &home, &cwd)?;
-            emit(&plan, sync_args.dry_run)?;
+            emit(&plan, sync_args.dry_run, sync_args.verbose)?;
         }
         Command::Compile(_) => {
             let validated = load_and_validate(&config, &dirs)?;
@@ -99,7 +102,7 @@ fn main() -> Result<()> {
             )?;
             let output_dir = config.resolve(&config.compile.output_dir);
             let plan = compile_plan(&result, &output_dir, &providers);
-            emit(&plan, false)?;
+            emit(&plan, false, false)?;
             eprintln!(
                 "wrote {} files to {}",
                 result.files.len(),
@@ -140,10 +143,11 @@ fn run_compile(
 ) -> Result<(CompileResult, Vec<Provider>)> {
     let providers = providers.to_vec();
     let result = compile::run(validated, templating, presets, &providers, adapter_configs)?;
+    let n = providers.len();
     eprintln!(
-        "compiled {} files for {} provider(s)",
+        "compiled {} files for {n} {}",
         result.files.len(),
-        providers.len()
+        if n == 1 { "provider" } else { "providers" }
     );
     Ok((result, providers))
 }
