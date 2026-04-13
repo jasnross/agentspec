@@ -7,7 +7,15 @@ OpenCode, and Cursor.
 ## Commands
 
 ```sh
-# From this directory (agentspec/)
+just check                      # format + lint + build + test + license check (the full suite)
+just fmt                        # format: cargo fix + cargo +nightly fmt
+just lint                       # clippy on all targets
+just test                       # run tests
+just build                      # build only
+just licenses                   # cargo deny check licenses
+just install                    # install binary locally
+
+# Or without just:
 cargo build
 cargo test
 cargo fmt                       # format all source files
@@ -15,7 +23,7 @@ cargo fmt --check               # verify formatting without writing (what CI run
 cargo clippy --all-targets      # lint all targets (including tests)
 cargo install --path .          # reinstall binary after schema changes (see below)
 
-# From agent-config/ (the spec library that exercises this compiler)
+# From dotfiles/agent-config/ (the spec library that exercises this compiler)
 agentspec validate              # schema + semantic checks only
 agentspec compile               # full pipeline; writes generated/
 agentspec sync                  # compile + distribute to tool config dirs

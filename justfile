@@ -20,9 +20,13 @@ fmt:
 lint:
     cargo clippy --all-targets
 
-# Format + lint + test
-check: fmt lint build test
+# Check dependency licenses
+licenses:
+    cargo deny check licenses
 
-# Reinstall binary (required after schema changes)
+# Format + lint + test + licenses
+check: fmt lint build test licenses
+
+# Install binary locally
 install:
     cargo install --path .

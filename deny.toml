@@ -4,13 +4,14 @@ allow = [
   "Apache-2.0",
   "BSD-2-Clause",
   "BSD-3-Clause",
-  "ISC",
   "MIT",
   "MIT-0",
-  "MPL-2.0",
   "Unicode-3.0",
-  "Unicode-DFS-2016",
   "Zlib",
+  # Additional licenses we're ok with if needed:
+  # "ISC",
+  # "MPL-2.0",
+  # "Unicode-DFS-2016",
 ]
 exceptions = []
 confidence-threshold = 0.8
