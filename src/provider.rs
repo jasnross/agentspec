@@ -24,7 +24,7 @@ pub enum Provider {
 }
 
 impl Provider {
-    /// Human-readable name for CLI output (e.g. "Claude", "`OpenCode`").
+    /// Human-readable name for CLI output (e.g. `"Claude"`, `"OpenCode"`).
     pub fn display_name(self) -> &'static str {
         match self {
             Self::Claude => "Claude",

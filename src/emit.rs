@@ -104,9 +104,9 @@ const REPORT_COLUMNS: &[ReportColumn] = &[
 
 /// Renders a compact sync report table to the given writer.
 ///
-/// In normal mode, only changed destinations appear. With `verbose`, all
-/// destinations (including unchanged) are shown. Columns with all-zero values
-/// are omitted. Dry-run mode prefixes column headers with "Would".
+/// In normal mode, only changed destinations appear and columns with all-zero
+/// values are omitted. With `verbose`, all destinations (including unchanged)
+/// and all columns are shown. Dry-run mode prefixes column headers with "Would".
 fn render_sync_report(
     out: &mut dyn std::io::Write,
     stats: &[BatchStats],

@@ -12,7 +12,7 @@ test:
 
 # Format source files
 fmt:
-    cargo fix
+    cargo fix --allow-dirty
     cargo +nightly fmt
     cargo sort-derives
 

@@ -51,7 +51,7 @@ pub struct SyncArgs {
     pub dry_run: bool,
 
     /// Show all sync destinations including unchanged ones
-    #[arg(long, short = 'v')]
+    #[arg(long)]
     pub verbose: bool,
 
     /// Allow overwriting user-owned files at sync destinations (disables collision errors)
