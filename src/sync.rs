@@ -78,6 +78,7 @@ pub fn resolve_sync_targets(
         dest: args.dest.clone(),
         mode: args.mode,
         prefix: args.prefix.clone(),
+        content_prefix: args.content_prefix.clone(),
     };
 
     let has_provider_arg = !args.common.provider.is_empty();

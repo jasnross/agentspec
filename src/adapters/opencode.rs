@@ -359,8 +359,8 @@ fn patch_opencode_instructions(
 
 /// Returns the name the AI model uses to reference this spec.
 ///
-/// - **Agents**: identity comes from the filename (`{prefix}-{id}.md`), so
-///   the model-facing name is prefixed.
+/// - **Agents**: the model-facing name is prefixed via `content_prefix()`,
+///   which may differ from the file-path prefix.
 /// - **Skills**: the frontmatter `name` field uses the unprefixed canonical ID
 ///   (the prefix only appears in the directory path). User-invocable skills
 ///   (commands) are also derived from `NormalizedSpec::Skill` — there is no
@@ -371,8 +371,8 @@ fn patch_opencode_instructions(
 pub fn model_facing_name(spec: &NormalizedSpec, cfg: Option<&AdapterConfig>) -> String {
     let id = spec.id();
     match spec {
-        NormalizedSpec::Agent(_) => match cfg.and_then(|c| c.prefix.as_deref()) {
-            Some(prefix) => format!("{prefix}-{id}"),
+        NormalizedSpec::Agent(_) => match cfg.and_then(AdapterConfig::content_prefix) {
+            Some(prefix) => format!("{prefix}{id}"),
             None => id.to_owned(),
         },
         NormalizedSpec::Skill(_) | NormalizedSpec::Rule(_) => id.to_owned(),
@@ -446,6 +446,7 @@ mod tests {
     fn test_adapt_skill_command_with_prefix_uses_subdirectory() {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
+            content_prefix: None,
         };
         let spec = NormalizedSpec::Skill(NormalizedSkillSpec {
             path: "test.md".into(),

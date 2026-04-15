@@ -213,7 +213,8 @@ output (typestate pattern — passing the wrong stage is a compile error):
 4. **Compile** — `compile.rs` resolves MiniJinja templates (rendering built-in
    variables like `specs` and `{% include %}` fragment references) and then
    dispatches each `(provider, spec)` pair to a provider adapter, passing
-   `Option<&AdapterConfig>` for prefix/strip transforms → `CompileResult`.
+   `Option<&AdapterConfig>` for prefix/strip transforms (`prefix` controls file
+   paths and frontmatter, `content_prefix` controls model-facing names) → `CompileResult`.
    Template resolution is an internal step of compilation, not a separate
    pipeline stage. Adapters produce fully-formed output (paths, frontmatter,
    content) — no post-hoc transforms downstream.

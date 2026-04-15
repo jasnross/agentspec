@@ -158,11 +158,12 @@ pub fn post_write_hook(
 
 /// Returns the name the AI model uses to reference this spec.
 ///
-/// For Cursor, all spec types use `{prefix}-{id}` when a prefix is configured.
+/// For Cursor, all spec types use `{content_prefix}{id}` when a content prefix
+/// is configured (either explicitly or derived from `prefix`).
 pub fn model_facing_name(spec: &NormalizedSpec, cfg: Option<&AdapterConfig>) -> String {
     let id = spec.id();
-    match cfg.and_then(|c| c.prefix.as_deref()) {
-        Some(prefix) => format!("{prefix}-{id}"),
+    match cfg.and_then(AdapterConfig::content_prefix) {
+        Some(prefix) => format!("{prefix}{id}"),
         None => id.to_owned(),
     }
 }
@@ -210,6 +211,7 @@ mod tests {
     fn test_adapt_agent_with_prefix() {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
+            content_prefix: None,
         };
         let spec = NormalizedSpec::Agent(NormalizedAgentSpec {
             path: "test.md".into(),
@@ -236,6 +238,7 @@ mod tests {
     fn test_adapt_skill_with_prefix() {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
+            content_prefix: None,
         };
         let spec = NormalizedSpec::Skill(NormalizedSkillSpec {
             path: "test.md".into(),
@@ -268,6 +271,7 @@ mod tests {
     fn test_adapt_rule_with_prefix() {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
+            content_prefix: None,
         };
         let spec = NormalizedSpec::Rule(NormalizedRuleSpec {
             path: "test.md".into(),

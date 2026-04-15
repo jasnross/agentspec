@@ -324,6 +324,7 @@ mod tests {
 
         let cfg = AdapterConfig {
             prefix: Some("tw".to_owned()),
+            content_prefix: None,
         };
         let ctx = TemplateContext::from_specs_for_provider(&specs, Provider::Claude, Some(&cfg));
 
@@ -351,6 +352,7 @@ mod tests {
 
         let cfg = AdapterConfig {
             prefix: Some("tw".to_owned()),
+            content_prefix: None,
         };
         let ctx = TemplateContext::from_specs_for_provider(&specs, Provider::OpenCode, Some(&cfg));
 
@@ -380,6 +382,55 @@ mod tests {
             ctx.specs.agent.get("my_agent").map(|e| &*e.name),
             Some("my-agent")
         );
+        assert_eq!(
+            ctx.specs.skill.get("gh_safe").map(|e| &*e.name),
+            Some("gh-safe")
+        );
+    }
+
+    #[test]
+    fn test_from_specs_for_provider_claude_with_content_prefix() {
+        let specs = vec![
+            make_agent("my-agent", "Agent desc"),
+            make_skill("gh-safe", Some("Skill desc")),
+        ];
+
+        let cfg = AdapterConfig {
+            prefix: None,
+            content_prefix: Some("tw:".to_owned()),
+        };
+        let ctx = TemplateContext::from_specs_for_provider(&specs, Provider::Claude, Some(&cfg));
+
+        // Claude with content_prefix: all types get colon-prefixed names
+        assert_eq!(
+            ctx.specs.agent.get("my_agent").map(|e| &*e.name),
+            Some("tw:my-agent")
+        );
+        assert_eq!(
+            ctx.specs.skill.get("gh_safe").map(|e| &*e.name),
+            Some("tw:gh-safe")
+        );
+    }
+
+    #[test]
+    fn test_from_specs_for_provider_opencode_with_content_prefix() {
+        let specs = vec![
+            make_agent("my-agent", "Agent desc"),
+            make_skill("gh-safe", Some("Skill desc")),
+        ];
+
+        let cfg = AdapterConfig {
+            prefix: None,
+            content_prefix: Some("tw:".to_owned()),
+        };
+        let ctx = TemplateContext::from_specs_for_provider(&specs, Provider::OpenCode, Some(&cfg));
+
+        // OpenCode agents: use content_prefix
+        assert_eq!(
+            ctx.specs.agent.get("my_agent").map(|e| &*e.name),
+            Some("tw:my-agent")
+        );
+        // OpenCode skills: always unprefixed (ignores prefix for skills)
         assert_eq!(
             ctx.specs.skill.get("gh_safe").map(|e| &*e.name),
             Some("gh-safe")

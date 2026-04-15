@@ -757,3 +757,142 @@ fn test_compile_nonexistent_spec_reference_errors() {
         "error should mention the spec with the bad reference, got:\n{stderr}"
     );
 }
+
+#[test]
+fn test_sync_content_prefix_without_file_prefix() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        r#"
+[presets.default]
+claude = { model = "sonnet" }
+opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
+cursor = { model = "fast" }
+
+[sync.claude]
+mode = "user"
+content-prefix = "tw:"
+"#,
+    )
+    .expect("failed to write agentspec.toml");
+
+    let home = dir.join("home");
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--provider", "claude"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "sync with content-prefix should succeed:\n{stderr}"
+    );
+
+    // File path should be unprefixed (no `prefix` set)
+    assert!(
+        home.join(".claude/skills/basic-skill/SKILL.md").exists(),
+        "skill directory should be unprefixed"
+    );
+
+    // Body content should use colon-prefixed agent reference
+    let skill_path = home.join(".claude/skills/basic-skill/SKILL.md");
+    let content = std::fs::read_to_string(&skill_path).expect("failed to read basic-skill");
+    assert!(
+        content.contains("Agent: tw:test-agent"),
+        "expected colon-prefixed agent reference 'tw:test-agent' in body, got:\n{content}"
+    );
+}
+
+#[test]
+fn test_sync_prefix_and_content_prefix() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        r#"
+[presets.default]
+claude = { model = "sonnet" }
+opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
+cursor = { model = "fast" }
+
+[sync.claude]
+mode = "user"
+prefix = "tw"
+content-prefix = "tw:"
+"#,
+    )
+    .expect("failed to write agentspec.toml");
+
+    let home = dir.join("home");
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--provider", "claude"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "sync with both prefix and content-prefix should succeed:\n{stderr}"
+    );
+
+    // File path uses prefix (hyphen-separated)
+    assert!(
+        home.join(".claude/skills/tw-basic-skill/SKILL.md").exists(),
+        "skill directory should use file prefix"
+    );
+
+    // Body content uses content-prefix (colon-separated)
+    let skill_path = home.join(".claude/skills/tw-basic-skill/SKILL.md");
+    let content = std::fs::read_to_string(&skill_path).expect("failed to read basic-skill");
+    assert!(
+        content.contains("Agent: tw:test-agent"),
+        "expected colon-prefixed agent reference 'tw:test-agent' in body, got:\n{content}"
+    );
+}
+
+#[test]
+fn test_sync_cli_content_prefix_overrides_config() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        r#"
+[presets.default]
+claude = { model = "sonnet" }
+opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
+cursor = { model = "fast" }
+
+[sync.claude]
+mode = "user"
+content-prefix = "original:"
+"#,
+    )
+    .expect("failed to write agentspec.toml");
+
+    let home = dir.join("home");
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--provider", "claude", "--content-prefix", "cli:"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync --content-prefix");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "sync with --content-prefix should succeed:\n{stderr}"
+    );
+
+    // CLI content-prefix should override config
+    let skill_path = home.join(".claude/skills/basic-skill/SKILL.md");
+    let content = std::fs::read_to_string(&skill_path).expect("failed to read basic-skill");
+    assert!(
+        content.contains("Agent: cli:test-agent"),
+        "expected CLI-overridden agent reference 'cli:test-agent' in body, got:\n{content}"
+    );
+}

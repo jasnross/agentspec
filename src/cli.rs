@@ -69,6 +69,10 @@ pub struct SyncArgs {
     /// Add a prefix to synced file names (can help avoid naming collisions with other commands)
     #[arg(long)]
     pub prefix: Option<String>,
+
+    /// Override the content-reference prefix (e.g., "tw:" for plugin namespaces)
+    #[arg(long)]
+    pub content_prefix: Option<String>,
 }
 
 impl Command {

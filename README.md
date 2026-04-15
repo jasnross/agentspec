@@ -247,27 +247,29 @@ lists (for iteration) and as keyed maps (for direct lookup by ID).
 
 **Keyed maps** (for direct lookup):
 
-| Field          | Type                | Description                              |
-| -------------- | ------------------- | ---------------------------------------- |
-| `specs.agent`  | map of key → entry  | Agents keyed by underscore-normalized ID |
-| `specs.skill`  | map of key → entry  | Skills keyed by underscore-normalized ID |
-| `specs.rule`   | map of key → entry  | Rules keyed by underscore-normalized ID  |
+| Field         | Type               | Description                              |
+| ------------- | ------------------ | ---------------------------------------- |
+| `specs.agent` | map of key → entry | Agents keyed by underscore-normalized ID |
+| `specs.skill` | map of key → entry | Skills keyed by underscore-normalized ID |
+| `specs.rule`  | map of key → entry | Rules keyed by underscore-normalized ID  |
 
 **Key normalization**: hyphens in spec IDs are replaced with underscores for
 keyed access. A spec with `id: gh-safe` is accessed as `specs.skill.gh_safe`.
 
 Each entry has:
 
-| Field         | Description                                                    |
-| ------------- | -------------------------------------------------------------- |
-| `name`        | The spec's name as the model sees it (may include sync prefix) |
-| `description` | The spec's description (empty string if not set)               |
-| `type`        | One of `agent`, `skill`, or `rule`                             |
-| `tags`        | List of tags from frontmatter (empty list if not set)          |
+| Field         | Description                                                                        |
+| ------------- | ---------------------------------------------------------------------------------- |
+| `name`        | The spec's name as the model sees it (uses `content-prefix` if set, else `prefix`) |
+| `description` | The spec's description (empty string if not set)                                   |
+| `type`        | One of `agent`, `skill`, or `rule`                                                 |
+| `tags`        | List of tags from frontmatter (empty list if not set)                              |
 
-When compiled with a sync prefix (e.g., `prefix = "tw"`), the `name` field
-resolves to the prefixed model-facing name (e.g., `tw-gh-safe` for Claude).
-Without a prefix, `name` is the canonical ID.
+When compiled with a sync prefix, the `name` field resolves to the
+prefix-aware model-facing name. By default this is `{prefix}-{id}`
+(e.g., `tw-gh-safe`), but when `content-prefix` is set explicitly
+(e.g., `"tw:"`), the `name` uses that format instead (e.g., `tw:gh-safe`).
+Without any prefix, `name` is the canonical ID.
 
 > **Best practice**: Use keyed references (`{{ specs.skill.gh_safe.name }}`)
 > instead of hardcoding spec names in body text. This ensures references stay
@@ -337,6 +339,7 @@ cursor = { model = "claude-opus-4-6" }
 [sync.<claude|cursor|opencode>] # See "Sync" documentation below
 mode = "user"
 # prefix = "tw"             # namespace prefix for synced file names
+# content-prefix = "tw:"    # content-reference prefix (defaults to "{prefix}-")
 # overwrite = false         # allow overwriting user-owned files
 # dir = "/path/to/output"   # base directory (only used with mode = "path")
 ```
@@ -385,16 +388,18 @@ appropriate location for each provider. Sync targets are configured in
 [sync.claude]
 mode = "user"
 # prefix = "tw"
+# content-prefix = "tw:"
 # overwrite = false
 # dir = "/path/to/output"
 ```
 
-| Field       | Default  | Description                                                                                                                                                                                               |
-| ----------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mode`      | `"user"` | `"user"` syncs to the tool's user-level config dir (e.g. `~/.claude/`).<br>`"project"` syncs to the project-local config dir (e.g. `.claude/`).<br> `"path"` syncs to an explicit directory set by `dir`. |
-| `prefix`    | `null`   | Namespace prefix applied to synced file names. Can be useful for avoiding collisions with user-owned files or specs from plugins. See [Prefix behavior](#prefix-behavior) below.                          |
-| `overwrite` | `false`  | When `true`, allows overwriting user-owned files at sync destinations (with backup). Can also be set per-invocation with `--force`.                                                                       |
-| `dir`       | `null`   | Base directory for synced output when `mode = "path"`. Subdirectories (`agents/`, `skills/`, `rules/`, `commands/`) are created automatically.                                                            |
+| Field            | Default  | Description                                                                                                                                                                                                             |
+| ---------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mode`           | `"user"` | `"user"` syncs to the tool's user-level config dir (e.g. `~/.claude/`).<br>`"project"` syncs to the project-local config dir (e.g. `.claude/`).<br> `"path"` syncs to an explicit directory set by `dir`.               |
+| `prefix`         | `null`   | Namespace prefix applied to synced file names. Can be useful for avoiding collisions with user-owned files or specs from plugins. See [Prefix behavior](#prefix-behavior) below.                                        |
+| `content-prefix` | `null`   | Literal prefix for content references (model-facing names). Includes its separator (e.g., `"tw:"` → `tw:skill-name`). When unset, defaults to `"{prefix}-"`. See [Content-reference prefix](#content-reference-prefix). |
+| `overwrite`      | `false`  | When `true`, allows overwriting user-owned files at sync destinations (with backup). Can also be set per-invocation with `--force`.                                                                                     |
+| `dir`            | `null`   | Base directory for synced output when `mode = "path"`. Subdirectories (`agents/`, `skills/`, `rules/`, `commands/`) are created automatically.                                                                          |
 
 ### Prefix behavior
 
@@ -405,6 +410,22 @@ When `prefix` is set, the naming convention varies by provider:
 | Claude   | Dash prefix on paths (`tw-commit.md` for agents, `tw-commit/` for skills)                                  | `tw-commit`        |
 | OpenCode | Commands sync under a prefix subdirectory (`commands/tw/commit.md`); agents/skills use dash-prefixed names | `/tw/commit`       |
 | Cursor   | Path uses dash prefix (`tw-commit/...`)                                                                    | `tw-commit`        |
+
+#### Content-reference prefix
+
+By default, content references (via `{{ specs.skill.foo.name }}`) use the same
+prefix format as file paths: `{prefix}-{id}`. To use a different format (for
+example, Claude Code plugins require the colon-namespaced form `tw:skill-name`)
+set `content-prefix` explicitly:
+
+| Config                                    | File path    | Content reference |
+| ----------------------------------------- | ------------ | ----------------- |
+| `prefix = "tw"`                           | `tw-commit/` | `tw-commit`       |
+| `content-prefix = "tw:"`                  | `commit/`    | `tw:commit`       |
+| `prefix = "tw"`, `content-prefix = "tw:"` | `tw-commit/` | `tw:commit`       |
+
+`content-prefix` is a literal string prepended directly to the spec ID. The
+separator (`:`, `-`, etc.) is part of the value itself.
 
 ### Collision detection
 

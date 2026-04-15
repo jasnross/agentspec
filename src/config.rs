@@ -96,9 +96,15 @@ impl AgentspecConfig {
         if let Some(prefix) = cli.prefix.as_deref() {
             resolved.prefix = Some(prefix.to_string());
         }
+        if let Some(content_prefix) = cli.content_prefix.as_deref() {
+            resolved.content_prefix = Some(content_prefix.to_string());
+        }
 
         if resolved.prefix.as_deref() == Some("") {
             resolved.prefix = None;
+        }
+        if resolved.content_prefix.as_deref() == Some("") {
+            resolved.content_prefix = None;
         }
 
         resolved
@@ -142,6 +148,7 @@ impl AgentspecConfig {
                     *p,
                     AdapterConfig {
                         prefix: t.prefix.clone(),
+                        content_prefix: t.content_prefix.clone(),
                     },
                 )
             })
@@ -243,7 +250,7 @@ impl Default for CompileConfig {
 /// When `mode` is `Path`, the per-kind fields (`agents`, `skills`, `rules`, `commands`)
 /// supply explicit destination directories (tilde-expanded at use site).
 #[derive(Clone, Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct SyncTargetConfig {
     /// Where to place synced files (user-level, project-local, or explicit path).
     pub mode: SyncMode,
@@ -252,6 +259,10 @@ pub struct SyncTargetConfig {
     /// For `OpenCode`: synced into a `{prefix}/` subdirectory.
     /// For Cursor: filename becomes `{prefix}-{name}`.
     pub prefix: Option<String>,
+    /// Optional content-reference prefix. When set, `model_facing_name()` uses
+    /// this literal string (including separator) instead of deriving from `prefix`.
+    /// For example, `"tw:"` produces content references like `tw:skill-name`.
+    pub content_prefix: Option<String>,
     /// Permit overwriting user-owned files at the destination.
     /// When false (default), sync errors on collision. Overridden by `--force`.
     pub overwrite: bool,
@@ -285,6 +296,8 @@ pub struct SyncFlags {
     pub mode: Option<SyncMode>,
     /// Override `prefix` setting.
     pub prefix: Option<String>,
+    /// Override `content-prefix` setting.
+    pub content_prefix: Option<String>,
 }
 
 #[cfg(test)]
@@ -646,5 +659,70 @@ mode = "user"
             result.is_err(),
             "should error when provider has no config and CLI is insufficient"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // content_prefix tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_resolve_sync_target_content_prefix_from_config() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[sync.claude]
+content-prefix = "tw:"
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+        let result = config.resolve_sync_target(Provider::Claude, &SyncFlags::default());
+        assert_eq!(result.content_prefix.as_deref(), Some("tw:"));
+    }
+
+    #[test]
+    fn test_resolve_sync_target_cli_content_prefix_overrides_config() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[sync.claude]
+content-prefix = "original:"
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+
+        let cli = SyncFlags {
+            content_prefix: Some("cli:".to_string()),
+            ..SyncFlags::default()
+        };
+
+        let result = config.resolve_sync_target(Provider::Claude, &cli);
+        assert_eq!(result.content_prefix.as_deref(), Some("cli:"));
+    }
+
+    #[test]
+    fn test_resolve_sync_target_empty_content_prefix_normalized_to_none() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[sync.claude]
+content-prefix = ""
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+
+        let result = config.resolve_sync_target(Provider::Claude, &SyncFlags::default());
+        assert!(result.content_prefix.is_none());
+    }
+
+    #[test]
+    fn test_resolve_sync_target_content_prefix_defaults_to_none() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[sync.claude]
+prefix = "tw"
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+
+        let result = config.resolve_sync_target(Provider::Claude, &SyncFlags::default());
+        assert!(result.content_prefix.is_none());
+        assert_eq!(result.prefix.as_deref(), Some("tw"));
     }
 }

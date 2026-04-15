@@ -19,13 +19,27 @@ use crate::templating::{TemplateContext, TemplatingResources, resolve_fragments}
 pub struct AdapterConfig {
     /// Namespace prefix for file paths and frontmatter names.
     pub prefix: Option<String>,
+    /// Literal prefix for content/model-facing names (e.g., `"tw:"` → `"tw:{id}"`).
+    /// When `None`, `content_prefix()` falls back to `"{prefix}-"`.
+    pub content_prefix: Option<String>,
 }
 
 impl AdapterConfig {
     /// Returns the file path prefix string (e.g., `"tw-"`), if a prefix is configured.
-    /// This is shared across all providers — the file path convention is the same.
+    /// Only used for filesystem paths — content references use `content_prefix()`.
     pub fn file_prefix(&self) -> Option<String> {
         self.prefix.as_ref().map(|p| format!("{p}-"))
+    }
+
+    /// Returns the content-reference prefix string, if any prefix is configured.
+    ///
+    /// When an explicit `content_prefix` is set (e.g., `"tw:"`), returns it directly.
+    /// Otherwise falls back to `"{prefix}-"` (matching the file prefix format).
+    /// Returns `None` when neither field is set.
+    pub fn content_prefix(&self) -> Option<String> {
+        self.content_prefix
+            .clone()
+            .or_else(|| self.prefix.as_ref().map(|p| format!("{p}-")))
     }
 }
 
@@ -138,4 +152,45 @@ pub(crate) fn compile_specs(
     files.sort_by(|a, b| a.path.cmp(&b.path));
 
     Ok(CompileResult { files })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_content_prefix_returns_explicit_value() {
+        let cfg = AdapterConfig {
+            prefix: Some("tw".to_owned()),
+            content_prefix: Some("tw:".to_owned()),
+        };
+        assert_eq!(cfg.content_prefix(), Some("tw:".to_owned()));
+    }
+
+    #[test]
+    fn test_content_prefix_falls_back_to_prefix_with_hyphen() {
+        let cfg = AdapterConfig {
+            prefix: Some("tw".to_owned()),
+            content_prefix: None,
+        };
+        assert_eq!(cfg.content_prefix(), Some("tw-".to_owned()));
+    }
+
+    #[test]
+    fn test_content_prefix_returns_none_when_both_none() {
+        let cfg = AdapterConfig {
+            prefix: None,
+            content_prefix: None,
+        };
+        assert_eq!(cfg.content_prefix(), None);
+    }
+
+    #[test]
+    fn test_file_prefix_unaffected_by_content_prefix() {
+        let cfg = AdapterConfig {
+            prefix: Some("tw".to_owned()),
+            content_prefix: Some("tw:".to_owned()),
+        };
+        assert_eq!(cfg.file_prefix(), Some("tw-".to_owned()));
+    }
 }

@@ -248,11 +248,12 @@ pub fn post_write_hook(
 
 /// Returns the name the AI model uses to reference this spec.
 ///
-/// For Claude, all spec types use `{prefix}-{id}` when a prefix is configured.
+/// For Claude, all spec types use `{content_prefix}{id}` when a content prefix
+/// is configured (either explicitly or derived from `prefix`).
 pub fn model_facing_name(spec: &NormalizedSpec, cfg: Option<&AdapterConfig>) -> String {
     let id = spec.id();
-    match cfg.and_then(|c| c.prefix.as_deref()) {
-        Some(prefix) => format!("{prefix}-{id}"),
+    match cfg.and_then(AdapterConfig::content_prefix) {
+        Some(prefix) => format!("{prefix}{id}"),
         None => id.to_owned(),
     }
 }
@@ -350,6 +351,7 @@ mod tests {
     fn test_adapt_agent_with_prefix() {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
+            content_prefix: None,
         };
         let spec = NormalizedSpec::Agent(NormalizedAgentSpec {
             path: "test.md".into(),
@@ -377,6 +379,7 @@ mod tests {
     fn test_adapt_rule_with_prefix() {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
+            content_prefix: None,
         };
         let spec = NormalizedSpec::Rule(NormalizedRuleSpec {
             path: "test.md".into(),
@@ -390,5 +393,76 @@ mod tests {
 
         let files = adapt_claude(spec, &HashMap::new(), Some(&cfg)).expect("expected value");
         assert_eq!(files[0].path.to_str(), Some("rules/tw-test-rule.md"));
+    }
+
+    #[test]
+    fn test_adapt_agent_content_prefix_does_not_affect_frontmatter() {
+        let cfg = AdapterConfig {
+            prefix: None,
+            content_prefix: Some("tw:".to_string()),
+        };
+        let spec = NormalizedSpec::Agent(NormalizedAgentSpec {
+            path: "test.md".into(),
+            frontmatter: NormalizedAgentFrontmatter {
+                id: "test-agent".to_string(),
+                description: "Test agent".to_string(),
+                tags: None,
+                execution: None,
+                capabilities: None,
+            },
+            body: "Body.".to_string(),
+        });
+
+        let files = adapt_claude(spec, &HashMap::new(), Some(&cfg)).expect("expected value");
+        // File path should be unprefixed (no file prefix set)
+        assert_eq!(files[0].path.to_str(), Some("agents/test-agent.md"));
+        // Frontmatter name should be unprefixed (controlled by `prefix`, not `content_prefix`)
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
+        assert!(
+            content.contains("name: test-agent"),
+            "frontmatter name should be bare (no content_prefix), got: {content}"
+        );
+    }
+
+    #[test]
+    fn test_model_facing_name_uses_content_prefix() {
+        let cfg = AdapterConfig {
+            prefix: None,
+            content_prefix: Some("tw:".to_string()),
+        };
+        let spec = NormalizedSpec::Agent(NormalizedAgentSpec {
+            path: "test.md".into(),
+            frontmatter: NormalizedAgentFrontmatter {
+                id: "test-agent".to_string(),
+                description: "Test agent".to_string(),
+                tags: None,
+                execution: None,
+                capabilities: None,
+            },
+            body: String::new(),
+        });
+
+        assert_eq!(model_facing_name(&spec, Some(&cfg)), "tw:test-agent");
+    }
+
+    #[test]
+    fn test_model_facing_name_falls_back_to_prefix() {
+        let cfg = AdapterConfig {
+            prefix: Some("tw".to_string()),
+            content_prefix: None,
+        };
+        let spec = NormalizedSpec::Agent(NormalizedAgentSpec {
+            path: "test.md".into(),
+            frontmatter: NormalizedAgentFrontmatter {
+                id: "test-agent".to_string(),
+                description: "Test agent".to_string(),
+                tags: None,
+                execution: None,
+                capabilities: None,
+            },
+            body: String::new(),
+        });
+
+        assert_eq!(model_facing_name(&spec, Some(&cfg)), "tw-test-agent");
     }
 }
