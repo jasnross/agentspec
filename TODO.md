@@ -32,9 +32,10 @@
    - All adapters now share the same interface: `adapt_*` (compile) and
      `post_write_hook` (sync) — ready for trait extraction
 6. Consider merging `bash` and `powershell` under a single `shell` canonical tool
-   - `ToolFrontmatter::Bash` currently maps to `Bash` in Claude and `bash` in OpenCode
-   - A `shell` abstraction could map to the platform-appropriate tool (Bash on
-     Unix, PowerShell on Windows)
+   - `ToolFrontmatter::Bash` currently maps to `Bash` in Claude but Claude
+     supports both `PowerShell` and `Bash`
+   - Expanding the `shell` canonical tool to both `Bash` and `PowerShell` for
+     Claude would help cover both
 7. Separate `FileWrite` into typed variants for `CleanSlate` vs `ManifestTracked`
    - `FileWrite` uses `kind: Option<FileKind>` where `None` means `CleanSlate` (compile)
      and `Some` means `ManifestTracked` (sync) — this is a runtime invariant enforced
