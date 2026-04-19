@@ -163,7 +163,7 @@ fn load_skill_specs(dir: &Path) -> Result<Vec<Spec>> {
     let mut skill_dirs: Vec<_> = fs::read_dir(dir)
         .with_context(|| format!("failed to read {}", dir.display()))?
         .filter_map(Result::ok)
-        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
         .map(|e| e.path())
         .collect();
     skill_dirs.sort();
@@ -176,7 +176,7 @@ fn load_skill_specs(dir: &Path) -> Result<Vec<Spec>> {
         let entries: Vec<_> = fs::read_dir(&skill_dir)
             .with_context(|| format!("failed to read {}", skill_dir.display()))?
             .filter_map(Result::ok)
-            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
             .collect();
 
         let md_files: Vec<_> = entries

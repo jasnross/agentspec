@@ -395,8 +395,7 @@ fn write_content_to_dest(
         // Back up the user-owned file before overwriting.
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_secs());
         let mut bak_name = dest.as_os_str().to_owned();
         bak_name.push(format!(".bak.{timestamp}"));
         let bak = PathBuf::from(bak_name);
