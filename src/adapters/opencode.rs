@@ -245,9 +245,10 @@ pub fn body_tool_name(tool: &ToolFrontmatter) -> &'static str {
 
 /// Build the boolean tool map used by `OpenCode` agents and agent-invocable skills.
 ///
-/// Initializes all `ToolFrontmatter`-expressible `OpenCode` tools to false, then enables the ones
-/// listed in the spec. Tools outside this set (list, lsp, patch, skill) are omitted and use
-/// `OpenCode`'s default (all enabled).
+/// Initializes all `ToolFrontmatter`-expressible `OpenCode` tools to false, then enables
+/// the ones listed in the spec. `OpenCode` tools outside this set — `apply_patch`,
+/// `codesearch`, `lsp`, `plan_exit`, and `invalid` — are omitted and fall back to
+/// `OpenCode`'s default behavior (enabled when not explicitly disabled).
 fn build_tool_map(tools: &[ToolFrontmatter]) -> IndexMap<String, bool> {
     let mut map: IndexMap<String, bool> = ToolFrontmatter::VARIANTS
         .iter()
