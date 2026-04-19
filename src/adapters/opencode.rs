@@ -226,8 +226,9 @@ pub fn post_write_hook(
     }))
 }
 
-/// Map a canonical tool to its `OpenCode` tool name.
-fn opencode_tool_name(tool: &ToolFrontmatter) -> &'static str {
+/// Resolve a canonical tool to the name an `OpenCode` spec body (or frontmatter
+/// tool map) should reference.
+pub fn body_tool_name(tool: &ToolFrontmatter) -> &'static str {
     match tool {
         ToolFrontmatter::Read => "read",
         ToolFrontmatter::Write => "write",
@@ -244,17 +245,17 @@ fn opencode_tool_name(tool: &ToolFrontmatter) -> &'static str {
 
 /// Build the boolean tool map used by `OpenCode` agents and agent-invocable skills.
 ///
-/// Initializes all ToolFrontmatter-expressible `OpenCode` tools to false, then enables the ones
+/// Initializes all `ToolFrontmatter`-expressible `OpenCode` tools to false, then enables the ones
 /// listed in the spec. Tools outside this set (list, lsp, patch, skill) are omitted and use
 /// `OpenCode`'s default (all enabled).
 fn build_tool_map(tools: &[ToolFrontmatter]) -> IndexMap<String, bool> {
     let mut map: IndexMap<String, bool> = ToolFrontmatter::VARIANTS
         .iter()
-        .map(|t| (opencode_tool_name(t).to_string(), false))
+        .map(|t| (body_tool_name(t).to_string(), false))
         .collect();
 
     for tool in tools {
-        map.insert(opencode_tool_name(tool).to_string(), true);
+        map.insert(body_tool_name(tool).to_string(), true);
     }
 
     map.sort_keys();
@@ -389,6 +390,11 @@ mod tests {
         NormalizedAgentFrontmatter, NormalizedAgentSpec, NormalizedSkillFrontmatter,
         NormalizedSkillSpec,
     };
+
+    #[test]
+    fn test_body_tool_name_tasks_maps_to_todowrite() {
+        assert_eq!(body_tool_name(&ToolFrontmatter::Tasks), "todowrite");
+    }
 
     #[test]
     fn test_build_tool_map_keys_are_sorted() {

@@ -217,8 +217,9 @@ pub struct ExecutionFrontmatter {
     pub preset: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, strum::VariantArray)]
+#[derive(Clone, Debug, Deserialize, strum::EnumString, Serialize, strum::VariantArray)]
 #[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
 pub enum ToolFrontmatter {
     Read,
     Write,

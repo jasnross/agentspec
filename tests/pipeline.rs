@@ -196,6 +196,57 @@ fn test_compile_generates_expected_files() {
 }
 
 #[test]
+fn test_compile_resolves_tool_per_provider() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    // The fragment `shared-note.md` uses `{{ tool("question") }}` and is included
+    // from `basic-skill`. The canonical name should resolve per provider.
+    let claude_path = dir.join("generated/claude/skills/basic-skill/SKILL.md");
+    let claude = std::fs::read_to_string(&claude_path).expect("failed to read claude basic-skill");
+    assert!(
+        claude.contains("AskUserQuestion"),
+        "expected 'AskUserQuestion' in claude basic-skill body, got:\n{claude}"
+    );
+
+    let cursor_path = dir.join("generated/cursor/skills/basic-skill/SKILL.md");
+    let cursor = std::fs::read_to_string(&cursor_path).expect("failed to read cursor basic-skill");
+    assert!(
+        cursor.contains("question picker"),
+        "expected 'question picker' in cursor basic-skill body, got:\n{cursor}"
+    );
+
+    let opencode_path = dir.join("generated/opencode/commands/basic-skill.md");
+    let opencode =
+        std::fs::read_to_string(&opencode_path).expect("failed to read opencode basic-skill");
+    // Match with surrounding backticks to distinguish from the frontmatter
+    // `question: false` tool-map entry. Also assert neither the Claude nor
+    // Cursor form leaked in — together these prove provider-specific resolution,
+    // not a canonical pass-through that happens to coincide with OpenCode's name.
+    assert!(
+        opencode.contains("`question`"),
+        "expected '`question`' in opencode basic-skill body, got:\n{opencode}"
+    );
+    assert!(
+        !opencode.contains("AskUserQuestion"),
+        "opencode body should not contain the Claude tool name, got:\n{opencode}"
+    );
+    assert!(
+        !opencode.contains("question picker"),
+        "opencode body should not contain the Cursor tool name, got:\n{opencode}"
+    );
+}
+
+#[test]
 #[cfg(unix)]
 fn test_compile_script_is_executable() {
     use std::os::unix::fs::PermissionsExt;

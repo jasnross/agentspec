@@ -7,7 +7,9 @@ use minijinja::{Environment, Value};
 use walkdir::WalkDir;
 
 use super::context::TemplateContext;
-use crate::spec::NormalizedSpec;
+use crate::adapters::{claude_body_tool_name, cursor_body_tool_name, opencode_body_tool_name};
+use crate::provider::Provider;
+use crate::spec::{NormalizedSpec, ToolFrontmatter};
 
 /// Resolve fragment references in spec bodies by rendering them through `MiniJinja`.
 ///
@@ -76,10 +78,19 @@ pub fn load_fragments(fragments_dir: &Path) -> Result<HashMap<String, String>> {
     Ok(fragments)
 }
 
-/// Build a `MiniJinja` environment with all fragments available as templates.
+/// Build a `MiniJinja` environment with all fragments available as templates
+/// and a `tool()` function registered for canonical-to-provider tool name
+/// resolution.
 ///
-/// Enables `{% include "review/prompt-contract.md" %}` syntax in specs.
-pub fn build_environment(fragments: &HashMap<String, String>) -> Result<Environment<'static>> {
+/// Enables `{% include "review/prompt-contract.md" %}` syntax and
+/// `{{ tool("<canonical>") }}` calls in specs. When `provider` is `Some`,
+/// `tool()` returns the provider-specific body-level name. When `None`
+/// (e.g., during `agentspec validate`), `tool()` passes the canonical name
+/// through unchanged after verifying it is a known tool.
+pub fn build_environment(
+    fragments: &HashMap<String, String>,
+    provider: Option<Provider>,
+) -> Result<Environment<'static>> {
     let mut env = Environment::new();
     // Lenient: undefined variables evaluate as falsy rather than erroring,
     // which is useful for optional boolean flags in templates.
@@ -90,7 +101,30 @@ pub fn build_environment(fragments: &HashMap<String, String>) -> Result<Environm
             .with_context(|| format!("failed to parse fragment '{name}'"))?;
     }
 
+    env.add_function("tool", move |name: String| resolve_tool(&name, provider));
+
     Ok(env)
+}
+
+/// Resolve a canonical tool name to the provider-specific body-level name.
+///
+/// Returns a `MiniJinja` render error if `name` is not a known canonical
+/// tool. When `provider` is `None`, the canonical name is returned unchanged
+/// (after the round-trip through `ToolFrontmatter` confirms it is valid).
+fn resolve_tool(name: &str, provider: Option<Provider>) -> Result<String, minijinja::Error> {
+    let tool: ToolFrontmatter = name.parse().map_err(|_| {
+        minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!("unknown canonical tool name '{name}'"),
+        )
+    })?;
+    let resolved = match provider {
+        Some(Provider::Claude) => claude_body_tool_name(&tool),
+        Some(Provider::Cursor) => cursor_body_tool_name(&tool),
+        Some(Provider::OpenCode) => opencode_body_tool_name(&tool),
+        None => return Ok(name.to_owned()),
+    };
+    Ok(resolved.to_owned())
 }
 
 #[cfg(test)]
@@ -140,7 +174,7 @@ mod tests {
         let mut fragments = HashMap::new();
         fragments.insert("greeting.md".to_string(), "Hello, world!".to_string());
 
-        let env = build_environment(&fragments).expect("expected value");
+        let env = build_environment(&fragments, None).expect("expected value");
         let template = env
             .template_from_str("Before.\n{% include \"greeting.md\" %}\nAfter.")
             .expect("expected value");
@@ -155,7 +189,7 @@ mod tests {
         let mut fragments = HashMap::new();
         fragments.insert("greeting.md".to_string(), "Hello, {{ name }}!".to_string());
 
-        let env = build_environment(&fragments).expect("expected value");
+        let env = build_environment(&fragments, None).expect("expected value");
         let template = env
             .template_from_str(
                 "{% with name = \"Alice\" %}{% include \"greeting.md\" %}{% endwith %}",
@@ -176,7 +210,7 @@ mod tests {
             "before {% include \"inner.md\" %} after".to_string(),
         );
 
-        let env = build_environment(&fragments).expect("expected value");
+        let env = build_environment(&fragments, None).expect("expected value");
         let template = env
             .template_from_str("start {% include \"outer.md\" %} end")
             .expect("expected value");
@@ -189,7 +223,7 @@ mod tests {
     #[test]
     fn test_missing_fragment_errors() {
         let fragments = HashMap::new();
-        let env = build_environment(&fragments).expect("expected value");
+        let env = build_environment(&fragments, None).expect("expected value");
         let template = env
             .template_from_str("{% include \"nonexistent.md\" %}")
             .expect("expected value");
@@ -200,7 +234,7 @@ mod tests {
     #[test]
     fn test_resolve_fragments_no_syntax() {
         let fragments = HashMap::new();
-        let env = build_environment(&fragments).expect("expected value");
+        let env = build_environment(&fragments, None).expect("expected value");
 
         let specs = vec![NormalizedSpec::Agent(NormalizedAgentSpec {
             path: "test.md".into(),
@@ -226,7 +260,7 @@ mod tests {
         let mut fragments = HashMap::new();
         fragments.insert("footer.md".to_string(), "-- End --".to_string());
 
-        let env = build_environment(&fragments).expect("expected value");
+        let env = build_environment(&fragments, None).expect("expected value");
 
         let specs = vec![NormalizedSpec::Agent(NormalizedAgentSpec {
             path: "test.md".into(),
@@ -252,7 +286,7 @@ mod tests {
         let mut fragments = HashMap::new();
         fragments.insert("rules.md".to_string(), "Rule 1\nRule 2\nRule 3".to_string());
 
-        let env = build_environment(&fragments).expect("expected value");
+        let env = build_environment(&fragments, None).expect("expected value");
         let template = env
             .template_from_str(
                 "Items:\n   {% filter indent(3, first=false) %}{% include \"rules.md\" %}{% endfilter %}",
@@ -272,7 +306,7 @@ mod tests {
             "Hello, {{ name }}!\nWelcome aboard.".to_string(),
         );
 
-        let env = build_environment(&fragments).expect("expected value");
+        let env = build_environment(&fragments, None).expect("expected value");
         let template = env
             .template_from_str(
                 "Message:\n    {% filter indent(4, first=false) %}{% with name = \"Alice\" %}{% include \"greeting.md\" %}{% endwith %}{% endfilter %}",
@@ -344,7 +378,7 @@ mod tests {
     fn test_specs_agents_length() {
         let ctx = test_context();
         let fragments = HashMap::new();
-        let env = build_environment(&fragments).expect("expected value");
+        let env = build_environment(&fragments, None).expect("expected value");
 
         let specs = vec![NormalizedSpec::Agent(NormalizedAgentSpec {
             path: "test.md".into(),
@@ -369,7 +403,7 @@ mod tests {
     fn test_specs_agents_sorted_names() {
         let ctx = test_context();
         let fragments = HashMap::new();
-        let env = build_environment(&fragments).expect("expected value");
+        let env = build_environment(&fragments, None).expect("expected value");
 
         let specs = vec![NormalizedSpec::Agent(NormalizedAgentSpec {
             path: "test.md".into(),
@@ -394,7 +428,7 @@ mod tests {
     fn test_specs_all_type_field() {
         let ctx = test_context();
         let fragments = HashMap::new();
-        let env = build_environment(&fragments).expect("expected value");
+        let env = build_environment(&fragments, None).expect("expected value");
 
         let specs = vec![NormalizedSpec::Agent(NormalizedAgentSpec {
             path: "test.md".into(),
@@ -423,7 +457,7 @@ mod tests {
             "listing.md".to_owned(),
             "Skills: {{ specs.skills | length }}".to_owned(),
         );
-        let env = build_environment(&fragments).expect("expected value");
+        let env = build_environment(&fragments, None).expect("expected value");
 
         let specs = vec![NormalizedSpec::Agent(NormalizedAgentSpec {
             path: "test.md".into(),
@@ -448,7 +482,7 @@ mod tests {
     fn test_no_variable_usage_unchanged() {
         let ctx = test_context();
         let fragments = HashMap::new();
-        let env = build_environment(&fragments).expect("expected value");
+        let env = build_environment(&fragments, None).expect("expected value");
 
         let specs = vec![NormalizedSpec::Agent(NormalizedAgentSpec {
             path: "test.md".into(),
@@ -510,7 +544,7 @@ mod tests {
             TemplateContext::from_specs_for_provider(&all_specs, Provider::Claude, Some(&cfg));
 
         let fragments = HashMap::new();
-        let env = build_environment(&fragments).expect("expected value");
+        let env = build_environment(&fragments, None).expect("expected value");
 
         // A spec body that references another spec by keyed access
         let specs = vec![NormalizedSpec::Skill(NormalizedSkillSpec {
@@ -533,5 +567,74 @@ mod tests {
             panic!("expected Skill variant")
         };
         assert_eq!(s.body, "Agent: tw-test-agent");
+    }
+
+    // --- `tool()` MiniJinja function tests ---
+
+    fn render_body(body: &str, provider: Option<Provider>) -> String {
+        let fragments = HashMap::new();
+        let env = build_environment(&fragments, provider).expect("expected value");
+        let template = env.template_from_str(body).expect("expected value");
+        template
+            .render(minijinja::context! {})
+            .expect("expected value")
+    }
+
+    #[test]
+    fn test_tool_resolves_for_claude() {
+        let out = render_body(r#"{{ tool("question") }}"#, Some(Provider::Claude));
+        assert_eq!(out, "AskUserQuestion");
+    }
+
+    #[test]
+    fn test_tool_resolves_for_cursor() {
+        let out = render_body(r#"{{ tool("question") }}"#, Some(Provider::Cursor));
+        assert_eq!(out, "question picker");
+    }
+
+    #[test]
+    fn test_tool_resolves_for_opencode() {
+        let out = render_body(r#"{{ tool("question") }}"#, Some(Provider::OpenCode));
+        assert_eq!(out, "question");
+    }
+
+    #[test]
+    fn test_tool_passes_through_canonical_when_provider_is_none() {
+        let out = render_body(r#"{{ tool("question") }}"#, None);
+        assert_eq!(out, "question");
+    }
+
+    #[test]
+    fn test_tool_resolves_inside_included_fragment() {
+        let mut fragments = HashMap::new();
+        fragments.insert(
+            "tool-ref.md".to_owned(),
+            r#"Use {{ tool("question") }}."#.to_owned(),
+        );
+        let env = build_environment(&fragments, Some(Provider::Claude)).expect("expected value");
+        let template = env
+            .template_from_str(r#"{% include "tool-ref.md" %}"#)
+            .expect("expected value");
+        let out = template
+            .render(minijinja::context! {})
+            .expect("expected value");
+        assert_eq!(out, "Use AskUserQuestion.");
+    }
+
+    #[test]
+    fn test_tool_unknown_name_errors() {
+        let fragments = HashMap::new();
+        let env = build_environment(&fragments, Some(Provider::Claude)).expect("expected value");
+        let template = env
+            .template_from_str(r#"{{ tool("nope") }}"#)
+            .expect("expected value");
+        let err = template
+            .render(minijinja::context! {})
+            .expect_err("expected render error for unknown tool");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("nope"),
+            "error message should contain offending name 'nope', got: {msg}"
+        );
     }
 }

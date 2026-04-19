@@ -238,6 +238,26 @@ fn adapt_tool(tool: &ToolFrontmatter) -> Vec<ClaudeTool> {
     }
 }
 
+/// Resolve a canonical tool to the name a Claude spec body should reference.
+///
+/// For tools that fan out to multiple frontmatter entries (e.g., `Tasks`),
+/// returns a single representative name — the one most commonly referenced
+/// in spec prose.
+pub fn body_tool_name(tool: &ToolFrontmatter) -> &'static str {
+    match tool {
+        ToolFrontmatter::Read => "Read",
+        ToolFrontmatter::Write => "Write",
+        ToolFrontmatter::Edit => "Edit",
+        ToolFrontmatter::Grep => "Grep",
+        ToolFrontmatter::Glob => "Glob",
+        ToolFrontmatter::Bash => "Bash",
+        ToolFrontmatter::WebFetch => "WebFetch",
+        ToolFrontmatter::WebSearch => "WebSearch",
+        ToolFrontmatter::Question => "AskUserQuestion",
+        ToolFrontmatter::Tasks => "TodoWrite",
+    }
+}
+
 pub fn post_write_hook(
     _kind: FileKind,
     _dest: &Path,
@@ -443,6 +463,19 @@ mod tests {
         });
 
         assert_eq!(model_facing_name(&spec, Some(&cfg)), "tw:test-agent");
+    }
+
+    #[test]
+    fn test_body_tool_name_question_maps_to_ask_user_question() {
+        assert_eq!(
+            body_tool_name(&ToolFrontmatter::Question),
+            "AskUserQuestion"
+        );
+    }
+
+    #[test]
+    fn test_body_tool_name_tasks_maps_to_todo_write() {
+        assert_eq!(body_tool_name(&ToolFrontmatter::Tasks), "TodoWrite");
     }
 
     #[test]

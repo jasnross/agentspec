@@ -1,7 +1,6 @@
 ---
 description: API design conventions for REST endpoints
-globs:
-  - src/api/**
+alwaysApply: true
 ---
 
 # API Design Rules

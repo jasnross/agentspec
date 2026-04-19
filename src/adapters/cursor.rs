@@ -7,7 +7,9 @@ use crate::compile::{AdapterConfig, GeneratedFile};
 use crate::plan::{FileKind, PostWriteHook};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
-use crate::spec::{NormalizedAgentSpec, NormalizedRuleSpec, NormalizedSkillSpec, NormalizedSpec};
+use crate::spec::{
+    NormalizedAgentSpec, NormalizedRuleSpec, NormalizedSkillSpec, NormalizedSpec, ToolFrontmatter,
+};
 
 // See: https://cursor.com/docs/subagents#configuration-fields
 #[derive(Serialize)]
@@ -148,6 +150,24 @@ fn adapt_rule_spec(
     Ok(vec![GeneratedFile::text(Provider::Cursor, path, content)])
 }
 
+/// Resolve a canonical tool to the name a Cursor spec body should reference.
+///
+/// For tools with no native Cursor equivalent, returns a descriptive phrase
+/// (not a real tool name) so the model understands the intent.
+pub fn body_tool_name(tool: &ToolFrontmatter) -> &'static str {
+    match tool {
+        ToolFrontmatter::Read => "read_file",
+        ToolFrontmatter::Write | ToolFrontmatter::Edit => "edit_file",
+        ToolFrontmatter::Grep => "grep_search",
+        ToolFrontmatter::Glob => "file_search",
+        ToolFrontmatter::Bash => "run_terminal_cmd",
+        ToolFrontmatter::WebSearch => "web_search",
+        ToolFrontmatter::WebFetch => "URL fetcher",
+        ToolFrontmatter::Question => "question picker",
+        ToolFrontmatter::Tasks => "task tracker",
+    }
+}
+
 pub fn post_write_hook(
     _kind: FileKind,
     _dest: &Path,
@@ -265,6 +285,23 @@ mod tests {
             content.contains("name: tw-test-skill"),
             "expected prefixed name with '-' delimiter, got: {content}"
         );
+    }
+
+    #[test]
+    fn test_body_tool_name_full_mapping() {
+        assert_eq!(body_tool_name(&ToolFrontmatter::Read), "read_file");
+        assert_eq!(body_tool_name(&ToolFrontmatter::Write), "edit_file");
+        assert_eq!(body_tool_name(&ToolFrontmatter::Edit), "edit_file");
+        assert_eq!(body_tool_name(&ToolFrontmatter::Grep), "grep_search");
+        assert_eq!(body_tool_name(&ToolFrontmatter::Glob), "file_search");
+        assert_eq!(body_tool_name(&ToolFrontmatter::Bash), "run_terminal_cmd");
+        assert_eq!(body_tool_name(&ToolFrontmatter::WebSearch), "web_search");
+        assert_eq!(body_tool_name(&ToolFrontmatter::WebFetch), "URL fetcher");
+        assert_eq!(
+            body_tool_name(&ToolFrontmatter::Question),
+            "question picker"
+        );
+        assert_eq!(body_tool_name(&ToolFrontmatter::Tasks), "task tracker");
     }
 
     #[test]

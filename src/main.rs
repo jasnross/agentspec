@@ -52,8 +52,9 @@ fn main() -> Result<()> {
         Command::Validate(_) => {
             let validated = load_and_validate(&config, &dirs)?;
             let templating = load_templating(&config)?;
-            // Check template syntax by resolving with unprefixed context
-            let env = templating.build_environment()?;
+            // Check template syntax by resolving with unprefixed context.
+            // `None` provider → `tool()` passes canonical names through unchanged.
+            let env = templating.build_environment(None)?;
             let context = TemplateContext::from_specs(validated.specs());
             resolve_fragments(validated.into_specs(), &env, &context)?;
             eprintln!("validation complete");

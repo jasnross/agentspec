@@ -127,13 +127,13 @@ pub(crate) fn compile_specs(
     providers: &[Provider],
     adapter_configs: &HashMap<Provider, AdapterConfig>,
 ) -> Result<CompileResult> {
-    let env = templating.build_environment()?;
     let mut files: Vec<GeneratedFile> = Vec::new();
 
     let mut sorted_providers: Vec<Provider> = providers.to_vec();
     sorted_providers.sort_by_key(ToString::to_string);
 
     for &provider in &sorted_providers {
+        let env = templating.build_environment(Some(provider))?;
         let adapter_config = adapter_configs.get(&provider);
         let context = TemplateContext::from_specs_for_provider(specs, provider, adapter_config);
         let resolved = resolve_fragments(specs.to_vec(), &env, &context)?;
