@@ -584,18 +584,30 @@ mod tests {
     fn test_tool_resolves_for_claude() {
         let out = render_body(r#"{{ tool("question") }}"#, Some(Provider::Claude));
         assert_eq!(out, "AskUserQuestion");
+        let out = render_body(r#"{{ tool("subagent") }}"#, Some(Provider::Claude));
+        assert_eq!(out, "Agent");
+        let out = render_body(r#"{{ tool("skill") }}"#, Some(Provider::Claude));
+        assert_eq!(out, "Skill");
     }
 
     #[test]
     fn test_tool_resolves_for_cursor() {
         let out = render_body(r#"{{ tool("question") }}"#, Some(Provider::Cursor));
-        assert_eq!(out, "question picker");
+        assert_eq!(out, "Ask questions");
+        let out = render_body(r#"{{ tool("subagent") }}"#, Some(Provider::Cursor));
+        assert_eq!(out, "Task");
+        let out = render_body(r#"{{ tool("skill") }}"#, Some(Provider::Cursor));
+        assert_eq!(out, "Skill runner");
     }
 
     #[test]
     fn test_tool_resolves_for_opencode() {
         let out = render_body(r#"{{ tool("question") }}"#, Some(Provider::OpenCode));
         assert_eq!(out, "question");
+        let out = render_body(r#"{{ tool("subagent") }}"#, Some(Provider::OpenCode));
+        assert_eq!(out, "task");
+        let out = render_body(r#"{{ tool("skill") }}"#, Some(Provider::OpenCode));
+        assert_eq!(out, "skill");
     }
 
     #[test]

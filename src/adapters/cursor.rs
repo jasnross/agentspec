@@ -152,19 +152,22 @@ fn adapt_rule_spec(
 
 /// Resolve a canonical tool to the name a Cursor spec body should reference.
 ///
-/// For tools with no native Cursor equivalent, returns a descriptive phrase
-/// (not a real tool name) so the model understands the intent.
+/// Returns either a display label sourced from `cursor.com/docs/agent/tools`
+/// (or `cursor.com/docs/subagents` for `Subagent`) or a descriptive phrase
+/// when Cursor documents no equivalent capability. Descriptive-phrase arms
+/// are marked inline.
 pub fn body_tool_name(tool: &ToolFrontmatter) -> &'static str {
     match tool {
-        ToolFrontmatter::Read => "read_file",
-        ToolFrontmatter::Write | ToolFrontmatter::Edit => "edit_file",
-        ToolFrontmatter::Grep => "grep_search",
-        ToolFrontmatter::Glob => "file_search",
-        ToolFrontmatter::Bash => "run_terminal_cmd",
-        ToolFrontmatter::WebSearch => "web_search",
-        ToolFrontmatter::WebFetch => "URL fetcher",
-        ToolFrontmatter::Question => "question picker",
-        ToolFrontmatter::Tasks => "task tracker",
+        ToolFrontmatter::Read => "Read files",
+        ToolFrontmatter::Write | ToolFrontmatter::Edit => "Edit files",
+        ToolFrontmatter::Grep | ToolFrontmatter::Glob => "Search files and folders",
+        ToolFrontmatter::Bash => "Run shell commands",
+        ToolFrontmatter::WebSearch => "Web",
+        ToolFrontmatter::WebFetch => "URL fetcher", // descriptive: Cursor docs name no URL-fetch tool
+        ToolFrontmatter::Question => "Ask questions",
+        ToolFrontmatter::Tasks => "TODO tracker", // descriptive: Cursor docs name no TODO-list tool
+        ToolFrontmatter::Subagent => "Task",
+        ToolFrontmatter::Skill => "Skill runner", // descriptive: Cursor docs name no skill-invocation tool
     }
 }
 
@@ -289,19 +292,24 @@ mod tests {
 
     #[test]
     fn test_body_tool_name_full_mapping() {
-        assert_eq!(body_tool_name(&ToolFrontmatter::Read), "read_file");
-        assert_eq!(body_tool_name(&ToolFrontmatter::Write), "edit_file");
-        assert_eq!(body_tool_name(&ToolFrontmatter::Edit), "edit_file");
-        assert_eq!(body_tool_name(&ToolFrontmatter::Grep), "grep_search");
-        assert_eq!(body_tool_name(&ToolFrontmatter::Glob), "file_search");
-        assert_eq!(body_tool_name(&ToolFrontmatter::Bash), "run_terminal_cmd");
-        assert_eq!(body_tool_name(&ToolFrontmatter::WebSearch), "web_search");
-        assert_eq!(body_tool_name(&ToolFrontmatter::WebFetch), "URL fetcher");
+        assert_eq!(body_tool_name(&ToolFrontmatter::Read), "Read files");
+        assert_eq!(body_tool_name(&ToolFrontmatter::Write), "Edit files");
+        assert_eq!(body_tool_name(&ToolFrontmatter::Edit), "Edit files");
         assert_eq!(
-            body_tool_name(&ToolFrontmatter::Question),
-            "question picker"
+            body_tool_name(&ToolFrontmatter::Grep),
+            "Search files and folders"
         );
-        assert_eq!(body_tool_name(&ToolFrontmatter::Tasks), "task tracker");
+        assert_eq!(
+            body_tool_name(&ToolFrontmatter::Glob),
+            "Search files and folders"
+        );
+        assert_eq!(body_tool_name(&ToolFrontmatter::Bash), "Run shell commands");
+        assert_eq!(body_tool_name(&ToolFrontmatter::WebSearch), "Web");
+        assert_eq!(body_tool_name(&ToolFrontmatter::WebFetch), "URL fetcher");
+        assert_eq!(body_tool_name(&ToolFrontmatter::Question), "Ask questions");
+        assert_eq!(body_tool_name(&ToolFrontmatter::Tasks), "TODO tracker");
+        assert_eq!(body_tool_name(&ToolFrontmatter::Subagent), "Task");
+        assert_eq!(body_tool_name(&ToolFrontmatter::Skill), "Skill runner");
     }
 
     #[test]

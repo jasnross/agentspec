@@ -231,6 +231,8 @@ pub enum ToolFrontmatter {
     WebSearch,
     Question,
     Tasks,
+    Subagent,
+    Skill,
 }
 
 #[derive(Clone, Debug)]

@@ -235,6 +235,8 @@ fn adapt_tool(tool: &ToolFrontmatter) -> Vec<ClaudeTool> {
             ClaudeTool::TaskStop,
             ClaudeTool::TodoWrite,
         ],
+        ToolFrontmatter::Subagent => vec![ClaudeTool::Agent],
+        ToolFrontmatter::Skill => vec![ClaudeTool::Skill],
     }
 }
 
@@ -255,6 +257,8 @@ pub fn body_tool_name(tool: &ToolFrontmatter) -> &'static str {
         ToolFrontmatter::WebSearch => "WebSearch",
         ToolFrontmatter::Question => "AskUserQuestion",
         ToolFrontmatter::Tasks => "TodoWrite",
+        ToolFrontmatter::Subagent => "Agent",
+        ToolFrontmatter::Skill => "Skill",
     }
 }
 
@@ -476,6 +480,30 @@ mod tests {
     #[test]
     fn test_body_tool_name_tasks_maps_to_todo_write() {
         assert_eq!(body_tool_name(&ToolFrontmatter::Tasks), "TodoWrite");
+    }
+
+    #[test]
+    fn test_body_tool_name_subagent_maps_to_agent() {
+        assert_eq!(body_tool_name(&ToolFrontmatter::Subagent), "Agent");
+    }
+
+    #[test]
+    fn test_body_tool_name_skill_maps_to_skill() {
+        assert_eq!(body_tool_name(&ToolFrontmatter::Skill), "Skill");
+    }
+
+    #[test]
+    fn test_adapt_tool_subagent_maps_to_agent() {
+        let tools = adapt_tool(&ToolFrontmatter::Subagent);
+        let yaml = serde_yml::to_string(&tools).expect("expected value");
+        assert_eq!(yaml, "- Agent\n");
+    }
+
+    #[test]
+    fn test_adapt_tool_skill_maps_to_skill() {
+        let tools = adapt_tool(&ToolFrontmatter::Skill);
+        let yaml = serde_yml::to_string(&tools).expect("expected value");
+        assert_eq!(yaml, "- Skill\n");
     }
 
     #[test]

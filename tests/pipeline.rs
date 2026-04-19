@@ -209,20 +209,37 @@ fn test_compile_resolves_tool_per_provider() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "compile failed:\n{stderr}");
 
-    // The fragment `shared-note.md` uses `{{ tool("question") }}` and is included
-    // from `basic-skill`. The canonical name should resolve per provider.
+    // The fragment `shared-note.md` uses `{{ tool("question") }}`,
+    // `{{ tool("subagent") }}`, and `{{ tool("skill") }}` and is included
+    // from `basic-skill`. Each canonical should resolve per provider.
     let claude_path = dir.join("generated/claude/skills/basic-skill/SKILL.md");
     let claude = std::fs::read_to_string(&claude_path).expect("failed to read claude basic-skill");
     assert!(
         claude.contains("AskUserQuestion"),
         "expected 'AskUserQuestion' in claude basic-skill body, got:\n{claude}"
     );
+    assert!(
+        claude.contains("`Agent`"),
+        "expected '`Agent`' in claude basic-skill body, got:\n{claude}"
+    );
+    assert!(
+        claude.contains("`Skill`"),
+        "expected '`Skill`' in claude basic-skill body, got:\n{claude}"
+    );
 
     let cursor_path = dir.join("generated/cursor/skills/basic-skill/SKILL.md");
     let cursor = std::fs::read_to_string(&cursor_path).expect("failed to read cursor basic-skill");
     assert!(
-        cursor.contains("question picker"),
-        "expected 'question picker' in cursor basic-skill body, got:\n{cursor}"
+        cursor.contains("Ask questions"),
+        "expected 'Ask questions' in cursor basic-skill body, got:\n{cursor}"
+    );
+    assert!(
+        cursor.contains("`Task`"),
+        "expected '`Task`' in cursor basic-skill body, got:\n{cursor}"
+    );
+    assert!(
+        cursor.contains("`Skill runner`"),
+        "expected '`Skill runner`' in cursor basic-skill body, got:\n{cursor}"
     );
 
     let opencode_path = dir.join("generated/opencode/commands/basic-skill.md");
@@ -237,12 +254,36 @@ fn test_compile_resolves_tool_per_provider() {
         "expected '`question`' in opencode basic-skill body, got:\n{opencode}"
     );
     assert!(
+        opencode.contains("`task`"),
+        "expected '`task`' in opencode basic-skill body, got:\n{opencode}"
+    );
+    assert!(
+        opencode.contains("`skill`"),
+        "expected '`skill`' in opencode basic-skill body, got:\n{opencode}"
+    );
+    assert!(
         !opencode.contains("AskUserQuestion"),
         "opencode body should not contain the Claude tool name, got:\n{opencode}"
     );
     assert!(
-        !opencode.contains("question picker"),
+        !opencode.contains("Ask questions"),
         "opencode body should not contain the Cursor tool name, got:\n{opencode}"
+    );
+    assert!(
+        !opencode.contains("`Agent`"),
+        "opencode body should not contain the Claude subagent name, got:\n{opencode}"
+    );
+    assert!(
+        !opencode.contains("`Task`"),
+        "opencode body should not contain the Cursor subagent name, got:\n{opencode}"
+    );
+    assert!(
+        !opencode.contains("`Skill`"),
+        "opencode body should not contain the Claude skill name, got:\n{opencode}"
+    );
+    assert!(
+        !opencode.contains("`Skill runner`"),
+        "opencode body should not contain the Cursor skill name, got:\n{opencode}"
     );
 }
 

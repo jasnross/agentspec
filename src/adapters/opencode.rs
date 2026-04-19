@@ -240,15 +240,21 @@ pub fn body_tool_name(tool: &ToolFrontmatter) -> &'static str {
         ToolFrontmatter::WebSearch => "websearch",
         ToolFrontmatter::Question => "question",
         ToolFrontmatter::Tasks => "todowrite",
+        ToolFrontmatter::Subagent => "task",
+        ToolFrontmatter::Skill => "skill",
     }
 }
 
 /// Build the boolean tool map used by `OpenCode` agents and agent-invocable skills.
 ///
 /// Initializes all `ToolFrontmatter`-expressible `OpenCode` tools to false, then enables
-/// the ones listed in the spec. `OpenCode` tools outside this set — `apply_patch`,
-/// `codesearch`, `lsp`, `plan_exit`, and `invalid` — are omitted and fall back to
-/// `OpenCode`'s default behavior (enabled when not explicitly disabled).
+/// the ones listed in the spec. User-facing `OpenCode` tools outside this set
+/// (`apply_patch`, `lsp`) are omitted and fall back to `OpenCode`'s default behavior
+/// (enabled when not explicitly disabled).
+///
+/// Note: `OpenCode` is transitioning from the per-agent `tools:` map to a `permissions`
+/// system; `task` (subagent dispatch) appears there rather than in the tools docs.
+/// See <https://opencode.ai/docs/permissions/>.
 fn build_tool_map(tools: &[ToolFrontmatter]) -> IndexMap<String, bool> {
     let mut map: IndexMap<String, bool> = ToolFrontmatter::VARIANTS
         .iter()
@@ -398,6 +404,16 @@ mod tests {
     }
 
     #[test]
+    fn test_body_tool_name_subagent_maps_to_task() {
+        assert_eq!(body_tool_name(&ToolFrontmatter::Subagent), "task");
+    }
+
+    #[test]
+    fn test_body_tool_name_skill_identity() {
+        assert_eq!(body_tool_name(&ToolFrontmatter::Skill), "skill");
+    }
+
+    #[test]
     fn test_build_tool_map_keys_are_sorted() {
         let tools = &[ToolFrontmatter::Write, ToolFrontmatter::Read];
         let map = build_tool_map(tools);
@@ -438,6 +454,8 @@ mod tests {
             "  grep: false\n",
             "  question: false\n",
             "  read: false\n",
+            "  skill: false\n",
+            "  task: false\n",
             "  todowrite: false\n",
             "  webfetch: false\n",
             "  websearch: false\n",

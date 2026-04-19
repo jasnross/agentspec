@@ -155,6 +155,8 @@ Python or Ruby scripts.
 | `websearch` | Search the web                                |
 | `question`  | Ask the user a question                       |
 | `tasks`     | Create and manage tasks for tracking progress |
+| `subagent`  | Dispatch work to a subagent                   |
+| `skill`     | Invoke a named skill                          |
 
 ### Templating
 
