@@ -1136,6 +1136,170 @@ fn test_validate_malformed_ignore_pattern_errors() {
 }
 
 #[test]
+fn test_validate_lists_ignored_paths() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    std::fs::write(
+        dir.join("spec/skills/scripted-skill/scripts/test_helper.bats"),
+        "bats test\n",
+    )
+    .expect("failed to write bats file");
+    write_ignore_config(&dir, &["**/*.bats"]);
+
+    let output = std::process::Command::new(agentspec())
+        .arg("validate")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec validate");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "validate failed:\n{stderr}");
+    assert!(
+        stderr.contains("ignoring 1 path"),
+        "expected 'ignoring 1 path' in stderr, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("test_helper.bats"),
+        "expected bats file in stderr, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("(pattern: **/*.bats)"),
+        "expected pattern annotation in stderr, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn test_validate_warns_unused_pattern() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    write_ignore_config(&dir, &["**/never-matches.xyz"]);
+
+    let output = std::process::Command::new(agentspec())
+        .arg("validate")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec validate");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "validate failed:\n{stderr}");
+    assert!(
+        stderr.contains("warning: ignore pattern '**/never-matches.xyz' matched no files"),
+        "expected unused-pattern warning in stderr, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn test_compile_silent_without_verbose() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    std::fs::write(
+        dir.join("spec/skills/scripted-skill/scripts/test_helper.bats"),
+        "bats test\n",
+    )
+    .expect("failed to write bats file");
+    write_ignore_config(&dir, &["**/*.bats"]);
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+    // All patterns matched, so no unused-pattern warning fires.
+    // Without --verbose, the listing should not appear.
+    assert!(
+        !stderr.contains("ignoring "),
+        "expected no listing in non-verbose compile, got:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("warning: ignore pattern"),
+        "expected no warnings when all patterns match, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn test_compile_verbose_lists_ignored() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    std::fs::write(
+        dir.join("spec/skills/scripted-skill/scripts/test_helper.bats"),
+        "bats test\n",
+    )
+    .expect("failed to write bats file");
+    write_ignore_config(&dir, &["**/*.bats"]);
+
+    let output = std::process::Command::new(agentspec())
+        .args(["compile", "--verbose"])
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile --verbose");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+    assert!(
+        stderr.contains("ignoring "),
+        "expected listing with --verbose, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("test_helper.bats"),
+        "expected bats file in listing, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn test_sync_dry_run_lists_ignored() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    std::fs::write(
+        dir.join("spec/skills/scripted-skill/scripts/test_helper.bats"),
+        "bats test\n",
+    )
+    .expect("failed to write bats file");
+    // write_ignore_config omits sync config — sync --dry-run requires one.
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        r#"
+[spec]
+sources_dir = "spec"
+ignore = ["**/*.bats"]
+
+[compile]
+output_dir = "generated"
+
+[presets.default]
+claude = { model = "sonnet" }
+opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
+cursor = { model = "fast" }
+
+[sync.claude]
+mode = "user"
+"#,
+    )
+    .expect("failed to write agentspec.toml");
+
+    let home = dir.join("home");
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--dry-run"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync --dry-run");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "sync dry-run failed:\n{stderr}");
+    assert!(
+        stderr.contains("ignoring "),
+        "expected listing with --dry-run, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("test_helper.bats"),
+        "expected bats file in listing, got:\n{stderr}"
+    );
+}
+
+#[test]
 fn test_compile_no_ignore_field_still_works() {
     // Baseline regression: an unconfigured `ignore` field must not change the
     // output of a fixture compile.

@@ -206,7 +206,11 @@ output (typestate pattern — passing the wrong stage is a compile error):
 
 1. **Load** — `specs.rs` (`Specs::load`) reads `.md` files from `spec/agents/`,
    `spec/skills/`, and `spec/rules/`, parses frontmatter via `gray_matter` into
-   typed structs → `Specs`
+   typed structs → `(Specs, LoadReport)`. Files (and subtrees) matching any
+   pattern in `[spec].ignore` are skipped before frontmatter parsing via
+   `WalkDir::filter_entry` pruning; the `LoadReport` records what was filtered
+   and which patterns matched zero files so `main.rs` can surface warnings and
+   listings.
 2. **Normalize** — `validate.rs` applies defaults → `NormalizedSpecs`
 3. **Validate** — `validate.rs` runs semantic checks (duplicate IDs, unknown
    presets, etc.) → `ValidatedSpecs`

@@ -38,6 +38,13 @@ pub struct CommonArgs {
     /// Providers to target (repeatable: `--provider claude --provider cursor`, or comma-separated: `--provider claude,cursor`)
     #[arg(long, value_delimiter = ',')]
     pub provider: Vec<Provider>,
+
+    /// Show detailed diagnostics. For `compile` and `sync`, emits the full
+    /// [spec].ignore listing; for `sync`, also shows unchanged sync
+    /// destinations. `validate` always shows the full listing regardless of
+    /// this flag.
+    #[arg(long)]
+    pub verbose: bool,
 }
 
 /// Arguments for the `sync` subcommand.
@@ -49,10 +56,6 @@ pub struct SyncArgs {
     /// Shows what would be synced without making changes
     #[arg(long)]
     pub dry_run: bool,
-
-    /// Show all sync destinations including unchanged ones
-    #[arg(long)]
-    pub verbose: bool,
 
     /// Allow overwriting user-owned files at sync destinations (disables collision errors)
     #[arg(long)]
@@ -73,14 +76,4 @@ pub struct SyncArgs {
     /// Override the content-reference prefix (e.g., "tw:" for plugin namespaces)
     #[arg(long)]
     pub content_prefix: Option<String>,
-}
-
-impl Command {
-    pub fn args(&self) -> Option<&CommonArgs> {
-        match self {
-            Command::Validate(args) | Command::Compile(args) => Some(args),
-            Command::Sync(args) => Some(&args.common),
-            Command::Completions { .. } => None,
-        }
-    }
 }

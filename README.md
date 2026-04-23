@@ -113,6 +113,46 @@ Supporting files preserve their relative paths and executable permissions in the
 compiled output. The skill's instructions can then reference the script by its
 relative path (e.g., `scripts/deploy.sh`).
 
+#### Ignoring files
+
+The `[spec].ignore` option in `agentspec.toml` is a list of glob patterns for
+files (and subtrees) to skip when reading the spec directory. Use it to keep
+test files, fixtures, or editor artifacts colocated with the code they relate
+to without shipping them to downstream tool config dirs.
+
+Patterns are matched against paths **relative to `sources_dir`**. Slashless
+patterns match only top-level entries — use `**/` explicitly to match at any
+depth:
+
+- `*.bats` matches `test.bats` only if it's directly under `sources_dir/`.
+- `**/*.bats` matches `.bats` files anywhere in the tree.
+- `foo/**` prunes the `foo` subtree entirely (neither descended into nor
+  stat'd).
+
+Example — bats tests colocated with a skill's scripts:
+
+```
+spec/skills/deploy/
+├── SKILL.md
+├── scripts/
+│   └── deploy.sh
+└── tests/
+    └── deploy.bats    # colocated test; ignored
+```
+
+```toml
+[spec]
+ignore = ["**/*.bats"]
+```
+
+`agentspec validate` reports which files were ignored and warns about patterns
+that matched zero files. Use `agentspec compile --verbose` or
+`agentspec sync --verbose` (or `--dry-run`) to see the same listing during a
+build.
+
+Gitignore-style negation (`!pattern`) and trailing-slash directory sugar
+(`foo/`) are **not** supported — write `foo/**` explicitly.
+
 ### Rules
 
 Rules are always-on instructions injected into every conversation. Each rule is
@@ -329,6 +369,7 @@ Place an `agentspec.toml` in your project root.
 
 [spec]
 sources_dir = "spec" # Directory where your spec sources are located. Can use relative or absolute paths.
+ignore = [] # See "Ignoring files" above for details.
 
 [compile]
 output_dir = "generated" # Output for the compile command. Can be a relative or absolute path.

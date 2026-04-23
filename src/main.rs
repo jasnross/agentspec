@@ -9,11 +9,11 @@ use agentspec::compile::{self, AdapterConfig, CompileResult};
 use agentspec::plan::compile_plan;
 use agentspec::presets::ProviderPresetsMap;
 use agentspec::provider::Provider;
-use agentspec::specs::{LoadReport, SpecDirs, Specs, ValidatedSpecs};
+use agentspec::specs::{IgnoreMatcher, LoadReport, SpecDirs, Specs, ValidatedSpecs};
 use agentspec::templating::{TemplateContext, TemplatingResources, resolve_fragments};
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
-use cli::{Cli, Command, CommonArgs};
+use cli::{Cli, Command};
 use config::AgentspecConfig;
 use emit::emit;
 use strum::VariantArray;
@@ -33,11 +33,6 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let args: &CommonArgs = match cli.command.args() {
-        Some(args) => args,
-        None => anyhow::bail!("internal error: command args unavailable"),
-    };
-
     let cwd = std::env::current_dir().context("failed to determine current directory")?;
     let config = AgentspecConfig::discover(&cwd)?;
 
@@ -53,7 +48,10 @@ fn main() -> Result<()> {
 
     match &cli.command {
         Command::Validate(_) => {
-            let (validated, _report) = load_and_validate(&config, &dirs)?;
+            let (validated, report) = load_and_validate(&config, &dirs)?;
+            // `validate` always shows the full listing — this is the command
+            // users run to inspect their `[spec].ignore` effect.
+            surface_load_report(&dirs.ignore, &report, ReportDisplay::Full);
             let templating = load_templating(&config)?;
             // Check template syntax by resolving with unprefixed context.
             // `None` provider → `tool()` passes canonical names through unchanged.
@@ -63,7 +61,13 @@ fn main() -> Result<()> {
             eprintln!("validation complete");
         }
         Command::Sync(sync_args) => {
-            let (validated, _report) = load_and_validate(&config, &dirs)?;
+            let (validated, report) = load_and_validate(&config, &dirs)?;
+            let display = if sync_args.dry_run || sync_args.common.verbose {
+                ReportDisplay::Full
+            } else {
+                ReportDisplay::WarningsOnly
+            };
+            surface_load_report(&dirs.ignore, &report, display);
             let templating = load_templating(&config)?;
             let targets = resolve_sync_targets(&config, sync_args)?;
             let sync_providers: Vec<Provider> = targets.iter().map(|(p, _)| *p).collect();
@@ -83,18 +87,24 @@ fn main() -> Result<()> {
 
             let home = home_dir()?;
             let plan = sync_plan(&result, &targets, &home, &cwd)?;
-            emit(&plan, sync_args.dry_run, sync_args.verbose)?;
+            emit(&plan, sync_args.dry_run, sync_args.common.verbose)?;
         }
-        Command::Compile(_) => {
-            let (validated, _report) = load_and_validate(&config, &dirs)?;
+        Command::Compile(compile_args) => {
+            let (validated, report) = load_and_validate(&config, &dirs)?;
+            let display = if compile_args.verbose {
+                ReportDisplay::Full
+            } else {
+                ReportDisplay::WarningsOnly
+            };
+            surface_load_report(&dirs.ignore, &report, display);
             let templating = load_templating(&config)?;
 
             let adapter_configs = AgentspecConfig::adapter_configs(&config.sync_targets());
 
-            let providers: Vec<Provider> = if args.provider.is_empty() {
+            let providers: Vec<Provider> = if compile_args.provider.is_empty() {
                 Provider::VARIANTS.to_vec()
             } else {
-                args.provider.clone()
+                compile_args.provider.clone()
             };
 
             let (result, providers) = run_compile(
@@ -119,9 +129,83 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// The `LoadReport` is bubbled out so each command can surface ignore-pattern
-/// diagnostics — this is a no-op today (call sites bind `_report`) and wired
-/// in during the observability phase.
+/// Display mode for `surface_load_report`.
+#[derive(Clone, Copy, Debug)]
+enum ReportDisplay {
+    /// Unused-pattern warnings only (the default for `compile` / `sync`
+    /// without `--verbose`).
+    WarningsOnly,
+    /// Unused-pattern warnings plus the full ignored-path listing.
+    Full,
+}
+
+/// Print ignore-pattern diagnostics to stderr.
+///
+/// Unused-pattern warnings are always printed. The ignored-path listing is
+/// printed only for `Full`.
+fn surface_load_report(matcher: &IgnoreMatcher, report: &LoadReport, display: ReportDisplay) {
+    // Always: unused-pattern warnings.
+    for idx in report.unused_pattern_indices() {
+        if let Some(pat) = matcher.pattern(idx) {
+            eprintln!("warning: ignore pattern '{pat}' matched no files");
+        }
+    }
+
+    if matches!(display, ReportDisplay::WarningsOnly) || report.ignored.is_empty() {
+        return;
+    }
+
+    for line in format_ignored_listing(matcher, report) {
+        eprintln!("{line}");
+    }
+}
+
+/// Produce the ignored-path listing as a sequence of lines, ready for stderr.
+///
+/// Pure function — takes a matcher + report and returns printable strings.
+/// Split from `surface_load_report` to make formatting unit-testable.
+fn format_ignored_listing(matcher: &IgnoreMatcher, report: &LoadReport) -> Vec<String> {
+    if report.ignored.is_empty() {
+        return Vec::new();
+    }
+
+    let pruned_count = report.ignored.iter().filter(|p| p.pruned).count();
+    let total = report.ignored.len();
+
+    let mut lines = Vec::with_capacity(1 + total);
+    let paths_word = if total == 1 { "path" } else { "paths" };
+    let summary = if pruned_count == 0 {
+        format!("ignoring {total} {paths_word}:")
+    } else {
+        let subtrees_word = if pruned_count == 1 {
+            "subtree"
+        } else {
+            "subtrees"
+        };
+        format!("ignoring {total} {paths_word} ({pruned_count} pruned {subtrees_word}):")
+    };
+    lines.push(summary);
+
+    let max_rel = report
+        .ignored
+        .iter()
+        .map(|p| p.rel_path.display().to_string().len())
+        .max()
+        .unwrap_or(0);
+    for entry in &report.ignored {
+        let pattern = matcher.pattern(entry.pattern_index).unwrap_or("<unknown>");
+        let suffix = if entry.pruned { ", pruned" } else { "" };
+        lines.push(format!(
+            "  {:<max_rel$}  (pattern: {pattern}{suffix})",
+            entry.rel_path.display(),
+        ));
+    }
+    lines
+}
+
+/// Load specs and run semantic validation, returning the validated specs
+/// alongside the [`LoadReport`] so the caller can surface ignore-pattern
+/// diagnostics via [`surface_load_report`].
 fn load_and_validate(
     config: &AgentspecConfig,
     dirs: &SpecDirs,
@@ -167,4 +251,63 @@ fn run_compile(
 /// Returns the current user's home directory.
 fn home_dir() -> Result<std::path::PathBuf> {
     home::home_dir().ok_or_else(|| anyhow::anyhow!("could not determine home directory"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use agentspec::specs::LoadReport;
+
+    use super::*;
+
+    #[test]
+    fn test_format_ignored_listing_empty_returns_no_lines() {
+        let matcher = IgnoreMatcher::empty();
+        let report = LoadReport::default();
+        assert!(format_ignored_listing(&matcher, &report).is_empty());
+    }
+
+    #[test]
+    fn test_format_ignored_listing_renders_file_and_pruned_entries() {
+        let matcher =
+            IgnoreMatcher::compile(&["**/*.bats".to_string(), "skills/deploy/**".to_string()])
+                .expect("expected value");
+        let mut report = LoadReport::with_matcher(&matcher);
+        report.record(PathBuf::from("skills/s/test.bats"), 0, false);
+        report.record(PathBuf::from("skills/deploy"), 1, true);
+
+        let lines = format_ignored_listing(&matcher, &report);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "ignoring 2 paths (1 pruned subtree):");
+        assert!(lines[1].contains("skills/s/test.bats"));
+        assert!(lines[1].contains("(pattern: **/*.bats)"));
+        assert!(lines[2].contains("skills/deploy"));
+        assert!(lines[2].contains("(pattern: skills/deploy/**, pruned)"));
+    }
+
+    #[test]
+    fn test_format_ignored_listing_drops_pruned_parenthetical_when_zero() {
+        // When no subtrees are pruned, the summary should be "ignoring 1 path:"
+        // — not "ignoring 1 path (0 pruned subtrees):".
+        let matcher = IgnoreMatcher::compile(&["**/*.bats".to_string()]).expect("expected value");
+        let mut report = LoadReport::with_matcher(&matcher);
+        report.record(PathBuf::from("skills/s/test.bats"), 0, false);
+
+        let lines = format_ignored_listing(&matcher, &report);
+        assert_eq!(lines[0], "ignoring 1 path:");
+    }
+
+    #[test]
+    fn test_format_ignored_listing_plural_pruned() {
+        let matcher =
+            IgnoreMatcher::compile(&["skills/a/**".to_string(), "skills/b/**".to_string()])
+                .expect("expected value");
+        let mut report = LoadReport::with_matcher(&matcher);
+        report.record(PathBuf::from("skills/a"), 0, true);
+        report.record(PathBuf::from("skills/b"), 1, true);
+
+        let lines = format_ignored_listing(&matcher, &report);
+        assert_eq!(lines[0], "ignoring 2 paths (2 pruned subtrees):");
+    }
 }
