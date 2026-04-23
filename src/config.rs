@@ -242,7 +242,6 @@ impl SpecConfig {
     /// Compile the raw `ignore` patterns into an [`IgnoreMatcher`].
     ///
     /// Returns an error naming the first malformed pattern.
-    #[allow(dead_code)] // wired into SpecDirs + Specs::load in Phase 2
     pub fn compile_ignore_matcher(&self) -> Result<agentspec::specs::IgnoreMatcher> {
         agentspec::specs::IgnoreMatcher::compile(&self.ignore)
     }

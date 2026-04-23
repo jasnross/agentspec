@@ -988,3 +988,175 @@ content-prefix = "original:"
         "expected CLI-overridden agent reference 'cli:test-agent' in body, got:\n{content}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// [spec].ignore tests
+// ---------------------------------------------------------------------------
+
+/// Rewrite `agentspec.toml` to retain the default `[compile]` / `[presets]`
+/// blocks and add a `[spec]` section with the given `ignore` patterns.
+fn write_ignore_config(dir: &Path, patterns: &[&str]) {
+    let patterns_toml: Vec<String> = patterns.iter().map(|p| format!("\"{p}\"")).collect();
+    let toml = format!(
+        r#"
+[spec]
+sources_dir = "spec"
+ignore = [{}]
+
+[compile]
+output_dir = "generated"
+
+[presets.default]
+claude = {{ model = "sonnet" }}
+opencode = {{ model = "anthropic/claude-sonnet-4-5", variant = "high" }}
+cursor = {{ model = "fast" }}
+"#,
+        patterns_toml.join(", ")
+    );
+    // `allow-expect-in-tests` applies only inside `#[test]` fns, so this
+    // helper uses the `assert!(…is_ok…)` idiom established by `setup()`.
+    let result = std::fs::write(dir.join("agentspec.toml"), toml);
+    assert!(result.is_ok(), "failed to write agentspec.toml: {result:?}");
+}
+
+#[test]
+fn test_compile_ignores_bats_files() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    // Drop a colocated test file next to the scripted-skill script.
+    std::fs::write(
+        dir.join("spec/skills/scripted-skill/scripts/test_helper.bats"),
+        "bats test\n",
+    )
+    .expect("failed to write bats file");
+
+    write_ignore_config(&dir, &["**/*.bats"]);
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    // helper.sh should still flow through to providers that emit supporting
+    // files (Claude, Cursor). OpenCode emits `commands/<name>.md` and no
+    // supporting files, so we only verify the .bats file is absent from
+    // providers that would otherwise ship it.
+    for provider in ["claude", "cursor"] {
+        assert!(
+            dir.join(format!(
+                "generated/{provider}/skills/scripted-skill/scripts/helper.sh"
+            ))
+            .exists(),
+            "{provider}: helper.sh should be present"
+        );
+        assert!(
+            !dir.join(format!(
+                "generated/{provider}/skills/scripted-skill/scripts/test_helper.bats"
+            ))
+            .exists(),
+            "{provider}: test_helper.bats should have been ignored"
+        );
+    }
+}
+
+#[test]
+fn test_compile_prunes_ignored_subtree() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    // Add a fixtures/ subtree next to the scripted-skill script.
+    let fixtures_dir = dir.join("spec/skills/scripted-skill/fixtures");
+    std::fs::create_dir_all(&fixtures_dir).expect("failed to create fixtures dir");
+    std::fs::write(fixtures_dir.join("big.dat"), "binary blob\n")
+        .expect("failed to write fixture file");
+
+    write_ignore_config(&dir, &["**/fixtures/**"]);
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    for provider in ["claude", "opencode", "cursor"] {
+        assert!(
+            !dir.join(format!(
+                "generated/{provider}/skills/scripted-skill/fixtures"
+            ))
+            .exists(),
+            "{provider}: fixtures/ should have been pruned"
+        );
+    }
+
+    // The ignore should target only the pruned subtree — sibling supporting
+    // files must survive.
+    for provider in ["claude", "cursor"] {
+        assert!(
+            dir.join(format!(
+                "generated/{provider}/skills/scripted-skill/scripts/helper.sh"
+            ))
+            .exists(),
+            "{provider}: helper.sh (sibling of fixtures/) should be preserved"
+        );
+    }
+}
+
+#[test]
+fn test_validate_malformed_ignore_pattern_errors() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    write_ignore_config(&dir, &["["]);
+
+    let output = std::process::Command::new(agentspec())
+        .arg("validate")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec validate");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "validate should fail on malformed pattern; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("invalid ignore pattern"),
+        "expected 'invalid ignore pattern' in stderr, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("'['"),
+        "expected offending pattern '[' in stderr, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn test_compile_no_ignore_field_still_works() {
+    // Baseline regression: an unconfigured `ignore` field must not change the
+    // output of a fixture compile.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    assert!(
+        dir.join("generated/claude/agents/test-agent.md").exists(),
+        "baseline agent file should exist"
+    );
+    assert!(
+        dir.join("generated/claude/skills/scripted-skill/scripts/helper.sh")
+            .exists(),
+        "baseline script should exist"
+    );
+}

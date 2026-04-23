@@ -9,7 +9,7 @@ use agentspec::compile::{self, AdapterConfig, CompileResult};
 use agentspec::plan::compile_plan;
 use agentspec::presets::ProviderPresetsMap;
 use agentspec::provider::Provider;
-use agentspec::specs::{SpecDirs, Specs, ValidatedSpecs};
+use agentspec::specs::{LoadReport, SpecDirs, Specs, ValidatedSpecs};
 use agentspec::templating::{TemplateContext, TemplatingResources, resolve_fragments};
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
@@ -42,15 +42,18 @@ fn main() -> Result<()> {
     let config = AgentspecConfig::discover(&cwd)?;
 
     let sources = config.resolve(&config.spec.sources_dir);
+    let ignore = config.spec.compile_ignore_matcher()?;
     let dirs = SpecDirs {
         agents: sources.join("agents"),
         skills: sources.join("skills"),
         rules: sources.join("rules"),
+        ignore,
+        ignore_anchor: sources,
     };
 
     match &cli.command {
         Command::Validate(_) => {
-            let validated = load_and_validate(&config, &dirs)?;
+            let (validated, _report) = load_and_validate(&config, &dirs)?;
             let templating = load_templating(&config)?;
             // Check template syntax by resolving with unprefixed context.
             // `None` provider → `tool()` passes canonical names through unchanged.
@@ -60,7 +63,7 @@ fn main() -> Result<()> {
             eprintln!("validation complete");
         }
         Command::Sync(sync_args) => {
-            let validated = load_and_validate(&config, &dirs)?;
+            let (validated, _report) = load_and_validate(&config, &dirs)?;
             let templating = load_templating(&config)?;
             let targets = resolve_sync_targets(&config, sync_args)?;
             let sync_providers: Vec<Provider> = targets.iter().map(|(p, _)| *p).collect();
@@ -83,7 +86,7 @@ fn main() -> Result<()> {
             emit(&plan, sync_args.dry_run, sync_args.verbose)?;
         }
         Command::Compile(_) => {
-            let validated = load_and_validate(&config, &dirs)?;
+            let (validated, _report) = load_and_validate(&config, &dirs)?;
             let templating = load_templating(&config)?;
 
             let adapter_configs = AgentspecConfig::adapter_configs(&config.sync_targets());
@@ -116,8 +119,15 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn load_and_validate(config: &AgentspecConfig, dirs: &SpecDirs) -> Result<ValidatedSpecs> {
-    Specs::load(dirs)?
+/// The `LoadReport` is bubbled out so each command can surface ignore-pattern
+/// diagnostics — this is a no-op today (call sites bind `_report`) and wired
+/// in during the observability phase.
+fn load_and_validate(
+    config: &AgentspecConfig,
+    dirs: &SpecDirs,
+) -> Result<(ValidatedSpecs, LoadReport)> {
+    let (specs, report) = Specs::load(dirs)?;
+    let validated = specs
         .normalize()
         .validate(&config.presets)
         .map_err(|errors| {
@@ -125,7 +135,8 @@ fn load_and_validate(config: &AgentspecConfig, dirs: &SpecDirs) -> Result<Valida
                 eprintln!("error: {e}");
             }
             anyhow::anyhow!("{} semantic validation error(s)", errors.len())
-        })
+        })?;
+    Ok((validated, report))
 }
 
 fn load_templating(config: &AgentspecConfig) -> Result<TemplatingResources> {
