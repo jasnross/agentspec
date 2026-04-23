@@ -3,6 +3,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use gray_matter::Matter;
 use gray_matter::engine::YAML;
 use walkdir::WalkDir;
@@ -17,6 +18,80 @@ use crate::validate::{SemanticError, normalize_specs, validate_semantics};
 // ---------------------------------------------------------------------------
 // Pipeline stage types
 // ---------------------------------------------------------------------------
+
+/// Compiled set of ignore glob patterns, matched against paths relative to
+/// the `sources_dir` anchor.
+///
+/// Patterns are structural globs (see the `globset` crate): `*`, `**`, `?`,
+/// character classes, and brace expansion are supported; gitignore negation
+/// and directory-trailing-slash sugar are not. Slashless patterns match only
+/// top-level entries — `*.bats` does not match `skills/s/test.bats`; users
+/// must write `**/*.bats` to match at any depth.
+///
+/// [`IgnoreMatcher::empty`] constructs a matcher with no patterns — the
+/// no-op case.
+#[derive(Debug)]
+pub struct IgnoreMatcher {
+    set: GlobSet,
+    patterns: Vec<String>,
+}
+
+impl IgnoreMatcher {
+    /// A matcher with no patterns — matches nothing.
+    pub fn empty() -> Self {
+        Self {
+            set: GlobSet::empty(),
+            patterns: Vec::new(),
+        }
+    }
+
+    /// Compile a list of glob patterns. Returns an error identifying the
+    /// first malformed pattern.
+    ///
+    /// Globs are compiled with `literal_separator(true)` so that `*` and `?`
+    /// never match `/` — slashless patterns like `*.bats` only match at the
+    /// top level, and users must write `**/*.bats` to match at any depth.
+    pub fn compile(patterns: &[String]) -> Result<Self> {
+        let mut builder = GlobSetBuilder::new();
+        for pat in patterns {
+            let glob = GlobBuilder::new(pat)
+                .literal_separator(true)
+                .build()
+                .with_context(|| format!("invalid ignore pattern '{pat}'"))?;
+            builder.add(glob);
+        }
+        let set = builder.build().context("failed to build ignore glob set")?;
+        Ok(Self {
+            set,
+            patterns: patterns.to_vec(),
+        })
+    }
+
+    /// Returns `true` when the matcher holds no patterns (the no-op case).
+    pub fn is_empty(&self) -> bool {
+        self.patterns.is_empty()
+    }
+
+    /// Number of compiled patterns.
+    pub fn len(&self) -> usize {
+        self.patterns.len()
+    }
+
+    /// Returns the lowest index of a matching pattern, if any.
+    pub fn matching_index(&self, rel_path: &Path) -> Option<usize> {
+        self.set.matches(rel_path).into_iter().next()
+    }
+
+    /// Returns the raw pattern source at `index`, or `None` if out of bounds.
+    pub fn pattern(&self, index: usize) -> Option<&str> {
+        self.patterns.get(index).map(String::as_str)
+    }
+
+    /// All compiled pattern sources, in the order they were supplied.
+    pub fn patterns(&self) -> &[String] {
+        &self.patterns
+    }
+}
 
 /// Directories from which specs are loaded.
 ///
@@ -442,5 +517,72 @@ Agent body.
         let tmp = tempfile::tempdir().expect("expected value");
         let specs = load_agent_specs(&tmp.path().join("nonexistent")).expect("expected value");
         assert!(specs.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // IgnoreMatcher tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_ignore_matcher_empty_matches_nothing() {
+        let matcher = IgnoreMatcher::empty();
+        assert!(matcher.is_empty());
+        assert_eq!(matcher.len(), 0);
+        assert_eq!(matcher.matching_index(Path::new("anything")), None);
+        assert_eq!(
+            matcher.matching_index(Path::new("deeply/nested/file.bats")),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_ignore_matcher_double_star_matches_at_any_depth() {
+        let matcher = IgnoreMatcher::compile(&["**/*.bats".to_string()]).expect("expected value");
+        assert_eq!(
+            matcher.matching_index(Path::new("skills/s/test.bats")),
+            Some(0),
+        );
+        assert_eq!(matcher.matching_index(Path::new("skills/s/test.md")), None);
+    }
+
+    #[test]
+    fn test_ignore_matcher_slashless_pattern_is_top_level_only() {
+        let matcher = IgnoreMatcher::compile(&["*.bats".to_string()]).expect("expected value");
+        assert_eq!(matcher.matching_index(Path::new("test.bats")), Some(0));
+        assert_eq!(
+            matcher.matching_index(Path::new("skills/s/test.bats")),
+            None
+        );
+    }
+
+    #[test]
+    fn test_ignore_matcher_compile_error_names_offending_pattern() {
+        let err = IgnoreMatcher::compile(&["[".to_string()]).expect_err("expected parse error");
+        let full = format!("{err:#}");
+        assert!(full.contains("invalid ignore pattern"), "error: {full}");
+        assert!(full.contains("'['"), "error: {full}");
+    }
+
+    #[test]
+    fn test_ignore_matcher_pattern_accessor() {
+        let patterns = vec!["**/*.bats".to_string(), "**/fixtures/**".to_string()];
+        let matcher = IgnoreMatcher::compile(&patterns).expect("expected value");
+        assert_eq!(matcher.len(), 2);
+        assert_eq!(matcher.pattern(0), Some("**/*.bats"));
+        assert_eq!(matcher.pattern(1), Some("**/fixtures/**"));
+        assert_eq!(matcher.pattern(2), None);
+        assert_eq!(matcher.patterns(), patterns.as_slice());
+    }
+
+    #[test]
+    fn test_ignore_matcher_returns_lowest_matching_index() {
+        // Two patterns that both match the same path.
+        let matcher = IgnoreMatcher::compile(&["**/*.bats".to_string(), "skills/**".to_string()])
+            .expect("expected value");
+        // "skills/s/test.bats" matches both; lowest index wins.
+        assert_eq!(
+            matcher.matching_index(Path::new("skills/s/test.bats")),
+            Some(0),
+        );
     }
 }

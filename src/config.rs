@@ -220,13 +220,31 @@ pub struct SpecConfig {
     /// Base directory containing spec subdirectories (`agents/`, `skills/`,
     /// `rules/`, `fragments/`).
     pub sources_dir: PathBuf,
+
+    /// Glob patterns of files to exclude from the spec tree during loading.
+    ///
+    /// Patterns are matched against paths relative to `sources_dir`. Slashless
+    /// patterns match only top-level entries — use `**/pattern` to match at
+    /// any depth. Defaults to an empty list.
+    pub ignore: Vec<String>,
 }
 
 impl Default for SpecConfig {
     fn default() -> Self {
         Self {
             sources_dir: PathBuf::from("spec"),
+            ignore: Vec::new(),
         }
+    }
+}
+
+impl SpecConfig {
+    /// Compile the raw `ignore` patterns into an [`IgnoreMatcher`].
+    ///
+    /// Returns an error naming the first malformed pattern.
+    #[allow(dead_code)] // wired into SpecDirs + Specs::load in Phase 2
+    pub fn compile_ignore_matcher(&self) -> Result<agentspec::specs::IgnoreMatcher> {
+        agentspec::specs::IgnoreMatcher::compile(&self.ignore)
     }
 }
 
@@ -724,5 +742,74 @@ prefix = "tw"
         let result = config.resolve_sync_target(Provider::Claude, &SyncFlags::default());
         assert!(result.content_prefix.is_none());
         assert_eq!(result.prefix.as_deref(), Some("tw"));
+    }
+
+    // -----------------------------------------------------------------------
+    // [spec].ignore tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_spec_ignore_round_trips_from_toml() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[spec]
+sources_dir = "spec"
+ignore = ["**/*.bats", "**/.DS_Store"]
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+        assert_eq!(
+            config.spec.ignore,
+            vec!["**/*.bats".to_string(), "**/.DS_Store".to_string()],
+        );
+    }
+
+    #[test]
+    fn test_spec_ignore_defaults_to_empty() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[spec]
+sources_dir = "spec"
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+        assert!(config.spec.ignore.is_empty());
+    }
+
+    #[test]
+    fn test_spec_ignore_rejects_non_string_element() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r"
+[spec]
+ignore = [42]
+";
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let err = AgentspecConfig::discover(tmp.path()).expect_err("expected parse error");
+        let full = format!("{err:#}");
+        assert!(full.contains("failed to parse"), "error: {full}");
+        assert!(full.contains("spec.ignore"), "error: {full}");
+    }
+
+    #[test]
+    fn test_spec_compile_ignore_matcher_propagates_pattern_error() {
+        let spec = SpecConfig {
+            sources_dir: PathBuf::from("spec"),
+            ignore: vec!["[".to_string()],
+        };
+        let err = spec
+            .compile_ignore_matcher()
+            .expect_err("expected pattern parse error");
+        let full = format!("{err:#}");
+        assert!(full.contains("invalid ignore pattern"), "error: {full}");
+        assert!(full.contains("'['"), "error: {full}");
+    }
+
+    #[test]
+    fn test_spec_compile_ignore_matcher_empty_by_default() {
+        let spec = SpecConfig::default();
+        let matcher = spec
+            .compile_ignore_matcher()
+            .expect("empty patterns should compile");
+        assert!(matcher.is_empty());
     }
 }
