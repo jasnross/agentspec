@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.3.0](https://github.com/jasnross/agentspec/compare/v0.2.0...v0.3.0) (2026-04-23)
+
+
+### Features
+
+* **cli:** surface [spec].ignore diagnostics via --verbose and validate ([78671ec](https://github.com/jasnross/agentspec/commit/78671ec82b072a09e0f1225601634ad70796bdb2))
+* **config:** add content-prefix field for independent content-reference namespacing ([d7202ba](https://github.com/jasnross/agentspec/commit/d7202ba998dc1b26d16c60e6e8863fe86a99539c))
+* **emit:** introduce BatchStats and kind field for sync report (phase 1) ([2b31348](https://github.com/jasnross/agentspec/commit/2b3134879a4276af087c84a7c3012c862571a2b6))
+* **emit:** replace per-batch eprintln with unified sync report table ([96f0514](https://github.com/jasnross/agentspec/commit/96f0514dbe3e995583ae85d57a863b8ce457c7b7))
+* **spec:** add IgnoreMatcher type and [spec].ignore config field ([efe2716](https://github.com/jasnross/agentspec/commit/efe2716a43d2994ab68da725889eb800d8075ff9))
+* **spec:** add subagent/skill canonicals and rewrite Cursor body_tool_name policy ([9300162](https://github.com/jasnross/agentspec/commit/930016257778fc48f048007fd38dbc23848d17d2))
+* **specs:** apply [spec].ignore during load-stage walks ([698745c](https://github.com/jasnross/agentspec/commit/698745c58856cfdfd2b73c5ce83f25d921ed8b41))
+* **templating:** add tool() MiniJinja function for provider-aware tool name resolution ([e8c10e8](https://github.com/jasnross/agentspec/commit/e8c10e83e9446fbdb0c7e56329ec0e8e179e0936))
+
+
+### Bug Fixes
+
+* **clippy:** replace map().unwrap_or() with is_ok_and/map_or on Result values ([e0eadd7](https://github.com/jasnross/agentspec/commit/e0eadd7e6d8d62883e08635ae84eef3c5a39f6c2))
+
+
+### Documentation
+
+* fix doc comment accuracy and CLI flag consistency ([bf29b5d](https://github.com/jasnross/agentspec/commit/bf29b5d01725d25b137ea0fd0a66d659f32a85b5))
+* **opencode:** correct non-canonical tool list in build_tool_map comment ([c137b36](https://github.com/jasnross/agentspec/commit/c137b360b20d8431c5c681b2322541b64bbb4cb2))
+* update shell tool TODO with Claude PowerShell coverage note ([c744b92](https://github.com/jasnross/agentspec/commit/c744b92ebe0d2ec963c76172b12bf7b8a002363c))
+
+
+### Miscellaneous Chores
+
+* add just recipes and document developer workflow ([09ec37e](https://github.com/jasnross/agentspec/commit/09ec37e043ec42fe3e73fb0497c144221484ade1))
+
 ## [0.2.0](https://github.com/jasnross/agentspec/compare/v0.1.0...v0.2.0) (2026-04-12)
 
 
