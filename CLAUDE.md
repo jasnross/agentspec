@@ -4,6 +4,30 @@ Rust binary that compiles provider-neutral agent/skill spec files (Markdown
 with YAML frontmatter) into ready-to-use configurations for Claude Code,
 OpenCode, and Cursor.
 
+## Project Status
+
+**agentspec is pre-1.0.** The architecture, public API, CLI surface, and
+configuration formats are all expected to evolve. This is the cheapest time to
+make foundational changes — once we ship 1.0 and downstream consumers start
+depending on stable behavior, every assumption hardens and refactors get
+expensive.
+
+When weighing design decisions:
+
+- Refactorings and breaking changes are on the table. Weigh the tradeoffs, but
+  don't reflexively defer hard changes to "later" — later is when they're
+  harder to make.
+- If components are difficult to fit together, abstractions are trending toward
+  leaky, or a change is awkward to implement, treat that friction as a signal
+  to reshape the surrounding code rather than work around it.
+- **"First make the change easy, then make the easy change."** When the next
+  feature feels awkward, the right first step is often to refactor so the
+  feature drops in cleanly — then add it.
+
+This bias toward refactoring does not override scope discipline. Improve what
+you touch in service of the current task; surface larger structural changes as
+their own work rather than smuggling them into unrelated commits.
+
 ## Commands
 
 ```sh
