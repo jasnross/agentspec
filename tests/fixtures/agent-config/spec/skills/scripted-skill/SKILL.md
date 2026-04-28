@@ -6,6 +6,7 @@ agent_invocable: false
 execution:
   preset: default
 ---
+
 # Scripted Skill
 
 Run the helper script.

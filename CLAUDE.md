@@ -1,32 +1,18 @@
 # agentspec
 
-Rust binary that compiles provider-neutral agent/skill spec files (Markdown
-with YAML frontmatter) into ready-to-use configurations for Claude Code,
-OpenCode, and Cursor.
+Rust binary that compiles provider-neutral agent/skill spec files (Markdown with YAML frontmatter) into ready-to-use configurations for Claude Code, OpenCode, and Cursor.
 
 ## Project Status
 
-**agentspec is pre-1.0.** The architecture, public API, CLI surface, and
-configuration formats are all expected to evolve. This is the cheapest time to
-make foundational changes — once we ship 1.0 and downstream consumers start
-depending on stable behavior, every assumption hardens and refactors get
-expensive.
+**agentspec is pre-1.0.** The architecture, public API, CLI surface, and configuration formats are all expected to evolve. This is the cheapest time to make foundational changes — once we ship 1.0 and downstream consumers start depending on stable behavior, every assumption hardens and refactors get expensive.
 
 When weighing design decisions:
 
-- Refactorings and breaking changes are on the table. Weigh the tradeoffs, but
-  don't reflexively defer hard changes to "later" — later is when they're
-  harder to make.
-- If components are difficult to fit together, abstractions are trending toward
-  leaky, or a change is awkward to implement, treat that friction as a signal
-  to reshape the surrounding code rather than work around it.
-- **"First make the change easy, then make the easy change."** When the next
-  feature feels awkward, the right first step is often to refactor so the
-  feature drops in cleanly — then add it.
+- Refactorings and breaking changes are on the table. Weigh the tradeoffs, but don't reflexively defer hard changes to "later" — later is when they're harder to make.
+- If components are difficult to fit together, abstractions are trending toward leaky, or a change is awkward to implement, treat that friction as a signal to reshape the surrounding code rather than work around it.
+- **"First make the change easy, then make the easy change."** When the next feature feels awkward, the right first step is often to refactor so the feature drops in cleanly — then add it.
 
-This bias toward refactoring does not override scope discipline. Improve what
-you touch in service of the current task; surface larger structural changes as
-their own work rather than smuggling them into unrelated commits.
+This bias toward refactoring does not override scope discipline. Improve what you touch in service of the current task; surface larger structural changes as their own work rather than smuggling them into unrelated commits.
 
 ## Commands
 
@@ -60,8 +46,7 @@ GitHub Actions policy:
 
 - All workflow `uses:` references must be pinned to full-length commit SHAs.
 - Do not use floating tags like `@v4` or `@stable` in this repository.
-- When adding or updating an action, resolve the current tag to a commit SHA and
-  include the human-readable tag in an inline comment (for example `# v4`).
+- When adding or updating an action, resolve the current tag to a commit SHA and include the human-readable tag in an inline comment (for example `# v4`).
 
 Standard release flow:
 
@@ -72,16 +57,13 @@ Standard release flow:
    - checksum generation/verification
    - SBOM + attestation publication
    - Homebrew gate
-4. Update `jasnross/homebrew-tap` `Formula/agentspec.rb` with the new version
-   and SHA256 entries from `SHA256SUMS`.
+4. Update `jasnross/homebrew-tap` `Formula/agentspec.rb` with the new version and SHA256 entries from `SHA256SUMS`.
 5. Confirm install paths (`brew` and `mise`) and announce release.
 
 Hotfix exception path:
 
-- Use `release.yml` `workflow_dispatch` only when waiting for the normal
-  `release-please` PR is unacceptable (e.g., urgent breakage/security fix).
-- Record the reason in release notes and follow up with a normal release PR to
-  return to the default protected-branch flow.
+- Use `release.yml` `workflow_dispatch` only when waiting for the normal `release-please` PR is unacceptable (e.g., urgent breakage/security fix).
+- Record the reason in release notes and follow up with a normal release PR to return to the default protected-branch flow.
 
 Release execution checklist:
 
@@ -112,34 +94,23 @@ test(fragments): add include_indented edge case
 chore: bump serde to 1.0.210
 ```
 
-Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `perf`, `style`.
-Scope is optional but helpful for module-level changes.
-Breaking changes: append `!` after type/scope (`feat!:`) and describe in the
-commit body with `BREAKING CHANGE:`.
+Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `perf`, `style`. Scope is optional but helpful for module-level changes. Breaking changes: append `!` after type/scope (`feat!:`) and describe in the commit body with `BREAKING CHANGE:`.
 
 ## Clippy
 
-Five lint groups (`complexity`, `pedantic`, `perf`, `style`, `suspicious`) are
-denied at `priority = -1` in `Cargo.toml`. Four `restriction` lints are
-additionally opted into: `expect_used`, `panic`, `unwrap_used`,
-`wildcard_enum_match_arm`.
+Five lint groups (`complexity`, `pedantic`, `perf`, `style`, `suspicious`) are denied at `priority = -1` in `Cargo.toml`. Four `restriction` lints are additionally opted into: `expect_used`, `panic`, `unwrap_used`, `wildcard_enum_match_arm`.
 
 Notable lints that affect everyday coding:
 
 - `unwrap_used` — use `?`, `match`, or an explicit fallback instead of `.unwrap()`
-- `expect_used` / `panic` — avoid in non-test code; tests are allowed via
-  `clippy.toml` (`allow-expect-in-tests`, `allow-panic-in-tests`)
+- `expect_used` / `panic` — avoid in non-test code; tests are allowed via `clippy.toml` (`allow-expect-in-tests`, `allow-panic-in-tests`)
 - `uninlined_format_args` — write `format!("{x}")` not `format!("{}", x)`
-- `doc_markdown` — wrap identifiers like `NormalizedSpec`, `MiniJinja`,
-  `OpenCode` in backticks in doc comments
+- `doc_markdown` — wrap identifiers like `NormalizedSpec`, `MiniJinja`, `OpenCode` in backticks in doc comments
 - `unnecessary_wraps` — don't return `Result<T>` from functions that can't fail
 
-Two pedantic lints are explicitly allowed: `similar_names` (flags unambiguous
-pairs like `dst`/`dest`) and `struct_field_names` (flags structs where fields
-share a suffix like `*_dir`).
+Two pedantic lints are explicitly allowed: `similar_names` (flags unambiguous pairs like `dst`/`dest`) and `struct_field_names` (flags structs where fields share a suffix like `*_dir`).
 
-Any `#[allow(clippy::...)]` should include a nearby comment explaining why it's
-needed and keep scope as narrow as possible (item-level over module-level).
+Any `#[allow(clippy::...)]` should include a nearby comment explaining why it's needed and keep scope as narrow as possible (item-level over module-level).
 
 Run `cargo fmt && cargo clippy --all-targets` before committing; CI enforces both.
 
@@ -147,16 +118,9 @@ Run `cargo fmt && cargo clippy --all-targets` before committing; CI enforces bot
 
 Prefer struct-level attributes over repeating the same attribute on every field:
 
-- **`#[serde(rename_all = "...")]`** — use on the struct instead of per-field
-  `#[serde(rename = "...")]` when all fields follow the same naming convention
-  (e.g., `"kebab-case"`, `"camelCase"`).
-- **`#[serde_with::skip_serializing_none]`** — use on the struct instead of
-  `#[serde(skip_serializing_if = "Option::is_none")]` on every `Option` field.
-  `serde_with` is already a dependency.
-- **`#[serde(deny_unknown_fields)]`** — add to any struct deserialized from
-  user-facing input (spec frontmatter, config files). This turns typos and
-  unrecognized fields into parse errors instead of silent no-ops. Omit only
-  for structs that intentionally allow extension (e.g., pass-through types).
+- **`#[serde(rename_all = "...")]`** — use on the struct instead of per-field `#[serde(rename = "...")]` when all fields follow the same naming convention (e.g., `"kebab-case"`, `"camelCase"`).
+- **`#[serde_with::skip_serializing_none]`** — use on the struct instead of `#[serde(skip_serializing_if = "Option::is_none")]` on every `Option` field. `serde_with` is already a dependency.
+- **`#[serde(deny_unknown_fields)]`** — add to any struct deserialized from user-facing input (spec frontmatter, config files). This turns typos and unrecognized fields into parse errors instead of silent no-ops. Omit only for structs that intentionally allow extension (e.g., pass-through types).
 
 The first two compose cleanly and can appear on the same struct.
 
@@ -177,92 +141,45 @@ src/plan.rs              ← WritePlan, FileWrite, WriteMode, ConfigPatch (libra
 
 ### Colocate code with its consumer
 
-Place functions in the module that calls them, not in a module named after an
-abstract category. If a function has one caller, it belongs next to that caller
-— even if it "sounds like" it belongs elsewhere. A function called
-`resolve_dest_dir` that's only used by `sync_plan` belongs in `sync.rs`, not in
-a separate `provider.rs`.
+Place functions in the module that calls them, not in a module named after an abstract category. If a function has one caller, it belongs next to that caller — even if it "sounds like" it belongs elsewhere. A function called `resolve_dest_dir` that's only used by `sync_plan` belongs in `sync.rs`, not in a separate `provider.rs`.
 
-When a function is private to its module, colocating it also minimizes the
-public API surface — fewer `pub` items, fewer cross-module imports, less
-indirection to discover.
+When a function is private to its module, colocating it also minimizes the public API surface — fewer `pub` items, fewer cross-module imports, less indirection to discover.
 
 ### Provider-specific logic belongs in adapters
 
-Adapters own all provider-specific content decisions: which frontmatter fields
-to set, how to serialize them, how to construct output paths, and how to apply
-transforms like name prefixing or stripping. Emit should never need to know
-about provider-specific frontmatter structure.
+Adapters own all provider-specific content decisions: which frontmatter fields to set, how to serialize them, how to construct output paths, and how to apply transforms like name prefixing or stripping. Emit should never need to know about provider-specific frontmatter structure.
 
-If adding support for a new provider, implement one adapter — no changes to
-emit, plan, or sync should be needed.
+If adding support for a new provider, implement one adapter — no changes to emit, plan, or sync should be needed.
 
 ### Operate on structs, not serialized strings
 
-Never parse or transform YAML/frontmatter by manipulating serialized strings
-(line-by-line scanning, regex, etc.). Instead, modify typed structs before
-serialization. If a field needs to be conditionally included, make it
-`Option<T>` on the struct and let serde handle it via
-`#[serde_with::skip_serializing_none]`.
+Never parse or transform YAML/frontmatter by manipulating serialized strings (line-by-line scanning, regex, etc.). Instead, modify typed structs before serialization. If a field needs to be conditionally included, make it `Option<T>` on the struct and let serde handle it via `#[serde_with::skip_serializing_none]`.
 
 ### Use config structs at module boundaries
 
-When passing configuration across module boundaries (especially from the binary
-crate into the library crate), use a named struct — not loose parameters, tuples,
-or the raw `AgentspecConfig`. This pattern is established by `TemplatingResources`,
-`SpecDirs`, and `AdapterConfig`.
+When passing configuration across module boundaries (especially from the binary crate into the library crate), use a named struct — not loose parameters, tuples, or the raw `AgentspecConfig`. This pattern is established by `TemplatingResources`, `SpecDirs`, and `AdapterConfig`.
 
 Key conventions:
 
-- **Library-side structs** (`TemplatingResources`, `SpecDirs`, `AdapterConfig`) have
-  no dependency on clap, serde, or the binary crate's config types. The binary
-  constructs them from `AgentspecConfig`.
-- **`Option<&Config>` means "use defaults"** — when a config is optional (like
-  `AdapterConfig` for adapters), pass `Option<&Config>` where `None` produces
-  canonical/default output.
-- **Centralize construction** — if multiple call sites build the same config from
-  the same source, extract a helper (e.g., `config.adapter_configs()`).
+- **Library-side structs** (`TemplatingResources`, `SpecDirs`, `AdapterConfig`) have no dependency on clap, serde, or the binary crate's config types. The binary constructs them from `AgentspecConfig`.
+- **`Option<&Config>` means "use defaults"** — when a config is optional (like `AdapterConfig` for adapters), pass `Option<&Config>` where `None` produces canonical/default output.
+- **Centralize construction** — if multiple call sites build the same config from the same source, extract a helper (e.g., `config.adapter_configs()`).
 
 ## Pipeline Stages
 
-`main.rs` orchestrates these stages in order, each consuming the previous stage's
-output (typestate pattern — passing the wrong stage is a compile error):
+`main.rs` orchestrates these stages in order, each consuming the previous stage's output (typestate pattern — passing the wrong stage is a compile error):
 
-1. **Load** — `specs.rs` (`Specs::load`) reads `.md` files from `spec/agents/`,
-   `spec/skills/`, and `spec/rules/`, parses frontmatter via `gray_matter` into
-   typed structs → `(Specs, LoadReport)`. Files (and subtrees) matching any
-   pattern in `[spec].ignore` are skipped before frontmatter parsing via
-   `WalkDir::filter_entry` pruning; the `LoadReport` records what was filtered
-   and which patterns matched zero files so `main.rs` can surface warnings and
-   listings.
+1. **Load** — `specs.rs` (`Specs::load`) reads `.md` files from `spec/agents/`, `spec/skills/`, and `spec/rules/`, parses frontmatter via `gray_matter` into typed structs → `(Specs, LoadReport)`. Files (and subtrees) matching any pattern in `[spec].ignore` are skipped before frontmatter parsing via `WalkDir::filter_entry` pruning; the `LoadReport` records what was filtered and which patterns matched zero files so `main.rs` can surface warnings and listings.
 2. **Normalize** — `validate.rs` applies defaults → `NormalizedSpecs`
-3. **Validate** — `validate.rs` runs semantic checks (duplicate IDs, unknown
-   presets, etc.) → `ValidatedSpecs`
-4. **Compile** — `compile.rs` resolves MiniJinja templates (rendering built-in
-   variables like `specs` and `{% include %}` fragment references) and then
-   dispatches each `(provider, spec)` pair to a provider adapter, passing
-   `Option<&AdapterConfig>` for prefix/strip transforms (`prefix` controls file
-   paths and frontmatter, `content_prefix` controls model-facing names) → `CompileResult`.
-   Template resolution is an internal step of compilation, not a separate
-   pipeline stage. Adapters produce fully-formed output (paths, frontmatter,
-   content) — no post-hoc transforms downstream.
-5. **Plan** — `plan.rs` + `sync.rs` build a `WritePlan` from `CompileResult` and
-   config: `compile_plan` (for `compile`) or `sync_plan` (for `sync`)
-6. **Emit** — `emit.rs` executes the `WritePlan`: `CleanSlate` mode for `compile`
-   (delete-and-rewrite `generated/<provider>/`), `ManifestTracked` mode for `sync`
-   (per-file ownership tracking, stale cleanup, direct write to tool config dirs);
-   runs adapter-provided post-write hooks (e.g., `OpenCode` `opencode.json`
-   patching). Emit is purely file I/O, manifest tracking, and hook execution —
-   no content transformation or provider-specific logic of its own.
+3. **Validate** — `validate.rs` runs semantic checks (duplicate IDs, unknown presets, etc.) → `ValidatedSpecs`
+4. **Compile** — `compile.rs` resolves MiniJinja templates (rendering built-in variables like `specs` and `{% include %}` fragment references) and then dispatches each `(provider, spec)` pair to a provider adapter, passing `Option<&AdapterConfig>` for prefix/strip transforms (`prefix` controls file paths and frontmatter, `content_prefix` controls model-facing names) → `CompileResult`. Template resolution is an internal step of compilation, not a separate pipeline stage. Adapters produce fully-formed output (paths, frontmatter, content) — no post-hoc transforms downstream.
+5. **Plan** — `plan.rs` + `sync.rs` build a `WritePlan` from `CompileResult` and config: `compile_plan` (for `compile`) or `sync_plan` (for `sync`)
+6. **Emit** — `emit.rs` executes the `WritePlan`: `CleanSlate` mode for `compile` (delete-and-rewrite `generated/<provider>/`), `ManifestTracked` mode for `sync` (per-file ownership tracking, stale cleanup, direct write to tool config dirs); runs adapter-provided post-write hooks (e.g., `OpenCode` `opencode.json` patching). Emit is purely file I/O, manifest tracking, and hook execution — no content transformation or provider-specific logic of its own.
 
 ## Integration Tests
 
-`tests/pipeline.rs` runs the real `agentspec` binary against the sibling
-`agent-config/` directory. These tests:
+`tests/pipeline.rs` runs the real `agentspec` binary against the sibling `agent-config/` directory. These tests:
 
-- Are skipped automatically if `agent-config/` doesn't exist (e.g., in CI without
-  the full dotfiles checkout)
-- Use `env!("CARGO_BIN_EXE_agentspec")` — they always test the binary built by
-  the current `cargo test` invocation, not any previously installed version
-- Assert on hardcoded spec counts (8 agents, 27 skills); update those constants
-  when adding or removing specs
+- Are skipped automatically if `agent-config/` doesn't exist (e.g., in CI without the full dotfiles checkout)
+- Use `env!("CARGO_BIN_EXE_agentspec")` — they always test the binary built by the current `cargo test` invocation, not any previously installed version
+- Assert on hardcoded spec counts (8 agents, 27 skills); update those constants when adding or removing specs
