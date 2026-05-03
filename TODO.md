@@ -32,8 +32,3 @@
    - Claude's subagent workflow also involves `SendMessage` (resume a subagent); spec authors declaring `tools: [subagent]` likely expect the full toolkit
    - Adding `SendMessage` requires a new `ClaudeTool` variant and deciding the complete subagent fan-out (potentially also `ToolSearch`, `Monitor`)
    - Out of scope for the tool-mapping-fixes plan; captured for a follow-up
-10. Reconsider Cursor `WebFetch` / `WebSearch` mapping — collapse both to `"Web"`?
-    - Cursor's public docs publish one web-related tool label: `"Web"` (for web search). No separate URL-fetch tool is documented
-    - Current mapping keeps them distinct: `WebSearch -> "Web"` (doc-sourced) and `WebFetch -> "URL fetcher"` (descriptive)
-    - A simpler alternative maps both to `"Web"` — truthful to what Cursor actually exposes, at the cost of collapsing two canonicals onto one label
-    - Trade-off: loses the `WebFetch`/`WebSearch` distinction in Cursor-rendered prose, but avoids inventing a descriptive phrase for a capability Cursor doesn't separately document
