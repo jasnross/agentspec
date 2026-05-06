@@ -7,12 +7,13 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1"
-home = "0.5"
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"
 globset = "0.4"
 gray_matter = "0.3"
+home = "0.5"
 indexmap = { version = "2", features = ["serde"] }
+jsonc-parser = { version = "0.32.3", features = ["cst"] }
 jsonschema = "0.28"
 minijinja = "2"
 serde = { version = "1", features = ["derive"] }
@@ -21,15 +22,12 @@ serde_path_to_error = "0.1"
 serde_with = "3.18.0"
 serde_yml = "0.0.12"
 strum = { version = "0.28", features = ["derive"] }
+# `tempfile` is in `[dependencies]` (used by `hooks_merge`'s atomic write); tests
+# pick it up transitively, so no separate `[dev-dependencies]` entry is needed.
+tempfile = "3"
 thiserror = "2"
 toml = "0.8"
 walkdir = "2"
-jsonc-parser = { version = "0.32.3", features = ["cst"] }
-tempfile = "3"
-
-[dev-dependencies]
-# `tempfile` is in `[dependencies]` (used by `hooks_merge`'s atomic write) so
-# tests pick it up transitively — no separate dev-dependency entry needed.
 
 [lints.clippy]
 # Lint groups at priority -1 so individual overrides below take precedence.
@@ -46,8 +44,8 @@ unwrap_used = "deny"
 wildcard_enum_match_arm = "deny"
 
 # Disabled pedantic lints: high noise, low signal.
-implicit_hasher = "allow"     # requires generics over BuildHasher — unnecessary for internal APIs
+implicit_hasher = "allow"  # requires generics over BuildHasher — unnecessary for internal APIs
 missing_errors_doc = "allow"  # pub fns are cross-module, not a documented public API yet
 must_use_candidate = "allow"  # flags every pure fn — too noisy until the API stabilizes
-similar_names = "allow"       # flags unambiguous pairs like `dst`/`dest`
+similar_names = "allow"  # flags unambiguous pairs like `dst`/`dest`
 struct_field_names = "allow"  # flags structs where all fields share a suffix (e.g. `*_dir`)
