@@ -138,17 +138,27 @@ impl AgentspecConfig {
     ///
     /// Providers absent from `targets` are absent from the map, causing adapters
     /// to produce canonical (unprefixed) output.
+    ///
+    /// Maps each target's `SyncMode` to a library-side `HookEmitMode` here so
+    /// the library never imports `SyncMode` (preserving the binary/library
+    /// boundary established in `CLAUDE.md`'s "Use config structs at module
+    /// boundaries" guidance).
     pub fn adapter_configs(
         targets: &[(Provider, SyncTargetConfig)],
     ) -> HashMap<Provider, AdapterConfig> {
         targets
             .iter()
             .map(|(p, t)| {
+                let hook_emit_mode = Some(match t.mode {
+                    SyncMode::Path => agentspec::compile::HookEmitMode::Bundled,
+                    SyncMode::User | SyncMode::Project => agentspec::compile::HookEmitMode::Merged,
+                });
                 (
                     *p,
                     AdapterConfig {
                         prefix: t.prefix.clone(),
                         content_prefix: t.content_prefix.clone(),
+                        hook_emit_mode,
                     },
                 )
             })

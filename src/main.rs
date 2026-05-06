@@ -5,10 +5,11 @@ mod sync;
 
 use std::collections::HashMap;
 
-use agentspec::compile::{self, AdapterConfig, CompileResult};
+use agentspec::compile::{self, AdapterConfig, CompileDiagnostics, CompileResult, SkippedHook};
 use agentspec::plan::compile_plan;
 use agentspec::presets::ProviderPresetsMap;
 use agentspec::provider::Provider;
+use agentspec::spec::NormalizedSpec;
 use agentspec::specs::{IgnoreMatcher, LoadReport, SpecDirs, Specs, ValidatedSpecs};
 use agentspec::templating::{TemplateContext, TemplatingResources, resolve_fragments};
 use anyhow::{Context, Result};
@@ -42,6 +43,7 @@ fn main() -> Result<()> {
         agents: sources.join("agents"),
         skills: sources.join("skills"),
         rules: sources.join("rules"),
+        hooks: sources.join("hooks"),
         ignore,
         ignore_anchor: sources,
     };
@@ -77,13 +79,14 @@ fn main() -> Result<()> {
             if sync_args.dry_run {
                 eprint!("[dry-run] ");
             }
-            let (result, _) = run_compile(
+            let (result, _, diagnostics) = run_compile(
                 &validated,
                 &templating,
                 &config.presets,
                 &sync_providers,
                 &adapter_configs,
             )?;
+            surface_compile_diagnostics(&diagnostics, display);
 
             let home = home_dir()?;
             let plan = sync_plan(&result, &targets, &home, &cwd)?;
@@ -107,13 +110,14 @@ fn main() -> Result<()> {
                 compile_args.provider.clone()
             };
 
-            let (result, providers) = run_compile(
+            let (result, providers, diagnostics) = run_compile(
                 &validated,
                 &templating,
                 &config.presets,
                 &providers,
                 &adapter_configs,
             )?;
+            surface_compile_diagnostics(&diagnostics, display);
             let output_dir = config.resolve(&config.compile.output_dir);
             let plan = compile_plan(&result, &output_dir, &providers);
             emit(&plan, false, false)?;
@@ -228,15 +232,16 @@ fn load_templating(config: &AgentspecConfig) -> Result<TemplatingResources> {
     TemplatingResources::load(&sources.join("fragments"))
 }
 
-/// Runs the compile step and reports the compiled file count. Returns the result and the
-/// provider list so the caller can decide what to do next (write or sync).
+/// Runs the compile step and reports the compiled file count. Returns the result, the
+/// provider list, and a diagnostics object recording any compile-time anomalies
+/// (today: hook specs skipped for `OpenCode`).
 fn run_compile(
     validated: &ValidatedSpecs,
     templating: &TemplatingResources,
     presets: &ProviderPresetsMap,
     providers: &[Provider],
     adapter_configs: &HashMap<Provider, AdapterConfig>,
-) -> Result<(CompileResult, Vec<Provider>)> {
+) -> Result<(CompileResult, Vec<Provider>, CompileDiagnostics)> {
     let providers = providers.to_vec();
     let result = compile::run(validated, templating, presets, &providers, adapter_configs)?;
     let n = providers.len();
@@ -245,7 +250,57 @@ fn run_compile(
         result.files.len(),
         if n == 1 { "provider" } else { "providers" }
     );
-    Ok((result, providers))
+
+    // Hook-skip detection — for every hook spec, record one `SkippedHook` per
+    // active provider that does not emit hooks (today: `OpenCode`).
+    let mut diagnostics = CompileDiagnostics::default();
+    for spec in validated.specs() {
+        if let NormalizedSpec::Hook(_) = spec {
+            for &provider in &providers {
+                if matches!(provider, Provider::OpenCode) {
+                    diagnostics.skipped_hooks.push(SkippedHook {
+                        provider,
+                        hook_id: spec.id().to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    Ok((result, providers, diagnostics))
+}
+
+/// Print compile diagnostics to stderr.
+///
+/// Default mode prints one line per provider with skipped hooks (`opencode:
+/// skipped N hook(s)`). Full mode additionally lists each skipped spec id —
+/// matching the format established by `surface_load_report` for `[spec].ignore`
+/// listings under `--verbose`.
+fn surface_compile_diagnostics(diagnostics: &CompileDiagnostics, display: ReportDisplay) {
+    use std::collections::BTreeMap;
+
+    if diagnostics.skipped_hooks.is_empty() {
+        return;
+    }
+
+    let mut by_provider: BTreeMap<Provider, Vec<&str>> = BTreeMap::new();
+    for skip in &diagnostics.skipped_hooks {
+        by_provider
+            .entry(skip.provider)
+            .or_default()
+            .push(skip.hook_id.as_str());
+    }
+
+    for (provider, ids) in &by_provider {
+        let n = ids.len();
+        let hook_word = if n == 1 { "hook" } else { "hooks" };
+        eprintln!("{provider}: skipped {n} {hook_word}");
+        if matches!(display, ReportDisplay::Full) {
+            for id in ids {
+                eprintln!("{provider}: skipped hook {id}");
+            }
+        }
+    }
 }
 
 /// Returns the current user's home directory.

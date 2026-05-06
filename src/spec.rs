@@ -7,6 +7,7 @@ pub enum Spec {
     Agent(AgentSpec),
     Skill(SkillSpec),
     Rule(RuleSpec),
+    Hook(HookSpec),
 }
 
 impl Spec {
@@ -15,6 +16,7 @@ impl Spec {
             Spec::Agent(agent_spec) => &agent_spec.body,
             Spec::Skill(skill_spec) => &skill_spec.body,
             Spec::Rule(rule_spec) => &rule_spec.body,
+            Spec::Hook(hook_spec) => &hook_spec.body,
         }
     }
 
@@ -23,6 +25,7 @@ impl Spec {
             Spec::Agent(agent_spec) => &agent_spec.path,
             Spec::Skill(skill_spec) => &skill_spec.path,
             Spec::Rule(rule_spec) => &rule_spec.path,
+            Spec::Hook(hook_spec) => &hook_spec.path,
         }
     }
 }
@@ -32,6 +35,7 @@ pub enum NormalizedSpec {
     Agent(NormalizedAgentSpec),
     Skill(NormalizedSkillSpec),
     Rule(NormalizedRuleSpec),
+    Hook(NormalizedHookSpec),
 }
 
 impl NormalizedSpec {
@@ -40,6 +44,7 @@ impl NormalizedSpec {
             NormalizedSpec::Agent(agent_spec) => &agent_spec.frontmatter.id,
             NormalizedSpec::Skill(skill_spec) => &skill_spec.frontmatter.id,
             NormalizedSpec::Rule(rule_spec) => &rule_spec.frontmatter.id,
+            NormalizedSpec::Hook(hook_spec) => &hook_spec.frontmatter.id,
         }
     }
 
@@ -48,6 +53,7 @@ impl NormalizedSpec {
             NormalizedSpec::Agent(agent_spec) => &agent_spec.body,
             NormalizedSpec::Skill(skill_spec) => &skill_spec.body,
             NormalizedSpec::Rule(rule_spec) => &rule_spec.body,
+            NormalizedSpec::Hook(hook_spec) => &hook_spec.body,
         }
     }
 
@@ -56,6 +62,7 @@ impl NormalizedSpec {
             NormalizedSpec::Agent(agent_spec) => &agent_spec.path,
             NormalizedSpec::Skill(skill_spec) => &skill_spec.path,
             NormalizedSpec::Rule(rule_spec) => &rule_spec.path,
+            NormalizedSpec::Hook(hook_spec) => &hook_spec.path,
         }
     }
 
@@ -64,6 +71,7 @@ impl NormalizedSpec {
             NormalizedSpec::Agent(s) => &s.frontmatter.description,
             NormalizedSpec::Skill(s) => s.frontmatter.description.as_deref().unwrap_or_default(),
             NormalizedSpec::Rule(s) => s.frontmatter.description.as_deref().unwrap_or_default(),
+            NormalizedSpec::Hook(s) => s.frontmatter.description.as_deref().unwrap_or_default(),
         }
     }
 
@@ -72,6 +80,7 @@ impl NormalizedSpec {
             NormalizedSpec::Agent(s) => s.frontmatter.tags.as_deref().unwrap_or_default(),
             NormalizedSpec::Skill(s) => s.frontmatter.tags.as_deref().unwrap_or_default(),
             NormalizedSpec::Rule(s) => s.frontmatter.tags.as_deref().unwrap_or_default(),
+            NormalizedSpec::Hook(s) => s.frontmatter.tags.as_deref().unwrap_or_default(),
         }
     }
 
@@ -80,6 +89,7 @@ impl NormalizedSpec {
             NormalizedSpec::Agent(_) => "agent",
             NormalizedSpec::Skill(_) => "skill",
             NormalizedSpec::Rule(_) => "rule",
+            NormalizedSpec::Hook(_) => "hook",
         }
     }
 }
@@ -148,6 +158,29 @@ pub struct NormalizedRuleSpec {
     pub body: String,
 }
 
+#[derive(Debug)]
+pub struct HookSpec {
+    /// Absolute path to the `hooks.toml` file the spec was loaded from.
+    pub path: PathBuf,
+    /// Parsed metadata for a single hook entry.
+    pub frontmatter: HookFrontmatter,
+    /// Always empty for hooks; the empty-body validation check is exempt for this variant.
+    pub body: String,
+    /// Files under `spec/hooks/scripts/` (recursive), `relative_path` rooted at
+    /// the hooks dir (so `scripts/init.sh`). Every `HookSpec` produced from one
+    /// `hooks.toml` carries the same list — emission is deduplicated by emitting
+    /// from a single provider-level synthesis pass, not per spec.
+    pub supporting_files: Vec<SupportingFile>,
+}
+
+#[derive(Clone)]
+pub struct NormalizedHookSpec {
+    pub path: PathBuf,
+    pub frontmatter: NormalizedHookFrontmatter,
+    pub body: String,
+    pub supporting_files: Vec<SupportingFile>,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentFrontmatter {
@@ -203,6 +236,72 @@ pub struct NormalizedRuleFrontmatter {
     pub id: String,
     pub description: Option<String>,
     pub tags: Option<Vec<String>>,
+}
+
+/// A single hook entry, parsed from a `[hooks.<id>]` table in `hooks.toml`.
+///
+/// `id` is captured from the TOML table key (not the inner table) when loaded;
+/// it is included as a struct field after construction so downstream code can
+/// treat it like every other spec frontmatter.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HookFrontmatter {
+    /// Stable identifier; populated from the `[hooks.<id>]` TOML table key.
+    #[serde(skip)]
+    pub id: String,
+    /// Provider-neutral event name (e.g., `pre_tool_use`).
+    pub event: HookEvent,
+    /// Path to the script implementation, relative to `spec/hooks/`.
+    pub script: PathBuf,
+    /// Tool-name matcher; only valid on tool-execute events.
+    pub matcher: Option<String>,
+    /// Optional timeout in seconds.
+    pub timeout: Option<u32>,
+    /// Free-form description (informational; not consumed by either provider in v1).
+    pub description: Option<String>,
+    /// Free-form tags.
+    pub tags: Option<Vec<String>>,
+}
+
+#[derive(Clone)]
+pub struct NormalizedHookFrontmatter {
+    pub id: String,
+    pub event: HookEvent,
+    pub script: PathBuf,
+    pub matcher: Option<String>,
+    pub timeout: Option<u32>,
+    pub description: Option<String>,
+    pub tags: Option<Vec<String>>,
+}
+
+/// The provider-neutral event surface for hooks.
+///
+/// Variants map to provider-specific event names inside each adapter
+/// (`claude_event_name`, `cursor_event_name`); the enum itself only
+/// expresses semantic identity, not naming.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookEvent {
+    PreToolUse,
+    PostToolUse,
+    PostToolUseFailure,
+    SessionStart,
+    SessionEnd,
+    Stop,
+    PreCompact,
+    SubagentStart,
+    SubagentStop,
+    UserPromptSubmit,
+}
+
+impl HookEvent {
+    /// Whether this event accepts a `matcher` field (true only for tool-execute events).
+    pub fn allows_matcher(self) -> bool {
+        matches!(
+            self,
+            Self::PreToolUse | Self::PostToolUse | Self::PostToolUseFailure
+        )
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

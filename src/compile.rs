@@ -3,10 +3,12 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use crate::adapters::{adapt_claude, adapt_cursor, adapt_opencode};
+use crate::adapters::{
+    adapt_claude, adapt_cursor, adapt_opencode, claude_synthesize_hooks, cursor_synthesize_hooks,
+};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
-use crate::spec::NormalizedSpec;
+use crate::spec::{HookEvent, NormalizedHookSpec, NormalizedSpec};
 use crate::specs::ValidatedSpecs;
 use crate::templating::{TemplateContext, TemplatingResources, resolve_fragments};
 
@@ -22,6 +24,109 @@ pub struct AdapterConfig {
     /// Literal prefix for content/model-facing names (e.g., `"tw:"` → `"tw:{id}"`).
     /// When `None`, `content_prefix()` falls back to `"{prefix}-"`.
     pub content_prefix: Option<String>,
+    /// How hook entries should be emitted for this provider.
+    ///
+    /// `None` means "use canonical (Bundled) defaults" — appropriate for the
+    /// `compile` command path when no `[sync.<provider>]` is configured. The
+    /// binary crate translates `SyncMode → HookEmitMode` at the boundary so
+    /// the library has no dependency on the binary's `SyncMode` type.
+    pub hook_emit_mode: Option<HookEmitMode>,
+}
+
+/// How a provider's hook entries should reach disk.
+///
+/// `Bundled` means agentspec writes a self-contained `hooks.json` (Path mode
+/// or `compile`-only). `Merged` means the entries are merged into a host
+/// config file via a post-write patcher (Project/User sync mode); Phase 2
+/// implements the patcher, so Phase 1 errors when this variant is requested.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HookEmitMode {
+    Bundled,
+    Merged,
+}
+
+/// A single canonical hook entry, computed once per provider during compile.
+///
+/// Both Phase 1's `synthesize_hooks_json` (which writes a self-contained
+/// `hooks.json`) and Phase 2's CST-aware merge layer consume the same shape.
+/// Provider-specific JSON wrapping (Claude grouping by matcher vs. Cursor's
+/// per-entry matcher) is applied at JSON-emission time, not stored here.
+#[derive(Clone, Debug)]
+pub struct EmittedHookEntry {
+    pub event: HookEvent,
+    pub matcher: Option<String>,
+    pub command: String,
+    pub timeout: Option<u32>,
+    /// Stable identifier emitted as `_agentspec_id` in the JSON output —
+    /// the sentinel Phase 2's merge layer uses to identify owned entries.
+    pub agentspec_id: String,
+}
+
+/// What an adapter's `synthesize_hooks` step returns.
+///
+/// `entries` is always populated (so Phase 2's patcher can consume them
+/// regardless of emit mode). `files` carries the full bundle for
+/// `HookEmitMode::Bundled` — both `hooks/hooks.json` AND every file under
+/// `hooks/scripts/`, since helpers (e.g., `_common.sh`) that an entry script
+/// `source`s also need to land at the destination. Merged-mode emission goes
+/// through the post-write patcher; `files` is empty in that mode (Phase 2).
+#[derive(Debug, Default)]
+pub struct HookSynthesis {
+    pub entries: Vec<EmittedHookEntry>,
+    pub files: Vec<GeneratedFile>,
+}
+
+/// Build the per-provider `Vec<GeneratedFile>` for every file under
+/// `spec/hooks/scripts/`, taken from the first hook spec.
+///
+/// `load_hook_specs` attaches the same `supporting_files` list to every hook
+/// spec parsed from a single `hooks.toml`, so reading from `specs[0]` gives
+/// the full set. Emitting once per provider here (rather than once per hook
+/// in `adapt_hook_spec`) avoids duplicate file entries downstream.
+pub fn build_hook_script_files(
+    provider: Provider,
+    specs: &[&NormalizedHookSpec],
+) -> Vec<GeneratedFile> {
+    let Some(first) = specs.first() else {
+        return Vec::new();
+    };
+    first
+        .supporting_files
+        .iter()
+        .map(|sf| {
+            GeneratedFile::binary(
+                provider,
+                Path::new("hooks").join(&sf.relative_path),
+                sf.content.clone(),
+                if sf.executable { Some(0o755) } else { None },
+            )
+        })
+        .collect()
+}
+
+/// Build canonical `EmittedHookEntry` rows from normalized hook specs.
+///
+/// The `command` field is provider-neutral because Cursor aliases
+/// `${CLAUDE_PLUGIN_ROOT}` natively at plugin scope, so Claude and Cursor
+/// share one anchor for Path-mode emission. Phase 2 will introduce alternate
+/// anchors (`${CLAUDE_PROJECT_DIR}/...`, `$HOME/...`) selected by `HookEmitMode`.
+pub fn build_emitted_hook_entries(specs: &[&NormalizedHookSpec]) -> Vec<EmittedHookEntry> {
+    specs
+        .iter()
+        .map(|s| {
+            let filename = s.frontmatter.script.file_name().map_or_else(
+                || s.frontmatter.script.to_string_lossy().into_owned(),
+                |f| f.to_string_lossy().into_owned(),
+            );
+            EmittedHookEntry {
+                event: s.frontmatter.event,
+                matcher: s.frontmatter.matcher.clone(),
+                command: format!("${{CLAUDE_PLUGIN_ROOT}}/hooks/scripts/{filename}"),
+                timeout: s.frontmatter.timeout,
+                agentspec_id: s.frontmatter.id.clone(),
+            }
+        })
+        .collect()
 }
 
 impl AdapterConfig {
@@ -84,9 +189,14 @@ impl GeneratedFile {
 }
 
 /// Result of compiling all specs for all target providers.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct CompileResult {
     pub files: Vec<GeneratedFile>,
+    /// Per-provider hook entries, populated whenever any `NormalizedSpec::Hook`
+    /// is in the input. Empty for providers that don't emit hooks (`OpenCode`)
+    /// or when no hook specs exist. Phase 2's merge layer consumes this map
+    /// directly so it doesn't have to re-parse the emitted JSON.
+    pub hooks: HashMap<Provider, Vec<EmittedHookEntry>>,
 }
 
 impl CompileResult {
@@ -94,6 +204,22 @@ impl CompileResult {
     pub fn files_for(&self, provider: Provider) -> impl Iterator<Item = &GeneratedFile> {
         self.files.iter().filter(move |f| f.provider == provider)
     }
+}
+
+/// Diagnostics surfaced from the compile stage that depend on the active
+/// provider list (and so can't be computed during load).
+///
+/// Today this only carries hook-skip notifications for `OpenCode`; the
+/// per-provider summary and per-spec listing are formatted by the binary.
+#[derive(Debug, Default)]
+pub struct CompileDiagnostics {
+    pub skipped_hooks: Vec<SkippedHook>,
+}
+
+#[derive(Debug)]
+pub struct SkippedHook {
+    pub provider: Provider,
+    pub hook_id: String,
 }
 
 /// Compile validated specs into provider-specific generated files.
@@ -128,6 +254,7 @@ pub(crate) fn compile_specs(
     adapter_configs: &HashMap<Provider, AdapterConfig>,
 ) -> Result<CompileResult> {
     let mut files: Vec<GeneratedFile> = Vec::new();
+    let mut hooks_map: HashMap<Provider, Vec<EmittedHookEntry>> = HashMap::new();
 
     let mut sorted_providers: Vec<Provider> = providers.to_vec();
     sorted_providers.sort_by_key(ToString::to_string);
@@ -138,6 +265,7 @@ pub(crate) fn compile_specs(
         let context = TemplateContext::from_specs_for_provider(specs, provider, adapter_config);
         let resolved = resolve_fragments(specs.to_vec(), &env, &context)?;
 
+        let mut hook_specs: Vec<&NormalizedHookSpec> = Vec::new();
         for spec in &resolved {
             let mut adapter_files = match provider {
                 Provider::Claude => adapt_claude(spec.clone(), presets, adapter_config)?,
@@ -145,13 +273,35 @@ pub(crate) fn compile_specs(
                 Provider::OpenCode => adapt_opencode(spec.clone(), presets, adapter_config)?,
             };
             files.append(&mut adapter_files);
+
+            if let NormalizedSpec::Hook(h) = spec {
+                hook_specs.push(h);
+            }
+        }
+
+        // Per-provider hook synthesis — runs once per provider with the full
+        // hook list because `hooks.json` is one shared file and the `scripts/`
+        // tree is shared across all hooks in the spec set.
+        let synthesis = match provider {
+            Provider::Claude => claude_synthesize_hooks(&hook_specs, adapter_config)?,
+            Provider::Cursor => cursor_synthesize_hooks(&hook_specs, adapter_config)?,
+            // OpenCode does not emit hooks in v1; the warning is surfaced via
+            // CompileDiagnostics in `run_compile`, not here.
+            Provider::OpenCode => HookSynthesis::default(),
+        };
+        files.extend(synthesis.files);
+        if !synthesis.entries.is_empty() {
+            hooks_map.insert(provider, synthesis.entries);
         }
     }
 
     // Sort output files by path for deterministic ordering
     files.sort_by(|a, b| a.path.cmp(&b.path));
 
-    Ok(CompileResult { files })
+    Ok(CompileResult {
+        files,
+        hooks: hooks_map,
+    })
 }
 
 #[cfg(test)]
@@ -163,6 +313,7 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_owned()),
             content_prefix: Some("tw:".to_owned()),
+            ..AdapterConfig::default()
         };
         assert_eq!(cfg.content_prefix(), Some("tw:".to_owned()));
     }
@@ -171,17 +322,14 @@ mod tests {
     fn test_content_prefix_falls_back_to_prefix_with_hyphen() {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_owned()),
-            content_prefix: None,
+            ..AdapterConfig::default()
         };
         assert_eq!(cfg.content_prefix(), Some("tw-".to_owned()));
     }
 
     #[test]
     fn test_content_prefix_returns_none_when_both_none() {
-        let cfg = AdapterConfig {
-            prefix: None,
-            content_prefix: None,
-        };
+        let cfg = AdapterConfig::default();
         assert_eq!(cfg.content_prefix(), None);
     }
 
@@ -190,6 +338,7 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_owned()),
             content_prefix: Some("tw:".to_owned()),
+            ..AdapterConfig::default()
         };
         assert_eq!(cfg.file_prefix(), Some("tw-".to_owned()));
     }

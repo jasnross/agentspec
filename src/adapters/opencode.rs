@@ -54,6 +54,9 @@ pub fn adapt_opencode(
         NormalizedSpec::Agent(s) => adapt_agent_spec(s, presets, cfg),
         NormalizedSpec::Skill(s) => adapt_skill_spec(s, presets, cfg),
         NormalizedSpec::Rule(s) => Ok(adapt_rule_spec(&s, cfg)),
+        // hooks are not emitted for OpenCode in v1; the per-provider warning
+        // is surfaced from `run_compile` via `CompileDiagnostics::skipped_hooks`.
+        NormalizedSpec::Hook(_) => Ok(Vec::new()),
     }
 }
 
@@ -383,7 +386,9 @@ pub fn model_facing_name(spec: &NormalizedSpec, cfg: Option<&AdapterConfig>) -> 
             Some(prefix) => format!("{prefix}{id}"),
             None => id.to_owned(),
         },
-        NormalizedSpec::Skill(_) | NormalizedSpec::Rule(_) => id.to_owned(),
+        NormalizedSpec::Skill(_) | NormalizedSpec::Rule(_) | NormalizedSpec::Hook(_) => {
+            id.to_owned()
+        }
     }
 }
 
@@ -472,6 +477,7 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
             content_prefix: None,
+            ..AdapterConfig::default()
         };
         let spec = NormalizedSpec::Skill(NormalizedSkillSpec {
             path: "test.md".into(),

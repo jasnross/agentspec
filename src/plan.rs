@@ -13,6 +13,7 @@ pub enum FileKind {
     Commands,
     Rules,
     Skills,
+    Hooks,
 }
 
 impl FileKind {
@@ -23,12 +24,19 @@ impl FileKind {
             Self::Commands => "commands",
             Self::Rules => "rules",
             Self::Skills => "skills",
+            Self::Hooks => "hooks",
         }
     }
 
     /// Returns all variants. Used for invariant checks (e.g. `files_for_kind`).
     pub fn all() -> &'static [Self] {
-        &[Self::Agents, Self::Commands, Self::Rules, Self::Skills]
+        &[
+            Self::Agents,
+            Self::Commands,
+            Self::Rules,
+            Self::Skills,
+            Self::Hooks,
+        ]
     }
 }
 
@@ -39,11 +47,18 @@ impl std::fmt::Display for FileKind {
 }
 
 /// Returns the file kinds generated for a given provider.
+///
+/// `Hooks` is included only for `Claude` and `Cursor`; `OpenCode` does not
+/// receive hook output in v1 (the hook-skip warning is surfaced separately
+/// via compile-time diagnostics).
 pub fn file_kinds(provider: Provider) -> Vec<FileKind> {
     match provider {
-        Provider::Claude | Provider::Cursor => {
-            vec![FileKind::Agents, FileKind::Rules, FileKind::Skills]
-        }
+        Provider::Claude | Provider::Cursor => vec![
+            FileKind::Agents,
+            FileKind::Rules,
+            FileKind::Skills,
+            FileKind::Hooks,
+        ],
         Provider::OpenCode => vec![
             FileKind::Agents,
             FileKind::Commands,
@@ -167,16 +182,37 @@ mod tests {
         assert!(kinds.contains(&FileKind::Agents));
         assert!(kinds.contains(&FileKind::Rules));
         assert!(kinds.contains(&FileKind::Skills));
+        assert!(kinds.contains(&FileKind::Hooks));
         assert!(!kinds.contains(&FileKind::Commands));
     }
 
     #[test]
-    fn test_file_kinds_opencode_all_four() {
+    fn test_file_kinds_opencode_excludes_hooks() {
         let kinds = file_kinds(Provider::OpenCode);
         assert!(kinds.contains(&FileKind::Agents));
         assert!(kinds.contains(&FileKind::Commands));
         assert!(kinds.contains(&FileKind::Rules));
         assert!(kinds.contains(&FileKind::Skills));
+        assert!(
+            !kinds.contains(&FileKind::Hooks),
+            "OpenCode does not receive hook output in v1"
+        );
+    }
+
+    #[test]
+    fn test_file_kinds_cursor_includes_hooks() {
+        let kinds = file_kinds(Provider::Cursor);
+        assert!(kinds.contains(&FileKind::Hooks));
+    }
+
+    #[test]
+    fn test_file_kind_hooks_dir_name() {
+        assert_eq!(FileKind::Hooks.dir_name(), "hooks");
+    }
+
+    #[test]
+    fn test_file_kind_all_includes_hooks() {
+        assert!(FileKind::all().contains(&FileKind::Hooks));
     }
 
     #[test]

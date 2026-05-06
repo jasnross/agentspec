@@ -37,6 +37,10 @@ pub fn resolve_fragments(
             NormalizedSpec::Agent(s) => s.body = body,
             NormalizedSpec::Skill(s) => s.body = body,
             NormalizedSpec::Rule(s) => s.body = body,
+            // Hooks have empty bodies and skip templating entirely. The render
+            // pass above produces the empty string for an empty input template,
+            // so no special-case is needed beyond keeping the body unchanged.
+            NormalizedSpec::Hook(_) => {}
         }
 
         resolved.push(spec);
@@ -539,6 +543,7 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_owned()),
             content_prefix: None,
+            ..AdapterConfig::default()
         };
         let ctx =
             TemplateContext::from_specs_for_provider(&all_specs, Provider::Claude, Some(&cfg));

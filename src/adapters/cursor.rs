@@ -1,14 +1,19 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use serde::Serialize;
 
-use crate::compile::{AdapterConfig, GeneratedFile};
+use crate::compile::{
+    AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode, HookSynthesis,
+    build_emitted_hook_entries, build_hook_script_files,
+};
 use crate::plan::{FileKind, PostWriteHook};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
 use crate::spec::{
-    NormalizedAgentSpec, NormalizedRuleSpec, NormalizedSkillSpec, NormalizedSpec, ToolFrontmatter,
+    HookEvent, NormalizedAgentSpec, NormalizedHookSpec, NormalizedRuleSpec, NormalizedSkillSpec,
+    NormalizedSpec, ToolFrontmatter,
 };
 
 // See: https://cursor.com/docs/subagents#configuration-fields
@@ -45,6 +50,9 @@ pub fn adapt_cursor(
         NormalizedSpec::Agent(s) => adapt_agent_spec(s, presets, cfg),
         NormalizedSpec::Skill(s) => adapt_skill_spec(s, cfg),
         NormalizedSpec::Rule(s) => adapt_rule_spec(s, cfg),
+        // Hook scripts are emitted by `synthesize_hooks` once per provider —
+        // see the matching note in `claude.rs::adapt_claude` for the rationale.
+        NormalizedSpec::Hook(_) => Ok(Vec::new()),
     }
 }
 
@@ -171,6 +179,106 @@ pub fn body_tool_name(tool: &ToolFrontmatter) -> &'static str {
     }
 }
 
+// ── hooks.json synthesis ────────────────────────────────────────────────────
+
+/// Cursor's documented `hooks.json` shape: a top-level object with a fixed
+/// `version: 1` field plus a `hooks` map. Each event maps directly to a list
+/// of entries — matchers live on the entry, not on a wrapping group.
+/// See: <https://cursor.com/docs/hooks>
+#[derive(Serialize)]
+struct CursorHooksJson {
+    version: u32,
+    hooks: BTreeMap<&'static str, Vec<CursorHookEntry>>,
+}
+
+#[serde_with::skip_serializing_none]
+#[derive(Serialize)]
+struct CursorHookEntry {
+    #[serde(rename = "type")]
+    type_field: &'static str,
+    matcher: Option<String>,
+    command: String,
+    timeout: Option<u32>,
+    #[serde(rename = "_agentspec_id")]
+    agentspec_id: String,
+}
+
+/// Translate a canonical `HookEvent` to Cursor's camelCase event name.
+///
+/// Note that `user_prompt_submit` maps to `beforeSubmitPrompt` — not a simple
+/// casing transform. See `thoughts/research/2026-05-03-provider-agnostic-hooks-comparison.md`
+/// §2.3 for the documented event list. Several mappings (postToolUseFailure,
+/// sessionStart, sessionEnd, subagentStart, subagentStop) are based on the
+/// research doc's listing and may need adjustment if Cursor's docs diverge —
+/// the plan calls out an empirical verification step before Phase 2 ships.
+fn cursor_event_name(event: HookEvent) -> &'static str {
+    match event {
+        HookEvent::PreToolUse => "preToolUse",
+        HookEvent::PostToolUse => "postToolUse",
+        HookEvent::PostToolUseFailure => "postToolUseFailure",
+        HookEvent::SessionStart => "sessionStart",
+        HookEvent::SessionEnd => "sessionEnd",
+        HookEvent::Stop => "stop",
+        HookEvent::PreCompact => "preCompact",
+        HookEvent::SubagentStart => "subagentStart",
+        HookEvent::SubagentStop => "subagentStop",
+        HookEvent::UserPromptSubmit => "beforeSubmitPrompt",
+    }
+}
+
+/// Synthesize the per-provider `hooks/hooks.json` plus the canonical entry
+/// list for downstream merge in Phase 2.
+pub fn synthesize_hooks(
+    specs: &[&NormalizedHookSpec],
+    cfg: Option<&AdapterConfig>,
+) -> Result<HookSynthesis> {
+    if specs.is_empty() {
+        return Ok(HookSynthesis::default());
+    }
+
+    let mode = cfg
+        .and_then(|c| c.hook_emit_mode)
+        .unwrap_or(HookEmitMode::Bundled);
+    if matches!(mode, HookEmitMode::Merged) {
+        bail!("hooks emit for Project/User mode is not yet implemented (lands in Phase 2)");
+    }
+
+    let entries = build_emitted_hook_entries(specs);
+    let json = build_cursor_hooks_json(&entries)?;
+    let mut files = build_hook_script_files(Provider::Cursor, specs);
+    files.push(GeneratedFile::text(
+        Provider::Cursor,
+        Path::new("hooks").join("hooks.json"),
+        json,
+    ));
+    Ok(HookSynthesis { entries, files })
+}
+
+/// Cursor places the `matcher` on each entry directly; entries within an
+/// event preserve insertion order from the spec list.
+fn build_cursor_hooks_json(entries: &[EmittedHookEntry]) -> Result<String> {
+    let mut by_event: BTreeMap<&'static str, Vec<CursorHookEntry>> = BTreeMap::new();
+    for entry in entries {
+        by_event
+            .entry(cursor_event_name(entry.event))
+            .or_default()
+            .push(CursorHookEntry {
+                type_field: "command",
+                matcher: entry.matcher.clone(),
+                command: entry.command.clone(),
+                timeout: entry.timeout,
+                agentspec_id: entry.agentspec_id.clone(),
+            });
+    }
+
+    let json = serde_json::to_string_pretty(&CursorHooksJson {
+        version: 1,
+        hooks: by_event,
+    })
+    .context("failed to serialize Cursor hooks.json")?;
+    Ok(format!("{json}\n"))
+}
+
 pub fn post_write_hook(
     _kind: FileKind,
     _dest: &Path,
@@ -235,6 +343,7 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
             content_prefix: None,
+            ..AdapterConfig::default()
         };
         let spec = NormalizedSpec::Agent(NormalizedAgentSpec {
             path: "test.md".into(),
@@ -262,6 +371,7 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
             content_prefix: None,
+            ..AdapterConfig::default()
         };
         let spec = NormalizedSpec::Skill(NormalizedSkillSpec {
             path: "test.md".into(),
@@ -312,11 +422,112 @@ mod tests {
         assert_eq!(body_tool_name(&ToolFrontmatter::Skill), "Skill runner");
     }
 
+    // -- Hook synthesis tests --
+
+    fn make_hook_spec(id: &str, event: HookEvent, matcher: Option<&str>) -> NormalizedHookSpec {
+        NormalizedHookSpec {
+            path: std::path::PathBuf::from("/tmp/hooks.toml"),
+            frontmatter: crate::spec::NormalizedHookFrontmatter {
+                id: id.to_string(),
+                event,
+                script: format!("scripts/{id}.sh").into(),
+                matcher: matcher.map(str::to_string),
+                timeout: None,
+                description: None,
+                tags: None,
+            },
+            body: String::new(),
+            supporting_files: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_cursor_event_name_user_prompt_submit_special_case() {
+        // The one mapping that isn't a simple casing transform.
+        assert_eq!(
+            cursor_event_name(HookEvent::UserPromptSubmit),
+            "beforeSubmitPrompt"
+        );
+    }
+
+    #[test]
+    fn test_cursor_event_name_full_mapping() {
+        assert_eq!(cursor_event_name(HookEvent::PreToolUse), "preToolUse");
+        assert_eq!(cursor_event_name(HookEvent::PostToolUse), "postToolUse");
+        assert_eq!(
+            cursor_event_name(HookEvent::PostToolUseFailure),
+            "postToolUseFailure"
+        );
+        assert_eq!(cursor_event_name(HookEvent::SessionStart), "sessionStart");
+        assert_eq!(cursor_event_name(HookEvent::SessionEnd), "sessionEnd");
+        assert_eq!(cursor_event_name(HookEvent::Stop), "stop");
+        assert_eq!(cursor_event_name(HookEvent::PreCompact), "preCompact");
+        assert_eq!(cursor_event_name(HookEvent::SubagentStart), "subagentStart");
+        assert_eq!(cursor_event_name(HookEvent::SubagentStop), "subagentStop");
+    }
+
+    #[test]
+    fn test_synthesize_hooks_emits_version_field() {
+        let spec = make_hook_spec("init", HookEvent::SessionStart, None);
+        let result = synthesize_hooks(&[&spec], None).expect("expected value");
+        let content = String::from_utf8(
+            result
+                .files
+                .iter()
+                .find(|f| f.path.to_str() == Some("hooks/hooks.json"))
+                .expect("hooks.json should be present")
+                .content
+                .clone(),
+        )
+        .expect("expected utf-8");
+        assert!(
+            content.contains("\"version\": 1"),
+            "expected version field, got: {content}"
+        );
+    }
+
+    #[test]
+    fn test_synthesize_hooks_per_entry_matcher_placement() {
+        // Cursor places `matcher` on each entry; verify it appears alongside
+        // `command` in a single object literal (not as a group key).
+        let spec = make_hook_spec("audit", HookEvent::PreToolUse, Some("Bash"));
+        let result = synthesize_hooks(&[&spec], None).expect("expected value");
+        let content = String::from_utf8(
+            result
+                .files
+                .iter()
+                .find(|f| f.path.to_str() == Some("hooks/hooks.json"))
+                .expect("hooks.json should be present")
+                .content
+                .clone(),
+        )
+        .expect("expected utf-8");
+        // Must contain matcher field on the entry (with same indentation as
+        // sibling fields like `command`).
+        assert!(
+            content.contains("\"matcher\": \"Bash\""),
+            "expected per-entry matcher, got: {content}"
+        );
+    }
+
+    #[test]
+    fn test_synthesize_hooks_merged_mode_errors_in_phase_one() {
+        let cfg = AdapterConfig {
+            hook_emit_mode: Some(HookEmitMode::Merged),
+            ..AdapterConfig::default()
+        };
+        let spec = make_hook_spec("init", HookEvent::SessionStart, None);
+        let err = synthesize_hooks(&[&spec], Some(&cfg)).expect_err("expected Phase 2 error");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("Phase 2"), "got: {msg}");
+    }
+
     #[test]
     fn test_adapt_rule_with_prefix() {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
             content_prefix: None,
+            ..AdapterConfig::default()
         };
         let spec = NormalizedSpec::Rule(NormalizedRuleSpec {
             path: "test.md".into(),

@@ -1,14 +1,20 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
+use indexmap::IndexMap;
 use serde::Serialize;
 
-use crate::compile::{AdapterConfig, GeneratedFile};
+use crate::compile::{
+    AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode, HookSynthesis,
+    build_emitted_hook_entries, build_hook_script_files,
+};
 use crate::plan::{FileKind, PostWriteHook};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
 use crate::spec::{
-    NormalizedAgentSpec, NormalizedRuleSpec, NormalizedSkillSpec, NormalizedSpec, ToolFrontmatter,
+    HookEvent, NormalizedAgentSpec, NormalizedHookSpec, NormalizedRuleSpec, NormalizedSkillSpec,
+    NormalizedSpec, ToolFrontmatter,
 };
 
 // See: https://code.claude.com/docs/en/sub-agents#supported-frontmatter-fields
@@ -79,6 +85,12 @@ pub fn adapt_claude(
         NormalizedSpec::Agent(s) => adapt_agent_spec(s, presets, cfg),
         NormalizedSpec::Skill(s) => adapt_skill_spec(s, presets, cfg),
         NormalizedSpec::Rule(s) => Ok(adapt_rule_spec(&s, cfg)),
+        // Hook scripts (entry scripts AND helpers under `scripts/`) are emitted
+        // by `synthesize_hooks` exactly once per provider, drawn from
+        // `supporting_files` collected by `load_hook_specs`. Per-spec dispatch
+        // contributes nothing — emitting per spec would duplicate every helper
+        // for every hook entry.
+        NormalizedSpec::Hook(_) => Ok(Vec::new()),
     }
 }
 
@@ -262,6 +274,130 @@ pub fn body_tool_name(tool: &ToolFrontmatter) -> &'static str {
     }
 }
 
+// ── hooks.json synthesis ────────────────────────────────────────────────────
+
+/// Claude's documented `hooks.json` shape: a top-level object whose `hooks`
+/// field maps `PascalCase` event names to a list of matcher-grouped entries.
+/// See: <https://code.claude.com/docs/en/hooks>
+#[derive(Serialize)]
+struct ClaudeHooksJson {
+    hooks: BTreeMap<&'static str, Vec<ClaudeHooksEventGroup>>,
+}
+
+#[serde_with::skip_serializing_none]
+#[derive(Serialize)]
+struct ClaudeHooksEventGroup {
+    matcher: Option<String>,
+    hooks: Vec<ClaudeHookEntry>,
+}
+
+#[serde_with::skip_serializing_none]
+#[derive(Serialize)]
+struct ClaudeHookEntry {
+    #[serde(rename = "type")]
+    type_field: &'static str,
+    command: String,
+    timeout: Option<u32>,
+    /// The sentinel Phase 2's merge layer uses to identify entries it owns.
+    /// Always emitted, even at Path mode, to keep the on-disk shape uniform
+    /// across emit modes.
+    #[serde(rename = "_agentspec_id")]
+    agentspec_id: String,
+}
+
+/// Translate a canonical `HookEvent` to Claude's `PascalCase` event name.
+///
+/// Provider-specific naming lives here per `CLAUDE.md`'s "Provider-specific
+/// logic belongs in adapters" principle.
+fn claude_event_name(event: HookEvent) -> &'static str {
+    match event {
+        HookEvent::PreToolUse => "PreToolUse",
+        HookEvent::PostToolUse => "PostToolUse",
+        HookEvent::PostToolUseFailure => "PostToolUseFailure",
+        HookEvent::SessionStart => "SessionStart",
+        HookEvent::SessionEnd => "SessionEnd",
+        HookEvent::Stop => "Stop",
+        HookEvent::PreCompact => "PreCompact",
+        HookEvent::SubagentStart => "SubagentStart",
+        HookEvent::SubagentStop => "SubagentStop",
+        HookEvent::UserPromptSubmit => "UserPromptSubmit",
+    }
+}
+
+/// Synthesize the per-provider `hooks/hooks.json` plus the canonical entry
+/// list for downstream merge in Phase 2.
+///
+/// Returns an empty `HookSynthesis` when there are no hook specs. Returns an
+/// error when `hook_emit_mode == Some(Merged)` (Phase 2's responsibility).
+pub fn synthesize_hooks(
+    specs: &[&NormalizedHookSpec],
+    cfg: Option<&AdapterConfig>,
+) -> Result<HookSynthesis> {
+    if specs.is_empty() {
+        return Ok(HookSynthesis::default());
+    }
+
+    let mode = cfg
+        .and_then(|c| c.hook_emit_mode)
+        .unwrap_or(HookEmitMode::Bundled);
+    if matches!(mode, HookEmitMode::Merged) {
+        bail!("hooks emit for Project/User mode is not yet implemented (lands in Phase 2)");
+    }
+
+    let entries = build_emitted_hook_entries(specs);
+    let json = build_claude_hooks_json(&entries)?;
+    let mut files = build_hook_script_files(Provider::Claude, specs);
+    files.push(GeneratedFile::text(
+        Provider::Claude,
+        Path::new("hooks").join("hooks.json"),
+        json,
+    ));
+    Ok(HookSynthesis { entries, files })
+}
+
+/// Group entries by `(event, matcher)` and serialize Claude's documented shape.
+///
+/// Top-level event keys are sorted alphabetically (`BTreeMap`) for stable output.
+/// Within an event, matcher groups preserve first-seen order — propagated from
+/// the spec list, which itself preserves `IndexMap` authoring order from the
+/// `hooks.toml` file.
+fn build_claude_hooks_json(entries: &[EmittedHookEntry]) -> Result<String> {
+    let mut by_event: BTreeMap<&'static str, IndexMap<Option<String>, Vec<ClaudeHookEntry>>> =
+        BTreeMap::new();
+    for entry in entries {
+        let event_name = claude_event_name(entry.event);
+        by_event
+            .entry(event_name)
+            .or_default()
+            .entry(entry.matcher.clone())
+            .or_default()
+            .push(ClaudeHookEntry {
+                type_field: "command",
+                command: entry.command.clone(),
+                timeout: entry.timeout,
+                agentspec_id: entry.agentspec_id.clone(),
+            });
+    }
+
+    let hooks_map: BTreeMap<&'static str, Vec<ClaudeHooksEventGroup>> = by_event
+        .into_iter()
+        .map(|(event, by_matcher)| {
+            let groups = by_matcher
+                .into_iter()
+                .map(|(matcher, hook_entries)| ClaudeHooksEventGroup {
+                    matcher,
+                    hooks: hook_entries,
+                })
+                .collect();
+            (event, groups)
+        })
+        .collect();
+
+    let json = serde_json::to_string_pretty(&ClaudeHooksJson { hooks: hooks_map })
+        .context("failed to serialize Claude hooks.json")?;
+    Ok(format!("{json}\n"))
+}
+
 pub fn post_write_hook(
     _kind: FileKind,
     _dest: &Path,
@@ -376,6 +512,7 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
             content_prefix: None,
+            ..AdapterConfig::default()
         };
         let spec = NormalizedSpec::Agent(NormalizedAgentSpec {
             path: "test.md".into(),
@@ -404,6 +541,7 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
             content_prefix: None,
+            ..AdapterConfig::default()
         };
         let spec = NormalizedSpec::Rule(NormalizedRuleSpec {
             path: "test.md".into(),
@@ -424,6 +562,7 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: None,
             content_prefix: Some("tw:".to_string()),
+            ..AdapterConfig::default()
         };
         let spec = NormalizedSpec::Agent(NormalizedAgentSpec {
             path: "test.md".into(),
@@ -453,6 +592,7 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: None,
             content_prefix: Some("tw:".to_string()),
+            ..AdapterConfig::default()
         };
         let spec = NormalizedSpec::Agent(NormalizedAgentSpec {
             path: "test.md".into(),
@@ -506,11 +646,127 @@ mod tests {
         assert_eq!(yaml, "- Skill\n");
     }
 
+    // -- Hook synthesis tests --
+
+    fn make_hook_spec(id: &str, event: HookEvent, matcher: Option<&str>) -> NormalizedHookSpec {
+        NormalizedHookSpec {
+            path: std::path::PathBuf::from("/tmp/hooks.toml"),
+            frontmatter: crate::spec::NormalizedHookFrontmatter {
+                id: id.to_string(),
+                event,
+                script: format!("scripts/{id}.sh").into(),
+                matcher: matcher.map(str::to_string),
+                timeout: None,
+                description: None,
+                tags: None,
+            },
+            body: String::new(),
+            supporting_files: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_claude_event_name_full_mapping() {
+        assert_eq!(claude_event_name(HookEvent::PreToolUse), "PreToolUse");
+        assert_eq!(claude_event_name(HookEvent::PostToolUse), "PostToolUse");
+        assert_eq!(
+            claude_event_name(HookEvent::PostToolUseFailure),
+            "PostToolUseFailure"
+        );
+        assert_eq!(claude_event_name(HookEvent::SessionStart), "SessionStart");
+        assert_eq!(claude_event_name(HookEvent::SessionEnd), "SessionEnd");
+        assert_eq!(claude_event_name(HookEvent::Stop), "Stop");
+        assert_eq!(claude_event_name(HookEvent::PreCompact), "PreCompact");
+        assert_eq!(claude_event_name(HookEvent::SubagentStart), "SubagentStart");
+        assert_eq!(claude_event_name(HookEvent::SubagentStop), "SubagentStop");
+        assert_eq!(
+            claude_event_name(HookEvent::UserPromptSubmit),
+            "UserPromptSubmit"
+        );
+    }
+
+    #[test]
+    fn test_synthesize_hooks_empty_returns_default() {
+        let result = synthesize_hooks(&[], None).expect("expected value");
+        assert!(result.entries.is_empty());
+        assert!(result.files.is_empty());
+    }
+
+    #[test]
+    fn test_synthesize_hooks_path_mode_emits_bundled_file() {
+        let spec = make_hook_spec("init", HookEvent::UserPromptSubmit, None);
+        let specs = vec![&spec];
+        let result = synthesize_hooks(&specs, None).expect("expected value");
+        assert_eq!(result.entries.len(), 1);
+        let file = result
+            .files
+            .iter()
+            .find(|f| f.path.to_str() == Some("hooks/hooks.json"))
+            .expect("hooks.json should be present");
+        let content = String::from_utf8(file.content.clone()).expect("expected utf-8");
+        assert!(
+            content.contains("\"UserPromptSubmit\""),
+            "expected PascalCase event name, got: {content}"
+        );
+        assert!(
+            content.contains("\"_agentspec_id\": \"init\""),
+            "expected _agentspec_id sentinel, got: {content}"
+        );
+        assert!(
+            content.contains("${CLAUDE_PLUGIN_ROOT}/hooks/scripts/init.sh"),
+            "expected CLAUDE_PLUGIN_ROOT-anchored command, got: {content}"
+        );
+    }
+
+    #[test]
+    fn test_synthesize_hooks_groups_by_event_and_matcher() {
+        // Two hooks share (UserPromptSubmit, None) → land in one matcher group
+        // with both entries; insertion order preserved.
+        let a = make_hook_spec("a", HookEvent::UserPromptSubmit, None);
+        let b = make_hook_spec("b", HookEvent::UserPromptSubmit, None);
+        let specs = vec![&a, &b];
+        let result = synthesize_hooks(&specs, None).expect("expected value");
+        let json_file = result
+            .files
+            .iter()
+            .find(|f| f.path.to_str() == Some("hooks/hooks.json"))
+            .expect("hooks.json should be present");
+        let content = String::from_utf8(json_file.content.clone()).expect("utf-8");
+        // Find the position of each agentspec_id sentinel and check ordering.
+        let a_pos = content.find("\"a\"").expect("a id");
+        let b_pos = content.find("\"b\"").expect("b id");
+        assert!(a_pos < b_pos, "expected insertion order preserved");
+        // Both entries should land in a single matcher group (one inner array).
+        // The inner-array key is `"hooks": [` (top-level uses `"hooks": {`).
+        let inner = content.matches("\"hooks\": [").count();
+        assert_eq!(
+            inner, 1,
+            "expected exactly one matcher-group hooks array, got {inner}: {content}"
+        );
+    }
+
+    #[test]
+    fn test_synthesize_hooks_merged_mode_errors_in_phase_one() {
+        let cfg = AdapterConfig {
+            hook_emit_mode: Some(HookEmitMode::Merged),
+            ..AdapterConfig::default()
+        };
+        let spec = make_hook_spec("init", HookEvent::SessionStart, None);
+        let specs = vec![&spec];
+        let err = synthesize_hooks(&specs, Some(&cfg)).expect_err("expected error");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("Phase 2"),
+            "expected Phase 2 message, got: {msg}"
+        );
+    }
+
     #[test]
     fn test_model_facing_name_falls_back_to_prefix() {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
             content_prefix: None,
+            ..AdapterConfig::default()
         };
         let spec = NormalizedSpec::Agent(NormalizedAgentSpec {
             path: "test.md".into(),

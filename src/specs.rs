@@ -6,12 +6,14 @@ use anyhow::{Context, Result, anyhow, bail};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use gray_matter::Matter;
 use gray_matter::engine::YAML;
+use indexmap::IndexMap;
+use serde::Deserialize;
 use walkdir::WalkDir;
 
 use crate::presets::ProviderPresetsMap;
 use crate::spec::{
-    AgentFrontmatter, AgentSpec, NormalizedSpec, RuleFrontmatter, RuleSpec, SkillFrontmatter,
-    SkillSpec, Spec, SupportingFile,
+    AgentFrontmatter, AgentSpec, HookFrontmatter, HookSpec, NormalizedSpec, RuleFrontmatter,
+    RuleSpec, SkillFrontmatter, SkillSpec, Spec, SupportingFile,
 };
 use crate::validate::{SemanticError, normalize_specs, validate_semantics};
 
@@ -101,6 +103,9 @@ pub struct SpecDirs {
     pub agents: PathBuf,
     pub skills: PathBuf,
     pub rules: PathBuf,
+    /// Directory containing `hooks.toml` and the `scripts/` subdirectory.
+    /// Absent directory is not an error — hook authoring is opt-in.
+    pub hooks: PathBuf,
     /// Compiled ignore patterns applied to every file walked during load.
     pub ignore: IgnoreMatcher,
     /// Absolute `sources_dir`. Ignore patterns are matched against paths
@@ -311,6 +316,12 @@ fn load_specs_from_dirs(dirs: &SpecDirs, report: &mut LoadReport) -> Result<Vec<
     )?);
     specs.extend(load_rule_specs(
         &dirs.rules,
+        &dirs.ignore,
+        &dirs.ignore_anchor,
+        report,
+    )?);
+    specs.extend(load_hook_specs(
+        &dirs.hooks,
         &dirs.ignore,
         &dirs.ignore_anchor,
         report,
@@ -590,6 +601,210 @@ fn load_rule_specs(
     Ok(specs)
 }
 
+/// On-disk shape of `hooks.toml`.
+///
+/// Authors write `[hooks.<id>]` tables; the outer `hooks` map's keys are
+/// captured into [`HookFrontmatter::id`] after deserialization. Using
+/// `IndexMap` preserves authoring order, which propagates through to the
+/// emitted `hooks.json` group ordering.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HookSpecFile {
+    #[serde(default)]
+    hooks: IndexMap<String, HookFrontmatter>,
+}
+
+/// Validate a hook id against the bare-key regex `^[a-z][a-z0-9_-]*$`.
+///
+/// Hooks share the spec-id namespace with agents/skills/rules; the same
+/// kebab-case convention applies. Empty ids are rejected.
+fn validate_hook_id(id: &str) -> Result<()> {
+    let mut chars = id.chars();
+    let Some(first) = chars.next() else {
+        bail!("hook id is empty");
+    };
+    if !first.is_ascii_lowercase() {
+        bail!("hook id '{id}' must start with a lowercase letter (allowed: a-z, then a-z0-9_-)");
+    }
+    for ch in chars {
+        if !(ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-' || ch == '_') {
+            bail!("hook id '{id}' contains invalid character '{ch}' (allowed: a-z, 0-9, -, _)");
+        }
+    }
+    Ok(())
+}
+
+/// Loads hook specs from a single `hooks.toml`, with each `[hooks.<id>]` table
+/// becoming one [`Spec::Hook`]. Walks `scripts/` once and attaches the full
+/// file list to every emitted spec — emission is deduplicated downstream by
+/// emitting from a single provider-level synthesis pass.
+///
+/// Behavior:
+/// - Returns `Ok(empty)` when `dir` does not exist (hook authoring is opt-in).
+/// - Errors when `hooks.toml` is absent but `scripts/` exists (orphaned scripts).
+/// - Errors when a script under `scripts/` starts with `_agentspec_` (reserved).
+/// - Errors when `frontmatter.script` escapes the hooks dir or does not resolve to a file.
+/// - Returns `Ok(empty)` when `hooks.toml` is absent and no `scripts/` exists.
+fn load_hook_specs(
+    dir: &Path,
+    ignore: &IgnoreMatcher,
+    anchor: &Path,
+    report: &mut LoadReport,
+) -> Result<Vec<Spec>> {
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    if should_ignore_path(dir, true, anchor, ignore, report) {
+        return Ok(Vec::new());
+    }
+
+    let toml_path = dir.join("hooks.toml");
+    let scripts_dir = dir.join("scripts");
+
+    if !toml_path.is_file() {
+        if scripts_dir.is_dir() {
+            bail!(
+                "{} exists but {} is missing — orphaned scripts (add hooks.toml or remove the directory)",
+                scripts_dir.display(),
+                toml_path.display()
+            );
+        }
+        return Ok(Vec::new());
+    }
+
+    // Walk `scripts/` once: enforce the `_agentspec_*` reserved-prefix rule
+    // and collect every non-ignored file as a `SupportingFile`. The same list
+    // is attached to every `HookSpec` produced from this `hooks.toml` — emission
+    // happens once per provider in `synthesize_hooks`, not once per hook.
+    let supporting_files = collect_hook_scripts(&scripts_dir, ignore, anchor, report)?;
+
+    let content = fs::read_to_string(&toml_path)
+        .with_context(|| format!("failed to read {}", toml_path.display()))?;
+
+    let parsed: HookSpecFile = serde_path_to_error::deserialize(toml::de::Deserializer::new(
+        &content,
+    ))
+    .map_err(|error| {
+        let path = error.path().to_string();
+        let location = if path.is_empty() { "<root>" } else { &path };
+        anyhow!(
+            "failed to parse {} at `{location}`: {}",
+            toml_path.display(),
+            error.into_inner()
+        )
+    })?;
+
+    let mut specs = Vec::new();
+    for (id, mut frontmatter) in parsed.hooks {
+        validate_hook_id(&id).with_context(|| format!("in {}", toml_path.display()))?;
+        validate_hook_script_path(&id, &frontmatter.script, dir, &toml_path)?;
+        let script_path = dir.join(&frontmatter.script);
+        if !script_path.is_file() {
+            bail!(
+                "hook '{id}' in {} references script {} which does not exist",
+                toml_path.display(),
+                script_path.display()
+            );
+        }
+        frontmatter.id = id;
+        specs.push(Spec::Hook(HookSpec {
+            path: toml_path.clone(),
+            frontmatter,
+            body: String::new(),
+            supporting_files: supporting_files.clone(),
+        }));
+    }
+
+    Ok(specs)
+}
+
+/// Reject `frontmatter.script` paths that escape the hooks directory.
+///
+/// Without this, `script = "../../etc/passwd"` would pull arbitrary files into
+/// `generated/<provider>/hooks/scripts/<basename>` once `adapt_hook_spec` reads
+/// them. Component-level rejection (`..`, absolute paths, root prefixes) is
+/// sufficient and avoids touching the filesystem at validate time.
+fn validate_hook_script_path(
+    id: &str,
+    script: &Path,
+    hooks_dir: &Path,
+    toml_path: &Path,
+) -> Result<()> {
+    use std::path::Component;
+    if script.is_absolute() {
+        bail!(
+            "hook '{id}' in {}: script {} must be a relative path under the hooks directory",
+            toml_path.display(),
+            script.display()
+        );
+    }
+    for component in script.components() {
+        match component {
+            Component::ParentDir => bail!(
+                "hook '{id}' in {}: script {} escapes the hooks directory ({}/scripts/) via `..`",
+                toml_path.display(),
+                script.display(),
+                hooks_dir.display()
+            ),
+            Component::RootDir | Component::Prefix(_) => bail!(
+                "hook '{id}' in {}: script {} must be relative",
+                toml_path.display(),
+                script.display()
+            ),
+            Component::CurDir | Component::Normal(_) => {}
+        }
+    }
+    Ok(())
+}
+
+/// Walk the `scripts/` subtree (one walk; respects `[spec].ignore`), enforce
+/// the `_agentspec_*` reserved-prefix rule, and return the collected files.
+fn collect_hook_scripts(
+    scripts_dir: &Path,
+    ignore: &IgnoreMatcher,
+    anchor: &Path,
+    report: &mut LoadReport,
+) -> Result<Vec<SupportingFile>> {
+    if !scripts_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let hooks_dir = scripts_dir.parent().unwrap_or(scripts_dir);
+    let mut files = Vec::new();
+    for entry in WalkDir::new(scripts_dir)
+        .into_iter()
+        .filter_entry(|e| !should_ignore_entry(e, anchor, ignore, report))
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+    {
+        let name = entry.file_name().to_string_lossy();
+        if name.starts_with("_agentspec_") {
+            bail!(
+                "{}: script names starting with `_agentspec_` are reserved for future use; rename this file",
+                entry.path().display()
+            );
+        }
+
+        let entry_path = entry.path();
+        let Ok(relative_path) = entry_path.strip_prefix(hooks_dir) else {
+            continue;
+        };
+        let content = fs::read(entry_path)
+            .with_context(|| format!("failed to read {}", entry_path.display()))?;
+        let metadata = fs::metadata(entry_path)
+            .with_context(|| format!("failed to stat {}", entry_path.display()))?;
+        let executable = metadata.permissions().mode() & 0o111 != 0;
+        files.push(SupportingFile {
+            relative_path: relative_path.to_path_buf(),
+            content,
+            executable,
+        });
+    }
+    files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+    Ok(files)
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -862,7 +1077,9 @@ Agent body.
             .iter()
             .map(|s| match s {
                 Spec::Agent(a) => a.frontmatter.id.as_str(),
-                Spec::Skill(_) | Spec::Rule(_) => panic!("expected Agent variant"),
+                Spec::Skill(_) | Spec::Rule(_) | Spec::Hook(_) => {
+                    panic!("expected Agent variant")
+                }
             })
             .collect();
         assert_eq!(ids, vec!["kept"]);
@@ -938,7 +1155,9 @@ Agent body.
             .iter()
             .map(|s| match s {
                 Spec::Skill(sk) => sk.frontmatter.id.as_str(),
-                Spec::Agent(_) | Spec::Rule(_) => panic!("expected Skill variant"),
+                Spec::Agent(_) | Spec::Rule(_) | Spec::Hook(_) => {
+                    panic!("expected Skill variant")
+                }
             })
             .collect();
         assert_eq!(ids, vec!["kept"]);
@@ -1052,6 +1271,198 @@ Agent body.
         assert_eq!(report.ignored.len(), 1);
         assert!(report.ignored[0].pruned);
         assert_eq!(report.ignored[0].rel_path, PathBuf::from("skills"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Hook loading tests
+    // -----------------------------------------------------------------------
+
+    fn write_hook_fixture(dir: &Path, id: &str, event: &str, script_name: &str) {
+        let toml =
+            format!("[hooks.{id}]\nevent = \"{event}\"\nscript = \"scripts/{script_name}\"\n");
+        fs::create_dir_all(dir.join("scripts")).expect("expected value");
+        fs::write(dir.join("hooks.toml"), toml).expect("expected value");
+        fs::write(
+            dir.join("scripts").join(script_name),
+            "#!/bin/sh\necho hi\n",
+        )
+        .expect("expected value");
+    }
+
+    fn load_hooks_no_ignore(dir: &Path) -> Result<Vec<Spec>> {
+        let mut report = LoadReport::default();
+        load_hook_specs(dir, &IgnoreMatcher::empty(), dir, &mut report)
+    }
+
+    #[test]
+    fn test_load_hook_specs_parses_single_hook() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let hooks_dir = tmp.path().join("hooks");
+        write_hook_fixture(&hooks_dir, "init", "user_prompt_submit", "init.sh");
+
+        let specs = load_hooks_no_ignore(&hooks_dir).expect("expected value");
+        assert_eq!(specs.len(), 1);
+        let Spec::Hook(ref h) = specs[0] else {
+            panic!("expected Hook variant")
+        };
+        assert_eq!(h.frontmatter.id, "init");
+    }
+
+    #[test]
+    fn test_load_hook_specs_preserves_authoring_order() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let hooks_dir = tmp.path().join("hooks");
+        fs::create_dir_all(hooks_dir.join("scripts")).expect("expected value");
+        // Two hooks in a deliberately non-sorted order in the TOML; IndexMap
+        // must preserve insertion order.
+        let toml = "
+[hooks.zeta]
+event = \"session_start\"
+script = \"scripts/zeta.sh\"
+
+[hooks.alpha]
+event = \"session_end\"
+script = \"scripts/alpha.sh\"
+";
+        fs::write(hooks_dir.join("hooks.toml"), toml).expect("expected value");
+        for name in ["zeta.sh", "alpha.sh"] {
+            fs::write(hooks_dir.join("scripts").join(name), "#!/bin/sh\necho hi\n")
+                .expect("expected value");
+        }
+
+        let specs = load_hooks_no_ignore(&hooks_dir).expect("expected value");
+        let ids: Vec<&str> = specs
+            .iter()
+            .map(|s| match s {
+                Spec::Hook(h) => h.frontmatter.id.as_str(),
+                Spec::Agent(_) | Spec::Skill(_) | Spec::Rule(_) => {
+                    panic!("expected Hook variant")
+                }
+            })
+            .collect();
+        assert_eq!(ids, vec!["zeta", "alpha"]);
+    }
+
+    #[test]
+    fn test_load_hook_specs_missing_toml_with_scripts_errors() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let hooks_dir = tmp.path().join("hooks");
+        fs::create_dir_all(hooks_dir.join("scripts")).expect("expected value");
+        fs::write(hooks_dir.join("scripts").join("orphan.sh"), "#!/bin/sh\n")
+            .expect("expected value");
+
+        let err = load_hooks_no_ignore(&hooks_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(full.contains("orphaned"), "error: {full}");
+    }
+
+    #[test]
+    fn test_load_hook_specs_no_dir_returns_empty() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let specs = load_hooks_no_ignore(&tmp.path().join("nonexistent"))
+            .expect("missing dir should be ok");
+        assert!(specs.is_empty());
+    }
+
+    #[test]
+    fn test_load_hook_specs_duplicate_table_header_is_toml_error() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let hooks_dir = tmp.path().join("hooks");
+        fs::create_dir_all(hooks_dir.join("scripts")).expect("expected value");
+        let toml = "
+[hooks.foo]
+event = \"session_start\"
+script = \"scripts/foo.sh\"
+
+[hooks.foo]
+event = \"session_end\"
+script = \"scripts/foo.sh\"
+";
+        fs::write(hooks_dir.join("hooks.toml"), toml).expect("expected value");
+        fs::write(hooks_dir.join("scripts").join("foo.sh"), "#!/bin/sh\n").expect("expected value");
+
+        let err = load_hooks_no_ignore(&hooks_dir).expect_err("expected parse error");
+        let full = format!("{err:#}");
+        assert!(full.contains("failed to parse"), "error: {full}");
+    }
+
+    #[test]
+    fn test_load_hook_specs_invalid_id_rejected() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let hooks_dir = tmp.path().join("hooks");
+        fs::create_dir_all(hooks_dir.join("scripts")).expect("expected value");
+        // Uppercase id — rejected by `validate_hook_id`.
+        let toml = "
+[hooks.BadID]
+event = \"session_start\"
+script = \"scripts/x.sh\"
+";
+        fs::write(hooks_dir.join("hooks.toml"), toml).expect("expected value");
+        fs::write(hooks_dir.join("scripts").join("x.sh"), "#!/bin/sh\n").expect("expected value");
+
+        let err = load_hooks_no_ignore(&hooks_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(full.contains("BadID"), "error: {full}");
+    }
+
+    #[test]
+    fn test_load_hook_specs_reserved_prefix_rejected() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let hooks_dir = tmp.path().join("hooks");
+        fs::create_dir_all(hooks_dir.join("scripts")).expect("expected value");
+        fs::write(hooks_dir.join("hooks.toml"), "").expect("expected value");
+        fs::write(
+            hooks_dir.join("scripts").join("_agentspec_envelope.sh"),
+            "#!/bin/sh\n",
+        )
+        .expect("expected value");
+
+        let err = load_hooks_no_ignore(&hooks_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(full.contains("_agentspec_"), "error: {full}");
+        assert!(full.contains("reserved"), "error: {full}");
+    }
+
+    #[test]
+    fn test_load_hook_specs_missing_script_rejected() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let hooks_dir = tmp.path().join("hooks");
+        fs::create_dir_all(hooks_dir.join("scripts")).expect("expected value");
+        let toml = "
+[hooks.init]
+event = \"session_start\"
+script = \"scripts/missing.sh\"
+";
+        fs::write(hooks_dir.join("hooks.toml"), toml).expect("expected value");
+
+        let err = load_hooks_no_ignore(&hooks_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(full.contains("does not exist"), "error: {full}");
+    }
+
+    #[test]
+    fn test_load_hook_specs_ignore_pattern_prunes_tests_subdir() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let hooks_dir = tmp.path().join("hooks");
+        write_hook_fixture(&hooks_dir, "init", "session_start", "init.sh");
+        fs::create_dir_all(hooks_dir.join("scripts").join("tests")).expect("expected value");
+        // A reserved-prefix file under tests/ would error if walked — but
+        // `ignore = ["**/scripts/tests/**"]` should prune the subtree first.
+        fs::write(
+            hooks_dir
+                .join("scripts")
+                .join("tests")
+                .join("_agentspec_x.sh"),
+            "#!/bin/sh\n",
+        )
+        .expect("expected value");
+
+        let patterns = vec!["**/scripts/tests/**".to_string()];
+        let ignore = IgnoreMatcher::compile(&patterns).expect("expected value");
+        let mut report = LoadReport::with_matcher(&ignore);
+        let specs =
+            load_hook_specs(&hooks_dir, &ignore, tmp.path(), &mut report).expect("expected value");
+        assert_eq!(specs.len(), 1);
     }
 
     #[test]

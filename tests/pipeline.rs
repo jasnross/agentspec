@@ -1324,3 +1324,383 @@ fn test_compile_no_ignore_field_still_works() {
         "baseline script should exist"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Hook tests
+// ---------------------------------------------------------------------------
+
+/// Drop a representative hook spec set into a fixture-derived directory.
+///
+/// The shared fixture intentionally omits hooks so that existing user/project
+/// sync tests don't trip Phase 1's scope guard. Tests that want hooks call
+/// this helper after `setup()`.
+///
+/// `clippy.toml`'s `allow-expect-in-tests` exemption only covers `#[test]`
+/// fns — this helper is a free function, so it uses the `assert!(…is_ok…)`
+/// idiom established by `setup()` instead of `.expect()`.
+fn install_hook_fixture(dir: &Path) {
+    let hooks_dir = dir.join("spec/hooks");
+    let scripts_dir = hooks_dir.join("scripts");
+    let r = std::fs::create_dir_all(&scripts_dir);
+    assert!(r.is_ok(), "create hooks dir: {r:?}");
+    let r = std::fs::write(
+        hooks_dir.join("hooks.toml"),
+        r#"
+[hooks.init-thoughts]
+event = "user_prompt_submit"
+script = "scripts/init-thoughts.sh"
+description = "Seed THOUGHTS_DIR context at the start of each turn"
+
+[hooks.audit-bash]
+event = "pre_tool_use"
+matcher = "Bash"
+script = "scripts/audit-bash.sh"
+"#,
+    );
+    assert!(r.is_ok(), "write hooks.toml: {r:?}");
+    let r = std::fs::write(
+        scripts_dir.join("init-thoughts.sh"),
+        "#!/bin/sh\nsource \"$(dirname \"$0\")/_common.sh\"\necho '{\"reply\": \"thoughts loaded\"}'\n",
+    );
+    assert!(r.is_ok(), "write init-thoughts.sh: {r:?}");
+    let r = std::fs::write(scripts_dir.join("audit-bash.sh"), "#!/bin/sh\nexit 0\n");
+    assert!(r.is_ok(), "write audit-bash.sh: {r:?}");
+    // _common.sh is a helper sourced by init-thoughts.sh; it's not a hook entry
+    // point but must still flow through to the destination so the entry script
+    // can `source` it at runtime.
+    let r = std::fs::write(
+        scripts_dir.join("_common.sh"),
+        "#!/bin/sh\n# shared helper sourced by entry scripts\n",
+    );
+    assert!(r.is_ok(), "write _common.sh: {r:?}");
+    set_script_permissions(&scripts_dir);
+}
+
+#[test]
+fn test_compile_emits_hooks_for_claude_and_cursor() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    // Both Claude and Cursor receive the same script content (Cursor aliases
+    // ${CLAUDE_PLUGIN_ROOT} natively at plugin scope).
+    for provider in ["claude", "cursor"] {
+        let json = dir.join(format!("generated/{provider}/hooks/hooks.json"));
+        assert!(json.exists(), "{provider}: hooks.json should be emitted");
+        let content = std::fs::read_to_string(&json).expect("failed to read hooks.json");
+        assert!(
+            content.contains("init-thoughts"),
+            "{provider}: hooks.json should contain init-thoughts agentspec_id, got:\n{content}"
+        );
+        assert!(
+            content.contains("${CLAUDE_PLUGIN_ROOT}/hooks/scripts/init-thoughts.sh"),
+            "{provider}: hooks.json should anchor scripts under CLAUDE_PLUGIN_ROOT"
+        );
+
+        // Both entry scripts AND the `_common.sh` helper that
+        // `init-thoughts.sh` sources must land at the destination — otherwise
+        // the entry script fails at runtime trying to source a missing file.
+        for script in ["init-thoughts.sh", "audit-bash.sh", "_common.sh"] {
+            let path = dir.join(format!("generated/{provider}/hooks/scripts/{script}"));
+            assert!(path.exists(), "{provider}: {script} should be emitted");
+        }
+    }
+
+    // OpenCode does not receive hook output in v1.
+    assert!(
+        !dir.join("generated/opencode/hooks").exists(),
+        "OpenCode should not receive hooks/ directory in v1"
+    );
+}
+
+#[test]
+fn test_compile_prunes_hooks_tests_subdir() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    // Drop a `tests/` subtree alongside the hook scripts (e.g., bats tests).
+    let tests_dir = dir.join("spec/hooks/scripts/tests");
+    std::fs::create_dir_all(&tests_dir).expect("create tests dir");
+    std::fs::write(tests_dir.join("audit.bats"), "@test 'noop' { :; }\n").expect("write bats test");
+    // Configure agentspec.toml with the conventional `**/scripts/tests/**`
+    // ignore pattern, mirroring the thoughts-workflow plugin's config.
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        r#"
+[spec]
+sources_dir = "spec"
+ignore = ["**/scripts/tests/**"]
+
+[compile]
+output_dir = "generated"
+
+[presets.default]
+claude = { model = "sonnet" }
+opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
+cursor = { model = "fast" }
+"#,
+    )
+    .expect("write agentspec.toml");
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+    assert!(
+        output.status.success(),
+        "compile failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    for provider in ["claude", "cursor"] {
+        // Helper survives.
+        assert!(
+            dir.join(format!("generated/{provider}/hooks/scripts/_common.sh"))
+                .exists(),
+            "{provider}: _common.sh should be preserved"
+        );
+        // tests/ subtree pruned.
+        assert!(
+            !dir.join(format!("generated/{provider}/hooks/scripts/tests"))
+                .exists(),
+            "{provider}: hooks/scripts/tests/ should have been pruned by [spec].ignore"
+        );
+    }
+}
+
+#[test]
+fn test_compile_rejects_hook_script_path_traversal() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let hooks_dir = dir.join("spec/hooks");
+    std::fs::create_dir_all(hooks_dir.join("scripts")).expect("create scripts dir");
+    // `script = "../../etc/passwd"` would read arbitrary files into the
+    // generated tree — `validate_hook_script_path` must reject it at load.
+    std::fs::write(
+        hooks_dir.join("hooks.toml"),
+        r#"
+[hooks.bad]
+event = "session_start"
+script = "../../etc/passwd"
+"#,
+    )
+    .expect("write hooks.toml");
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "compile should fail on path traversal:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("escapes the hooks directory"),
+        "expected path-traversal error, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn test_compile_claude_hooks_json_uses_pascal_case_events() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+    assert!(
+        output.status.success(),
+        "compile failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let claude_json = std::fs::read_to_string(dir.join("generated/claude/hooks/hooks.json"))
+        .expect("failed to read claude hooks.json");
+    assert!(
+        claude_json.contains("\"UserPromptSubmit\""),
+        "Claude should use PascalCase event names, got:\n{claude_json}"
+    );
+    assert!(
+        claude_json.contains("\"PreToolUse\""),
+        "Claude should map pre_tool_use to PreToolUse, got:\n{claude_json}"
+    );
+}
+
+#[test]
+fn test_compile_cursor_hooks_json_uses_camel_case_and_version() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+    assert!(
+        output.status.success(),
+        "compile failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let cursor_json = std::fs::read_to_string(dir.join("generated/cursor/hooks/hooks.json"))
+        .expect("failed to read cursor hooks.json");
+    assert!(
+        cursor_json.contains("\"version\": 1"),
+        "Cursor hooks.json should carry version: 1, got:\n{cursor_json}"
+    );
+    // user_prompt_submit → beforeSubmitPrompt (the one non-trivial mapping).
+    assert!(
+        cursor_json.contains("\"beforeSubmitPrompt\""),
+        "Cursor should map user_prompt_submit to beforeSubmitPrompt, got:\n{cursor_json}"
+    );
+    assert!(
+        cursor_json.contains("\"preToolUse\""),
+        "Cursor should map pre_tool_use to preToolUse, got:\n{cursor_json}"
+    );
+    // Cursor places matcher per-entry (not on a wrapping group).
+    assert!(
+        cursor_json.contains("\"matcher\": \"Bash\""),
+        "Cursor should place matcher per-entry, got:\n{cursor_json}"
+    );
+}
+
+#[test]
+fn test_compile_opencode_with_hooks_prints_skip_warning() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+
+    let output = std::process::Command::new(agentspec())
+        .args(["compile", "--provider", "opencode"])
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile --provider opencode");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+    assert!(
+        stderr.contains("opencode: skipped"),
+        "expected per-provider skip summary, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn test_compile_opencode_verbose_lists_skipped_hooks() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+
+    let output = std::process::Command::new(agentspec())
+        .args(["compile", "--provider", "opencode", "--verbose"])
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile --provider opencode --verbose");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+    assert!(
+        stderr.contains("opencode: skipped hook init-thoughts"),
+        "expected per-spec listing under --verbose, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("opencode: skipped hook audit-bash"),
+        "expected per-spec listing under --verbose, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn test_sync_claude_path_mode_writes_hooks() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    let dest = dir.join("plugin-claude");
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        format!(
+            r#"
+[presets.default]
+claude = {{ model = "sonnet" }}
+opencode = {{ model = "anthropic/claude-sonnet-4-5", variant = "high" }}
+cursor = {{ model = "fast" }}
+
+[sync.claude]
+mode = "path"
+dir = "{}"
+"#,
+            dest.display()
+        ),
+    )
+    .expect("failed to write agentspec.toml");
+
+    let home = dir.join("home");
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--provider", "claude"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "sync (path mode) should succeed:\n{stderr}"
+    );
+
+    assert!(
+        dest.join("hooks/hooks.json").exists(),
+        "hooks.json should land under the plugin path destination"
+    );
+    assert!(
+        dest.join("hooks/scripts/init-thoughts.sh").exists(),
+        "hook script should land under the plugin path destination"
+    );
+}
+
+#[test]
+fn test_sync_claude_user_mode_with_hooks_errors_until_phase_two() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        r#"
+[presets.default]
+claude = { model = "sonnet" }
+opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
+cursor = { model = "fast" }
+
+[sync.claude]
+mode = "user"
+"#,
+    )
+    .expect("failed to write agentspec.toml");
+
+    let home = dir.join("home");
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--provider", "claude"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "sync (user mode) should fail in Phase 1 because Merged emit is not yet implemented:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("Phase 2"),
+        "expected Phase 2 error message, got:\n{stderr}"
+    );
+}

@@ -90,6 +90,10 @@ fn build_context(
                 rule_map.insert(key, entry.clone());
                 rules_list.push(entry);
             }
+            // Hooks aren't user-referenceable in templates (no `specs.hook.foo`
+            // surface today); they participate in the pipeline but are absent
+            // from `TemplateContext`. Adding them later is purely additive.
+            NormalizedSpec::Hook(_) => {}
         }
     }
 
@@ -325,6 +329,7 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_owned()),
             content_prefix: None,
+            ..AdapterConfig::default()
         };
         let ctx = TemplateContext::from_specs_for_provider(&specs, Provider::Claude, Some(&cfg));
 
@@ -353,6 +358,7 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_owned()),
             content_prefix: None,
+            ..AdapterConfig::default()
         };
         let ctx = TemplateContext::from_specs_for_provider(&specs, Provider::OpenCode, Some(&cfg));
 
@@ -398,6 +404,7 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: None,
             content_prefix: Some("tw:".to_owned()),
+            ..AdapterConfig::default()
         };
         let ctx = TemplateContext::from_specs_for_provider(&specs, Provider::Claude, Some(&cfg));
 
@@ -422,6 +429,7 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: None,
             content_prefix: Some("tw:".to_owned()),
+            ..AdapterConfig::default()
         };
         let ctx = TemplateContext::from_specs_for_provider(&specs, Provider::OpenCode, Some(&cfg));
 

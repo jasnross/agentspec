@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 
 use crate::presets::ProviderPresetsMap;
 use crate::spec::{
-    AgentSpec, NormalizedAgentFrontmatter, NormalizedAgentSpec, NormalizedRuleFrontmatter,
-    NormalizedRuleSpec, NormalizedSkillFrontmatter, NormalizedSkillSpec, NormalizedSpec, RuleSpec,
-    SkillSpec, Spec,
+    AgentSpec, HookSpec, NormalizedAgentFrontmatter, NormalizedAgentSpec,
+    NormalizedHookFrontmatter, NormalizedHookSpec, NormalizedRuleFrontmatter, NormalizedRuleSpec,
+    NormalizedSkillFrontmatter, NormalizedSkillSpec, NormalizedSpec, RuleSpec, SkillSpec, Spec,
 };
 
 /// A semantic validation error.
@@ -32,6 +32,7 @@ pub fn normalize_specs(specs: Vec<Spec>) -> Vec<NormalizedSpec> {
             Spec::Agent(s) => NormalizedSpec::Agent(normalize_agent_spec(s)),
             Spec::Skill(s) => NormalizedSpec::Skill(normalize_skill_spec(s)),
             Spec::Rule(s) => NormalizedSpec::Rule(normalize_rule_spec(s)),
+            Spec::Hook(s) => NormalizedSpec::Hook(normalize_hook_spec(s)),
         })
         .collect()
 }
@@ -85,6 +86,25 @@ fn normalize_rule_spec(spec: RuleSpec) -> NormalizedRuleSpec {
     }
 }
 
+fn normalize_hook_spec(spec: HookSpec) -> NormalizedHookSpec {
+    let frontmatter = NormalizedHookFrontmatter {
+        id: spec.frontmatter.id,
+        event: spec.frontmatter.event,
+        script: spec.frontmatter.script,
+        matcher: spec.frontmatter.matcher,
+        timeout: spec.frontmatter.timeout,
+        description: spec.frontmatter.description,
+        tags: spec.frontmatter.tags,
+    };
+
+    NormalizedHookSpec {
+        path: spec.path,
+        frontmatter,
+        body: spec.body,
+        supporting_files: spec.supporting_files,
+    }
+}
+
 /// Run semantic validation checks on normalized specs.
 ///
 /// Returns all errors found. An empty vec means all checks pass.
@@ -106,7 +126,9 @@ pub fn validate_semantics(
         }
 
         // Empty body check
-        if spec.body().is_empty() {
+        // Hook specs intentionally have empty bodies (they are TOML-driven, not
+        // markdown-bodied), so they are exempt from this check.
+        if spec.body().is_empty() && !matches!(spec, NormalizedSpec::Hook(_)) {
             errors.push(SemanticError {
                 path: spec.path().to_path_buf(),
                 message: "instruction body cannot be empty".to_string(),
@@ -125,6 +147,23 @@ pub fn validate_semantics(
             });
         }
 
+        // Hook event/matcher compatibility: a `matcher` is only valid on the
+        // tool-execute events. `HookEvent::allows_matcher` codifies the rule;
+        // both providers agree on the answer, so it lives on the enum.
+        if let NormalizedSpec::Hook(hook_spec) = spec
+            && hook_spec.frontmatter.matcher.is_some()
+            && !hook_spec.frontmatter.event.allows_matcher()
+        {
+            errors.push(SemanticError {
+                path: hook_spec.path.clone(),
+                message: format!(
+                    "hook '{}' uses event '{:?}' which does not accept a `matcher`; \
+                     only pre_tool_use, post_tool_use, and post_tool_use_failure may set one",
+                    hook_spec.frontmatter.id, hook_spec.frontmatter.event,
+                ),
+            });
+        }
+
         let execution = match spec {
             NormalizedSpec::Agent(normalized_agent_spec) => {
                 &normalized_agent_spec.frontmatter.execution
@@ -132,7 +171,7 @@ pub fn validate_semantics(
             NormalizedSpec::Skill(normalized_skill_spec) => {
                 &normalized_skill_spec.frontmatter.execution
             }
-            NormalizedSpec::Rule(_) => &None,
+            NormalizedSpec::Rule(_) | NormalizedSpec::Hook(_) => &None,
         };
 
         // Preset validation (skip if no presets loaded)
@@ -196,7 +235,7 @@ mod tests {
     use super::*;
     use crate::presets::{ProviderPresets, ProviderPresetsMap};
     use crate::spec::{
-        AgentFrontmatter, ExecutionFrontmatter, NormalizedRuleFrontmatter,
+        AgentFrontmatter, ExecutionFrontmatter, HookEvent, NormalizedRuleFrontmatter,
         NormalizedSkillFrontmatter, RuleFrontmatter, SkillFrontmatter,
     };
 
@@ -242,6 +281,23 @@ mod tests {
                 tags: None,
             },
             body: body.to_string(),
+        })
+    }
+
+    fn make_hook(id: &str, event: HookEvent, matcher: Option<&str>) -> NormalizedSpec {
+        NormalizedSpec::Hook(NormalizedHookSpec {
+            path: PathBuf::from("hooks.toml"),
+            frontmatter: NormalizedHookFrontmatter {
+                id: id.to_string(),
+                event,
+                script: PathBuf::from(format!("scripts/{id}.sh")),
+                matcher: matcher.map(str::to_string),
+                timeout: None,
+                description: None,
+                tags: None,
+            },
+            body: String::new(),
+            supporting_files: Vec::new(),
         })
     }
 
@@ -527,6 +583,77 @@ mod tests {
         assert!(
             collision_errors.is_empty(),
             "single spec should not collide, got: {collision_errors:?}"
+        );
+    }
+
+    // -- Hook validation tests --
+
+    #[test]
+    fn test_hook_empty_body_does_not_error() {
+        // Hooks have empty bodies by design; the empty-body check must skip them.
+        let specs = vec![make_hook("init", HookEvent::SessionStart, None)];
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        assert!(
+            errors.is_empty(),
+            "expected no errors for hook with empty body, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_hook_matcher_on_tool_event_passes() {
+        let specs = vec![make_hook("audit", HookEvent::PreToolUse, Some("Bash|Edit"))];
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        assert!(
+            errors.is_empty(),
+            "expected no errors for matcher on pre_tool_use, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_hook_matcher_on_non_tool_event_errors() {
+        let specs = vec![make_hook("init", HookEvent::SessionStart, Some("anything"))];
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        let matcher_errors: Vec<_> = errors
+            .iter()
+            .filter(|e| e.message.contains("does not accept a `matcher`"))
+            .collect();
+        assert_eq!(
+            matcher_errors.len(),
+            1,
+            "expected exactly one matcher error, got all: {errors:?}"
+        );
+        assert!(matcher_errors[0].message.contains("'init'"));
+    }
+
+    #[test]
+    fn test_hook_id_collides_with_skill_id() {
+        // The existing duplicate-ID check is global across spec types — a hook
+        // with the same ID as an agent/skill/rule errors.
+        let specs = vec![
+            make_skill("gh-safe", "body"),
+            make_hook("gh-safe", HookEvent::SessionStart, None),
+        ];
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("duplicate id 'gh-safe'")),
+            "expected cross-spec-type duplicate-ID error, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_hook_duplicate_ids_within_hooks_error() {
+        let specs = vec![
+            make_hook("init", HookEvent::SessionStart, None),
+            make_hook("init", HookEvent::SessionEnd, None),
+        ];
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("duplicate id 'init'")),
+            "expected duplicate-id error, got: {errors:?}"
         );
     }
 }

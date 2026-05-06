@@ -190,7 +190,10 @@ mod tests {
     use crate::config::{SyncMode, SyncTargetConfig};
 
     fn make_result(files: Vec<GeneratedFile>) -> CompileResult {
-        CompileResult { files }
+        CompileResult {
+            files,
+            ..CompileResult::default()
+        }
     }
 
     #[test]
@@ -261,8 +264,8 @@ mod tests {
         let home = Path::new("/tmp");
         let plan = sync_plan(&result, &targets, home, home).expect("sync_plan should succeed");
 
-        // Claude: 3 kinds (agents, rules, skills); OpenCode: 4 kinds (agents, commands, rules, skills)
-        assert_eq!(plan.writes.len(), 7);
+        // Claude: 4 kinds (agents, rules, skills, hooks); OpenCode: 4 kinds (agents, commands, rules, skills).
+        assert_eq!(plan.writes.len(), 8);
 
         // Every write uses ManifestTracked mode and has a kind set.
         for w in &plan.writes {
