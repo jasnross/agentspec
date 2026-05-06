@@ -24,9 +24,12 @@ strum = { version = "0.28", features = ["derive"] }
 thiserror = "2"
 toml = "0.8"
 walkdir = "2"
+jsonc-parser = { version = "0.32.3", features = ["cst"] }
+tempfile = "3"
 
 [dev-dependencies]
-tempfile = "3"
+# `tempfile` is in `[dependencies]` (used by `hooks_merge`'s atomic write) so
+# tests pick it up transitively — no separate dev-dependency entry needed.
 
 [lints.clippy]
 # Lint groups at priority -1 so individual overrides below take precedence.

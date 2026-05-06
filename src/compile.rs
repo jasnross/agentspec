@@ -36,13 +36,27 @@ pub struct AdapterConfig {
 /// How a provider's hook entries should reach disk.
 ///
 /// `Bundled` means agentspec writes a self-contained `hooks.json` (Path mode
-/// or `compile`-only). `Merged` means the entries are merged into a host
-/// config file via a post-write patcher (Project/User sync mode); Phase 2
-/// implements the patcher, so Phase 1 errors when this variant is requested.
+/// or `compile`-only). `MergedUser` and `MergedProject` mean entries are
+/// merged into a host config file (`settings.json` for Claude, `hooks.json`
+/// for Cursor) via a post-write patcher.
+///
+/// User vs. Project is split because the script command path-anchoring
+/// differs: User mode emits `$HOME/.claude/hooks/scripts/<f>`, Project mode
+/// emits `${CLAUDE_PROJECT_DIR}/.claude/hooks/scripts/<f>`. Plan originally
+/// had two variants — split during Phase 2 because per-mode anchoring isn't
+/// derivable from a single Merged variant.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HookEmitMode {
     Bundled,
-    Merged,
+    MergedUser,
+    MergedProject,
+}
+
+impl HookEmitMode {
+    /// Whether this mode requires the post-write merge patcher (Phase 2 path).
+    pub fn is_merged(self) -> bool {
+        matches!(self, Self::MergedUser | Self::MergedProject)
+    }
 }
 
 /// A single canonical hook entry, computed once per provider during compile.
@@ -106,11 +120,19 @@ pub fn build_hook_script_files(
 
 /// Build canonical `EmittedHookEntry` rows from normalized hook specs.
 ///
-/// The `command` field is provider-neutral because Cursor aliases
-/// `${CLAUDE_PLUGIN_ROOT}` natively at plugin scope, so Claude and Cursor
-/// share one anchor for Path-mode emission. Phase 2 will introduce alternate
-/// anchors (`${CLAUDE_PROJECT_DIR}/...`, `$HOME/...`) selected by `HookEmitMode`.
-pub fn build_emitted_hook_entries(specs: &[&NormalizedHookSpec]) -> Vec<EmittedHookEntry> {
+/// The `command` field's anchor depends on `(provider, emit_mode)`:
+/// - Bundled (Path mode): `${CLAUDE_PLUGIN_ROOT}/hooks/scripts/<f>` for both
+///   providers (Cursor aliases `${CLAUDE_PLUGIN_ROOT}` at plugin scope).
+/// - `MergedUser`: `$HOME/.<dotdir>/hooks/scripts/<f>` (`$HOME` not `~/...`
+///   because Claude's hook-command runtime isn't documented to expand `~`).
+/// - `MergedProject`: `${CLAUDE_PROJECT_DIR}/.<dotdir>/hooks/scripts/<f>`.
+///   Cursor's behavior with `${CLAUDE_PROJECT_DIR}` outside plugin scope is
+///   not documented — Phase 2's manual verification gate covers this.
+pub fn build_emitted_hook_entries(
+    specs: &[&NormalizedHookSpec],
+    provider: Provider,
+    emit_mode: HookEmitMode,
+) -> Vec<EmittedHookEntry> {
     specs
         .iter()
         .map(|s| {
@@ -121,12 +143,48 @@ pub fn build_emitted_hook_entries(specs: &[&NormalizedHookSpec]) -> Vec<EmittedH
             EmittedHookEntry {
                 event: s.frontmatter.event,
                 matcher: s.frontmatter.matcher.clone(),
-                command: format!("${{CLAUDE_PLUGIN_ROOT}}/hooks/scripts/{filename}"),
+                command: hook_command_anchor(provider, emit_mode, &filename),
                 timeout: s.frontmatter.timeout,
                 agentspec_id: s.frontmatter.id.clone(),
             }
         })
         .collect()
+}
+
+/// Compute the `command` string for a hook entry given the provider and mode.
+///
+/// In Bundled (Path) mode, the host runtime sets `$CLAUDE_PLUGIN_ROOT`
+/// (Cursor aliases it) to the plugin root, so we just reference the script
+/// directly. In Merged (User/Project) modes, the host doesn't set that
+/// variable — but hook scripts authored for the plugin distribution model
+/// commonly reference `$CLAUDE_PLUGIN_ROOT/rules`, `$CLAUDE_PLUGIN_ROOT/skills`,
+/// etc. to find sibling assets. We assign it inline (`FOO=bar cmd`, standard
+/// POSIX) so plugin-shaped scripts keep working when synced project/user-wide.
+/// The assigned value is the config dir (e.g., `$HOME/.claude` for User mode),
+/// where agentspec also writes those sibling kinds.
+///
+/// `OpenCode` never reaches this helper — the per-provider dispatch in
+/// `compile_specs` short-circuits to an empty `HookSynthesis` for it. The
+/// `OpenCode` arms below exist for exhaustiveness and would only fire if a
+/// future caller wired the hooks pipeline to `OpenCode` incorrectly; they
+/// fall back to Claude-shaped paths so the result is still a valid string.
+fn hook_command_anchor(provider: Provider, emit_mode: HookEmitMode, filename: &str) -> String {
+    if matches!(emit_mode, HookEmitMode::Bundled) {
+        return format!("${{CLAUDE_PLUGIN_ROOT}}/hooks/scripts/{filename}");
+    }
+    let dotdir = match provider {
+        Provider::Claude | Provider::OpenCode => ".claude",
+        Provider::Cursor => ".cursor",
+    };
+    let var_anchor = match emit_mode {
+        // Bundled handled by the early-return above; both `Merged*` variants
+        // are exhaustively listed here so adding a future variant breaks the
+        // build instead of silently falling through.
+        HookEmitMode::Bundled | HookEmitMode::MergedUser => "$HOME",
+        HookEmitMode::MergedProject => "${CLAUDE_PROJECT_DIR}",
+    };
+    let config_dir = format!("{var_anchor}/{dotdir}");
+    format!("CLAUDE_PLUGIN_ROOT={config_dir} {config_dir}/hooks/scripts/{filename}")
 }
 
 impl AdapterConfig {

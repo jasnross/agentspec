@@ -151,7 +151,8 @@ impl AgentspecConfig {
             .map(|(p, t)| {
                 let hook_emit_mode = Some(match t.mode {
                     SyncMode::Path => agentspec::compile::HookEmitMode::Bundled,
-                    SyncMode::User | SyncMode::Project => agentspec::compile::HookEmitMode::Merged,
+                    SyncMode::User => agentspec::compile::HookEmitMode::MergedUser,
+                    SyncMode::Project => agentspec::compile::HookEmitMode::MergedProject,
                 });
                 (
                     *p,

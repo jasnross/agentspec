@@ -215,10 +215,16 @@ impl PostWriteHook for OpenCodeInstructionsPatch {
     }
 }
 
+/// `emit_mode` and `owned_entries` are accepted for signature symmetry with
+/// the Claude/Cursor factories — `OpenCode` does not emit hooks in v1, so
+/// they are unused here. Keeping the signatures aligned lets `sync.rs`
+/// dispatch uniformly per provider.
 pub fn post_write_hook(
     kind: FileKind,
     dest: &Path,
     config_dir: &Path,
+    _emit_mode: crate::compile::HookEmitMode,
+    _owned_entries: &[crate::compile::EmittedHookEntry],
 ) -> Option<Box<dyn PostWriteHook>> {
     if kind != FileKind::Rules {
         return None;

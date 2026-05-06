@@ -141,6 +141,54 @@ description: Prefer dedicated CLI tools over inline scripts
 Use `jq` for JSON, `yq` for YAML, and purpose-built CLI tools over inline Python or Ruby scripts.
 ```
 
+### Hooks
+
+Hooks are scripts that fire on session events (e.g., before a tool runs, when a session starts). agentspec compiles a single `spec/hooks/hooks.toml` plus a `spec/hooks/scripts/` directory into provider-native `hooks/hooks.json` (Claude Code, Cursor) — OpenCode is out of scope for hook output in v1.
+
+`spec/hooks/hooks.toml`:
+
+```toml
+[hooks.init-thoughts]
+event = "user_prompt_submit"
+script = "scripts/init-thoughts.sh"
+description = "Seed THOUGHTS_DIR context at the start of each turn"
+timeout = 30
+
+[hooks.audit-bash]
+event = "pre_tool_use"
+matcher = "Bash"
+script = "scripts/audit-bash.sh"
+```
+
+`spec/hooks/scripts/` contains both entry scripts (referenced by `[hooks.<id>].script`) and any helper scripts they `source` — agentspec walks the directory and copies all files. Helper conventions like `_common.sh` are supported. The `_agentspec_*` filename prefix is reserved for future use and rejected at load time.
+
+#### Hook events
+
+| Canonical event         | Claude               | Cursor               |
+| ----------------------- | -------------------- | -------------------- |
+| `pre_tool_use`          | `PreToolUse`         | `preToolUse`         |
+| `post_tool_use`         | `PostToolUse`        | `postToolUse`        |
+| `post_tool_use_failure` | `PostToolUseFailure` | `postToolUseFailure` |
+| `session_start`         | `SessionStart`       | `sessionStart`       |
+| `session_end`           | `SessionEnd`         | `sessionEnd`         |
+| `stop`                  | `Stop`               | `stop`               |
+| `pre_compact`           | `PreCompact`         | `preCompact`         |
+| `subagent_start`        | `SubagentStart`      | `subagentStart`      |
+| `subagent_stop`         | `SubagentStop`       | `subagentStop`       |
+| `user_prompt_submit`    | `UserPromptSubmit`   | `beforeSubmitPrompt` |
+
+`matcher` is only valid on the three tool-execute events (`pre_tool_use`, `post_tool_use`, `post_tool_use_failure`).
+
+#### Sync modes
+
+- **Path mode** (`mode = "path"`): agentspec writes a complete `hooks/hooks.json` plus `hooks/scripts/` under the configured destination. The plugin owns the file.
+- **User mode** (`mode = "user"`): scripts land at `~/.<provider>/hooks/scripts/`; entries are merged into `~/.<provider>/settings.json` (Claude) or `~/.cursor/hooks.json` (Cursor) via a CST-aware patcher. Comments, trailing commas, and user-authored entries round-trip unchanged. Each agentspec entry carries an `_agentspec_id` sentinel so re-syncing replaces only entries it owns.
+- **Project mode** (`mode = "project"`): same as User mode but rooted at the project directory.
+
+#### OpenCode behavior
+
+OpenCode does not emit hooks in v1. If your spec set contains hooks and `[sync.opencode]` is configured, agents/skills/rules sync normally and a per-provider warning is printed: `opencode: skipped N hooks`. Use `--verbose` to list each skipped hook id.
+
 ### Frontmatter reference
 
 | Field                | Agent    | Skill    | Rule     | Description                                                                                                 |

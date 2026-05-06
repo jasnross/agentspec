@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use indexmap::IndexMap;
 use serde::Serialize;
 
@@ -276,40 +276,36 @@ pub fn body_tool_name(tool: &ToolFrontmatter) -> &'static str {
 
 // ── hooks.json synthesis ────────────────────────────────────────────────────
 
-/// Claude's documented `hooks.json` shape: a top-level object whose `hooks`
-/// field maps `PascalCase` event names to a list of matcher-grouped entries.
-/// See: <https://code.claude.com/docs/en/hooks>
-#[derive(Serialize)]
-struct ClaudeHooksJson {
-    hooks: BTreeMap<&'static str, Vec<ClaudeHooksEventGroup>>,
-}
+// Claude's documented `hooks.json` shape (see <https://code.claude.com/docs/en/hooks>):
+//   { "hooks": { "<EventName>": [ { "matcher": "...", "hooks": [<entry>, ...] }, ... ] } }
+//
+// `entry_to_claude_json` is provider-specific JSON shaping that lives here
+// (per CLAUDE.md's "Provider-specific logic belongs in adapters"); the Phase 2
+// merge layer (`hooks_merge`) imports it so both emission paths share one
+// source of truth for the `_agentspec_id` sentinel and entry shape.
 
-#[serde_with::skip_serializing_none]
-#[derive(Serialize)]
-struct ClaudeHooksEventGroup {
-    matcher: Option<String>,
-    hooks: Vec<ClaudeHookEntry>,
-}
-
-#[serde_with::skip_serializing_none]
-#[derive(Serialize)]
-struct ClaudeHookEntry {
-    #[serde(rename = "type")]
-    type_field: &'static str,
-    command: String,
-    timeout: Option<u32>,
-    /// The sentinel Phase 2's merge layer uses to identify entries it owns.
-    /// Always emitted, even at Path mode, to keep the on-disk shape uniform
-    /// across emit modes.
-    #[serde(rename = "_agentspec_id")]
-    agentspec_id: String,
+/// Build the JSON object for one entry in Claude's `hooks.json` matcher group.
+/// Used by both Phase 1's whole-file synthesis (`build_claude_hooks_json`)
+/// and Phase 2's CST merge (`hooks_merge::merge_claude_settings`).
+pub fn entry_to_claude_json(e: &EmittedHookEntry) -> serde_json::Value {
+    use serde_json::{Map, json};
+    let mut obj = Map::new();
+    obj.insert("type".to_string(), json!("command"));
+    obj.insert("command".to_string(), json!(e.command));
+    if let Some(t) = e.timeout {
+        obj.insert("timeout".to_string(), json!(t));
+    }
+    obj.insert("_agentspec_id".to_string(), json!(e.agentspec_id));
+    serde_json::Value::Object(obj)
 }
 
 /// Translate a canonical `HookEvent` to Claude's `PascalCase` event name.
 ///
 /// Provider-specific naming lives here per `CLAUDE.md`'s "Provider-specific
-/// logic belongs in adapters" principle.
-fn claude_event_name(event: HookEvent) -> &'static str {
+/// logic belongs in adapters" principle. Exposed publicly so the Phase 2 CST
+/// merge layer (`hooks_merge`) can resolve event names without re-deriving
+/// the mapping.
+pub fn claude_event_name(event: HookEvent) -> &'static str {
     match event {
         HookEvent::PreToolUse => "PreToolUse",
         HookEvent::PostToolUse => "PostToolUse",
@@ -337,21 +333,23 @@ pub fn synthesize_hooks(
         return Ok(HookSynthesis::default());
     }
 
-    let mode = cfg
+    let emit_mode = cfg
         .and_then(|c| c.hook_emit_mode)
         .unwrap_or(HookEmitMode::Bundled);
-    if matches!(mode, HookEmitMode::Merged) {
-        bail!("hooks emit for Project/User mode is not yet implemented (lands in Phase 2)");
-    }
 
-    let entries = build_emitted_hook_entries(specs);
-    let json = build_claude_hooks_json(&entries)?;
+    let entries = build_emitted_hook_entries(specs, Provider::Claude, emit_mode);
     let mut files = build_hook_script_files(Provider::Claude, specs);
-    files.push(GeneratedFile::text(
-        Provider::Claude,
-        Path::new("hooks").join("hooks.json"),
-        json,
-    ));
+    if matches!(emit_mode, HookEmitMode::Bundled) {
+        // Bundled (Path) mode: agentspec owns the whole `hooks/hooks.json`.
+        // Merged modes hand emission to `ClaudeHooksPatch`, which surgically
+        // edits the host `settings.json` instead.
+        let json = build_claude_hooks_json(&entries)?;
+        files.push(GeneratedFile::text(
+            Provider::Claude,
+            Path::new("hooks").join("hooks.json"),
+            json,
+        ));
+    }
     Ok(HookSynthesis { entries, files })
 }
 
@@ -360,50 +358,87 @@ pub fn synthesize_hooks(
 /// Top-level event keys are sorted alphabetically (`BTreeMap`) for stable output.
 /// Within an event, matcher groups preserve first-seen order — propagated from
 /// the spec list, which itself preserves `IndexMap` authoring order from the
-/// `hooks.toml` file.
+/// `hooks.toml` file. The per-entry serialization delegates to the local
+/// `entry_to_claude_json` helper so Phase 1 and Phase 2 share one source of
+/// truth for the entry shape (including the `_agentspec_id` sentinel).
 fn build_claude_hooks_json(entries: &[EmittedHookEntry]) -> Result<String> {
-    let mut by_event: BTreeMap<&'static str, IndexMap<Option<String>, Vec<ClaudeHookEntry>>> =
+    use serde_json::{Map, Value, json};
+
+    let mut by_event: BTreeMap<&'static str, IndexMap<Option<String>, Vec<Value>>> =
         BTreeMap::new();
     for entry in entries {
-        let event_name = claude_event_name(entry.event);
         by_event
-            .entry(event_name)
+            .entry(claude_event_name(entry.event))
             .or_default()
             .entry(entry.matcher.clone())
             .or_default()
-            .push(ClaudeHookEntry {
-                type_field: "command",
-                command: entry.command.clone(),
-                timeout: entry.timeout,
-                agentspec_id: entry.agentspec_id.clone(),
-            });
+            .push(entry_to_claude_json(entry));
     }
 
-    let hooks_map: BTreeMap<&'static str, Vec<ClaudeHooksEventGroup>> = by_event
-        .into_iter()
-        .map(|(event, by_matcher)| {
-            let groups = by_matcher
-                .into_iter()
-                .map(|(matcher, hook_entries)| ClaudeHooksEventGroup {
-                    matcher,
-                    hooks: hook_entries,
-                })
-                .collect();
-            (event, groups)
-        })
-        .collect();
+    let mut hooks_map = Map::new();
+    for (event, by_matcher) in by_event {
+        let groups: Vec<Value> = by_matcher
+            .into_iter()
+            .map(|(matcher, hook_entries)| {
+                let mut group = Map::new();
+                if let Some(m) = matcher {
+                    group.insert("matcher".to_string(), json!(m));
+                }
+                group.insert("hooks".to_string(), Value::Array(hook_entries));
+                Value::Object(group)
+            })
+            .collect();
+        hooks_map.insert(event.to_string(), Value::Array(groups));
+    }
 
-    let json = serde_json::to_string_pretty(&ClaudeHooksJson { hooks: hooks_map })
-        .context("failed to serialize Claude hooks.json")?;
+    let top = json!({ "hooks": hooks_map });
+    let json =
+        serde_json::to_string_pretty(&top).context("failed to serialize Claude hooks.json")?;
     Ok(format!("{json}\n"))
 }
 
+/// Post-write hook that merges agentspec-owned hook entries into Claude's
+/// hand-edited `settings.json` via the CST patcher in `hooks_merge`.
+///
+/// Constructed once per `(provider, FileKind::Hooks)` sync call when the
+/// emit mode is `MergedUser` or `MergedProject`. Path mode owns the entire
+/// `hooks/hooks.json` file directly so no patcher is created for it.
+#[derive(Debug)]
+pub struct ClaudeHooksPatch {
+    settings_path: std::path::PathBuf,
+    owned_entries: Vec<EmittedHookEntry>,
+}
+
+impl PostWriteHook for ClaudeHooksPatch {
+    fn run(&self, dry_run: bool) -> Result<()> {
+        crate::hooks_merge::merge_claude_settings(&self.settings_path, &self.owned_entries, dry_run)
+    }
+}
+
+/// Factory for Claude's post-write hooks.
+///
+/// `config_dir` is the parent of `dest` for hooks (e.g., `~/.claude` when
+/// `dest` is `~/.claude/hooks`); the binary computes it at the call site
+/// rather than the library inferring it from `dest`.
 pub fn post_write_hook(
-    _kind: FileKind,
+    kind: FileKind,
     _dest: &Path,
-    _config_dir: &Path,
+    config_dir: &Path,
+    emit_mode: HookEmitMode,
+    owned_entries: &[EmittedHookEntry],
 ) -> Option<Box<dyn PostWriteHook>> {
-    None
+    if kind != FileKind::Hooks {
+        return None;
+    }
+    if !emit_mode.is_merged() {
+        // Bundled (Path) mode: agentspec owns the whole `hooks/hooks.json`
+        // produced by `synthesize_hooks`. No merge needed.
+        return None;
+    }
+    Some(Box::new(ClaudeHooksPatch {
+        settings_path: config_dir.join("settings.json"),
+        owned_entries: owned_entries.to_vec(),
+    }))
 }
 
 /// Returns the name the AI model uses to reference this spec.
@@ -746,18 +781,57 @@ mod tests {
     }
 
     #[test]
-    fn test_synthesize_hooks_merged_mode_errors_in_phase_one() {
+    fn test_synthesize_hooks_merged_user_mode_emits_scripts_only() {
+        // In Phase 2's Merged modes, agentspec emits hook scripts but not the
+        // host config file (hooks.json) — that's owned by `ClaudeHooksPatch`,
+        // which surgically merges entries into `<config>/settings.json`.
+        // `entries` is still populated so the patcher can consume them.
         let cfg = AdapterConfig {
-            hook_emit_mode: Some(HookEmitMode::Merged),
+            hook_emit_mode: Some(HookEmitMode::MergedUser),
             ..AdapterConfig::default()
         };
         let spec = make_hook_spec("init", HookEvent::SessionStart, None);
-        let specs = vec![&spec];
-        let err = synthesize_hooks(&specs, Some(&cfg)).expect_err("expected error");
-        let msg = format!("{err:#}");
+        let result = synthesize_hooks(&[&spec], Some(&cfg)).expect("expected ok");
+        assert_eq!(result.entries.len(), 1);
         assert!(
-            msg.contains("Phase 2"),
-            "expected Phase 2 message, got: {msg}"
+            !result
+                .files
+                .iter()
+                .any(|f| f.path.to_str() == Some("hooks/hooks.json")),
+            "Merged mode must NOT emit hooks/hooks.json; the patcher owns the host config"
+        );
+    }
+
+    #[test]
+    fn test_synthesize_hooks_merged_user_anchor_includes_plugin_root_assignment() {
+        // MergedUser: command anchors to $HOME (not ~/...) per the plan AND
+        // sets `CLAUDE_PLUGIN_ROOT` inline so plugin-shaped scripts that
+        // reference `$CLAUDE_PLUGIN_ROOT/rules` etc. resolve correctly when
+        // the host runtime doesn't set that variable for non-plugin scope.
+        let cfg = AdapterConfig {
+            hook_emit_mode: Some(HookEmitMode::MergedUser),
+            ..AdapterConfig::default()
+        };
+        let spec = make_hook_spec("init", HookEvent::SessionStart, None);
+        let result = synthesize_hooks(&[&spec], Some(&cfg)).expect("expected ok");
+        assert_eq!(
+            result.entries[0].command,
+            "CLAUDE_PLUGIN_ROOT=$HOME/.claude $HOME/.claude/hooks/scripts/init.sh"
+        );
+    }
+
+    #[test]
+    fn test_synthesize_hooks_merged_project_anchor_includes_plugin_root_assignment() {
+        // MergedProject: ${CLAUDE_PROJECT_DIR} anchor + inline CLAUDE_PLUGIN_ROOT.
+        let cfg = AdapterConfig {
+            hook_emit_mode: Some(HookEmitMode::MergedProject),
+            ..AdapterConfig::default()
+        };
+        let spec = make_hook_spec("init", HookEvent::SessionStart, None);
+        let result = synthesize_hooks(&[&spec], Some(&cfg)).expect("expected ok");
+        assert_eq!(
+            result.entries[0].command,
+            "CLAUDE_PLUGIN_ROOT=${CLAUDE_PROJECT_DIR}/.claude ${CLAUDE_PROJECT_DIR}/.claude/hooks/scripts/init.sh"
         );
     }
 

@@ -1669,7 +1669,11 @@ dir = "{}"
 }
 
 #[test]
-fn test_sync_claude_user_mode_with_hooks_errors_until_phase_two() {
+fn test_sync_claude_user_mode_merges_hooks_into_settings_json() {
+    // Phase 2: User-mode sync merges agentspec hook entries into the
+    // hand-edited `~/.claude/settings.json` via the CST patcher. Scripts
+    // still flow through to `~/.claude/hooks/scripts/`; the host config
+    // file gains a `hooks` key with sentinel-tagged entries.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
@@ -1696,11 +1700,31 @@ mode = "user"
         .expect("failed to run agentspec sync");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !output.status.success(),
-        "sync (user mode) should fail in Phase 1 because Merged emit is not yet implemented:\n{stderr}"
+        output.status.success(),
+        "sync (user mode) should succeed in Phase 2:\n{stderr}"
+    );
+
+    // Scripts (entry + helpers) under hooks/scripts/.
+    for script in ["init-thoughts.sh", "audit-bash.sh", "_common.sh"] {
+        assert!(
+            home.join(format!(".claude/hooks/scripts/{script}"))
+                .exists(),
+            "{script} should land under ~/.claude/hooks/scripts/"
+        );
+    }
+
+    // settings.json merged with sentinel-tagged hook entries.
+    let settings = home.join(".claude/settings.json");
+    assert!(settings.exists(), "settings.json should be created");
+    let content = std::fs::read_to_string(&settings).expect("read settings.json");
+    assert!(
+        content.contains("\"_agentspec_id\""),
+        "settings.json should contain sentinel, got:\n{content}"
     );
     assert!(
-        stderr.contains("Phase 2"),
-        "expected Phase 2 error message, got:\n{stderr}"
+        content.contains(
+            "CLAUDE_PLUGIN_ROOT=$HOME/.claude $HOME/.claude/hooks/scripts/init-thoughts.sh"
+        ),
+        "command should set CLAUDE_PLUGIN_ROOT inline and anchor under $HOME for User mode, got:\n{content}"
     );
 }

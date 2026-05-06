@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use agentspec::adapters::{
     claude_post_write_hook, cursor_post_write_hook, opencode_post_write_hook,
 };
-use agentspec::compile::{CompileResult, GeneratedFile};
+use agentspec::compile::{CompileResult, EmittedHookEntry, GeneratedFile, HookEmitMode};
 use agentspec::plan::{
     FileKind, FileWrite, WriteMode, WritePlan, expand_tilde, file_kinds, project_dest_dir,
     user_dest_dir,
@@ -29,7 +29,14 @@ pub fn sync_plan(
     let mut writes = Vec::new();
     let mut post_write_hooks = Vec::new();
 
+    let empty: Vec<EmittedHookEntry> = Vec::new();
     for (provider, target) in targets {
+        let emit_mode = sync_mode_to_hook_emit_mode(target.mode);
+        let owned_entries: &[EmittedHookEntry] = result
+            .hooks
+            .get(provider)
+            .map_or(empty.as_slice(), Vec::as_slice);
+
         for kind in file_kinds(*provider) {
             let dest = resolve_dest_dir(*provider, kind, target, home, cwd)?;
             let files = files_for_kind(result, *provider, kind);
@@ -43,14 +50,22 @@ pub fn sync_plan(
                 overwrite: target.overwrite,
             });
 
-            // Every adapter gets a chance to provide a post-write hook.
-            // Only OpenCode needs a config_dir; Claude/Cursor pass a dummy path.
+            // Every adapter gets a chance to provide a post-write hook. Each
+            // provider derives its own `config_dir` from `dest` (parent of the
+            // hooks/ destination) — see `claude_config_dir` etc. for sync.rs's
+            // resolution logic.
             let hook = match *provider {
-                Provider::Claude => claude_post_write_hook(kind, &dest, Path::new("")),
-                Provider::Cursor => cursor_post_write_hook(kind, &dest, Path::new("")),
+                Provider::Claude => {
+                    let config_dir = provider_config_dir(*provider, target, home, cwd);
+                    claude_post_write_hook(kind, &dest, &config_dir, emit_mode, owned_entries)
+                }
+                Provider::Cursor => {
+                    let config_dir = provider_config_dir(*provider, target, home, cwd);
+                    cursor_post_write_hook(kind, &dest, &config_dir, emit_mode, owned_entries)
+                }
                 Provider::OpenCode => {
                     let config_dir = opencode_config_dir(target, home, cwd);
-                    opencode_post_write_hook(kind, &dest, &config_dir)
+                    opencode_post_write_hook(kind, &dest, &config_dir, emit_mode, owned_entries)
                 }
             };
             if let Some(h) = hook {
@@ -175,6 +190,47 @@ fn opencode_config_dir(target: &SyncTargetConfig, home: &Path, cwd: &Path) -> Pa
             || home.join(".config").join("opencode"),
             |d| expand_tilde(d, home),
         ),
+    }
+}
+
+/// Resolves a provider's config directory (e.g., `~/.claude`, `.claude`,
+/// `<plugin>/`) for use as the parent of the hooks destination and the
+/// containing directory of the hooks-merge target file (`settings.json` for
+/// Claude, `hooks.json` for Cursor). Diverges from `opencode_config_dir`
+/// because Claude and Cursor use single-level dotdirs (`.claude` / `.cursor`)
+/// while `OpenCode` lives under `~/.config/opencode`.
+fn provider_config_dir(
+    provider: Provider,
+    target: &SyncTargetConfig,
+    home: &Path,
+    cwd: &Path,
+) -> PathBuf {
+    // The `Provider::OpenCode` case is statically excluded by the call sites
+    // — `sync_plan` dispatches per provider and routes OpenCode through
+    // `opencode_config_dir`. Claude/OpenCode collapse to the same Claude-shaped
+    // fallback for exhaustiveness; the OpenCode arm is unreachable in practice.
+    let dotdir = match provider {
+        Provider::Claude | Provider::OpenCode => ".claude",
+        Provider::Cursor => ".cursor",
+    };
+    match target.mode {
+        SyncMode::User => home.join(dotdir),
+        SyncMode::Project => cwd.join(dotdir),
+        SyncMode::Path => target
+            .dir
+            .as_deref()
+            .map_or_else(|| home.join(dotdir), |d| expand_tilde(d, home)),
+    }
+}
+
+/// Translate the binary-side `SyncMode` to the library-side `HookEmitMode` at
+/// the call boundary, preserving the rule that the library never imports
+/// `SyncMode` (per CLAUDE.md's library/binary boundary guidance).
+fn sync_mode_to_hook_emit_mode(mode: SyncMode) -> HookEmitMode {
+    match mode {
+        SyncMode::Path => HookEmitMode::Bundled,
+        SyncMode::User => HookEmitMode::MergedUser,
+        SyncMode::Project => HookEmitMode::MergedProject,
     }
 }
 

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::compile::{
@@ -181,29 +181,36 @@ pub fn body_tool_name(tool: &ToolFrontmatter) -> &'static str {
 
 // ── hooks.json synthesis ────────────────────────────────────────────────────
 
-/// Cursor's documented `hooks.json` shape: a top-level object with a fixed
-/// `version: 1` field plus a `hooks` map. Each event maps directly to a list
-/// of entries — matchers live on the entry, not on a wrapping group.
-/// See: <https://cursor.com/docs/hooks>
-#[derive(Serialize)]
-struct CursorHooksJson {
-    version: u32,
-    hooks: BTreeMap<&'static str, Vec<CursorHookEntry>>,
-}
+// Cursor's documented `hooks.json` shape (see <https://cursor.com/docs/hooks>):
+//   { "version": 1, "hooks": { "<eventName>": [<entry>, <entry>, ...] } }
+//
+// `entry_to_cursor_json` is the per-entry shape (matcher per-entry, sentinel
+// field). Mirrors `claude::entry_to_claude_json`; Phase 2's merge layer
+// imports both helpers so the two emission paths stay in lockstep.
 
-#[serde_with::skip_serializing_none]
-#[derive(Serialize)]
-struct CursorHookEntry {
-    #[serde(rename = "type")]
-    type_field: &'static str,
-    matcher: Option<String>,
-    command: String,
-    timeout: Option<u32>,
-    #[serde(rename = "_agentspec_id")]
-    agentspec_id: String,
+/// Build the JSON object for one entry in Cursor's `hooks.json` event array.
+/// Cursor differs from Claude by placing `matcher` on each entry directly
+/// (Claude wraps entries in matcher groups). The `_agentspec_id` sentinel is
+/// emitted in both shapes for symmetric ownership tracking.
+pub fn entry_to_cursor_json(e: &EmittedHookEntry) -> serde_json::Value {
+    use serde_json::{Map, json};
+    let mut obj = Map::new();
+    obj.insert("type".to_string(), json!("command"));
+    if let Some(m) = &e.matcher {
+        obj.insert("matcher".to_string(), json!(m));
+    }
+    obj.insert("command".to_string(), json!(e.command));
+    if let Some(t) = e.timeout {
+        obj.insert("timeout".to_string(), json!(t));
+    }
+    obj.insert("_agentspec_id".to_string(), json!(e.agentspec_id));
+    serde_json::Value::Object(obj)
 }
 
 /// Translate a canonical `HookEvent` to Cursor's camelCase event name.
+///
+/// Exposed publicly so the Phase 2 CST merge layer (`hooks_merge`) can
+/// resolve event names without re-deriving the mapping.
 ///
 /// Note that `user_prompt_submit` maps to `beforeSubmitPrompt` — not a simple
 /// casing transform. See `thoughts/research/2026-05-03-provider-agnostic-hooks-comparison.md`
@@ -211,7 +218,7 @@ struct CursorHookEntry {
 /// sessionStart, sessionEnd, subagentStart, subagentStop) are based on the
 /// research doc's listing and may need adjustment if Cursor's docs diverge —
 /// the plan calls out an empirical verification step before Phase 2 ships.
-fn cursor_event_name(event: HookEvent) -> &'static str {
+pub fn cursor_event_name(event: HookEvent) -> &'static str {
     match event {
         HookEvent::PreToolUse => "preToolUse",
         HookEvent::PostToolUse => "postToolUse",
@@ -236,55 +243,85 @@ pub fn synthesize_hooks(
         return Ok(HookSynthesis::default());
     }
 
-    let mode = cfg
+    let emit_mode = cfg
         .and_then(|c| c.hook_emit_mode)
         .unwrap_or(HookEmitMode::Bundled);
-    if matches!(mode, HookEmitMode::Merged) {
-        bail!("hooks emit for Project/User mode is not yet implemented (lands in Phase 2)");
-    }
 
-    let entries = build_emitted_hook_entries(specs);
-    let json = build_cursor_hooks_json(&entries)?;
+    let entries = build_emitted_hook_entries(specs, Provider::Cursor, emit_mode);
     let mut files = build_hook_script_files(Provider::Cursor, specs);
-    files.push(GeneratedFile::text(
-        Provider::Cursor,
-        Path::new("hooks").join("hooks.json"),
-        json,
-    ));
+    if matches!(emit_mode, HookEmitMode::Bundled) {
+        let json = build_cursor_hooks_json(&entries)?;
+        files.push(GeneratedFile::text(
+            Provider::Cursor,
+            Path::new("hooks").join("hooks.json"),
+            json,
+        ));
+    }
     Ok(HookSynthesis { entries, files })
 }
 
 /// Cursor places the `matcher` on each entry directly; entries within an
-/// event preserve insertion order from the spec list.
+/// event preserve insertion order from the spec list. Per-entry serialization
+/// delegates to the local `entry_to_cursor_json` helper so Phase 1 and Phase 2
+/// share one source of truth for the entry shape.
 fn build_cursor_hooks_json(entries: &[EmittedHookEntry]) -> Result<String> {
-    let mut by_event: BTreeMap<&'static str, Vec<CursorHookEntry>> = BTreeMap::new();
+    use serde_json::{Map, Value, json};
+
+    let mut by_event: BTreeMap<&'static str, Vec<Value>> = BTreeMap::new();
     for entry in entries {
         by_event
             .entry(cursor_event_name(entry.event))
             .or_default()
-            .push(CursorHookEntry {
-                type_field: "command",
-                matcher: entry.matcher.clone(),
-                command: entry.command.clone(),
-                timeout: entry.timeout,
-                agentspec_id: entry.agentspec_id.clone(),
-            });
+            .push(entry_to_cursor_json(entry));
     }
 
-    let json = serde_json::to_string_pretty(&CursorHooksJson {
-        version: 1,
-        hooks: by_event,
-    })
-    .context("failed to serialize Cursor hooks.json")?;
+    let mut hooks_map = Map::new();
+    for (event, hook_entries) in by_event {
+        hooks_map.insert(event.to_string(), Value::Array(hook_entries));
+    }
+
+    let top = json!({ "version": 1, "hooks": hooks_map });
+    let json =
+        serde_json::to_string_pretty(&top).context("failed to serialize Cursor hooks.json")?;
     Ok(format!("{json}\n"))
 }
 
+/// Post-write hook that merges agentspec-owned hook entries into Cursor's
+/// hand-edited `hooks.json` via the CST patcher in `hooks_merge`.
+///
+/// Cursor's host config file is the same name as the Path-mode bundle
+/// (`hooks.json`) but lives at the config-dir root rather than under
+/// `hooks/`. The patcher is constructed only for `MergedUser`/`MergedProject`
+/// modes; Path mode emits the file directly.
+#[derive(Debug)]
+pub struct CursorHooksPatch {
+    hooks_path: std::path::PathBuf,
+    owned_entries: Vec<EmittedHookEntry>,
+}
+
+impl PostWriteHook for CursorHooksPatch {
+    fn run(&self, dry_run: bool) -> Result<()> {
+        crate::hooks_merge::merge_cursor_hooks(&self.hooks_path, &self.owned_entries, dry_run)
+    }
+}
+
 pub fn post_write_hook(
-    _kind: FileKind,
+    kind: FileKind,
     _dest: &Path,
-    _config_dir: &Path,
+    config_dir: &Path,
+    emit_mode: HookEmitMode,
+    owned_entries: &[EmittedHookEntry],
 ) -> Option<Box<dyn PostWriteHook>> {
-    None
+    if kind != FileKind::Hooks {
+        return None;
+    }
+    if !emit_mode.is_merged() {
+        return None;
+    }
+    Some(Box::new(CursorHooksPatch {
+        hooks_path: config_dir.join("hooks.json"),
+        owned_entries: owned_entries.to_vec(),
+    }))
 }
 
 /// Returns the name the AI model uses to reference this spec.
@@ -511,15 +548,31 @@ mod tests {
     }
 
     #[test]
-    fn test_synthesize_hooks_merged_mode_errors_in_phase_one() {
+    fn test_synthesize_hooks_merged_user_emits_scripts_no_hooks_json() {
+        // Merged modes hand JSON emission to `CursorHooksPatch`. Scripts still
+        // flow through to disk; hooks.json itself does not (the patcher edits
+        // the host `<config>/hooks.json` instead).
         let cfg = AdapterConfig {
-            hook_emit_mode: Some(HookEmitMode::Merged),
+            hook_emit_mode: Some(HookEmitMode::MergedUser),
             ..AdapterConfig::default()
         };
         let spec = make_hook_spec("init", HookEvent::SessionStart, None);
-        let err = synthesize_hooks(&[&spec], Some(&cfg)).expect_err("expected Phase 2 error");
-        let msg = format!("{err:#}");
-        assert!(msg.contains("Phase 2"), "got: {msg}");
+        let result = synthesize_hooks(&[&spec], Some(&cfg)).expect("expected ok");
+        assert_eq!(result.entries.len(), 1);
+        assert!(
+            !result
+                .files
+                .iter()
+                .any(|f| f.path.to_str() == Some("hooks/hooks.json")),
+            "Merged mode must NOT emit hooks/hooks.json"
+        );
+        // Anchor uses $HOME for User mode AND sets CLAUDE_PLUGIN_ROOT inline
+        // (Cursor aliases the var at plugin scope; outside that scope agentspec
+        // sets it explicitly so plugin-shaped scripts keep working).
+        assert_eq!(
+            result.entries[0].command,
+            "CLAUDE_PLUGIN_ROOT=$HOME/.cursor $HOME/.cursor/hooks/scripts/init.sh"
+        );
     }
 
     #[test]
