@@ -82,6 +82,11 @@ pub fn merge_claude_settings(
             settings_path.display()
         )
     })?;
+    // No entries to add and no existing `hooks` key to clean orphans from —
+    // don't inject a spurious `"hooks": {}` into the user's settings.json.
+    if owned_entries.is_empty() && top.get("hooks").is_none() {
+        return Ok(());
+    }
     let hooks_obj = top.object_value_or_create("hooks").with_context(|| {
         format!(
             "{}: top-level `hooks` exists but is not an object; refusing to overwrite",
@@ -227,6 +232,12 @@ pub fn merge_cursor_hooks(
             hooks_path.display()
         )
     })?;
+    // No entries to add and no existing `hooks` key to clean orphans from —
+    // don't inject `version: 1` or `"hooks": {}` into a file we have no
+    // business touching. Mirrors the Claude `merge_claude_settings` guard.
+    if owned_entries.is_empty() && top.get("hooks").is_none() {
+        return Ok(());
+    }
 
     // Set `version: 1` if missing. Don't overwrite a user-authored value, even
     // if it's a different version — the user's intent wins.
@@ -305,6 +316,13 @@ fn read_or_empty_object(path: &Path) -> Result<String> {
 
 /// Atomic write: serialize the CST, write to a sibling tempfile, rename into
 /// place. A dropped or crashed write leaves the original untouched.
+///
+/// `tempfile::NamedTempFile::new_in` creates files with mode 0600. When
+/// merging into an existing file with broader permissions (e.g., 0644),
+/// the original mode is captured before the rename and applied to the
+/// tempfile *before* the atomic rename — so the persisted file lands with
+/// the right mode in a single step (no observable 0600 window between
+/// `persist` and a follow-up `set_permissions`).
 fn finish(root: &CstRootNode, path: &Path, dry_run: bool) -> Result<()> {
     let output = root.to_string();
 
@@ -322,10 +340,28 @@ fn finish(root: &CstRootNode, path: &Path, dry_run: bool) -> Result<()> {
     fs::create_dir_all(parent)
         .with_context(|| format!("failed to create dir {}", parent.display()))?;
 
+    // Capture original mode before the atomic rename so we can restore it.
+    // None for a fresh file means we keep tempfile's 0600 default.
+    #[cfg(unix)]
+    let original_mode: Option<u32> = {
+        use std::os::unix::fs::PermissionsExt;
+        fs::metadata(path).ok().map(|m| m.permissions().mode())
+    };
+
     let tmp = tempfile::NamedTempFile::new_in(parent)
         .with_context(|| format!("failed to create tempfile in {}", parent.display()))?;
     fs::write(tmp.path(), output.as_bytes())
         .with_context(|| format!("failed to write tempfile {}", tmp.path().display()))?;
+
+    // Apply original mode to the tempfile before persist so the rename
+    // delivers the file at the right mode atomically.
+    #[cfg(unix)]
+    if let Some(mode) = original_mode {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(tmp.path(), fs::Permissions::from_mode(mode))
+            .with_context(|| format!("failed to set tempfile mode for {}", path.display()))?;
+    }
+
     tmp.persist(path)
         .with_context(|| format!("failed to atomically rename into {}", path.display()))?;
 
@@ -455,6 +491,41 @@ mod tests {
     }
 
     #[test]
+    fn test_merge_claude_leaves_empty_event_array_after_removing_all_owned_entries() {
+        // `remove_claude_owned_entries` deliberately does NOT prune empty
+        // event arrays — the user might still have entries to add later, and
+        // touching the event key shape is more invasive than necessary.
+        // Lock that contract: if all `_agentspec_id` entries under an event
+        // are removed and no replacements arrive, the event key remains as
+        // an empty array rather than getting deleted.
+        let tmp = TempDir::new().expect("tmp");
+        let path = tmp.path().join("settings.json");
+
+        // Seed with one owned entry under PreToolUse, then re-sync with no
+        // PreToolUse entries (only a SessionStart entry under a different event).
+        let entries_v1 = vec![entry_with_matcher(
+            "audit",
+            HookEvent::PreToolUse,
+            "Bash",
+            "AUDIT",
+        )];
+        merge_claude_settings(&path, &entries_v1, false).expect("merge v1");
+        let entries_v2 = vec![entry("init", HookEvent::SessionStart, "INIT")];
+        merge_claude_settings(&path, &entries_v2, false).expect("merge v2");
+
+        let after = std::fs::read_to_string(&path).expect("read");
+        assert!(
+            !after.contains("\"AUDIT\""),
+            "owned entry must be removed, got:\n{after}"
+        );
+        // Empty event array stays — contract documented in source comment.
+        assert!(
+            after.contains("\"PreToolUse\""),
+            "PreToolUse event key should remain (intentionally not pruned), got:\n{after}"
+        );
+    }
+
+    #[test]
     fn test_merge_claude_orphan_removed_when_owned_list_shrinks() {
         let tmp = TempDir::new().expect("tmp");
         let path = tmp.path().join("settings.json");
@@ -553,6 +624,39 @@ mod tests {
             !path.exists(),
             "no file + no entries must not create settings.json"
         );
+    }
+
+    #[test]
+    fn test_merge_cursor_skips_when_file_exists_no_hooks_key_and_no_entries() {
+        // Symmetric to the Claude case: a `.cursor/hooks.json` that exists
+        // but lacks a `hooks` key (e.g., user has only set `version`) must
+        // not be re-written when there are no agentspec hook specs.
+        let tmp = TempDir::new().expect("tmp");
+        let path = tmp.path().join("hooks.json");
+        let initial = "{\n  \"version\": 1\n}\n";
+        std::fs::write(&path, initial).expect("write initial");
+
+        merge_cursor_hooks(&path, &[], false).expect("merge");
+
+        let after = std::fs::read_to_string(&path).expect("read");
+        assert_eq!(after, initial, "file must round-trip byte-identical");
+    }
+
+    #[test]
+    fn test_merge_skips_when_file_exists_no_hooks_key_and_no_entries() {
+        // A user who has a `settings.json` with `permissions` etc. but no
+        // hooks block — and a project with no hook specs — must not have
+        // `"hooks": {}` injected on every sync. The file should round-trip
+        // byte-identical.
+        let tmp = TempDir::new().expect("tmp");
+        let path = tmp.path().join("settings.json");
+        let initial = "{\n  \"permissions\": { \"allow\": [\"Read\"] }\n}\n";
+        std::fs::write(&path, initial).expect("write initial");
+
+        merge_claude_settings(&path, &[], false).expect("merge");
+
+        let after = std::fs::read_to_string(&path).expect("read");
+        assert_eq!(after, initial, "file must round-trip byte-identical");
     }
 
     #[test]

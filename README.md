@@ -187,7 +187,7 @@ script = "scripts/audit-bash.sh"
 
 #### OpenCode behavior
 
-OpenCode does not emit hooks in v1. If your spec set contains hooks and `[sync.opencode]` is configured, agents/skills/rules sync normally and a per-provider warning is printed: `opencode: skipped N hooks`. Use `--verbose` to list each skipped hook id.
+If your spec set contains hooks and `[sync.opencode]` is configured, agents/skills/rules sync normally and a per-provider warning is printed: `opencode: skipped N hooks`. Use `--verbose` to list each skipped hook id.
 
 ### Frontmatter reference
 

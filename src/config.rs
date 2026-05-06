@@ -149,17 +149,12 @@ impl AgentspecConfig {
         targets
             .iter()
             .map(|(p, t)| {
-                let hook_emit_mode = Some(match t.mode {
-                    SyncMode::Path => agentspec::compile::HookEmitMode::Bundled,
-                    SyncMode::User => agentspec::compile::HookEmitMode::MergedUser,
-                    SyncMode::Project => agentspec::compile::HookEmitMode::MergedProject,
-                });
                 (
                     *p,
                     AdapterConfig {
                         prefix: t.prefix.clone(),
                         content_prefix: t.content_prefix.clone(),
-                        hook_emit_mode,
+                        hook_emit_mode: Some(t.mode.to_hook_emit_mode()),
                     },
                 )
             })
@@ -311,6 +306,21 @@ pub enum SyncMode {
     Project,
     /// Sync to an explicit base directory specified by `SyncTargetConfig::dir`
     Path,
+}
+
+impl SyncMode {
+    /// Translate the binary-side `SyncMode` to the library-side `HookEmitMode`.
+    ///
+    /// Single source of truth so `adapter_configs` (compile-time) and
+    /// `sync_plan` (sync-time) can't disagree on the mapping.
+    pub fn to_hook_emit_mode(self) -> agentspec::compile::HookEmitMode {
+        use agentspec::compile::HookEmitMode;
+        match self {
+            Self::Path => HookEmitMode::Bundled,
+            Self::User => HookEmitMode::MergedUser,
+            Self::Project => HookEmitMode::MergedProject,
+        }
+    }
 }
 
 /// CLI flag overrides for sync target resolution.

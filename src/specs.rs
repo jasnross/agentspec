@@ -457,8 +457,20 @@ fn load_single_skill(
         .into_iter()
         .filter_entry(|e| !should_ignore_entry(e, anchor, ignore, report))
         .filter_map(Result::ok)
-        .filter(|e| e.file_type().is_file())
     {
+        // Symmetric to the hook-script symlink rule: `Path::is_file()`
+        // (which downstream readers may use) follows links but `WalkDir`
+        // does not, so a symlinked supporting file would be silently
+        // omitted from emission. Fail loudly so the user knows.
+        if entry.file_type().is_symlink() {
+            bail!(
+                "{}: symlinks under skill directories are not supported (would be silently omitted from emission); replace with a regular file",
+                entry.path().display()
+            );
+        }
+        if !entry.file_type().is_file() {
+            continue;
+        }
         let entry_path = entry.path();
 
         // Skip the spec file itself
@@ -755,6 +767,35 @@ fn validate_hook_script_path(
             Component::CurDir | Component::Normal(_) => {}
         }
     }
+    // Require the first meaningful component to be `scripts`. `collect_hook_scripts`
+    // only walks `<hooks_dir>/scripts/`, and `build_emitted_hook_entries` builds
+    // command anchors under `${ANCHOR}/hooks/scripts/<rel>`. A script outside
+    // `scripts/` (e.g., `init.sh` at `spec/hooks/init.sh`) would silently produce
+    // a hook entry pointing at a never-emitted file.
+    let first = script
+        .components()
+        .find(|c| !matches!(c, Component::CurDir))
+        .and_then(|c| match c {
+            Component::Normal(s) => s.to_str(),
+            // Other variants are rejected by the loop above; reaching them
+            // here is impossible given prior validation, but be explicit
+            // rather than wildcard-matching.
+            Component::ParentDir
+            | Component::RootDir
+            | Component::Prefix(_)
+            | Component::CurDir => None,
+        });
+    if first != Some("scripts") {
+        let suggested = script.file_name().map_or_else(
+            || "<name>.sh".to_string(),
+            |f| f.to_string_lossy().into_owned(),
+        );
+        bail!(
+            "hook '{id}' in {}: script {} must live under `scripts/` (e.g., `scripts/{suggested}`)",
+            toml_path.display(),
+            script.display()
+        );
+    }
     Ok(())
 }
 
@@ -776,16 +817,37 @@ fn collect_hook_scripts(
         .into_iter()
         .filter_entry(|e| !should_ignore_entry(e, anchor, ignore, report))
         .filter_map(Result::ok)
-        .filter(|e| e.file_type().is_file())
     {
-        let name = entry.file_name().to_string_lossy();
-        if name.starts_with("_agentspec_") {
+        // Symlinks would pass `Path::is_file()` (which follows links) used by
+        // the frontmatter-script existence check, but `WalkDir` does not follow
+        // links — so the script would never get emitted. Fail loudly rather
+        // than silently producing a hook entry pointing at a missing file.
+        if entry.file_type().is_symlink() {
             bail!(
-                "{}: script names starting with `_agentspec_` are reserved for future use; rename this file",
+                "{}: symlinks under spec/hooks/scripts/ are not supported (would be silently omitted from emission); replace with a regular file",
                 entry.path().display()
             );
         }
-
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        // The `_agentspec_*` prefix reserves the entire path namespace, not
+        // just leaf filenames — a directory like `scripts/_agentspec_helpers/`
+        // would otherwise leak under the reservation. Walk every component
+        // under `scripts/` and reject the first violation.
+        if let Ok(rel_under_scripts) = entry.path().strip_prefix(scripts_dir) {
+            for component in rel_under_scripts.components() {
+                if let std::path::Component::Normal(name) = component
+                    && name.to_string_lossy().starts_with("_agentspec_")
+                {
+                    bail!(
+                        "{}: path components starting with `_agentspec_` are reserved for future use; rename `{}`",
+                        entry.path().display(),
+                        name.to_string_lossy()
+                    );
+                }
+            }
+        }
         let entry_path = entry.path();
         let Ok(relative_path) = entry_path.strip_prefix(hooks_dir) else {
             continue;
@@ -919,6 +981,28 @@ Agent body.
             std::path::PathBuf::from("scripts/helper.sh")
         );
         assert!(s.supporting_files[0].executable);
+    }
+
+    #[test]
+    fn test_load_skill_specs_symlink_supporting_file_rejected() {
+        // Symmetric to the hook-script symlink rule. A symlinked supporting
+        // file would pass `Path::is_file()` (which follows links) elsewhere
+        // but `WalkDir` doesn't follow links, so the file would be silently
+        // omitted from emission. Loading must fail loudly.
+        let tmp = tempfile::tempdir().expect("expected value");
+        let skills_dir = tmp.path().join("skills");
+        let skill_dir = skills_dir.join("my-skill");
+        fs::create_dir_all(&skill_dir).expect("expected value");
+        let spec_content = "---\nid: my-skill\ndescription: A test skill\nuser_invocable: true\nagent_invocable: false\n---\nSkill body.\n";
+        fs::write(skill_dir.join("SKILL.md"), spec_content).expect("expected value");
+
+        let real = tmp.path().join("real-helper.sh");
+        fs::write(&real, "#!/bin/sh\n").expect("expected value");
+        std::os::unix::fs::symlink(&real, skill_dir.join("helper.sh")).expect("expected value");
+
+        let err = load_skills_no_ignore(&skills_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(full.contains("symlink"), "error: {full}");
     }
 
     #[test]
@@ -1416,6 +1500,96 @@ script = \"scripts/x.sh\"
             "#!/bin/sh\n",
         )
         .expect("expected value");
+
+        let err = load_hooks_no_ignore(&hooks_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(full.contains("_agentspec_"), "error: {full}");
+        assert!(full.contains("reserved"), "error: {full}");
+    }
+
+    #[test]
+    fn test_load_hook_specs_script_outside_scripts_rejected() {
+        // A `script` path that doesn't live under `scripts/` would silently
+        // produce a broken hook entry: the file isn't collected by
+        // `collect_hook_scripts` (which only walks `scripts/`), but the
+        // command anchor still points under `${ANCHOR}/hooks/scripts/`.
+        // Reject at validate time with a clear message.
+        let tmp = tempfile::tempdir().expect("expected value");
+        let hooks_dir = tmp.path().join("hooks");
+        fs::create_dir_all(hooks_dir.join("scripts")).expect("expected value");
+        // Place a real file at `spec/hooks/init.sh` — it would pass the
+        // existence check but live outside `scripts/`.
+        fs::write(hooks_dir.join("init.sh"), "#!/bin/sh\n").expect("expected value");
+        let toml = "
+[hooks.init]
+event = \"session_start\"
+script = \"init.sh\"
+";
+        fs::write(hooks_dir.join("hooks.toml"), toml).expect("expected value");
+
+        let err = load_hooks_no_ignore(&hooks_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(full.contains("must live under `scripts/`"), "error: {full}");
+    }
+
+    #[test]
+    fn test_load_hook_specs_symlink_under_scripts_rejected() {
+        // A symlink would pass `Path::is_file()` (which follows links) used by
+        // the frontmatter-script existence check, but `WalkDir` does not follow
+        // links — so the script would be silently dropped from emission.
+        // Loading must fail loudly instead of producing a broken hook entry.
+        let tmp = tempfile::tempdir().expect("expected value");
+        let hooks_dir = tmp.path().join("hooks");
+        fs::create_dir_all(hooks_dir.join("scripts")).expect("expected value");
+        let real = tmp.path().join("real-init.sh");
+        fs::write(&real, "#!/bin/sh\n").expect("expected value");
+        std::os::unix::fs::symlink(&real, hooks_dir.join("scripts").join("init.sh"))
+            .expect("expected value");
+        let toml = "
+[hooks.init]
+event = \"session_start\"
+script = \"scripts/init.sh\"
+";
+        fs::write(hooks_dir.join("hooks.toml"), toml).expect("expected value");
+
+        let err = load_hooks_no_ignore(&hooks_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(full.contains("symlink"), "error: {full}");
+    }
+
+    #[test]
+    fn test_hook_frontmatter_rejects_id_field_in_table_body() {
+        // `HookFrontmatter::id` is `#[serde(skip)]` — it's populated from the
+        // `[hooks.<id>]` table key, never from the inner table body. Combined
+        // with `#[serde(deny_unknown_fields)]` on `HookSpecFile`, writing
+        // `id = "x"` inside `[hooks.foo]` must error rather than silently
+        // overwriting the captured key.
+        let toml = "
+[hooks.foo]
+id = \"bar\"
+event = \"session_start\"
+script = \"scripts/init.sh\"
+";
+        let result: Result<HookSpecFile, _> = toml::from_str(toml);
+        let err = result.expect_err("expected unknown-field error for body `id`");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("unknown field") && msg.contains("id"),
+            "expected unknown-field error mentioning `id`, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_load_hook_specs_reserved_prefix_directory_rejected() {
+        // The `_agentspec_*` reservation owns the whole namespace, not just
+        // leaf filenames. A directory like `scripts/_agentspec_helpers/` would
+        // otherwise leak into emitted output under the reserved prefix.
+        let tmp = tempfile::tempdir().expect("expected value");
+        let hooks_dir = tmp.path().join("hooks");
+        let reserved_subdir = hooks_dir.join("scripts").join("_agentspec_helpers");
+        fs::create_dir_all(&reserved_subdir).expect("expected value");
+        fs::write(reserved_subdir.join("foo.sh"), "#!/bin/sh\n").expect("expected value");
+        fs::write(hooks_dir.join("hooks.toml"), "").expect("expected value");
 
         let err = load_hooks_no_ignore(&hooks_dir).expect_err("expected error");
         let full = format!("{err:#}");

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use agentspec::adapters::{
     claude_post_write_hook, cursor_post_write_hook, opencode_post_write_hook,
 };
-use agentspec::compile::{CompileResult, EmittedHookEntry, GeneratedFile, HookEmitMode};
+use agentspec::compile::{CompileResult, EmittedHookEntry, GeneratedFile};
 use agentspec::plan::{
     FileKind, FileWrite, WriteMode, WritePlan, expand_tilde, file_kinds, project_dest_dir,
     user_dest_dir,
@@ -29,13 +29,10 @@ pub fn sync_plan(
     let mut writes = Vec::new();
     let mut post_write_hooks = Vec::new();
 
-    let empty: Vec<EmittedHookEntry> = Vec::new();
     for (provider, target) in targets {
-        let emit_mode = sync_mode_to_hook_emit_mode(target.mode);
-        let owned_entries: &[EmittedHookEntry] = result
-            .hooks
-            .get(provider)
-            .map_or(empty.as_slice(), Vec::as_slice);
+        let emit_mode = target.mode.to_hook_emit_mode();
+        let owned_entries: &[EmittedHookEntry] =
+            result.hooks.get(provider).map_or(&[], Vec::as_slice);
 
         for kind in file_kinds(*provider) {
             let dest = resolve_dest_dir(*provider, kind, target, home, cwd)?;
@@ -205,13 +202,16 @@ fn provider_config_dir(
     home: &Path,
     cwd: &Path,
 ) -> PathBuf {
-    // The `Provider::OpenCode` case is statically excluded by the call sites
-    // — `sync_plan` dispatches per provider and routes OpenCode through
-    // `opencode_config_dir`. Claude/OpenCode collapse to the same Claude-shaped
-    // fallback for exhaustiveness; the OpenCode arm is unreachable in practice.
+    // `OpenCode` is intentionally absent: `sync_plan` routes it through
+    // `opencode_config_dir`, so reaching this arm would mean a future refactor
+    // wired OpenCode in incorrectly. Panic loudly rather than returning a
+    // silently-wrong Claude-shaped path.
     let dotdir = match provider {
-        Provider::Claude | Provider::OpenCode => ".claude",
+        Provider::Claude => ".claude",
         Provider::Cursor => ".cursor",
+        Provider::OpenCode => {
+            unreachable!("OpenCode is routed through opencode_config_dir, not provider_config_dir")
+        }
     };
     match target.mode {
         SyncMode::User => home.join(dotdir),
@@ -220,17 +220,6 @@ fn provider_config_dir(
             .dir
             .as_deref()
             .map_or_else(|| home.join(dotdir), |d| expand_tilde(d, home)),
-    }
-}
-
-/// Translate the binary-side `SyncMode` to the library-side `HookEmitMode` at
-/// the call boundary, preserving the rule that the library never imports
-/// `SyncMode` (per CLAUDE.md's library/binary boundary guidance).
-fn sync_mode_to_hook_emit_mode(mode: SyncMode) -> HookEmitMode {
-    match mode {
-        SyncMode::Path => HookEmitMode::Bundled,
-        SyncMode::User => HookEmitMode::MergedUser,
-        SyncMode::Project => HookEmitMode::MergedProject,
     }
 }
 

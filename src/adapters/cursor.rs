@@ -504,6 +504,30 @@ mod tests {
     }
 
     #[test]
+    fn test_synthesize_hooks_does_not_serialize_description() {
+        // `HookFrontmatter::description` is documented as informational;
+        // neither provider's host runtime consumes it. Lock that contract:
+        // a description on the spec must not appear in the emitted JSON.
+        let mut spec = make_hook_spec("init", HookEvent::SessionStart, None);
+        spec.frontmatter.description = Some("informational note".to_string());
+        let result = synthesize_hooks(&[&spec], None).expect("expected value");
+        let content = String::from_utf8(
+            result
+                .files
+                .iter()
+                .find(|f| f.path.to_str() == Some("hooks/hooks.json"))
+                .expect("hooks.json should be present")
+                .content
+                .clone(),
+        )
+        .expect("expected utf-8");
+        assert!(
+            !content.contains("description") && !content.contains("informational note"),
+            "description must not be serialized into Cursor hooks.json, got: {content}"
+        );
+    }
+
+    #[test]
     fn test_synthesize_hooks_emits_version_field() {
         let spec = make_hook_spec("init", HookEvent::SessionStart, None);
         let result = synthesize_hooks(&[&spec], None).expect("expected value");

@@ -728,6 +728,59 @@ mod tests {
     }
 
     #[test]
+    fn test_synthesize_hooks_preserves_nested_script_path_in_command() {
+        // Regression: `build_emitted_hook_entries` previously stripped the
+        // script path to its basename via `file_name()`, breaking any
+        // non-flat layout (e.g., `scripts/git/pre-commit.sh` would emit a
+        // command pointing to `${CLAUDE_PLUGIN_ROOT}/hooks/scripts/pre-commit.sh`
+        // — a path that does not exist, since the file was correctly emitted
+        // to `hooks/scripts/git/pre-commit.sh`).
+        let mut spec = make_hook_spec("audit", HookEvent::PreToolUse, Some("Bash"));
+        spec.frontmatter.script = std::path::PathBuf::from("scripts/git/pre-commit.sh");
+        let result = synthesize_hooks(&[&spec], None).expect("expected value");
+        assert_eq!(
+            result.entries[0].command,
+            "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/git/pre-commit.sh"
+        );
+    }
+
+    #[test]
+    fn test_synthesize_hooks_normalizes_leading_dot_slash_in_script_path() {
+        // Regression: `Path::strip_prefix("scripts")` returns Err for
+        // `./scripts/init.sh` (the leading CurDir component breaks prefix
+        // matching), so the previous fix using `strip_prefix` would emit a
+        // command like `${ANCHOR}/hooks/scripts/./scripts/init.sh`.
+        // The component-based normalization handles both forms.
+        let mut spec = make_hook_spec("init", HookEvent::SessionStart, None);
+        spec.frontmatter.script = std::path::PathBuf::from("./scripts/init.sh");
+        let result = synthesize_hooks(&[&spec], None).expect("expected value");
+        assert_eq!(
+            result.entries[0].command,
+            "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/init.sh"
+        );
+    }
+
+    #[test]
+    fn test_synthesize_hooks_does_not_serialize_description() {
+        // `HookFrontmatter::description` is documented as informational;
+        // neither provider's host runtime consumes it. Lock that contract:
+        // a description on the spec must not appear in the emitted JSON.
+        let mut spec = make_hook_spec("init", HookEvent::UserPromptSubmit, None);
+        spec.frontmatter.description = Some("informational note".to_string());
+        let result = synthesize_hooks(&[&spec], None).expect("expected value");
+        let file = result
+            .files
+            .iter()
+            .find(|f| f.path.to_str() == Some("hooks/hooks.json"))
+            .expect("hooks.json should be present");
+        let content = String::from_utf8(file.content.clone()).expect("expected utf-8");
+        assert!(
+            !content.contains("description") && !content.contains("informational note"),
+            "description must not be serialized into Claude hooks.json, got: {content}"
+        );
+    }
+
+    #[test]
     fn test_synthesize_hooks_path_mode_emits_bundled_file() {
         let spec = make_hook_spec("init", HookEvent::UserPromptSubmit, None);
         let specs = vec![&spec];

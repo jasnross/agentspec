@@ -35,9 +35,16 @@ impl Default for Manifest {
 }
 
 impl Manifest {
+    /// Returns the path where the manifest file lives for `dir`. Useful for
+    /// existence checks before running a write batch (so empty batches can
+    /// skip dir creation when there's no prior manifest to clean from).
+    pub fn path(dir: &Path) -> std::path::PathBuf {
+        dir.join(MANIFEST_FILE)
+    }
+
     /// Loads `.agentspec-manifest.json` from `dir`. Returns an empty manifest if absent.
     pub fn load(dir: &Path) -> Result<Self> {
-        let path = dir.join(MANIFEST_FILE);
+        let path = Self::path(dir);
         if !path.exists() {
             return Ok(Self::default());
         }
@@ -50,7 +57,7 @@ impl Manifest {
 
     /// Saves the manifest to `.agentspec-manifest.json` in `dir`.
     pub fn save(&self, dir: &Path) -> Result<()> {
-        let path = dir.join(MANIFEST_FILE);
+        let path = Self::path(dir);
         let content =
             serde_json::to_string_pretty(self).context("failed to serialize manifest")? + "\n";
         std::fs::write(&path, content)

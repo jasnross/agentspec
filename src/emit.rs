@@ -275,6 +275,14 @@ fn write_batch(w: &FileWrite, dry_run: bool) -> Result<Option<BatchStats>> {
         WriteMode::ManifestTracked => {
             let kind = w.kind.context("ManifestTracked writes must have a kind")?;
 
+            // Empty batch + no prior manifest → nothing to write and nothing
+            // to clean. Return early so we don't create a spurious destination
+            // directory plus an empty `.agentspec-manifest.json` marker file
+            // (e.g., `~/.claude/hooks/` for a project with no hook specs).
+            if w.files.is_empty() && !Manifest::path(&w.destination).exists() {
+                return Ok(None);
+            }
+
             if !dry_run {
                 fs::create_dir_all(&w.destination).with_context(|| {
                     format!("failed to create dest dir {}", w.destination.display())

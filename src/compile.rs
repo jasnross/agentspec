@@ -136,10 +136,23 @@ pub fn build_emitted_hook_entries(
     specs
         .iter()
         .map(|s| {
-            let filename = s.frontmatter.script.file_name().map_or_else(
-                || s.frontmatter.script.to_string_lossy().into_owned(),
-                |f| f.to_string_lossy().into_owned(),
-            );
+            // The frontmatter `script` is documented as relative to
+            // `spec/hooks/` and validated to live under `scripts/` (see
+            // `validate_hook_script_path` in specs.rs). Strip any leading
+            // `./` and the required `scripts/` segment so the command
+            // anchor — which already includes `hooks/scripts/` — preserves
+            // any nested subdirectory layout (e.g., `git/pre-commit.sh`).
+            // `Path::strip_prefix("scripts")` does not handle a leading
+            // `./` component, so iterate components instead.
+            use std::path::Component;
+            let path_under_scripts: std::path::PathBuf = s
+                .frontmatter
+                .script
+                .components()
+                .skip_while(|c| matches!(c, Component::CurDir))
+                .skip(1) // the "scripts" component, enforced by validation
+                .collect();
+            let filename = path_under_scripts.to_string_lossy().into_owned();
             EmittedHookEntry {
                 event: s.frontmatter.event,
                 matcher: s.frontmatter.matcher.clone(),
@@ -165,16 +178,21 @@ pub fn build_emitted_hook_entries(
 ///
 /// `OpenCode` never reaches this helper — the per-provider dispatch in
 /// `compile_specs` short-circuits to an empty `HookSynthesis` for it. The
-/// `OpenCode` arms below exist for exhaustiveness and would only fire if a
-/// future caller wired the hooks pipeline to `OpenCode` incorrectly; they
-/// fall back to Claude-shaped paths so the result is still a valid string.
+/// `OpenCode` arm panics loudly via `unreachable!()` so a future refactor
+/// that wires `OpenCode` through this path surfaces the mistake immediately
+/// instead of silently emitting Claude-shaped paths under `.claude`.
 fn hook_command_anchor(provider: Provider, emit_mode: HookEmitMode, filename: &str) -> String {
     if matches!(emit_mode, HookEmitMode::Bundled) {
         return format!("${{CLAUDE_PLUGIN_ROOT}}/hooks/scripts/{filename}");
     }
     let dotdir = match provider {
-        Provider::Claude | Provider::OpenCode => ".claude",
+        Provider::Claude => ".claude",
         Provider::Cursor => ".cursor",
+        Provider::OpenCode => {
+            unreachable!(
+                "OpenCode short-circuits in compile_specs and never reaches hook_command_anchor"
+            )
+        }
     };
     let var_anchor = match emit_mode {
         // Bundled handled by the early-return above; both `Merged*` variants
@@ -314,8 +332,11 @@ pub(crate) fn compile_specs(
     let mut files: Vec<GeneratedFile> = Vec::new();
     let mut hooks_map: HashMap<Provider, Vec<EmittedHookEntry>> = HashMap::new();
 
+    // `Provider` derives `Ord` and its variants are declared alphabetically
+    // (Claude < Cursor < OpenCode), so `sort()` matches the lowercase-string
+    // sort order without per-provider `String` allocations.
     let mut sorted_providers: Vec<Provider> = providers.to_vec();
-    sorted_providers.sort_by_key(ToString::to_string);
+    sorted_providers.sort();
 
     for &provider in &sorted_providers {
         let env = templating.build_environment(Some(provider))?;
