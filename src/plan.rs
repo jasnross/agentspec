@@ -92,32 +92,26 @@ pub fn project_dest_dir(provider: Provider, kind: FileKind, cwd: &Path) -> PathB
 
 /// Builds a plan that writes compiled files to an output directory (e.g. `generated/`).
 ///
-/// Uses `WriteMode::CleanSlate` — agentspec owns the output directory entirely, so each
+/// Each `CleanSlateWrite` declares that agentspec owns its destination entirely — every
 /// provider subdirectory is deleted and rewritten from scratch on every compile.
 pub fn compile_plan(
     result: &CompileResult,
     output_dir: &Path,
     providers: &[Provider],
-) -> WritePlan {
+) -> CompilePlan {
     let writes = providers
         .iter()
         .copied()
         .map(|provider| {
             let files: Vec<_> = result.files_for(provider).cloned().collect();
-            FileWrite {
+            CleanSlateWrite {
                 provider,
-                kind: None,
                 destination: output_dir.join(provider.to_string()),
                 files,
-                mode: WriteMode::CleanSlate,
-                overwrite: true,
             }
         })
         .collect();
-    WritePlan {
-        writes,
-        post_write_hooks: vec![],
-    }
+    CompilePlan { writes }
 }
 
 /// Expands a leading `~/` to the home directory. Returns the path unchanged otherwise.
@@ -175,41 +169,57 @@ impl RemovePatchReport {
     }
 }
 
-/// A complete write plan: files to write followed by post-write hooks to run.
-///
-/// Hooks always run after all writes (e.g. `OpenCode` patching needs rule files
-/// to exist first).
+/// A batch of files for a destination agentspec owns exclusively (the `compile`
+/// pipeline). The destination is deleted and rewritten from scratch on every emit.
 #[derive(Debug)]
-pub struct WritePlan {
-    pub writes: Vec<FileWrite>,
+pub struct CleanSlateWrite {
+    pub provider: Provider,
+    pub destination: PathBuf,
+    pub files: Vec<GeneratedFile>,
+}
+
+/// A batch of files for a destination shared with the user (the `sync` pipeline).
+/// Only files tracked in the manifest are created, updated, or pruned; collisions
+/// with user-authored content honour `overwrite`.
+#[derive(Debug)]
+pub struct ManifestTrackedWrite {
+    pub provider: Provider,
+    pub kind: FileKind,
+    pub destination: PathBuf,
+    pub files: Vec<GeneratedFile>,
+    pub overwrite: bool,
+}
+
+/// A batch description for the `remove` pipeline. The manifest at
+/// `destination/.agentspec-manifest.json` is the source of truth at execution time —
+/// no file content is carried because every tracked file is deleted.
+#[derive(Debug)]
+pub struct RemoveWrite {
+    pub provider: Provider,
+    pub kind: FileKind,
+    pub destination: PathBuf,
+}
+
+/// Plan for the `compile` pipeline: clean-slate writes only, no post-write hooks.
+#[derive(Debug)]
+pub struct CompilePlan {
+    pub writes: Vec<CleanSlateWrite>,
+}
+
+/// Plan for the `sync` pipeline: manifest-tracked writes followed by post-write
+/// hooks (e.g. `OpenCode` instructions patching, Claude/Cursor settings merge).
+#[derive(Debug)]
+pub struct SyncPlan {
+    pub writes: Vec<ManifestTrackedWrite>,
     pub post_write_hooks: Vec<Box<dyn PostWriteHook>>,
 }
 
-/// How the executor treats the destination directory.
+/// Plan for the `remove` pipeline: manifest-driven removals followed by post-write
+/// hooks (e.g. Claude/Cursor settings tidy, `OpenCode` instructions filter).
 #[derive(Debug)]
-pub enum WriteMode {
-    /// agentspec owns this directory exclusively — delete it and rewrite from scratch.
-    /// Safe only for directories like `generated/` that agentspec controls entirely.
-    CleanSlate,
-    /// This directory may contain files agentspec does not own (e.g. user-created skills).
-    /// Only create, update, or remove files tracked in the manifest.
-    ManifestTracked,
-    /// Reverses `ManifestTracked`: read the manifest, delete every file it
-    /// tracks, delete the manifest itself, then rmdir the dest dir if empty.
-    /// `FileWrite.files` and `FileWrite.overwrite` are unused for this variant.
-    Remove,
-}
-
-/// A batch of files to write to a single destination directory.
-#[derive(Debug)]
-pub struct FileWrite {
-    pub provider: Provider,
-    /// Present for `ManifestTracked` writes (sync); `None` for `CleanSlate` (compile).
-    pub kind: Option<FileKind>,
-    pub destination: PathBuf,
-    pub files: Vec<GeneratedFile>,
-    pub mode: WriteMode,
-    pub overwrite: bool,
+pub struct RemovePlan {
+    pub writes: Vec<RemoveWrite>,
+    pub post_write_hooks: Vec<Box<dyn PostWriteHook>>,
 }
 
 #[cfg(test)]
@@ -293,18 +303,42 @@ mod tests {
 
     #[test]
     fn test_plan_types_construct() {
-        let plan = WritePlan {
-            writes: vec![FileWrite {
+        let compile = CompilePlan {
+            writes: vec![CleanSlateWrite {
                 provider: Provider::Claude,
-                kind: None,
-                destination: PathBuf::from("/tmp/test"),
+                destination: PathBuf::from("/tmp/compile"),
                 files: vec![],
-                mode: WriteMode::CleanSlate,
-                overwrite: false,
+            }],
+        };
+        assert_eq!(compile.writes.len(), 1);
+        assert_eq!(compile.writes[0].provider, Provider::Claude);
+        assert_eq!(compile.writes[0].destination, PathBuf::from("/tmp/compile"));
+
+        let sync = SyncPlan {
+            writes: vec![ManifestTrackedWrite {
+                provider: Provider::Cursor,
+                kind: FileKind::Skills,
+                destination: PathBuf::from("/tmp/sync"),
+                files: vec![],
+                overwrite: true,
             }],
             post_write_hooks: vec![],
         };
-        assert_eq!(plan.writes.len(), 1);
-        assert!(plan.post_write_hooks.is_empty());
+        assert_eq!(sync.writes.len(), 1);
+        assert_eq!(sync.writes[0].kind, FileKind::Skills);
+        assert!(sync.writes[0].overwrite);
+        assert!(sync.post_write_hooks.is_empty());
+
+        let remove = RemovePlan {
+            writes: vec![RemoveWrite {
+                provider: Provider::OpenCode,
+                kind: FileKind::Rules,
+                destination: PathBuf::from("/tmp/remove"),
+            }],
+            post_write_hooks: vec![],
+        };
+        assert_eq!(remove.writes.len(), 1);
+        assert_eq!(remove.writes[0].kind, FileKind::Rules);
+        assert!(remove.post_write_hooks.is_empty());
     }
 }

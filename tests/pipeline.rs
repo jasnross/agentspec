@@ -2254,9 +2254,9 @@ fn test_remove_leaves_unmanaged_files_in_dest_dir() {
 
 #[test]
 fn test_remove_refuses_higher_manifest_version() {
-    // Deferred from Phase 1: now lands because Phase 2's `remove_batch`
-    // calls `Manifest::load_strict`, which is the only path that triggers
-    // the version-mismatch error end-to-end.
+    // Deferred from Phase 1: now lands because Phase 2's
+    // `remove_manifest_tracked` calls `Manifest::load_strict`, which is the
+    // only path that triggers the version-mismatch error end-to-end.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     write_remove_config(&dir, &[("claude", "user")]);

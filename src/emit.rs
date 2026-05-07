@@ -3,7 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use agentspec::plan::{FileKind, FileWrite, WriteMode, WritePlan};
+use agentspec::plan::{
+    CleanSlateWrite, CompilePlan, FileKind, ManifestTrackedWrite, RemovePlan, RemoveWrite, SyncPlan,
+};
 use agentspec::provider::Provider;
 use anyhow::{Context, Result, bail};
 use walkdir::WalkDir;
@@ -30,7 +32,7 @@ impl BatchStats {
 
 /// Aggregated remove stats for a single (provider, kind) destination.
 ///
-/// Sibling of [`BatchStats`] used by `WriteMode::Remove`. Tracks how many
+/// Sibling of [`BatchStats`] used by [`emit_remove`]. Tracks how many
 /// manifest-listed files were deleted, whether the manifest itself was
 /// removed, and whether the dest dir was rmdir'd.
 pub(crate) struct RemoveStats {
@@ -55,33 +57,49 @@ pub(crate) enum SyncAction {
     BackedUp,
 }
 
-/// Execute a write plan: write all file batches, then run post-write hooks.
+/// Execute a [`CompilePlan`]: rewrite each provider's `generated/` subdirectory
+/// from scratch.
 ///
-/// Each `FileWrite` is dispatched on its `WriteMode`: `CleanSlate` and
-/// `ManifestTracked` go to `write_batch` (producing `BatchStats`), `Remove`
-/// goes to `remove_batch` (producing `RemoveStats`). The two stat streams are
-/// rendered separately to stderr.
-pub fn emit(plan: &WritePlan, dry_run: bool, verbose: bool) -> Result<()> {
-    let mut sync_stats: Vec<BatchStats> = Vec::new();
-    let mut remove_stats: Vec<RemoveStats> = Vec::new();
+/// `CompilePlan` carries no post-write hooks (the compile path doesn't patch
+/// host config files) and produces no rendered report — clean-slate writes have
+/// no per-batch stats to summarise.
+pub fn emit_compile(plan: &CompilePlan, dry_run: bool) -> Result<()> {
     for w in &plan.writes {
-        match w.mode {
-            WriteMode::CleanSlate | WriteMode::ManifestTracked => {
-                if let Some(stats) = write_batch(w, dry_run)? {
-                    sync_stats.push(stats);
-                }
-            }
-            WriteMode::Remove => {
-                if let Some(stats) = remove_batch(w, dry_run)? {
-                    remove_stats.push(stats);
-                }
-            }
+        write_clean_slate(w, dry_run)?;
+    }
+    Ok(())
+}
+
+/// Execute a [`SyncPlan`]: manifest-track each (provider, kind) write, render a
+/// sync report to stderr, then run post-write hooks (settings/instructions
+/// merges).
+pub fn emit_sync(plan: &SyncPlan, dry_run: bool, verbose: bool) -> Result<()> {
+    let mut sync_stats: Vec<BatchStats> = Vec::new();
+    for w in &plan.writes {
+        if let Some(stats) = write_manifest_tracked(w, dry_run)? {
+            sync_stats.push(stats);
         }
     }
     if !sync_stats.is_empty() {
         let mut stderr = std::io::stderr();
         // Stderr write failures are not actionable — don't fail the sync for them.
         let _ = render_sync_report(&mut stderr, &sync_stats, dry_run, verbose);
+    }
+    for hook in &plan.post_write_hooks {
+        hook.run(dry_run)?;
+    }
+    Ok(())
+}
+
+/// Execute a [`RemovePlan`]: delete every manifest-tracked file at each
+/// destination, render a remove report to stderr, then run post-write hooks
+/// (settings/instructions tidy).
+pub fn emit_remove(plan: &RemovePlan, dry_run: bool) -> Result<()> {
+    let mut remove_stats: Vec<RemoveStats> = Vec::new();
+    for w in &plan.writes {
+        if let Some(stats) = remove_manifest_tracked(w, dry_run)? {
+            remove_stats.push(stats);
+        }
     }
     if !remove_stats.is_empty() {
         let mut stderr = std::io::stderr();
@@ -260,7 +278,7 @@ fn render_table(
 /// stderr) can disambiguate dry-run output from real action. The host-file
 /// patches (settings.json, hooks.json, opencode.json) are owned by post-write
 /// hooks and report themselves separately — this function only summarises the
-/// `WriteMode::Remove` batches (manifest-tracked file deletions).
+/// manifest-tracked file deletions performed by [`remove_manifest_tracked`].
 fn render_remove_report(
     out: &mut dyn std::io::Write,
     stats: &[RemoveStats],
@@ -336,128 +354,124 @@ fn render_footer(
     }
 }
 
-// `write_batch` covers CleanSlate and ManifestTracked inline (the `Remove`
-// arm is `unreachable!` here — `remove_batch` handles it). Extracting one
-// arm per helper would obscure the dispatch shape for a 1-line gain.
-#[allow(clippy::too_many_lines)]
-fn write_batch(w: &FileWrite, dry_run: bool) -> Result<Option<BatchStats>> {
-    match w.mode {
-        WriteMode::Remove => {
-            unreachable!("WriteMode::Remove is dispatched to remove_batch by emit()")
+/// Rewrite the destination from scratch with `w.files`. Safe only for
+/// agentspec-owned directories (the `compile` pipeline's `generated/`).
+fn write_clean_slate(w: &CleanSlateWrite, dry_run: bool) -> Result<()> {
+    if dry_run {
+        return Ok(());
+    }
+    if w.destination.exists() {
+        fs::remove_dir_all(&w.destination)
+            .with_context(|| format!("failed to delete {}", w.destination.display()))?;
+    }
+    for file in &w.files {
+        let dest_path = w.destination.join(&file.path);
+        if let Some(parent) = dest_path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create directory {}", parent.display()))?;
         }
-        WriteMode::CleanSlate => {
-            if !dry_run {
-                if w.destination.exists() {
-                    fs::remove_dir_all(&w.destination)
-                        .with_context(|| format!("failed to delete {}", w.destination.display()))?;
-                }
-                for file in &w.files {
-                    let dest_path = w.destination.join(&file.path);
-                    if let Some(parent) = dest_path.parent() {
-                        fs::create_dir_all(parent).with_context(|| {
-                            format!("failed to create directory {}", parent.display())
-                        })?;
-                    }
-                    fs::write(&dest_path, &file.content)
-                        .with_context(|| format!("failed to write {}", dest_path.display()))?;
+        fs::write(&dest_path, &file.content)
+            .with_context(|| format!("failed to write {}", dest_path.display()))?;
 
-                    #[cfg(unix)]
-                    if let Some(mode) = file.mode {
-                        use std::os::unix::fs::PermissionsExt;
-                        fs::set_permissions(&dest_path, fs::Permissions::from_mode(mode))
-                            .with_context(|| {
-                                format!("failed to set permissions on {}", dest_path.display())
-                            })?;
-                    }
-                }
-            }
-            Ok(None)
-        }
-        WriteMode::ManifestTracked => {
-            let kind = w.kind.context("ManifestTracked writes must have a kind")?;
-
-            // Empty batch + no prior manifest → nothing to write and nothing
-            // to clean. Return early so we don't create a spurious destination
-            // directory plus an empty `.agentspec-manifest.json` marker file
-            // (e.g., `~/.claude/hooks/` for a project with no hook specs).
-            if w.files.is_empty() && !Manifest::path(&w.destination).exists() {
-                return Ok(None);
-            }
-
-            if !dry_run {
-                fs::create_dir_all(&w.destination).with_context(|| {
-                    format!("failed to create dest dir {}", w.destination.display())
-                })?;
-            }
-
-            let mut manifest = Manifest::load(&w.destination)?;
-            let mut current_keys: HashSet<String> = HashSet::new();
-            let mut n_created = 0usize;
-            let mut n_updated = 0usize;
-            let mut n_backed_up = 0usize;
-            let mut n_unchanged = 0usize;
-            let mut n_removed = 0usize;
-
-            for file in &w.files {
-                // Strip the first path component (kind dir: "agents/", "skills/", etc.)
-                // since the destination IS the kind dir.
-                let rel: PathBuf = file.path.components().skip(1).collect();
-                let rel_str = rel.to_string_lossy().to_string();
-                current_keys.insert(rel_str.clone());
-                let dest = w.destination.join(&rel);
-
-                let action = write_content_to_dest(
-                    &file.content,
-                    &dest,
-                    &rel_str,
-                    &mut manifest,
-                    file.mode,
-                    w.overwrite,
-                    dry_run,
-                )?;
-                match action {
-                    SyncAction::Created => n_created += 1,
-                    SyncAction::Updated => n_updated += 1,
-                    SyncAction::BackedUp => n_backed_up += 1,
-                    SyncAction::Unchanged => n_unchanged += 1,
-                }
-            }
-
-            // Stale cleanup: remove dest files whose key is no longer in the current batch.
-            let stale_keys: Vec<String> = manifest
-                .files
-                .keys()
-                .filter(|k| !current_keys.contains(*k))
-                .cloned()
-                .collect();
-            for key in stale_keys {
-                let dest_file = w.destination.join(&key);
-                if !dry_run {
-                    if dest_file.exists() {
-                        fs::remove_file(&dest_file).with_context(|| {
-                            format!("failed to remove stale file {}", dest_file.display())
-                        })?;
-                    }
-                    manifest.files.remove(&key);
-                }
-                n_removed += 1;
-            }
-
-            if !dry_run {
-                manifest.save(&w.destination)?;
-            }
-
-            Ok(Some(BatchStats {
-                provider: w.provider,
-                kind,
-                created: n_created,
-                updated: n_updated,
-                removed: n_removed,
-                backed_up: n_backed_up,
-                unchanged: n_unchanged,
-            }))
+        #[cfg(unix)]
+        if let Some(mode) = file.mode {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&dest_path, fs::Permissions::from_mode(mode))
+                .with_context(|| format!("failed to set permissions on {}", dest_path.display()))?;
         }
     }
+    Ok(())
+}
+
+/// Sync `w.files` into a manifest-tracked destination, returning per-batch stats.
+///
+/// Honours the manifest at `<destination>/.agentspec-manifest.json` for ownership;
+/// stale entries (in the manifest but missing from `w.files`) are deleted, and
+/// collisions with user-authored files honour `w.overwrite`.
+///
+/// Returns `Ok(None)` when there is nothing to do (empty batch + no prior
+/// manifest) so the caller doesn't inflate the report's "unchanged" count with
+/// destinations that were never synced and have no specs of this kind.
+fn write_manifest_tracked(w: &ManifestTrackedWrite, dry_run: bool) -> Result<Option<BatchStats>> {
+    // Empty batch + no prior manifest → nothing to write and nothing to clean.
+    // Return early so we don't create a spurious destination directory plus an
+    // empty `.agentspec-manifest.json` marker file (e.g., `~/.claude/hooks/`
+    // for a project with no hook specs).
+    if w.files.is_empty() && !Manifest::path(&w.destination).exists() {
+        return Ok(None);
+    }
+
+    if !dry_run {
+        fs::create_dir_all(&w.destination)
+            .with_context(|| format!("failed to create dest dir {}", w.destination.display()))?;
+    }
+
+    let mut manifest = Manifest::load(&w.destination)?;
+    let mut current_keys: HashSet<String> = HashSet::new();
+    let mut n_created = 0usize;
+    let mut n_updated = 0usize;
+    let mut n_backed_up = 0usize;
+    let mut n_unchanged = 0usize;
+    let mut n_removed = 0usize;
+
+    for file in &w.files {
+        // Strip the first path component (kind dir: "agents/", "skills/", etc.)
+        // since the destination IS the kind dir.
+        let rel: PathBuf = file.path.components().skip(1).collect();
+        let rel_str = rel.to_string_lossy().to_string();
+        current_keys.insert(rel_str.clone());
+        let dest = w.destination.join(&rel);
+
+        let action = write_content_to_dest(
+            &file.content,
+            &dest,
+            &rel_str,
+            &mut manifest,
+            file.mode,
+            w.overwrite,
+            dry_run,
+        )?;
+        match action {
+            SyncAction::Created => n_created += 1,
+            SyncAction::Updated => n_updated += 1,
+            SyncAction::BackedUp => n_backed_up += 1,
+            SyncAction::Unchanged => n_unchanged += 1,
+        }
+    }
+
+    // Stale cleanup: remove dest files whose key is no longer in the current batch.
+    let stale_keys: Vec<String> = manifest
+        .files
+        .keys()
+        .filter(|k| !current_keys.contains(*k))
+        .cloned()
+        .collect();
+    for key in stale_keys {
+        let dest_file = w.destination.join(&key);
+        if !dry_run {
+            if dest_file.exists() {
+                fs::remove_file(&dest_file).with_context(|| {
+                    format!("failed to remove stale file {}", dest_file.display())
+                })?;
+            }
+            manifest.files.remove(&key);
+        }
+        n_removed += 1;
+    }
+
+    if !dry_run {
+        manifest.save(&w.destination)?;
+    }
+
+    Ok(Some(BatchStats {
+        provider: w.provider,
+        kind: w.kind,
+        created: n_created,
+        updated: n_updated,
+        removed: n_removed,
+        backed_up: n_backed_up,
+        unchanged: n_unchanged,
+    }))
 }
 
 /// Prunes empty intermediate subdirectories that agentspec created inside
@@ -586,20 +600,7 @@ fn try_rmdir_if_empty(dir: &Path) -> Result<bool> {
 /// missing state). Returns `Err` only on `load_strict` version refusal or an
 /// I/O error other than `NotFound` / `DirectoryNotEmpty` — files the user
 /// already deleted are warned-and-skipped.
-fn remove_batch(w: &FileWrite, dry_run: bool) -> Result<Option<RemoveStats>> {
-    debug_assert!(
-        w.files.is_empty(),
-        "WriteMode::Remove FileWrite must have empty files"
-    );
-    debug_assert!(
-        !w.overwrite,
-        "WriteMode::Remove FileWrite must not set overwrite"
-    );
-
-    let kind = w
-        .kind
-        .context("WriteMode::Remove writes must have a kind")?;
-
+fn remove_manifest_tracked(w: &RemoveWrite, dry_run: bool) -> Result<Option<RemoveStats>> {
     let manifest_path = Manifest::path(&w.destination);
     if !manifest_path.exists() {
         return Ok(None);
@@ -643,7 +644,7 @@ fn remove_batch(w: &FileWrite, dry_run: bool) -> Result<Option<RemoveStats>> {
 
     Ok(Some(RemoveStats {
         provider: w.provider,
-        kind,
+        kind: w.kind,
         destination: w.destination.clone(),
         files_removed,
         manifest_removed,
@@ -744,7 +745,7 @@ mod tests {
     use std::path::Path;
 
     use agentspec::compile::GeneratedFile;
-    use agentspec::plan::{FileWrite, WriteMode, WritePlan};
+    use agentspec::plan::{CleanSlateWrite, CompilePlan, ManifestTrackedWrite, SyncPlan};
     use agentspec::provider::Provider;
     use tempfile::TempDir;
 
@@ -758,17 +759,13 @@ mod tests {
         provider: Provider,
         output_dir: &Path,
         files: Vec<GeneratedFile>,
-    ) -> WritePlan {
-        WritePlan {
-            writes: vec![FileWrite {
+    ) -> CompilePlan {
+        CompilePlan {
+            writes: vec![CleanSlateWrite {
                 provider,
-                kind: None,
                 destination: output_dir.join(provider.to_string()),
                 files,
-                mode: WriteMode::CleanSlate,
-                overwrite: true,
             }],
-            post_write_hooks: vec![],
         }
     }
 
@@ -784,7 +781,7 @@ mod tests {
         )];
 
         let plan = clean_slate_plan(Provider::Claude, &output_dir, files);
-        emit(&plan, false, false).expect("expected value");
+        emit_compile(&plan, false).expect("expected value");
 
         assert!(output_dir.join("claude/skills/test/SKILL.md").exists());
     }
@@ -802,7 +799,7 @@ mod tests {
         // Write new files (different path)
         let files = vec![make_file(Provider::Claude, "skills/new/SKILL.md", "fresh")];
         let plan = clean_slate_plan(Provider::Claude, &output_dir, files);
-        emit(&plan, false, false).expect("expected value");
+        emit_compile(&plan, false).expect("expected value");
 
         // Old file should be gone
         assert!(!stale_dir.join("old.md").exists());
@@ -815,10 +812,9 @@ mod tests {
         let tmp = TempDir::new().expect("expected value");
         let output_dir = tmp.path().join("generated");
 
-        let plan = WritePlan {
-            writes: vec![FileWrite {
+        let plan = CompilePlan {
+            writes: vec![CleanSlateWrite {
                 provider: Provider::Claude,
-                kind: None,
                 destination: output_dir.join("claude"),
                 files: vec![GeneratedFile::binary(
                     Provider::Claude,
@@ -826,13 +822,10 @@ mod tests {
                     b"#!/bin/bash\necho hi".to_vec(),
                     Some(0o755),
                 )],
-                mode: WriteMode::CleanSlate,
-                overwrite: true,
             }],
-            post_write_hooks: vec![],
         };
 
-        emit(&plan, false, false).expect("expected value");
+        emit_compile(&plan, false).expect("expected value");
 
         #[cfg(unix)]
         {
@@ -851,23 +844,22 @@ mod tests {
         let tmp = TempDir::new().expect("expected value");
         let dest = tmp.path().join("skills");
 
-        let plan = WritePlan {
-            writes: vec![FileWrite {
+        let plan = SyncPlan {
+            writes: vec![ManifestTrackedWrite {
                 provider: Provider::Claude,
-                kind: Some(agentspec::plan::FileKind::Skills),
+                kind: agentspec::plan::FileKind::Skills,
                 destination: dest.clone(),
                 files: vec![make_file(
                     Provider::Claude,
                     "skills/basic/SKILL.md",
                     "---\nname: basic\n---\n\nbody\n",
                 )],
-                mode: WriteMode::ManifestTracked,
                 overwrite: true,
             }],
             post_write_hooks: vec![],
         };
 
-        emit(&plan, false, false).expect("expected value");
+        emit_sync(&plan, false, false).expect("expected value");
 
         assert!(dest.join("basic/SKILL.md").exists());
         assert!(dest.join(".agentspec-manifest.json").exists());
@@ -882,33 +874,31 @@ mod tests {
         let dest = tmp.path().join("skills");
 
         // First sync: write basic/SKILL.md
-        let plan = WritePlan {
-            writes: vec![FileWrite {
+        let plan = SyncPlan {
+            writes: vec![ManifestTrackedWrite {
                 provider: Provider::Claude,
-                kind: Some(agentspec::plan::FileKind::Skills),
+                kind: agentspec::plan::FileKind::Skills,
                 destination: dest.clone(),
                 files: vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "v1")],
-                mode: WriteMode::ManifestTracked,
                 overwrite: true,
             }],
             post_write_hooks: vec![],
         };
-        emit(&plan, false, false).expect("expected value");
+        emit_sync(&plan, false, false).expect("expected value");
         assert!(dest.join("basic/SKILL.md").exists());
 
         // Second sync: empty files list → basic/SKILL.md becomes stale
-        let plan2 = WritePlan {
-            writes: vec![FileWrite {
+        let plan2 = SyncPlan {
+            writes: vec![ManifestTrackedWrite {
                 provider: Provider::Claude,
-                kind: Some(agentspec::plan::FileKind::Skills),
+                kind: agentspec::plan::FileKind::Skills,
                 destination: dest.clone(),
                 files: vec![],
-                mode: WriteMode::ManifestTracked,
                 overwrite: true,
             }],
             post_write_hooks: vec![],
         };
-        emit(&plan2, false, false).expect("expected value");
+        emit_sync(&plan2, false, false).expect("expected value");
 
         assert!(
             !dest.join("basic/SKILL.md").exists(),
@@ -921,14 +911,13 @@ mod tests {
         );
     }
 
-    fn manifest_tracked_plan(dest: &Path, files: Vec<GeneratedFile>, overwrite: bool) -> WritePlan {
-        WritePlan {
-            writes: vec![FileWrite {
+    fn manifest_tracked_plan(dest: &Path, files: Vec<GeneratedFile>, overwrite: bool) -> SyncPlan {
+        SyncPlan {
+            writes: vec![ManifestTrackedWrite {
                 provider: Provider::Claude,
-                kind: Some(agentspec::plan::FileKind::Skills),
+                kind: agentspec::plan::FileKind::Skills,
                 destination: dest.to_path_buf(),
                 files,
-                mode: WriteMode::ManifestTracked,
                 overwrite,
             }],
             post_write_hooks: vec![],
@@ -946,7 +935,7 @@ mod tests {
             vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "body")],
             false,
         );
-        emit(&plan, false, false).expect("expected value");
+        emit_sync(&plan, false, false).expect("expected value");
 
         // Second sync: same content — should be Unchanged (no manifest rewrite needed).
         let plan2 = manifest_tracked_plan(
@@ -954,7 +943,7 @@ mod tests {
             vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "body")],
             false,
         );
-        emit(&plan2, false, false).expect("expected value");
+        emit_sync(&plan2, false, false).expect("expected value");
 
         // File still present and unchanged.
         let content = fs::read_to_string(dest.join("basic/SKILL.md")).expect("expected value");
@@ -971,14 +960,14 @@ mod tests {
             vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "v1")],
             false,
         );
-        emit(&plan, false, false).expect("expected value");
+        emit_sync(&plan, false, false).expect("expected value");
 
         let plan2 = manifest_tracked_plan(
             &dest,
             vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "v2")],
             false,
         );
-        emit(&plan2, false, false).expect("expected value");
+        emit_sync(&plan2, false, false).expect("expected value");
 
         let content = fs::read_to_string(dest.join("basic/SKILL.md")).expect("expected value");
         assert_eq!(content, "v2");
@@ -997,7 +986,7 @@ mod tests {
             vec![make_file(Provider::Claude, "agents/foo.md", "agentspec")],
             false, // overwrite = false
         );
-        let err = emit(&plan, false, false).expect_err("expected collision error");
+        let err = emit_sync(&plan, false, false).expect_err("expected collision error");
         assert!(
             err.to_string().contains("collision:"),
             "expected collision error, got: {err}"
@@ -1019,7 +1008,7 @@ mod tests {
             vec![make_file(Provider::Claude, "agents/foo.md", "agentspec")],
             true, // overwrite = true
         );
-        emit(&plan, false, false).expect("expected value");
+        emit_sync(&plan, false, false).expect("expected value");
 
         // New content written.
         let content = fs::read_to_string(dest.join("foo.md")).expect("expected value");
@@ -1264,36 +1253,21 @@ mod tests {
     }
 
     #[test]
-    fn test_write_batch_returns_none_for_clean_slate() {
-        let tmp = TempDir::new().expect("expected value");
-        let w = FileWrite {
-            provider: Provider::Claude,
-            kind: None,
-            destination: tmp.path().join("out"),
-            files: vec![],
-            mode: WriteMode::CleanSlate,
-            overwrite: true,
-        };
-        let result = write_batch(&w, false).expect("expected value");
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_write_batch_returns_some_for_manifest_tracked() {
+    fn test_write_manifest_tracked_returns_stats() {
         use agentspec::plan::FileKind;
 
         let tmp = TempDir::new().expect("expected value");
         let dest = tmp.path().join("skills");
-        let w = FileWrite {
+        let w = ManifestTrackedWrite {
             provider: Provider::Claude,
-            kind: Some(FileKind::Skills),
+            kind: FileKind::Skills,
             destination: dest,
             files: vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "body")],
-            mode: WriteMode::ManifestTracked,
             overwrite: true,
         };
-        let result = write_batch(&w, false).expect("expected value");
-        let stats = result.expect("expected Some(BatchStats)");
+        let stats = write_manifest_tracked(&w, false)
+            .expect("expected value")
+            .expect("expected Some(BatchStats) for non-empty batch");
         assert_eq!(stats.created, 1);
         assert_eq!(stats.unchanged, 0);
         assert!(matches!(stats.provider, Provider::Claude));
@@ -1305,19 +1279,18 @@ mod tests {
         let tmp = TempDir::new().expect("expected value");
         let dest = tmp.path().join("skills");
 
-        let plan = WritePlan {
-            writes: vec![FileWrite {
+        let plan = SyncPlan {
+            writes: vec![ManifestTrackedWrite {
                 provider: Provider::Claude,
-                kind: Some(agentspec::plan::FileKind::Skills),
+                kind: agentspec::plan::FileKind::Skills,
                 destination: dest.clone(),
                 files: vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "body")],
-                mode: WriteMode::ManifestTracked,
                 overwrite: true,
             }],
             post_write_hooks: vec![],
         };
 
-        emit(&plan, true, false).expect("expected value");
+        emit_sync(&plan, true, false).expect("expected value");
 
         assert!(!dest.exists(), "dry-run must not create directory");
     }

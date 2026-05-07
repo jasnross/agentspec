@@ -96,7 +96,7 @@ pub fn merge_claude_settings(
     if owned_entries.is_empty() && top.get("hooks").is_none() {
         return Ok(());
     }
-    // `force=true` mirrors the semantics of `--force` in `emit::write_batch`:
+    // `force=true` mirrors the semantics of `--force` in `emit::write_manifest_tracked`:
     // allow agentspec to overwrite user-authored content. Here that means
     // replacing a non-object `hooks` value (e.g., `null` or `"string"`) with
     // an empty object before merging. `force=false` keeps the protective

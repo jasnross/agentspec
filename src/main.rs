@@ -16,7 +16,7 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use cli::{Cli, Command};
 use config::AgentspecConfig;
-use emit::emit;
+use emit::{emit_compile, emit_remove, emit_sync};
 use strum::VariantArray;
 use sync::{resolve_sync_targets, sync_plan};
 
@@ -93,7 +93,7 @@ fn main() -> Result<()> {
 
             let home = home_dir()?;
             let plan = sync_plan(&result, &targets, &home, &cwd)?;
-            emit(&plan, sync_args.dry_run, sync_args.common.verbose)?;
+            emit_sync(&plan, sync_args.dry_run, sync_args.common.verbose)?;
         }
         Command::Remove(remove_args) => {
             let targets = remove::resolve_remove_targets(&config, remove_args)?;
@@ -102,7 +102,7 @@ fn main() -> Result<()> {
             } else {
                 let home = home_dir()?;
                 let plan = remove::remove_plan(&targets, &home, &cwd)?;
-                emit(&plan, remove_args.dry_run, remove_args.common.verbose)?;
+                emit_remove(&plan, remove_args.dry_run)?;
             }
         }
         Command::Compile(compile_args) => {
@@ -133,7 +133,7 @@ fn main() -> Result<()> {
             surface_compile_diagnostics(&diagnostics, display);
             let output_dir = config.resolve(&config.compile.output_dir);
             let plan = compile_plan(&result, &output_dir, &providers);
-            emit(&plan, false, false)?;
+            emit_compile(&plan, false)?;
             eprintln!(
                 "wrote {} files to {}",
                 result.files.len(),

@@ -3,7 +3,7 @@ use std::path::Path;
 use agentspec::adapters::{
     claude_remove_post_write_hook, cursor_remove_post_write_hook, opencode_remove_post_write_hook,
 };
-use agentspec::plan::{FileWrite, WriteMode, WritePlan, file_kinds};
+use agentspec::plan::{RemovePlan, RemoveWrite, file_kinds};
 use agentspec::provider::Provider;
 use anyhow::{Result, bail};
 
@@ -54,19 +54,18 @@ pub fn resolve_remove_targets(
     Ok(resolved)
 }
 
-/// Builds a `WritePlan` that reverses a prior sync.
+/// Builds a `RemovePlan` that reverses a prior sync.
 ///
-/// One `FileWrite { mode: WriteMode::Remove, .. }` is produced per
-/// `(provider, kind)` dest dir. `files` is empty and `overwrite` is `false`
-/// for every entry — the manifest at `destination/.agentspec-manifest.json` is
-/// the source of truth at execution time. `post_write_hooks` is populated by
-/// later phases (Claude/Cursor settings tidy in Phase 3, `OpenCode` instructions
-/// tidy in Phase 4).
+/// One `RemoveWrite` is produced per `(provider, kind)` dest dir. The manifest at
+/// `destination/.agentspec-manifest.json` is the source of truth at execution time;
+/// no file content is carried because every tracked file is deleted.
+/// `post_write_hooks` is populated by later phases (Claude/Cursor settings tidy in
+/// Phase 3, `OpenCode` instructions tidy in Phase 4).
 pub fn remove_plan(
     targets: &[(Provider, SyncTargetConfig)],
     home: &Path,
     cwd: &Path,
-) -> Result<WritePlan> {
+) -> Result<RemovePlan> {
     debug_assert!(
         !targets.is_empty(),
         "remove_plan must not be called with empty targets; main.rs should print 'nothing to remove' instead"
@@ -109,18 +108,15 @@ pub fn remove_plan(
                 post_write_hooks.push(h);
             }
 
-            writes.push(FileWrite {
+            writes.push(RemoveWrite {
                 provider: *provider,
-                kind: Some(kind),
+                kind,
                 destination,
-                files: Vec::new(),
-                mode: WriteMode::Remove,
-                overwrite: false,
             });
         }
     }
 
-    Ok(WritePlan {
+    Ok(RemovePlan {
         writes,
         post_write_hooks,
     })

@@ -483,7 +483,7 @@ impl PostWriteHook for ClaudeRemoveHooksPatch {
 ///
 /// Returns `None` for non-`Hooks` kinds and for non-Merged emit modes (Path
 /// mode owns `hooks/hooks.json` outright — its cleanup is handled by
-/// `remove_batch`'s dest-dir teardown, not via a settings.json patch).
+/// `remove_manifest_tracked`'s dest-dir teardown, not via a settings.json patch).
 pub fn remove_post_write_hook(
     kind: FileKind,
     _dest: &Path,

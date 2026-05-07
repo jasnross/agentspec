@@ -7,7 +7,7 @@ use agentspec::adapters::{
 };
 use agentspec::compile::{CompileResult, EmittedHookEntry, GeneratedFile};
 use agentspec::plan::{
-    FileKind, FileWrite, WriteMode, WritePlan, expand_tilde, file_kinds, project_dest_dir,
+    FileKind, ManifestTrackedWrite, SyncPlan, expand_tilde, file_kinds, project_dest_dir,
     user_dest_dir,
 };
 use agentspec::provider::Provider;
@@ -16,16 +16,16 @@ use anyhow::{Context, Result, bail};
 use crate::cli::SyncArgs;
 use crate::config::{AgentspecConfig, SyncFlags, SyncMode, SyncTargetConfig};
 
-/// Builds a `WritePlan` that writes compiled files directly to tool config destinations.
+/// Builds a `SyncPlan` that writes compiled files directly to tool config destinations.
 ///
-/// One `FileWrite` (with `WriteMode::ManifestTracked`) is produced per (provider, kind) pair.
-/// Each adapter may optionally provide a post-write hook for specific kinds.
+/// One `ManifestTrackedWrite` is produced per (provider, kind) pair. Each adapter may
+/// optionally provide a post-write hook for specific kinds.
 pub fn sync_plan(
     result: &CompileResult,
     targets: &[(Provider, SyncTargetConfig)],
     home: &Path,
     cwd: &Path,
-) -> Result<WritePlan> {
+) -> Result<SyncPlan> {
     let mut writes = Vec::new();
     let mut post_write_hooks = Vec::new();
 
@@ -46,12 +46,11 @@ pub fn sync_plan(
             let dest = resolve_dest_dir(*provider, kind, target, home, cwd)?;
             let files = files_for_kind(result, *provider, kind);
 
-            writes.push(FileWrite {
+            writes.push(ManifestTrackedWrite {
                 provider: *provider,
-                kind: Some(kind),
+                kind,
                 destination: dest.clone(),
                 files,
-                mode: WriteMode::ManifestTracked,
                 overwrite: target.overwrite,
             });
 
@@ -87,7 +86,7 @@ pub fn sync_plan(
         }
     }
 
-    Ok(WritePlan {
+    Ok(SyncPlan {
         writes,
         post_write_hooks,
     })
@@ -244,7 +243,7 @@ mod tests {
     use std::path::Path;
 
     use agentspec::compile::{CompileResult, GeneratedFile};
-    use agentspec::plan::{FileKind, WriteMode};
+    use agentspec::plan::FileKind;
     use agentspec::provider::Provider;
 
     use super::{files_for_kind, resolve_dest_dir, sync_plan};
@@ -327,22 +326,6 @@ mod tests {
 
         // Claude: 4 kinds (agents, rules, skills, hooks); OpenCode: 4 kinds (agents, commands, rules, skills).
         assert_eq!(plan.writes.len(), 8);
-
-        // Every write uses ManifestTracked mode and has a kind set.
-        for w in &plan.writes {
-            assert!(
-                matches!(w.mode, WriteMode::ManifestTracked),
-                "expected ManifestTracked for {} {:?}",
-                w.provider,
-                w.destination
-            );
-            assert!(
-                w.kind.is_some(),
-                "expected kind to be set for {} {:?}",
-                w.provider,
-                w.destination
-            );
-        }
 
         // Exactly one post-write hook: OpenCode instructions patching.
         assert_eq!(plan.post_write_hooks.len(), 1);
