@@ -407,11 +407,19 @@ fn build_claude_hooks_json(entries: &[EmittedHookEntry]) -> Result<String> {
 pub struct ClaudeHooksPatch {
     settings_path: std::path::PathBuf,
     owned_entries: Vec<EmittedHookEntry>,
+    /// `--force`/`overwrite=true`: replace a non-object `hooks` value with
+    /// `{}` before merging, instead of erroring.
+    force: bool,
 }
 
 impl PostWriteHook for ClaudeHooksPatch {
     fn run(&self, dry_run: bool) -> Result<()> {
-        crate::hooks_merge::merge_claude_settings(&self.settings_path, &self.owned_entries, dry_run)
+        crate::hooks_merge::merge_claude_settings(
+            &self.settings_path,
+            &self.owned_entries,
+            self.force,
+            dry_run,
+        )
     }
 }
 
@@ -419,13 +427,16 @@ impl PostWriteHook for ClaudeHooksPatch {
 ///
 /// `config_dir` is the parent of `dest` for hooks (e.g., `~/.claude` when
 /// `dest` is `~/.claude/hooks`); the binary computes it at the call site
-/// rather than the library inferring it from `dest`.
+/// rather than the library inferring it from `dest`. `force` reflects the
+/// `--force` flag and lets the merge replace user-authored non-object
+/// `hooks` values rather than erroring.
 pub fn post_write_hook(
     kind: FileKind,
     _dest: &Path,
     config_dir: &Path,
     emit_mode: HookEmitMode,
     owned_entries: &[EmittedHookEntry],
+    force: bool,
 ) -> Option<Box<dyn PostWriteHook>> {
     if kind != FileKind::Hooks {
         return None;
@@ -438,6 +449,7 @@ pub fn post_write_hook(
     Some(Box::new(ClaudeHooksPatch {
         settings_path: config_dir.join("settings.json"),
         owned_entries: owned_entries.to_vec(),
+        force,
     }))
 }
 

@@ -29,6 +29,11 @@ thiserror = "2"
 toml = "0.8"
 walkdir = "2"
 
+[target.'cfg(unix)'.dependencies]
+# Used by `hooks_merge::finish` to read the current process umask when creating
+# a fresh settings.json. No stdlib accessor exists; libc::umask is the only path.
+libc = "0.2"
+
 [lints.clippy]
 # Lint groups at priority -1 so individual overrides below take precedence.
 complexity = { level = "deny", priority = -1 }

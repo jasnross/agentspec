@@ -33,6 +33,14 @@ pub fn sync_plan(
         let emit_mode = target.mode.to_hook_emit_mode();
         let owned_entries: &[EmittedHookEntry] =
             result.hooks.get(provider).map_or(&[], Vec::as_slice);
+        // `config_dir` does not depend on `kind`, so compute it once per
+        // (provider, target) and reuse across the inner loop.
+        let config_dir = match *provider {
+            Provider::Claude | Provider::Cursor => {
+                provider_config_dir(*provider, target, home, cwd)
+            }
+            Provider::OpenCode => opencode_config_dir(target, home, cwd),
+        };
 
         for kind in file_kinds(*provider) {
             let dest = resolve_dest_dir(*provider, kind, target, home, cwd)?;
@@ -47,21 +55,29 @@ pub fn sync_plan(
                 overwrite: target.overwrite,
             });
 
-            // Every adapter gets a chance to provide a post-write hook. Each
-            // provider derives its own `config_dir` from `dest` (parent of the
-            // hooks/ destination) — see `claude_config_dir` etc. for sync.rs's
-            // resolution logic.
+            // Every adapter gets a chance to provide a post-write hook.
+            // `target.overwrite` reflects `--force`; the Claude/Cursor merge
+            // patchers consume it to decide whether to replace a user-authored
+            // non-object `hooks` value with `{}`. OpenCode's instructions
+            // patcher doesn't use it.
             let hook = match *provider {
-                Provider::Claude => {
-                    let config_dir = provider_config_dir(*provider, target, home, cwd);
-                    claude_post_write_hook(kind, &dest, &config_dir, emit_mode, owned_entries)
-                }
-                Provider::Cursor => {
-                    let config_dir = provider_config_dir(*provider, target, home, cwd);
-                    cursor_post_write_hook(kind, &dest, &config_dir, emit_mode, owned_entries)
-                }
+                Provider::Claude => claude_post_write_hook(
+                    kind,
+                    &dest,
+                    &config_dir,
+                    emit_mode,
+                    owned_entries,
+                    target.overwrite,
+                ),
+                Provider::Cursor => cursor_post_write_hook(
+                    kind,
+                    &dest,
+                    &config_dir,
+                    emit_mode,
+                    owned_entries,
+                    target.overwrite,
+                ),
                 Provider::OpenCode => {
-                    let config_dir = opencode_config_dir(target, home, cwd);
                     opencode_post_write_hook(kind, &dest, &config_dir, emit_mode, owned_entries)
                 }
             };

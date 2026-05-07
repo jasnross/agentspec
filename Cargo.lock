@@ -15,6 +15,7 @@ dependencies = [
  "indexmap 2.13.0",
  "jsonc-parser",
  "jsonschema",
+ "libc",
  "minijinja",
  "serde",
  "serde_json",

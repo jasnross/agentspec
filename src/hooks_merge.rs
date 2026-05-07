@@ -35,6 +35,13 @@ use crate::compile::EmittedHookEntry;
 /// The two enums are isomorphic; this is a mechanical recursive walk. Lives
 /// here rather than in `compile.rs` because it's only needed for CST insertion
 /// (Phase 1's emission path serializes `Value` directly via `serde_json`).
+///
+/// Caller contract: `Number` values reaching this function today are integers
+/// only (the `timeout` field on `EmittedHookEntry` is `u32`). `n.to_string()`
+/// preserves integer formatting losslessly. If a future caller introduces
+/// floats, revisit the `Number` arm — `serde_json::Number`'s `Display` impl
+/// can produce non-canonical forms (`1e10` vs `10000000000.0`) that may
+/// surprise downstream JSON consumers.
 fn value_to_cst_input(v: Value) -> CstInputValue {
     match v {
         Value::Null => CstInputValue::Null,
@@ -61,6 +68,7 @@ fn value_to_cst_input(v: Value) -> CstInputValue {
 pub fn merge_claude_settings(
     settings_path: &Path,
     owned_entries: &[EmittedHookEntry],
+    force: bool,
     dry_run: bool,
 ) -> Result<()> {
     // Skip the write entirely when the file doesn't exist and we have no
@@ -73,9 +81,9 @@ pub fn merge_claude_settings(
     let root = CstRootNode::parse(&content, &ParseOptions::default())
         .with_context(|| format!("failed to parse {}", settings_path.display()))?;
 
-    // `_or_create` returns `None` when a property exists with a non-matching
-    // shape (e.g. `"hooks": null`). Refuse to silently overwrite — bail with a
-    // pointer to the offending file so the user can fix the malformation.
+    // The root must be a JSON object. `_or_create` errors on non-object roots
+    // even with `force` — replacing the entire file body is too destructive
+    // for a guard that exists to protect user content.
     let top = root.object_value_or_create().with_context(|| {
         format!(
             "{} has a non-object root; agentspec hooks merge requires a JSON object",
@@ -87,12 +95,21 @@ pub fn merge_claude_settings(
     if owned_entries.is_empty() && top.get("hooks").is_none() {
         return Ok(());
     }
-    let hooks_obj = top.object_value_or_create("hooks").with_context(|| {
-        format!(
-            "{}: top-level `hooks` exists but is not an object; refusing to overwrite",
-            settings_path.display()
-        )
-    })?;
+    // `force=true` mirrors the semantics of `--force` in `emit::write_batch`:
+    // allow agentspec to overwrite user-authored content. Here that means
+    // replacing a non-object `hooks` value (e.g., `null` or `"string"`) with
+    // an empty object before merging. `force=false` keeps the protective
+    // guard; the bail message points users at the recovery flag.
+    let hooks_obj = if force {
+        top.object_value_or_set("hooks")
+    } else {
+        top.object_value_or_create("hooks").with_context(|| {
+            format!(
+                "{}: top-level `hooks` exists but is not an object; refusing to overwrite. Pass --force to replace.",
+                settings_path.display()
+            )
+        })?
+    };
 
     // Step 1 — Remove every agentspec-owned entry under every event. We can't
     // restrict to events present in `owned_entries` because re-syncing with one
@@ -102,6 +119,11 @@ pub fn merge_claude_settings(
     // Step 2 — Append new entries grouped by `(event, matcher)`. Each new
     // matcher group is appended fresh; we don't merge into existing user-owned
     // groups so user formatting in those groups is untouched.
+    //
+    // `BTreeMap` sort order matters: when no event key exists yet,
+    // `array_value_or_create` creates it at end-of-object, so new keys land in
+    // alphabetical order. This matches `build_claude_hooks_json`'s emission
+    // ordering — observable in user diffs of `settings.json`.
     let mut grouped: std::collections::BTreeMap<&'static str, Vec<&EmittedHookEntry>> =
         std::collections::BTreeMap::new();
     for e in owned_entries {
@@ -111,14 +133,21 @@ pub fn merge_claude_settings(
             .push(e);
     }
     for (event_name, entries) in &grouped {
-        let event_arr = hooks_obj
-            .array_value_or_create(event_name)
-            .with_context(|| {
-                format!(
-                    "{}: `hooks.{event_name}` exists but is not an array; refusing to overwrite",
-                    settings_path.display()
-                )
-            })?;
+        // Mirrors the outer `hooks` guard: `force=true` replaces a non-array
+        // per-event value (e.g., `"PreToolUse": "string"`) with `[]` and
+        // proceeds; `force=false` errors with `--force` as the recovery.
+        let event_arr = if force {
+            hooks_obj.array_value_or_set(event_name)
+        } else {
+            hooks_obj
+                .array_value_or_create(event_name)
+                .with_context(|| {
+                    format!(
+                        "{}: `hooks.{event_name}` exists but is not an array; refusing to overwrite. Pass --force to replace.",
+                        settings_path.display()
+                    )
+                })?
+        };
         // Within an event, group consecutive entries by matcher into one
         // matcher-wrapper object (Claude's documented shape). Insertion order
         // is preserved from the spec list (which preserves IndexMap order from
@@ -217,6 +246,7 @@ fn node_as_object(node: &jsonc_parser::cst::CstNode) -> Option<CstObject> {
 pub fn merge_cursor_hooks(
     hooks_path: &Path,
     owned_entries: &[EmittedHookEntry],
+    force: bool,
     dry_run: bool,
 ) -> Result<()> {
     if !hooks_path.is_file() && owned_entries.is_empty() {
@@ -245,17 +275,26 @@ pub fn merge_cursor_hooks(
         top.append("version", CstInputValue::Number("1".to_string()));
     }
 
-    let hooks_obj = top.object_value_or_create("hooks").with_context(|| {
-        format!(
-            "{}: top-level `hooks` exists but is not an object; refusing to overwrite",
-            hooks_path.display()
-        )
-    })?;
+    // Mirrors `merge_claude_settings`: `force=true` lets agentspec replace a
+    // non-object `hooks` value with `{}`; `force=false` errors with a pointer
+    // to `--force` as the recovery.
+    let hooks_obj = if force {
+        top.object_value_or_set("hooks")
+    } else {
+        top.object_value_or_create("hooks").with_context(|| {
+            format!(
+                "{}: top-level `hooks` exists but is not an object; refusing to overwrite. Pass --force to replace.",
+                hooks_path.display()
+            )
+        })?
+    };
 
     // Step 1 — remove every agentspec-owned entry under every event.
     remove_cursor_owned_entries(&hooks_obj);
 
     // Step 2 — append new entries directly under their event arrays.
+    // `BTreeMap` sort order matches the Claude path (and the build_*_hooks_json
+    // emission order), so newly-created event keys land alphabetically.
     let mut by_event: std::collections::BTreeMap<&'static str, Vec<&EmittedHookEntry>> =
         std::collections::BTreeMap::new();
     for e in owned_entries {
@@ -265,14 +304,20 @@ pub fn merge_cursor_hooks(
             .push(e);
     }
     for (event_name, entries) in &by_event {
-        let event_arr = hooks_obj
-            .array_value_or_create(event_name)
-            .with_context(|| {
-                format!(
-                    "{}: `hooks.{event_name}` exists but is not an array; refusing to overwrite",
-                    hooks_path.display()
-                )
-            })?;
+        // Mirrors the Claude path: `force=true` replaces a non-array per-event
+        // value with `[]`; `force=false` errors with `--force` as recovery.
+        let event_arr = if force {
+            hooks_obj.array_value_or_set(event_name)
+        } else {
+            hooks_obj
+                .array_value_or_create(event_name)
+                .with_context(|| {
+                    format!(
+                        "{}: `hooks.{event_name}` exists but is not an array; refusing to overwrite. Pass --force to replace.",
+                        hooks_path.display()
+                    )
+                })?
+        };
         for &e in entries {
             event_arr.append(value_to_cst_input(entry_to_cursor_json(e)));
         }
@@ -314,15 +359,31 @@ fn read_or_empty_object(path: &Path) -> Result<String> {
     }
 }
 
+/// Serializes umask reads across concurrent `finish` callers.
+///
+/// `umask(2)` is process-global state and the only way to read it is the
+/// set-then-restore dance below — there's a brief window where umask is 0.
+/// Production agentspec is single-threaded, so the window is harmless. Under
+/// `cargo test`'s default parallel execution, two `finish` calls overlap;
+/// without this lock, one test's transient `umask=0` would leak overly
+/// permissive modes to another test's concurrent file creates.
+#[cfg(unix)]
+static UMASK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Atomic write: serialize the CST, write to a sibling tempfile, rename into
 /// place. A dropped or crashed write leaves the original untouched.
 ///
-/// `tempfile::NamedTempFile::new_in` creates files with mode 0600. When
-/// merging into an existing file with broader permissions (e.g., 0644),
-/// the original mode is captured before the rename and applied to the
-/// tempfile *before* the atomic rename — so the persisted file lands with
-/// the right mode in a single step (no observable 0600 window between
-/// `persist` and a follow-up `set_permissions`).
+/// `tempfile::NamedTempFile::new_in` creates files with mode 0600. We resolve
+/// the target mode once (preserving the original mode for an existing file,
+/// or honoring the process umask for a fresh file) and apply it to the
+/// tempfile *before* `persist`, so the rename delivers the file at the right
+/// mode atomically — no observable 0600 window.
+///
+/// # Multi-thread safety
+///
+/// The fresh-file branch reads the process umask. Because `umask(2)` mutates
+/// process-global state, concurrent `finish` calls are serialized via
+/// [`UMASK_LOCK`] — see its docstring for the failure mode this prevents.
 fn finish(root: &CstRootNode, path: &Path, dry_run: bool) -> Result<()> {
     let output = root.to_string();
 
@@ -340,12 +401,30 @@ fn finish(root: &CstRootNode, path: &Path, dry_run: bool) -> Result<()> {
     fs::create_dir_all(parent)
         .with_context(|| format!("failed to create dir {}", parent.display()))?;
 
-    // Capture original mode before the atomic rename so we can restore it.
-    // None for a fresh file means we keep tempfile's 0600 default.
+    // Resolve target mode: existing file → preserve; fresh file → honor umask
+    // (the conventional shell behavior, matching how a user-authored
+    // `settings.json` would land).
     #[cfg(unix)]
-    let original_mode: Option<u32> = {
+    let target_mode: u32 = {
         use std::os::unix::fs::PermissionsExt;
-        fs::metadata(path).ok().map(|m| m.permissions().mode())
+        fs::metadata(path).ok().map_or_else(
+            || {
+                // `umask(2)` is the only way to read the current process
+                // umask — there is no stdlib accessor. Set-then-restore
+                // briefly flips umask to 0; serialize via UMASK_LOCK so
+                // overlapping callers don't leak modes to each other.
+                // `into_inner` recovers from a poisoned mutex — we don't
+                // hold any state inside the lock other than the umask
+                // syscall itself, so poison is harmless.
+                let _guard = UMASK_LOCK
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let prev = unsafe { libc::umask(0) };
+                unsafe { libc::umask(prev) };
+                0o666 & !(u32::from(prev))
+            },
+            |m| m.permissions().mode(),
+        )
     };
 
     let tmp = tempfile::NamedTempFile::new_in(parent)
@@ -353,12 +432,12 @@ fn finish(root: &CstRootNode, path: &Path, dry_run: bool) -> Result<()> {
     fs::write(tmp.path(), output.as_bytes())
         .with_context(|| format!("failed to write tempfile {}", tmp.path().display()))?;
 
-    // Apply original mode to the tempfile before persist so the rename
+    // Apply target mode to the tempfile before persist so the rename
     // delivers the file at the right mode atomically.
     #[cfg(unix)]
-    if let Some(mode) = original_mode {
+    {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(tmp.path(), fs::Permissions::from_mode(mode))
+        fs::set_permissions(tmp.path(), fs::Permissions::from_mode(target_mode))
             .with_context(|| format!("failed to set tempfile mode for {}", path.display()))?;
     }
 
@@ -410,7 +489,7 @@ mod tests {
             "$HOME/.claude/hooks/scripts/init.sh",
         )];
 
-        merge_claude_settings(&path, &entries, false).expect("merge");
+        merge_claude_settings(&path, &entries, false, false).expect("merge");
 
         assert!(path.exists());
         let content = std::fs::read_to_string(&path).expect("read");
@@ -439,7 +518,7 @@ mod tests {
             HookEvent::SessionStart,
             "$HOME/.claude/hooks/scripts/init.sh",
         )];
-        merge_claude_settings(&path, &entries, false).expect("merge");
+        merge_claude_settings(&path, &entries, false, false).expect("merge");
 
         let after = std::fs::read_to_string(&path).expect("read");
         assert!(
@@ -473,7 +552,7 @@ mod tests {
         std::fs::write(&path, initial).expect("write initial");
 
         let entries = vec![entry("init", HookEvent::SessionStart, "NEW")];
-        merge_claude_settings(&path, &entries, false).expect("merge");
+        merge_claude_settings(&path, &entries, false, false).expect("merge");
 
         let after = std::fs::read_to_string(&path).expect("read");
         assert!(
@@ -509,9 +588,9 @@ mod tests {
             "Bash",
             "AUDIT",
         )];
-        merge_claude_settings(&path, &entries_v1, false).expect("merge v1");
+        merge_claude_settings(&path, &entries_v1, false, false).expect("merge v1");
         let entries_v2 = vec![entry("init", HookEvent::SessionStart, "INIT")];
-        merge_claude_settings(&path, &entries_v2, false).expect("merge v2");
+        merge_claude_settings(&path, &entries_v2, false, false).expect("merge v2");
 
         let after = std::fs::read_to_string(&path).expect("read");
         assert!(
@@ -535,13 +614,13 @@ mod tests {
             entry("init", HookEvent::SessionStart, "INIT"),
             entry("audit", HookEvent::SessionStart, "AUDIT"),
         ];
-        merge_claude_settings(&path, &entries_v1, false).expect("merge v1");
+        merge_claude_settings(&path, &entries_v1, false, false).expect("merge v1");
         let after_v1 = std::fs::read_to_string(&path).expect("read v1");
         assert!(after_v1.contains("\"INIT\"") && after_v1.contains("\"AUDIT\""));
 
         // Re-sync with `audit` removed — it must disappear.
         let entries_v2 = vec![entry("init", HookEvent::SessionStart, "INIT")];
-        merge_claude_settings(&path, &entries_v2, false).expect("merge v2");
+        merge_claude_settings(&path, &entries_v2, false, false).expect("merge v2");
         let after_v2 = std::fs::read_to_string(&path).expect("read v2");
         assert!(after_v2.contains("\"INIT\""));
         assert!(
@@ -559,7 +638,7 @@ mod tests {
             HookEvent::SessionStart,
             "$HOME/.cursor/hooks/scripts/init.sh",
         )];
-        merge_cursor_hooks(&path, &entries, false).expect("merge");
+        merge_cursor_hooks(&path, &entries, false, false).expect("merge");
 
         let content = std::fs::read_to_string(&path).expect("read");
         assert!(
@@ -578,7 +657,7 @@ mod tests {
             "Bash",
             "$HOME/.cursor/hooks/scripts/audit.sh",
         )];
-        merge_cursor_hooks(&path, &entries, false).expect("merge");
+        merge_cursor_hooks(&path, &entries, false, false).expect("merge");
 
         let content = std::fs::read_to_string(&path).expect("read");
         // Cursor's shape: `{"type": "command", "matcher": "...", "command": "..."}`.
@@ -607,7 +686,8 @@ mod tests {
             HookEvent::SessionStart,
             "$HOME/.claude/hooks/scripts/init.sh",
         )];
-        merge_claude_settings(&path, &entries, false).expect("merge should succeed on empty file");
+        merge_claude_settings(&path, &entries, false, false)
+            .expect("merge should succeed on empty file");
 
         let content = std::fs::read_to_string(&path).expect("read");
         assert!(content.contains("\"_agentspec_id\""));
@@ -619,7 +699,7 @@ mod tests {
         // spurious `{"hooks": {}}` settings.json.
         let tmp = TempDir::new().expect("tmp");
         let path = tmp.path().join("settings.json");
-        merge_claude_settings(&path, &[], false).expect("merge");
+        merge_claude_settings(&path, &[], false, false).expect("merge");
         assert!(
             !path.exists(),
             "no file + no entries must not create settings.json"
@@ -636,7 +716,7 @@ mod tests {
         let initial = "{\n  \"version\": 1\n}\n";
         std::fs::write(&path, initial).expect("write initial");
 
-        merge_cursor_hooks(&path, &[], false).expect("merge");
+        merge_cursor_hooks(&path, &[], false, false).expect("merge");
 
         let after = std::fs::read_to_string(&path).expect("read");
         assert_eq!(after, initial, "file must round-trip byte-identical");
@@ -653,7 +733,7 @@ mod tests {
         let initial = "{\n  \"permissions\": { \"allow\": [\"Read\"] }\n}\n";
         std::fs::write(&path, initial).expect("write initial");
 
-        merge_claude_settings(&path, &[], false).expect("merge");
+        merge_claude_settings(&path, &[], false, false).expect("merge");
 
         let after = std::fs::read_to_string(&path).expect("read");
         assert_eq!(after, initial, "file must round-trip byte-identical");
@@ -662,8 +742,8 @@ mod tests {
     #[test]
     fn test_merge_refuses_to_overwrite_non_object_hooks_value() {
         // Sentinel-based ownership relies on `hooks` being an object. A user
-        // who hand-wrote `"hooks": null` should get a clear error, not silent
-        // overwrite (which `*_or_set` would have done).
+        // who hand-wrote `"hooks": null` should get a clear error pointing at
+        // `--force` as the recovery, not a silent overwrite.
         let tmp = TempDir::new().expect("tmp");
         let path = tmp.path().join("settings.json");
         std::fs::write(&path, "{\"hooks\": null}").expect("write malformed");
@@ -673,16 +753,134 @@ mod tests {
             HookEvent::SessionStart,
             "$HOME/.claude/hooks/scripts/init.sh",
         )];
-        let err = merge_claude_settings(&path, &entries, false)
+        let err = merge_claude_settings(&path, &entries, false, false)
             .expect_err("expected refusal-to-overwrite error");
         let msg = format!("{err:#}");
         assert!(
             msg.contains("not an object"),
             "expected non-object refusal, got: {msg}"
         );
+        assert!(
+            msg.contains("--force"),
+            "error must point at --force as the recovery, got: {msg}"
+        );
         // File must be untouched after refusal.
         let after = std::fs::read_to_string(&path).expect("read");
         assert_eq!(after, "{\"hooks\": null}");
+    }
+
+    #[test]
+    fn test_merge_force_replaces_non_object_hooks_value() {
+        // `--force` must let agentspec replace a non-object `hooks` value
+        // (e.g., the user's `null`) with `{}` and proceed with the merge.
+        let tmp = TempDir::new().expect("tmp");
+        let path = tmp.path().join("settings.json");
+        std::fs::write(&path, "{\"hooks\": null}").expect("write malformed");
+
+        let entries = vec![entry(
+            "init",
+            HookEvent::SessionStart,
+            "$HOME/.claude/hooks/scripts/init.sh",
+        )];
+        merge_claude_settings(&path, &entries, true, false).expect("force merge");
+
+        let after = std::fs::read_to_string(&path).expect("read");
+        assert!(
+            after.contains("\"_agentspec_id\""),
+            "force merge must inject the entry, got: {after}"
+        );
+        assert!(
+            !after.contains("\"hooks\": null"),
+            "non-object hooks value must be gone, got: {after}"
+        );
+    }
+
+    #[test]
+    fn test_merge_force_replaces_non_array_per_event_value() {
+        // Inner-array symmetry with the outer hooks guard: --force must also
+        // replace a non-array per-event value (e.g., user wrote
+        // `"PreToolUse": "weird"`) with `[]` before merging entries into it.
+        let tmp = TempDir::new().expect("tmp");
+        let path = tmp.path().join("settings.json");
+        std::fs::write(
+            &path,
+            "{\n  \"hooks\": {\n    \"PreToolUse\": \"weird\"\n  }\n}\n",
+        )
+        .expect("write malformed");
+
+        let entries = vec![entry_with_matcher(
+            "audit",
+            HookEvent::PreToolUse,
+            "Bash",
+            "$HOME/.claude/hooks/scripts/audit.sh",
+        )];
+        merge_claude_settings(&path, &entries, true, false).expect("force merge");
+
+        let after = std::fs::read_to_string(&path).expect("read");
+        assert!(
+            after.contains("\"_agentspec_id\""),
+            "force merge must inject the entry, got: {after}"
+        );
+        assert!(
+            !after.contains("\"PreToolUse\": \"weird\""),
+            "non-array per-event value must be gone, got: {after}"
+        );
+    }
+
+    #[test]
+    fn test_merge_inner_non_array_errors_without_force() {
+        // Without --force, a non-array per-event value must error and the
+        // message must point at --force as the recovery.
+        let tmp = TempDir::new().expect("tmp");
+        let path = tmp.path().join("settings.json");
+        std::fs::write(
+            &path,
+            "{\n  \"hooks\": {\n    \"PreToolUse\": \"weird\"\n  }\n}\n",
+        )
+        .expect("write malformed");
+
+        let entries = vec![entry_with_matcher(
+            "audit",
+            HookEvent::PreToolUse,
+            "Bash",
+            "$HOME/.claude/hooks/scripts/audit.sh",
+        )];
+        let err = merge_claude_settings(&path, &entries, false, false)
+            .expect_err("expected refusal-to-overwrite error at inner level");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("not an array"),
+            "expected non-array refusal, got: {msg}"
+        );
+        assert!(
+            msg.contains("--force"),
+            "inner error must point at --force as recovery, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_merge_cursor_force_replaces_non_object_hooks_value() {
+        // Cursor mirror of the Claude force test.
+        let tmp = TempDir::new().expect("tmp");
+        let path = tmp.path().join("hooks.json");
+        std::fs::write(&path, "{\"version\": 1, \"hooks\": \"oops\"}").expect("write malformed");
+
+        let entries = vec![entry(
+            "audit",
+            HookEvent::PreToolUse,
+            "$HOME/.cursor/hooks/scripts/audit.sh",
+        )];
+        merge_cursor_hooks(&path, &entries, true, false).expect("force merge");
+
+        let after = std::fs::read_to_string(&path).expect("read");
+        assert!(
+            after.contains("\"_agentspec_id\""),
+            "force merge must inject the entry, got: {after}"
+        );
+        assert!(
+            !after.contains("\"hooks\": \"oops\""),
+            "non-object hooks value must be gone, got: {after}"
+        );
     }
 
     #[test]
@@ -694,7 +892,7 @@ mod tests {
             HookEvent::SessionStart,
             "$HOME/.claude/hooks/scripts/init.sh",
         )];
-        merge_claude_settings(&path, &entries, true).expect("dry-run merge");
+        merge_claude_settings(&path, &entries, false, true).expect("dry-run merge");
         assert!(!path.exists(), "dry-run must not create the file");
     }
 
@@ -708,13 +906,56 @@ mod tests {
             HookEvent::SessionStart,
             "$HOME/.claude/hooks/scripts/init.sh",
         )];
-        merge_claude_settings(&path, &entries, false).expect("merge 1");
+        merge_claude_settings(&path, &entries, false, false).expect("merge 1");
         let after_1 = std::fs::read_to_string(&path).expect("read 1");
 
-        merge_claude_settings(&path, &entries, false).expect("merge 2");
+        merge_claude_settings(&path, &entries, false, false).expect("merge 2");
         let after_2 = std::fs::read_to_string(&path).expect("read 2");
 
         assert_eq!(after_1, after_2, "merge must be idempotent");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_merge_fresh_file_honors_umask() {
+        // Fresh-file creation must honor the process umask rather than
+        // leaving tempfile's restrictive 0600 default — otherwise a fresh
+        // ~/.claude/settings.json would land at 0600, more restrictive than
+        // every other dotfile under $HOME.
+        //
+        // Note: `umask(2)` is per-process; this test serially sets and restores
+        // it, so running with `--test-threads=1` is safest if this becomes
+        // flaky alongside other Unix-mode-asserting tests (none exist today).
+        use std::os::unix::fs::PermissionsExt;
+        let original = unsafe { libc::umask(0o022) };
+        let restore = scopeguard_restore_umask(original);
+
+        let tmp = TempDir::new().expect("tmp");
+        let path = tmp.path().join("settings.json");
+        let entries = vec![entry(
+            "init",
+            HookEvent::SessionStart,
+            "$HOME/.claude/hooks/scripts/init.sh",
+        )];
+        merge_claude_settings(&path, &entries, false, false).expect("merge");
+
+        let mode = std::fs::metadata(&path).expect("stat").permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o644,
+            "fresh-file mode should equal 0o666 & !0o022 = 0o644 (got {mode:o})"
+        );
+        drop(restore);
+    }
+
+    #[cfg(unix)]
+    fn scopeguard_restore_umask(original: libc::mode_t) -> impl Drop {
+        struct Restore(libc::mode_t);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                unsafe { libc::umask(self.0) };
+            }
+        }
+        Restore(original)
     }
 
     #[test]

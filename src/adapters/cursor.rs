@@ -297,11 +297,19 @@ fn build_cursor_hooks_json(entries: &[EmittedHookEntry]) -> Result<String> {
 pub struct CursorHooksPatch {
     hooks_path: std::path::PathBuf,
     owned_entries: Vec<EmittedHookEntry>,
+    /// `--force`/`overwrite=true`: replace a non-object `hooks` value with
+    /// `{}` before merging, instead of erroring.
+    force: bool,
 }
 
 impl PostWriteHook for CursorHooksPatch {
     fn run(&self, dry_run: bool) -> Result<()> {
-        crate::hooks_merge::merge_cursor_hooks(&self.hooks_path, &self.owned_entries, dry_run)
+        crate::hooks_merge::merge_cursor_hooks(
+            &self.hooks_path,
+            &self.owned_entries,
+            self.force,
+            dry_run,
+        )
     }
 }
 
@@ -311,6 +319,7 @@ pub fn post_write_hook(
     config_dir: &Path,
     emit_mode: HookEmitMode,
     owned_entries: &[EmittedHookEntry],
+    force: bool,
 ) -> Option<Box<dyn PostWriteHook>> {
     if kind != FileKind::Hooks {
         return None;
@@ -321,6 +330,7 @@ pub fn post_write_hook(
     Some(Box::new(CursorHooksPatch {
         hooks_path: config_dir.join("hooks.json"),
         owned_entries: owned_entries.to_vec(),
+        force,
     }))
 }
 
