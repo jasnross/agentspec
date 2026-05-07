@@ -5,11 +5,10 @@ mod sync;
 
 use std::collections::HashMap;
 
-use agentspec::compile::{self, AdapterConfig, CompileDiagnostics, CompileResult, SkippedHook};
+use agentspec::compile::{self, AdapterConfig, CompileDiagnostics, CompileResult};
 use agentspec::plan::compile_plan;
 use agentspec::presets::ProviderPresetsMap;
 use agentspec::provider::Provider;
-use agentspec::spec::NormalizedSpec;
 use agentspec::specs::{IgnoreMatcher, LoadReport, SpecDirs, Specs, ValidatedSpecs};
 use agentspec::templating::{TemplateContext, TemplatingResources, resolve_fragments};
 use anyhow::{Context, Result};
@@ -79,7 +78,7 @@ fn main() -> Result<()> {
             if sync_args.dry_run {
                 eprint!("[dry-run] ");
             }
-            let (result, _, diagnostics) = run_compile(
+            let (result, diagnostics) = run_compile(
                 &validated,
                 &templating,
                 &config.presets,
@@ -110,7 +109,7 @@ fn main() -> Result<()> {
                 compile_args.provider.clone()
             };
 
-            let (result, providers, diagnostics) = run_compile(
+            let (result, diagnostics) = run_compile(
                 &validated,
                 &templating,
                 &config.presets,
@@ -232,42 +231,25 @@ fn load_templating(config: &AgentspecConfig) -> Result<TemplatingResources> {
     TemplatingResources::load(&sources.join("fragments"))
 }
 
-/// Runs the compile step and reports the compiled file count. Returns the result, the
-/// provider list, and a diagnostics object recording any compile-time anomalies
-/// (today: hook specs skipped for `OpenCode`).
+/// Runs the compile step and reports the compiled file count. The compile
+/// stage owns its own diagnostics ([`CompileDiagnostics`]) and returns them
+/// directly — this thin wrapper exists only to print the file-count line.
 fn run_compile(
     validated: &ValidatedSpecs,
     templating: &TemplatingResources,
     presets: &ProviderPresetsMap,
     providers: &[Provider],
     adapter_configs: &HashMap<Provider, AdapterConfig>,
-) -> Result<(CompileResult, Vec<Provider>, CompileDiagnostics)> {
-    let providers = providers.to_vec();
-    let result = compile::run(validated, templating, presets, &providers, adapter_configs)?;
+) -> Result<(CompileResult, CompileDiagnostics)> {
+    let (result, diagnostics) =
+        compile::run(validated, templating, presets, providers, adapter_configs)?;
     let n = providers.len();
     eprintln!(
         "compiled {} files for {n} {}",
         result.files.len(),
         if n == 1 { "provider" } else { "providers" }
     );
-
-    // Hook-skip detection — for every hook spec, record one `SkippedHook` per
-    // active provider that does not emit hooks (today: `OpenCode`).
-    let mut diagnostics = CompileDiagnostics::default();
-    for spec in validated.specs() {
-        if let NormalizedSpec::Hook(_) = spec {
-            for &provider in &providers {
-                if matches!(provider, Provider::OpenCode) {
-                    diagnostics.skipped_hooks.push(SkippedHook {
-                        provider,
-                        hook_id: spec.id().to_string(),
-                    });
-                }
-            }
-        }
-    }
-
-    Ok((result, providers, diagnostics))
+    Ok((result, diagnostics))
 }
 
 /// Print compile diagnostics to stderr.

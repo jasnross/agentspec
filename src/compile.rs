@@ -195,10 +195,10 @@ fn hook_command_anchor(provider: Provider, emit_mode: HookEmitMode, filename: &s
         }
     };
     let var_anchor = match emit_mode {
-        // Bundled handled by the early-return above; both `Merged*` variants
-        // are exhaustively listed here so adding a future variant breaks the
-        // build instead of silently falling through.
-        HookEmitMode::Bundled | HookEmitMode::MergedUser => "$HOME",
+        HookEmitMode::Bundled => {
+            unreachable!("Bundled returns early at the top of hook_command_anchor")
+        }
+        HookEmitMode::MergedUser => "$HOME",
         HookEmitMode::MergedProject => "${CLAUDE_PROJECT_DIR}",
     };
     let config_dir = format!("{var_anchor}/{dotdir}");
@@ -287,6 +287,8 @@ impl CompileResult {
 ///
 /// Today this only carries hook-skip notifications for `OpenCode`; the
 /// per-provider summary and per-spec listing are formatted by the binary.
+/// Mirrors `LoadReport` in shape: each pipeline stage that produces stage-only
+/// diagnostics owns its own report struct and returns it alongside its result.
 #[derive(Debug, Default)]
 pub struct CompileDiagnostics {
     pub skipped_hooks: Vec<SkippedHook>,
@@ -303,13 +305,16 @@ pub struct SkippedHook {
 /// Template resolution is performed internally: the `MiniJinja` environment is
 /// built from `templating`, the context is constructed from the specs, and each
 /// spec body is rendered before being handed to the provider adapters.
+///
+/// Returns the generated files alongside a [`CompileDiagnostics`] capturing
+/// any compile-time anomalies (today: hook specs skipped for `OpenCode`).
 pub fn run(
     validated: &ValidatedSpecs,
     templating: &TemplatingResources,
     presets: &ProviderPresetsMap,
     providers: &[Provider],
     adapter_configs: &HashMap<Provider, AdapterConfig>,
-) -> Result<CompileResult> {
+) -> Result<(CompileResult, CompileDiagnostics)> {
     compile_specs(
         validated.specs(),
         templating,
@@ -328,9 +333,10 @@ pub(crate) fn compile_specs(
     presets: &ProviderPresetsMap,
     providers: &[Provider],
     adapter_configs: &HashMap<Provider, AdapterConfig>,
-) -> Result<CompileResult> {
+) -> Result<(CompileResult, CompileDiagnostics)> {
     let mut files: Vec<GeneratedFile> = Vec::new();
     let mut hooks_map: HashMap<Provider, Vec<EmittedHookEntry>> = HashMap::new();
+    let mut diagnostics = CompileDiagnostics::default();
 
     // `Provider` derives `Ord` and its variants are declared alphabetically
     // (Claude < Cursor < OpenCode), so `sort()` matches the lowercase-string
@@ -355,6 +361,12 @@ pub(crate) fn compile_specs(
 
             if let NormalizedSpec::Hook(h) = spec {
                 hook_specs.push(h);
+                if matches!(provider, Provider::OpenCode) {
+                    diagnostics.skipped_hooks.push(SkippedHook {
+                        provider,
+                        hook_id: spec.id().to_string(),
+                    });
+                }
             }
         }
 
@@ -364,8 +376,8 @@ pub(crate) fn compile_specs(
         let synthesis = match provider {
             Provider::Claude => claude_synthesize_hooks(&hook_specs, adapter_config)?,
             Provider::Cursor => cursor_synthesize_hooks(&hook_specs, adapter_config)?,
-            // OpenCode does not emit hooks in v1; the warning is surfaced via
-            // CompileDiagnostics in `run_compile`, not here.
+            // OpenCode does not emit hooks in v1; skips are recorded in
+            // `diagnostics.skipped_hooks` above.
             Provider::OpenCode => HookSynthesis::default(),
         };
         files.extend(synthesis.files);
@@ -377,10 +389,13 @@ pub(crate) fn compile_specs(
     // Sort output files by path for deterministic ordering
     files.sort_by(|a, b| a.path.cmp(&b.path));
 
-    Ok(CompileResult {
-        files,
-        hooks: hooks_map,
-    })
+    Ok((
+        CompileResult {
+            files,
+            hooks: hooks_map,
+        },
+        diagnostics,
+    ))
 }
 
 #[cfg(test)]
