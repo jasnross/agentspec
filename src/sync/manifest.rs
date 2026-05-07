@@ -50,6 +50,15 @@ impl Manifest {
     }
 
     /// Loads `.agentspec-manifest.json` from `dir`. Returns an empty manifest if absent.
+    ///
+    /// **Silent-clobber caveat:** unlike [`load_strict`](Self::load_strict),
+    /// this function accepts any `version` field and ignores unknown entry
+    /// fields. If a future agentspec writes a manifest with `version > 1`,
+    /// an older binary's `sync` (which calls this function) will deserialize
+    /// it into the current shape and rewrite it at the older version on
+    /// `save`, destroying any future-version-specific fields. Today the
+    /// schema is `MANIFEST_VERSION = 1` so the risk is dormant — captured
+    /// for tracking under TODO #17.
     pub fn load(dir: &Path) -> Result<Self> {
         let path = Self::path(dir);
         if !path.exists() {

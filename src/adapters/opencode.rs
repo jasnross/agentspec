@@ -305,6 +305,7 @@ pub fn remove_post_write_hook(
 /// pre-existing limitation inherited from the sync path, not a regression
 /// introduced by remove. Claude's and Cursor's remove patches go through
 /// `hooks_merge::tidy_jsonc_file`, which preserves comments and trivia.
+/// Tracked for parity work under TODO #16.
 fn remove_opencode_instructions(
     rules_dest_dir: &Path,
     opencode_config_dir: &Path,

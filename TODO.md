@@ -76,3 +76,16 @@
     - Open question — ownership-sentinel collision: `_agentspec_id` is emitted per `EmittedHookEntry` and sourced from `spec.id()` (`src/compile.rs:367`); expanding one source entry into N entries gives them all the same `_agentspec_id`. The merge layer groups by event/matcher before checking ownership (`src/hooks_merge.rs:127`, `298`), so cross-event duplicates should be independent rows — but worth re-verifying the removal path in `hooks_merge` before committing to the expansion strategy
     - Open question — id derivation interaction: if TODO #1 lands (id derived from path), one source file producing N entries means one path produces N ids; either the per-entry id needs an event suffix (`<id>:<event>`) or the sentinel needs to allow many-to-one mapping. Resolving #1 first would clarify the right call here.
     - Out of scope for the hooks-pipeline branch; small-enough change to land standalone once #1 is settled.
+16. CST-aware tidy for `opencode.json` (parity with Claude/Cursor)
+    - The `OpenCode` remove path (`remove_opencode_instructions`) and sync path (`patch_opencode_instructions`) both use plain `serde_json` to read/rewrite `opencode.json`, so any user-authored comments and formatting trivia are lost across a sync or remove cycle
+    - Claude and Cursor go through `hooks_merge::tidy_jsonc_file` / `merge_*_settings`, both backed by `jsonc-parser`'s CST API, which preserves comments and trivia
+    - Fix: route OpenCode's instructions tidy through a CST-aware helper analogous to `tidy_jsonc_file`, with a per-provider strategy (the array shape is `instructions: [string, ...]` rather than the nested matcher-group shape Claude uses); pairs naturally with TODO #13's broader migration of provider-specific JSON-merge knowledge into adapters
+    - The doc comment on `remove_opencode_instructions` already calls out this asymmetry as pre-existing; the TODO entry pins it for tracking against pre-1.0 work
+    - Out of scope for the remove-pipeline branch; revisit alongside TODO #13
+17. Make `Manifest::load` strict-by-default (parity with `load_strict`)
+    - `Manifest::load` (used by `sync` at `emit.rs:393`) silently accepts any version, including future-version manifests; `Manifest::load_strict` (used by `remove`) refuses any manifest whose `version > MANIFEST_VERSION`
+    - A user who upgrades to a future agentspec, then runs an older agentspec's `sync`, would have the future-version manifest deserialized into the older shape and silently rewritten at the older version on save — destroying any future-version-specific fields
+    - Today the schema is `MANIFEST_VERSION = 1` so the risk is dormant. The asymmetry only matters when the schema bumps; mitigating before the first bump is the right time
+    - Likely shape: switch `sync`'s call site to `load_strict`, surface forward-incompatible manifests as actionable errors with the same upgrade-or-remove guidance the remove path already uses
+    - A doc comment on `Manifest::load` (this branch) calls out the asymmetry inline so a future reader sees it at the call site
+    - Out of scope for the remove-pipeline branch; address before the first manifest schema bump
