@@ -30,7 +30,7 @@ impl Spec {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum NormalizedSpec {
     Agent(NormalizedAgentSpec),
     Skill(NormalizedSkillSpec),
@@ -104,7 +104,7 @@ pub struct AgentSpec {
     pub body: String,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NormalizedAgentSpec {
     /// Absolute path to the spec
     pub path: PathBuf,
@@ -126,7 +126,7 @@ pub struct SkillSpec {
     pub supporting_files: Vec<SupportingFile>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NormalizedSkillSpec {
     /// Absolute path to the spec root
     pub path: PathBuf,
@@ -148,7 +148,7 @@ pub struct RuleSpec {
     pub body: String,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NormalizedRuleSpec {
     /// Absolute path to the spec root
     pub path: PathBuf,
@@ -173,7 +173,7 @@ pub struct HookSpec {
     pub supporting_files: Vec<SupportingFile>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NormalizedHookSpec {
     pub path: PathBuf,
     pub frontmatter: NormalizedHookFrontmatter,
@@ -191,7 +191,7 @@ pub struct AgentFrontmatter {
     pub capabilities: Option<CapabilitiesFrontmatter>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NormalizedAgentFrontmatter {
     pub id: String,
     pub description: String,
@@ -212,7 +212,7 @@ pub struct SkillFrontmatter {
     pub capabilities: Option<CapabilitiesFrontmatter>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NormalizedSkillFrontmatter {
     pub id: String,
     pub description: Option<String>,
@@ -231,7 +231,7 @@ pub struct RuleFrontmatter {
     pub tags: Option<Vec<String>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NormalizedRuleFrontmatter {
     pub id: String,
     pub description: Option<String>,
@@ -263,7 +263,7 @@ pub struct HookFrontmatter {
     pub tags: Option<Vec<String>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NormalizedHookFrontmatter {
     pub id: String,
     pub event: HookEvent,

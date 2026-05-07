@@ -824,7 +824,7 @@ fn collect_hook_scripts(
         // than silently producing a hook entry pointing at a missing file.
         if entry.file_type().is_symlink() {
             bail!(
-                "{}: symlinks under spec/hooks/scripts/ are not supported (would be silently omitted from emission); replace with a regular file",
+                "{}: symlinks at or under spec/hooks/scripts/ are not supported (would be silently omitted from emission); replace with a regular file",
                 entry.path().display()
             );
         }

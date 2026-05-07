@@ -185,6 +185,8 @@ script = "scripts/audit-bash.sh"
 - **User mode** (`mode = "user"`): scripts land at `~/.<provider>/hooks/scripts/`; entries are merged into `~/.<provider>/settings.json` (Claude) or `~/.cursor/hooks.json` (Cursor) via a CST-aware patcher. Comments, trailing commas, and user-authored entries round-trip unchanged. Each agentspec entry carries an `_agentspec_id` sentinel so re-syncing replaces only entries it owns.
 - **Project mode** (`mode = "project"`): same as User mode but rooted at the project directory.
 
+> **Note**: Cursor support for the merged-mode path (User/Project) is currently shipped as best-effort. Several Cursor runtime behaviors — event-name aliases, `${CLAUDE_PLUGIN_ROOT}` resolution outside plugin scope, and tolerance of unknown sub-fields like `_agentspec_id` — are inferred from documentation rather than empirically verified against a real Cursor build. Empirical verification is a pre-1.0 blocker; if you hit a Cursor-specific issue, please open an issue with the failing config.
+
 #### OpenCode behavior
 
 If your spec set contains hooks and `[sync.opencode]` is configured, agents/skills/rules sync normally and a per-provider warning is printed: `opencode: skipped N hooks`. Use `--verbose` to list each skipped hook id.

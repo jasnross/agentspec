@@ -183,3 +183,14 @@ Key conventions:
 - Use `tests/fixtures/agent-config/` as a self-contained fixture (copied per-test into a `TempDir`); no dependency on a sibling `agent-config/` checkout.
 - Use `env!("CARGO_BIN_EXE_agentspec")` — they always test the binary built by the current `cargo test` invocation, not any previously installed version.
 - Tests for hooks install fixture content programmatically via `install_hook_fixture()` after `setup()` (rather than committing hook content under the shared fixture) so non-hook tests aren't affected by the hooks pipeline's mode-specific behavior.
+
+## graphify
+
+This project has a graphify knowledge graph at graphify-out/.
+
+Rules:
+
+- Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
+- If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
+- For cross-module "how does X relate to Y" questions, prefer `graphify query "<question>"`, `graphify path "<A>" "<B>"`, or `graphify explain "<concept>"` over grep — these traverse the graph's EXTRACTED + INFERRED edges instead of scanning files
+- After modifying code files in this session, run `graphify update .` to keep the graph current (AST-only, no API cost)
