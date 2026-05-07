@@ -1669,6 +1669,72 @@ dir = "{}"
 }
 
 #[test]
+fn test_sync_claude_project_mode_merges_hooks_into_settings_json() {
+    // Phase 2: Project-mode sync merges agentspec hook entries into the
+    // hand-edited `<cwd>/.claude/settings.json` via the CST patcher. Scripts
+    // flow through to `<cwd>/.claude/hooks/scripts/`; the host config file
+    // gains a `hooks` key with sentinel-tagged entries. Mirrors the User-mode
+    // test below; the only difference is the anchor (`${CLAUDE_PROJECT_DIR}`
+    // for Project mode) and the destination root (`<cwd>` vs `~`).
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        r#"
+[presets.default]
+claude = { model = "sonnet" }
+opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
+cursor = { model = "fast" }
+
+[sync.claude]
+mode = "project"
+"#,
+    )
+    .expect("failed to write agentspec.toml");
+
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--provider", "claude"])
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "sync (project mode) should succeed in Phase 2:\n{stderr}"
+    );
+
+    // Scripts (entry + helpers) under <cwd>/.claude/hooks/scripts/.
+    for script in ["init-thoughts.sh", "audit-bash.sh", "_common.sh"] {
+        assert!(
+            dir.join(format!(".claude/hooks/scripts/{script}")).exists(),
+            "{script} should land under <cwd>/.claude/hooks/scripts/"
+        );
+    }
+
+    // Manifest tracks the emitted scripts so subsequent syncs can prune stale entries.
+    let manifest = dir.join(".claude/hooks/.agentspec-manifest.json");
+    assert!(
+        manifest.exists(),
+        "manifest should be written alongside the hooks dir"
+    );
+
+    // settings.json merged with sentinel-tagged hook entries, anchored at
+    // ${CLAUDE_PROJECT_DIR} for Project mode.
+    let settings = dir.join(".claude/settings.json");
+    assert!(settings.exists(), "settings.json should be created");
+    let content = std::fs::read_to_string(&settings).expect("read settings.json");
+    assert!(
+        content.contains("\"_agentspec_id\""),
+        "settings.json should contain sentinel, got:\n{content}"
+    );
+    assert!(
+        content.contains("CLAUDE_PLUGIN_ROOT=${CLAUDE_PROJECT_DIR}/.claude ${CLAUDE_PROJECT_DIR}/.claude/hooks/scripts/init-thoughts.sh"),
+        "command should set CLAUDE_PLUGIN_ROOT inline and anchor under \\${{CLAUDE_PROJECT_DIR}} for Project mode, got:\n{content}"
+    );
+}
+
+#[test]
 fn test_sync_claude_user_mode_merges_hooks_into_settings_json() {
     // Phase 2: User-mode sync merges agentspec hook entries into the
     // hand-edited `~/.claude/settings.json` via the CST patcher. Scripts
