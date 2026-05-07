@@ -255,7 +255,9 @@ fn render_table(
 /// Renders a compact remove report to the given writer.
 ///
 /// One line per touched (provider, kind) destination, followed by a totals
-/// footer. Dry-run prefixes the action verb with "would". The host-file
+/// footer. Dry-run prefixes the action verb with "would" and tags every
+/// non-blank line with `[dry-run] ` so downstream consumers (logs, piped
+/// stderr) can disambiguate dry-run output from real action. The host-file
 /// patches (settings.json, hooks.json, opencode.json) are owned by post-write
 /// hooks and report themselves separately — this function only summarises the
 /// `WriteMode::Remove` batches (manifest-tracked file deletions).
@@ -266,6 +268,7 @@ fn render_remove_report(
 ) -> std::io::Result<()> {
     let action = if dry_run { "would remove" } else { "removed" };
     let rmdir_phrase = if dry_run { "would rmdir" } else { "rmdir'd" };
+    let prefix = if dry_run { "[dry-run] " } else { "" };
 
     writeln!(out)?;
     for s in stats {
@@ -281,7 +284,7 @@ fn render_remove_report(
         };
         writeln!(
             out,
-            "{} {} ({}): {action} {} file(s){}{}",
+            "{prefix}{} {} ({}): {action} {} file(s){}{}",
             s.provider.display_name(),
             s.kind.dir_name(),
             s.destination.display(),
@@ -304,8 +307,7 @@ fn render_remove_report(
     writeln!(out)?;
     writeln!(
         out,
-        "{n_dests} {dest_word}; {action} {total_files} file(s), \
-         {total_manifests} manifest(s), {total_dirs} dir(s) rmdir'd"
+        "{prefix}{n_dests} {dest_word}; {action} {total_files} file(s), {total_manifests} manifest(s), {total_dirs} dir(s) rmdir'd"
     )?;
     Ok(())
 }

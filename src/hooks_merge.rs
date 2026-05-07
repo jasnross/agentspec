@@ -399,8 +399,9 @@ where
         .with_context(|| format!("failed to parse {}", path.display()))?;
 
     let Some(top) = root.object_value_or_create() else {
+        let prefix = if dry_run { "[dry-run] " } else { "" };
         eprintln!(
-            "warning: {} has a non-object root; skipping tidy",
+            "{prefix}warning: {} has a non-object root; skipping tidy",
             path.display()
         );
         return Ok(RemovePatchReport {
@@ -597,7 +598,11 @@ fn finish(root: &CstRootNode, path: &Path, dry_run: bool) -> Result<()> {
     let output = root.to_string();
 
     if dry_run {
-        eprintln!("would merge {} bytes into {}", output.len(), path.display());
+        eprintln!(
+            "[dry-run] would merge {} bytes into {}",
+            output.len(),
+            path.display()
+        );
         return Ok(());
     }
 

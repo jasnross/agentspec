@@ -346,7 +346,7 @@ pub struct CursorRemoveHooksPatch {
 impl PostWriteHook for CursorRemoveHooksPatch {
     fn run(&self, dry_run: bool) -> Result<()> {
         let report = crate::hooks_merge::remove_cursor_hooks(&self.hooks_path, dry_run)?;
-        report.print_summary();
+        report.print_summary(dry_run);
         Ok(())
     }
 }

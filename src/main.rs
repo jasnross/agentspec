@@ -100,9 +100,6 @@ fn main() -> Result<()> {
             if targets.is_empty() {
                 eprintln!("nothing to remove");
             } else {
-                if remove_args.dry_run {
-                    eprint!("[dry-run] ");
-                }
                 let home = home_dir()?;
                 let plan = remove::remove_plan(&targets, &home, &cwd)?;
                 emit(&plan, remove_args.dry_run, remove_args.common.verbose)?;

@@ -257,7 +257,7 @@ pub struct OpenCodeRemoveInstructionsPatch {
 impl PostWriteHook for OpenCodeRemoveInstructionsPatch {
     fn run(&self, dry_run: bool) -> Result<()> {
         let report = remove_opencode_instructions(&self.rules_dest_dir, &self.config_dir, dry_run)?;
-        report.print_summary();
+        report.print_summary(dry_run);
         Ok(())
     }
 }
@@ -324,8 +324,9 @@ fn remove_opencode_instructions(
     let Some(obj) = config.as_object_mut() else {
         // Match the Claude/Cursor tidy path: warn so the user knows their
         // hand-edited config looked unusual, then return the empty report.
+        let prefix = if dry_run { "[dry-run] " } else { "" };
         eprintln!(
-            "warning: {} has a non-object root; skipping tidy",
+            "{prefix}warning: {} has a non-object root; skipping tidy",
             config_path.display()
         );
         return Ok(RemovePatchReport {
@@ -377,7 +378,7 @@ fn remove_opencode_instructions(
 
     if dry_run {
         eprintln!(
-            "would tidy {} agentspec instruction(s) from {}",
+            "[dry-run] would tidy {} agentspec instruction(s) from {}",
             agentspec_entries_removed,
             config_path.display()
         );
@@ -506,7 +507,7 @@ fn patch_opencode_instructions(
 
     if dry_run {
         eprintln!(
-            "would write {} instructions to {}",
+            "[dry-run] would write {} instructions to {}",
             updated_instructions.len(),
             config_path.display()
         );

@@ -155,9 +155,9 @@ impl RemovePatchReport {
     /// Prints "`M` user-authored entr{y|ies} remain in `<host_path>`" to
     /// stderr when `user_entries_remaining > 0`. Suppressed otherwise to
     /// avoid noisy "0 user-authored entries remain" lines on the common
-    /// fresh-config path. Both the live and dry-run flows share the same
-    /// gate — the user-visible "[dry-run] " prefix is set elsewhere.
-    pub fn print_summary(&self) {
+    /// fresh-config path. Under `dry_run` the line is prefixed with
+    /// `[dry-run] ` so it's distinguishable in piped stderr.
+    pub fn print_summary(&self, dry_run: bool) {
         if self.user_entries_remaining == 0 {
             return;
         }
@@ -166,8 +166,9 @@ impl RemovePatchReport {
         } else {
             "entries"
         };
+        let prefix = if dry_run { "[dry-run] " } else { "" };
         eprintln!(
-            "{count} user-authored {entry_word} remain in {path}",
+            "{prefix}{count} user-authored {entry_word} remain in {path}",
             count = self.user_entries_remaining,
             path = self.host_path.display(),
         );

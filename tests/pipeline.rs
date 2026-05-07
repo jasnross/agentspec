@@ -2082,10 +2082,17 @@ fn test_remove_dry_run_writes_nothing() {
     .expect("agentspec spawn");
     let stderr = String::from_utf8_lossy(&remove.stderr);
     assert!(remove.status.success(), "dry-run remove failed:\n{stderr}");
-    assert!(
-        stderr.starts_with("[dry-run] "),
-        "stderr should start with '[dry-run] ', got:\n{stderr}"
-    );
+    // Every non-blank stderr line must be tagged with `[dry-run] ` so piped
+    // logs are unambiguous about which lines reflect dry-run vs. live action.
+    for line in stderr.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        assert!(
+            line.starts_with("[dry-run] "),
+            "every non-blank dry-run stderr line must start with '[dry-run] ', got line: {line:?}\nfull stderr:\n{stderr}"
+        );
+    }
     // Files survive a dry run.
     assert!(agent_path.exists(), "dry-run remove must not delete files");
     assert!(

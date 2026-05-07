@@ -468,7 +468,7 @@ pub struct ClaudeRemoveHooksPatch {
 impl PostWriteHook for ClaudeRemoveHooksPatch {
     fn run(&self, dry_run: bool) -> Result<()> {
         let report = crate::hooks_merge::remove_claude_settings(&self.settings_path, dry_run)?;
-        report.print_summary();
+        report.print_summary(dry_run);
         Ok(())
     }
 }
