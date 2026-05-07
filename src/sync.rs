@@ -141,7 +141,7 @@ pub fn resolve_sync_targets(
 /// - `User` → `user_dest_dir`
 /// - `Project` → `project_dest_dir`
 /// - `Path` → per-kind explicit field from `config`; error if the kind's field is `None`
-fn resolve_dest_dir(
+pub(crate) fn resolve_dest_dir(
     provider: Provider,
     kind: FileKind,
     config: &SyncTargetConfig,
@@ -195,7 +195,7 @@ fn files_for_kind(
 /// In `Path` mode, derives the config dir from the rules path's parent (convention:
 /// `opencode.json` lives one level above `rules/`). Falls back to the user-level
 /// config dir if the rules path is absent or has no parent.
-fn opencode_config_dir(target: &SyncTargetConfig, home: &Path, cwd: &Path) -> PathBuf {
+pub(crate) fn opencode_config_dir(target: &SyncTargetConfig, home: &Path, cwd: &Path) -> PathBuf {
     match target.mode {
         SyncMode::User => home.join(".config").join("opencode"),
         SyncMode::Project => cwd.join(".opencode"),
@@ -212,7 +212,7 @@ fn opencode_config_dir(target: &SyncTargetConfig, home: &Path, cwd: &Path) -> Pa
 /// Claude, `hooks.json` for Cursor). Diverges from `opencode_config_dir`
 /// because Claude and Cursor use single-level dotdirs (`.claude` / `.cursor`)
 /// while `OpenCode` lives under `~/.config/opencode`.
-fn provider_config_dir(
+pub(crate) fn provider_config_dir(
     provider: Provider,
     target: &SyncTargetConfig,
     home: &Path,

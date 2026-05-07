@@ -26,6 +26,9 @@ pub enum Command {
     /// Compile and distribute generated files to each tool's config directory
     Sync(SyncArgs),
 
+    /// Remove agentspec-managed files and config entries from each tool's config directory
+    Remove(RemoveArgs),
+
     /// Print shell completion script to stdout
     Completions {
         /// Shell to generate completions for
@@ -76,4 +79,23 @@ pub struct SyncArgs {
     /// Override the content-reference prefix (e.g., "tw:" for plugin namespaces)
     #[arg(long)]
     pub content_prefix: Option<String>,
+}
+
+/// Arguments for the `remove` subcommand.
+#[derive(Debug, Parser)]
+pub struct RemoveArgs {
+    #[command(flatten)]
+    pub common: CommonArgs,
+
+    /// Show what would be removed without making changes
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Destination to remove from (implies --mode=path)
+    #[arg(long)]
+    pub dest: Option<String>,
+
+    /// Specify which sync mode to reverse
+    #[arg(long, value_enum)]
+    pub mode: Option<SyncMode>,
 }

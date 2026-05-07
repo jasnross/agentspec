@@ -1794,3 +1794,55 @@ mode = "user"
         "command should set CLAUDE_PLUGIN_ROOT inline and anchor under $HOME for User mode, got:\n{content}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// `agentspec remove` tests (Phase 1: CLI scaffold)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_remove_help_lists_subcommand() {
+    let output = std::process::Command::new(agentspec())
+        .args(["--help"])
+        .output()
+        .expect("failed to run agentspec --help");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "--help failed:\n{stdout}");
+    assert!(
+        stdout.contains("remove"),
+        "expected `remove` in --help output, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn test_remove_with_no_providers_configured_is_clean_exit() {
+    // No `[sync.*]` blocks: `agentspec remove` must exit 0 and report
+    // "nothing to remove" rather than `bail!`-ing the way `sync` does.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = tmp.path();
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        r#"
+[spec]
+sources_dir = "spec"
+"#,
+    )
+    .expect("failed to write agentspec.toml");
+
+    let home = dir.join("home");
+    let output = std::process::Command::new(agentspec())
+        .args(["remove"])
+        .env("HOME", &home)
+        .current_dir(dir)
+        .output()
+        .expect("failed to run agentspec remove");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "remove with no providers should exit 0:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("nothing to remove"),
+        "expected 'nothing to remove' in stderr, got:\n{stderr}"
+    );
+}

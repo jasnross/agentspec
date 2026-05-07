@@ -1,6 +1,7 @@
 mod cli;
 mod config;
 mod emit;
+mod remove;
 mod sync;
 
 use std::collections::HashMap;
@@ -19,6 +20,9 @@ use emit::emit;
 use strum::VariantArray;
 use sync::{resolve_sync_targets, sync_plan};
 
+// `main` is naturally long — one match arm per subcommand. Extracting each
+// arm into its own helper would buy little and obscure the dispatch shape.
+#[allow(clippy::too_many_lines)]
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -90,6 +94,21 @@ fn main() -> Result<()> {
             let home = home_dir()?;
             let plan = sync_plan(&result, &targets, &home, &cwd)?;
             emit(&plan, sync_args.dry_run, sync_args.common.verbose)?;
+        }
+        Command::Remove(remove_args) => {
+            // Phase 1 stub: validate the invocation by resolving targets, then
+            // emit a one-line "would remove" message to stderr. Phases 2–4 add
+            // the actual plan + emit pipeline.
+            let targets = remove::resolve_remove_targets(&config, remove_args)?;
+            if targets.is_empty() {
+                eprintln!("nothing to remove");
+            } else {
+                let n = targets.len();
+                eprintln!(
+                    "would remove for {n} {}",
+                    if n == 1 { "provider" } else { "providers" }
+                );
+            }
         }
         Command::Compile(compile_args) => {
             let (validated, report) = load_and_validate(&config, &dirs)?;
