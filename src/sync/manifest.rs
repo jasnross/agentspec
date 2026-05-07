@@ -80,8 +80,7 @@ impl Manifest {
             .with_context(|| format!("failed to parse manifest {}", path.display()))?;
         if manifest.version > MANIFEST_VERSION {
             anyhow::bail!(
-                "manifest at {} has version {}, but this agentspec binary writes version {}; \
-                 upgrade agentspec or remove the manifest manually",
+                "manifest at {} has version {}, but this agentspec binary writes version {}; upgrade agentspec or remove the manifest manually",
                 path.display(),
                 manifest.version,
                 MANIFEST_VERSION,

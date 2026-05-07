@@ -338,6 +338,26 @@ pub struct SyncFlags {
     pub content_prefix: Option<String>,
 }
 
+impl SyncFlags {
+    /// Constructor for the `remove` subcommand. `force`, `prefix`, and
+    /// `content_prefix` are not meaningful for remove (no writes happen, so
+    /// nothing can be overwritten or prefixed); only `dest` and `mode`
+    /// participate in target resolution.
+    ///
+    /// Centralizes the "remove uses these defaults" knowledge: future fields
+    /// added to `SyncFlags` force a deliberate decision here rather than
+    /// silently inheriting `Default`.
+    pub fn for_remove(dest: Option<String>, mode: Option<SyncMode>) -> Self {
+        Self {
+            force: false,
+            dest,
+            mode,
+            prefix: None,
+            content_prefix: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;

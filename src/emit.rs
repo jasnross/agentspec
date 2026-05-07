@@ -336,9 +336,9 @@ fn render_footer(
     }
 }
 
-// `write_batch` covers two modes (CleanSlate / ManifestTracked) inline; the
-// `Remove` arm pushes it just past the 100-line ceiling. Extracting one arm
-// per helper would obscure the dispatch shape for a 1-line gain.
+// `write_batch` covers CleanSlate and ManifestTracked inline (the `Remove`
+// arm is `unreachable!` here — `remove_batch` handles it). Extracting one
+// arm per helper would obscure the dispatch shape for a 1-line gain.
 #[allow(clippy::too_many_lines)]
 fn write_batch(w: &FileWrite, dry_run: bool) -> Result<Option<BatchStats>> {
     match w.mode {
@@ -632,8 +632,6 @@ fn remove_batch(w: &FileWrite, dry_run: bool) -> Result<Option<RemoveStats>> {
     if !dry_run {
         Manifest::delete(&w.destination)?;
     }
-    // We entered this branch because the manifest existed; in both dry-run
-    // and live mode, we report the intent to remove it.
     let manifest_removed = true;
 
     let dir_rmdir = if dry_run {

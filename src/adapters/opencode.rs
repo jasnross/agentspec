@@ -347,14 +347,18 @@ fn remove_opencode_instructions(
             arr.iter()
                 .filter(|v| {
                     v.as_str()
-                        .is_none_or(|p| !Path::new(p).starts_with(rules_dest_dir))
+                        .is_none_or(|p| !is_agentspec_instruction(p, rules_dest_dir))
                 })
                 .cloned()
                 .collect()
         })
         .unwrap_or_default();
     let user_entries_remaining = user_entries.len();
-    let agentspec_entries_removed = pre_count.saturating_sub(user_entries_remaining);
+    debug_assert!(
+        pre_count >= user_entries_remaining,
+        "filter cannot grow the array: pre_count={pre_count}, remaining={user_entries_remaining}"
+    );
+    let agentspec_entries_removed = pre_count - user_entries_remaining;
 
     if user_entries.is_empty() {
         obj.remove("instructions");
@@ -365,11 +369,10 @@ fn remove_opencode_instructions(
         );
     }
 
-    // No-op short-circuit: if no agentspec-owned entries were found AND no
-    // pre-existing `instructions` key was dropped, skip the rewrite to avoid
-    // bumping mtime on what is functionally a read-only cycle.
-    let nothing_to_persist = agentspec_entries_removed == 0 && pre_count == user_entries_remaining;
-    if nothing_to_persist {
+    // No-op short-circuit: if no agentspec-owned entries were removed, skip
+    // the rewrite to avoid bumping mtime on what is functionally a read-only
+    // cycle.
+    if agentspec_entries_removed == 0 {
         return Ok(RemovePatchReport {
             host_path: config_path,
             user_entries_remaining,
@@ -439,6 +442,18 @@ fn build_tool_map(tools: &[ToolFrontmatter]) -> IndexMap<String, bool> {
     map
 }
 
+/// Shared ownership predicate: returns `true` if `entry_path` (a string from
+/// `opencode.json`'s `instructions[]`) belongs to agentspec.
+///
+/// Used by both [`patch_opencode_instructions`] (sync, write side) and
+/// [`remove_opencode_instructions`] (read side) so any future change to path
+/// representation must update both call sites at once. Without this seam, a
+/// switch to absolute / canonicalized / tilde-prefixed paths on the write side
+/// would silently leave entries behind on remove.
+fn is_agentspec_instruction(entry_path: &str, rules_dest_dir: &Path) -> bool {
+    Path::new(entry_path).starts_with(rules_dest_dir)
+}
+
 /// Patches the `instructions` array in `opencode_config_dir/opencode.json`.
 ///
 /// Ownership contract: agentspec owns any entry whose path falls under `rules_dest_dir`.
@@ -478,7 +493,7 @@ fn patch_opencode_instructions(
     // Split into user-owned and agentspec-owned
     let user_entries: Vec<String> = existing
         .into_iter()
-        .filter(|p| !Path::new(p).starts_with(rules_dest_dir))
+        .filter(|p| !is_agentspec_instruction(p, rules_dest_dir))
         .collect();
 
     // Enumerate current rule files in rules_dest_dir

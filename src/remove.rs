@@ -18,17 +18,16 @@ use crate::sync::{self, opencode_config_dir, provider_config_dir};
 /// print a "nothing to remove" notice and exit cleanly. Running
 /// `agentspec remove` on a fresh checkout with no `[sync.*]` configured is a
 /// legitimate "nothing to clean up" state, not a usage error.
+///
+/// Also enforces the `--dest` requires `--provider` invariant: passing
+/// `--dest` without an explicit `--provider` is a usage error. This matches
+/// `resolve_sync_targets`'s behavior so the two code paths reject the same
+/// CLI shapes.
 pub fn resolve_remove_targets(
     config: &AgentspecConfig,
     args: &RemoveArgs,
 ) -> Result<Vec<(Provider, SyncTargetConfig)>> {
-    let sync_flags = SyncFlags {
-        force: false,
-        dest: args.dest.clone(),
-        mode: args.mode,
-        prefix: None,
-        content_prefix: None,
-    };
+    let sync_flags = SyncFlags::for_remove(args.dest.clone(), args.mode);
 
     let has_provider_arg = !args.common.provider.is_empty();
 
@@ -68,6 +67,10 @@ pub fn remove_plan(
     home: &Path,
     cwd: &Path,
 ) -> Result<WritePlan> {
+    debug_assert!(
+        !targets.is_empty(),
+        "remove_plan must not be called with empty targets; main.rs should print 'nothing to remove' instead"
+    );
     let mut writes = Vec::new();
     let mut post_write_hooks = Vec::new();
 

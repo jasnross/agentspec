@@ -2634,7 +2634,7 @@ fn test_remove_empirical_check_jsonc_parser_last_element_comma() {
     assert!(remove.status.success());
 
     // Strong assertion: round-trip restores the user-only state.
-    let initial_path = dir.join("settings.initial.json");
+    let initial_path = tmp.path().join("settings.initial.json");
     std::fs::write(&initial_path, initial).expect("write initial copy");
     let initial_value = read_jsonc_normalized(&initial_path);
     let post_value = read_jsonc_normalized(&settings);
