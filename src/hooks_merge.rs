@@ -27,6 +27,7 @@ use crate::adapters::{
     claude_event_name, cursor_event_name, entry_to_claude_json, entry_to_cursor_json,
 };
 use crate::compile::EmittedHookEntry;
+use crate::plan::RemovePatchReport;
 
 // ── serde_json::Value → CstInputValue bridge ────────────────────────────────
 
@@ -339,6 +340,214 @@ fn remove_cursor_owned_entries(hooks_obj: &CstObject) {
             }
         }
     }
+}
+
+// ── remove (tidy) entry points ──────────────────────────────────────────────
+//
+// Every `.remove()` call below lands on a value-bearing CST node
+// (`CstObjectProp::remove`, `CstObject::remove`); none touch `CstWhitespace`,
+// `CstNewline`, or `CstToken` directly. That preserves jsonc-parser's
+// trivia-aware delete semantics — comments and surrounding whitespace stay
+// attached to whatever survives.
+
+/// Reverses `merge_claude_settings`'s effect on `<config_dir>/settings.json`.
+///
+/// Removes every `_agentspec_id`-tagged entry, then performs maximum-depth
+/// tidy: empty matcher-group wrappers (handled by `remove_claude_owned_entries`),
+/// empty event arrays, and the top-level `hooks` key when it becomes `{}`.
+/// User-authored entries, comments, and surrounding formatting round-trip
+/// unchanged via the `jsonc-parser` CST API. The host file is **never**
+/// deleted.
+///
+/// Tidy contract diverges from sync's `remove_claude_owned_entries` (which
+/// deliberately leaves empty event arrays alone — locked by
+/// `test_merge_claude_leaves_empty_event_array_after_removing_all_owned_entries`).
+/// Sync's behavior is preserved unchanged; the additional pruning lives in
+/// this dedicated path so the merge contract is unaffected.
+pub fn remove_claude_settings(settings_path: &Path, dry_run: bool) -> Result<RemovePatchReport> {
+    tidy_jsonc_file(settings_path, dry_run, tidy_claude_settings_after_remove)
+}
+
+/// Reverses `merge_cursor_hooks`'s effect on `<config_dir>/hooks.json`.
+///
+/// Cursor's hooks shape is one nesting level shallower than Claude's (no
+/// matcher-group wrapper), so tidy is correspondingly simpler: drop owned
+/// entries, drop empty event arrays, drop the top-level `hooks` key if it
+/// becomes `{}`. User-authored entries and `version: 1` (or any other
+/// top-level keys) survive untouched.
+pub fn remove_cursor_hooks(hooks_path: &Path, dry_run: bool) -> Result<RemovePatchReport> {
+    tidy_jsonc_file(hooks_path, dry_run, tidy_cursor_hooks_after_remove)
+}
+
+/// Shared body for [`remove_claude_settings`] and [`remove_cursor_hooks`]:
+/// read the host file, run the provider-specific tidy, write back atomically
+/// (or skip the write under `dry_run` — `finish` already gates internally),
+/// and return a [`RemovePatchReport`].
+///
+/// Returns the default report when the host file is absent, or a
+/// zero-entry-count report (with a warning to stderr) when the file's root
+/// is not an object — both states are tolerated as "nothing to clean".
+fn tidy_jsonc_file<F>(path: &Path, dry_run: bool, tidy: F) -> Result<RemovePatchReport>
+where
+    F: FnOnce(&CstObject) -> usize,
+{
+    if !path.is_file() {
+        return Ok(RemovePatchReport::default());
+    }
+    let content = read_or_empty_object(path)?;
+    let root = CstRootNode::parse(&content, &ParseOptions::default())
+        .with_context(|| format!("failed to parse {}", path.display()))?;
+
+    let Some(top) = root.object_value_or_create() else {
+        eprintln!(
+            "warning: {} has a non-object root; skipping tidy",
+            path.display()
+        );
+        return Ok(RemovePatchReport {
+            host_path: path.to_path_buf(),
+            user_entries_remaining: 0,
+        });
+    };
+
+    let user_entries_remaining = tidy(&top);
+
+    finish(&root, path, dry_run)?;
+
+    Ok(RemovePatchReport {
+        host_path: path.to_path_buf(),
+        user_entries_remaining,
+    })
+}
+
+/// Removes every `_agentspec_id`-tagged Claude hook entry, then prunes empty
+/// containers up the tree (matcher groups → event arrays → top-level `hooks`).
+/// Returns the count of surviving user-authored entries.
+///
+/// `top` mutates via `jsonc-parser`'s interior-mutability CST API — the
+/// `&CstObject` signature reads as inspection-only, but `.remove()` calls on
+/// child nodes propagate through to the shared root.
+fn tidy_claude_settings_after_remove(top: &CstObject) -> usize {
+    let Some(hooks_obj) = top.object_value("hooks") else {
+        return 0;
+    };
+
+    // Step 1 — defer to the existing sync helper for the inner-most layer
+    // (entry removal + matcher-group pruning when the inner `hooks` array
+    // empties). Reusing the helper keeps sync's contract — and its locked
+    // test — unchanged.
+    remove_claude_owned_entries(&hooks_obj);
+
+    // Step 2 — drop event arrays that are now empty. Sync deliberately
+    // doesn't do this (so user keys survive cross-sync), but on remove there
+    // are no further sync writes coming, so leaving empty arrays is just
+    // visual clutter.
+    //
+    // Materialize the property list before mutating, mirroring
+    // `remove_claude_owned_entries`. `properties()` returns an owned `Vec`
+    // today, but the explicit collect keeps the pattern consistent and
+    // immune to a future jsonc-parser API change.
+    let event_props: Vec<_> = hooks_obj.properties();
+    for event_prop in event_props {
+        if event_prop
+            .array_value()
+            .is_some_and(|arr| arr.elements().is_empty())
+        {
+            event_prop.remove();
+        }
+    }
+
+    // Step 3 — if the `hooks` object itself is now empty, drop the top-level
+    // key. `top.get("hooks")` returns the CstObjectProp; `.remove()` is the
+    // trivia-aware variant.
+    if hooks_obj.properties().is_empty()
+        && let Some(hooks_prop) = top.get("hooks")
+    {
+        hooks_prop.remove();
+    }
+
+    count_claude_user_entries(top)
+}
+
+/// Cursor analog of [`tidy_claude_settings_after_remove`]. The structure is
+/// shallower (each event maps directly to a list of entries — no
+/// matcher-group wrapper), so tidy is one level less deep.
+///
+/// `top` mutates via interior mutability; see the Claude variant's docstring
+/// for the contract.
+fn tidy_cursor_hooks_after_remove(top: &CstObject) -> usize {
+    let Some(hooks_obj) = top.object_value("hooks") else {
+        return 0;
+    };
+
+    remove_cursor_owned_entries(&hooks_obj);
+
+    let event_props: Vec<_> = hooks_obj.properties();
+    for event_prop in event_props {
+        if event_prop
+            .array_value()
+            .is_some_and(|arr| arr.elements().is_empty())
+        {
+            event_prop.remove();
+        }
+    }
+
+    if hooks_obj.properties().is_empty()
+        && let Some(hooks_prop) = top.get("hooks")
+    {
+        hooks_prop.remove();
+    }
+
+    count_cursor_user_entries(top)
+}
+
+/// Counts user-authored Claude hook entries: walks every surviving matcher
+/// group's inner `hooks` array and counts entries lacking `_agentspec_id`.
+/// Owned entries should be gone by the time this runs, but the
+/// non-owned-only check is defensive.
+fn count_claude_user_entries(top: &CstObject) -> usize {
+    let Some(hooks_obj) = top.object_value("hooks") else {
+        return 0;
+    };
+    let mut count = 0;
+    for event_prop in hooks_obj.properties() {
+        let Some(event_arr) = event_prop.array_value() else {
+            continue;
+        };
+        for group_node in event_arr.elements() {
+            let Some(group_obj) = node_as_object(&group_node) else {
+                continue;
+            };
+            let Some(inner) = group_obj.array_value("hooks") else {
+                continue;
+            };
+            for entry in inner.elements() {
+                if !is_owned_entry(&entry) {
+                    count += 1;
+                }
+            }
+        }
+    }
+    count
+}
+
+/// Counts user-authored Cursor hook entries: walks every surviving event
+/// array and counts elements lacking `_agentspec_id`.
+fn count_cursor_user_entries(top: &CstObject) -> usize {
+    let Some(hooks_obj) = top.object_value("hooks") else {
+        return 0;
+    };
+    let mut count = 0;
+    for event_prop in hooks_obj.properties() {
+        let Some(event_arr) = event_prop.array_value() else {
+            continue;
+        };
+        for entry in event_arr.elements() {
+            if !is_owned_entry(&entry) {
+                count += 1;
+            }
+        }
+    }
+    count
 }
 
 // ── shared file I/O ─────────────────────────────────────────────────────────

@@ -1846,6 +1846,26 @@ fn run_agentspec(args: &[&str], dir: &Path, home: &Path) -> std::io::Result<std:
         .output()
 }
 
+/// Parses a JSONC file via `jsonc_parser`'s CST and returns the semantic
+/// `serde_json::Value`.
+///
+/// Comments and trivia are stripped — for byte-level fidelity (e.g. comment
+/// preservation), assert against the raw file content with `.contains(...)`
+/// instead.
+///
+/// `clippy::expect_used` is denied at crate level and `clippy.toml`'s test
+/// exemption only covers `#[test]` functions, not free helpers like this
+/// one. A narrow `#[allow]` is more readable than the alternative
+/// `assert!(...is_ok())` + `unreachable!()` dance.
+#[allow(dead_code, clippy::expect_used)] // used by Phase 3 tests below
+fn read_jsonc_normalized(path: &Path) -> serde_json::Value {
+    let content = std::fs::read_to_string(path).expect("read jsonc file");
+    let root =
+        jsonc_parser::cst::CstRootNode::parse(&content, &jsonc_parser::ParseOptions::default())
+            .expect("parse jsonc file");
+    root.to_serde_value().expect("jsonc to serde value")
+}
+
 #[test]
 fn test_remove_with_no_providers_configured_is_clean_exit() {
     // No `[sync.*]` blocks: `agentspec remove` must exit 0 and report
@@ -2201,5 +2221,403 @@ fn test_remove_refuses_higher_manifest_version() {
     assert!(
         stderr.contains("version 999") && stderr.contains("upgrade agentspec"),
         "expected version-refusal error message, got:\n{stderr}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// `agentspec remove` tests (Phase 3: Claude/Cursor settings tidy)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_remove_strips_claude_owned_entries_from_settings_json() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    write_remove_config(&dir, &[("claude", "user")]);
+    let home = dir.join("home");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(
+        sync.status.success(),
+        "sync failed:\n{}",
+        String::from_utf8_lossy(&sync.stderr)
+    );
+    let settings = home.join(".claude/settings.json");
+    assert!(settings.exists(), "settings.json should exist after sync");
+    let pre = std::fs::read_to_string(&settings).expect("read settings.json");
+    assert!(
+        pre.contains("\"_agentspec_id\""),
+        "sync should write sentinel"
+    );
+
+    let remove =
+        run_agentspec(&["remove", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(
+        remove.status.success(),
+        "remove failed:\n{}",
+        String::from_utf8_lossy(&remove.stderr)
+    );
+
+    assert!(settings.exists(), "settings.json must not be deleted");
+    let post = std::fs::read_to_string(&settings).expect("read settings.json");
+    assert!(
+        !post.contains("\"_agentspec_id\""),
+        "sentinels must be gone, got:\n{post}"
+    );
+}
+
+#[test]
+fn test_remove_strips_cursor_owned_entries_from_hooks_json() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    write_remove_config(&dir, &[("cursor", "user")]);
+    let home = dir.join("home");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "cursor"], &dir, &home).expect("agentspec spawn");
+    assert!(sync.status.success());
+
+    let hooks = home.join(".cursor/hooks.json");
+    assert!(hooks.exists());
+    let pre = std::fs::read_to_string(&hooks).expect("read hooks.json");
+    assert!(pre.contains("\"_agentspec_id\""));
+
+    let remove =
+        run_agentspec(&["remove", "--provider", "cursor"], &dir, &home).expect("agentspec spawn");
+    assert!(remove.status.success());
+
+    assert!(hooks.exists(), "hooks.json must not be deleted");
+    let post = std::fs::read_to_string(&hooks).expect("read hooks.json");
+    assert!(
+        !post.contains("\"_agentspec_id\""),
+        "sentinels must be gone, got:\n{post}"
+    );
+}
+
+#[test]
+fn test_remove_preserves_user_authored_entries_in_settings_json() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    write_remove_config(&dir, &[("claude", "user")]);
+    let home = dir.join("home");
+
+    // Pre-populate settings.json with a user-authored entry plus a non-hooks key.
+    let settings = home.join(".claude/settings.json");
+    std::fs::create_dir_all(settings.parent().expect("parent")).expect("mkdir");
+    let initial = r#"{
+  "model": "opus",
+  "hooks": {
+    "SessionStart": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "user-script.sh" }] }
+    ]
+  }
+}
+"#;
+    std::fs::write(&settings, initial).expect("write initial settings.json");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(sync.status.success());
+
+    let remove =
+        run_agentspec(&["remove", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(remove.status.success());
+
+    let parsed = read_jsonc_normalized(&settings);
+    let model = parsed.get("model").and_then(|v| v.as_str());
+    assert_eq!(model, Some("opus"), "model must survive: {parsed:?}");
+
+    let user_cmd = parsed
+        .pointer("/hooks/SessionStart/0/hooks/0/command")
+        .and_then(|v| v.as_str());
+    assert_eq!(
+        user_cmd,
+        Some("user-script.sh"),
+        "user-authored command must survive: {parsed:?}"
+    );
+}
+
+#[test]
+fn test_remove_drops_empty_event_arrays_in_settings_json() {
+    // After remove, any event array that becomes empty (because all its
+    // entries were agentspec-owned) is dropped — leaving no `SessionStart`
+    // key behind.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    write_remove_config(&dir, &[("claude", "user")]);
+    let home = dir.join("home");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(sync.status.success());
+
+    let remove =
+        run_agentspec(&["remove", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(remove.status.success());
+
+    let settings = home.join(".claude/settings.json");
+    let parsed = read_jsonc_normalized(&settings);
+    // No SessionStart key should remain.
+    let session_start = parsed.pointer("/hooks/SessionStart");
+    assert!(
+        session_start.is_none(),
+        "SessionStart should not survive remove, got: {parsed:?}"
+    );
+}
+
+#[test]
+fn test_remove_drops_top_level_hooks_key_when_empty() {
+    // settings.json starts empty (no user content), sync adds agentspec
+    // hooks, remove must drop the entire top-level `hooks` object.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    write_remove_config(&dir, &[("claude", "user")]);
+    let home = dir.join("home");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(sync.status.success());
+
+    let remove =
+        run_agentspec(&["remove", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(remove.status.success());
+
+    let settings = home.join(".claude/settings.json");
+    let parsed = read_jsonc_normalized(&settings);
+    assert!(
+        parsed.get("hooks").is_none(),
+        "top-level hooks key should be dropped, got: {parsed:?}"
+    );
+}
+
+#[test]
+fn test_remove_preserves_top_level_hooks_key_when_user_entries_remain() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    write_remove_config(&dir, &[("claude", "user")]);
+    let home = dir.join("home");
+
+    let settings = home.join(".claude/settings.json");
+    std::fs::create_dir_all(settings.parent().expect("parent")).expect("mkdir");
+    let initial = r#"{
+  "hooks": {
+    "SessionStart": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "user-script.sh" }] }
+    ]
+  }
+}
+"#;
+    std::fs::write(&settings, initial).expect("write initial");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(sync.status.success());
+
+    let remove =
+        run_agentspec(&["remove", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(remove.status.success());
+
+    let parsed = read_jsonc_normalized(&settings);
+    assert!(
+        parsed.pointer("/hooks/SessionStart/0").is_some(),
+        "user entry under SessionStart should survive, got: {parsed:?}"
+    );
+}
+
+#[test]
+fn test_remove_dry_run_reports_user_entries_remaining() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    write_remove_config(&dir, &[("claude", "user")]);
+    let home = dir.join("home");
+
+    let settings = home.join(".claude/settings.json");
+    std::fs::create_dir_all(settings.parent().expect("parent")).expect("mkdir");
+    // Two user entries.
+    let initial = r#"{
+  "hooks": {
+    "SessionStart": [
+      { "matcher": "*", "hooks": [
+        { "type": "command", "command": "u1.sh" },
+        { "type": "command", "command": "u2.sh" }
+      ]}
+    ]
+  }
+}
+"#;
+    std::fs::write(&settings, initial).expect("write initial");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(sync.status.success());
+
+    let remove = run_agentspec(
+        &["remove", "--provider", "claude", "--dry-run"],
+        &dir,
+        &home,
+    )
+    .expect("agentspec spawn");
+    let stderr = String::from_utf8_lossy(&remove.stderr);
+    assert!(remove.status.success(), "dry-run failed:\n{stderr}");
+    assert!(
+        stderr.contains("2 user-authored entries remain"),
+        "expected user-entries-remaining count, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("settings.json"),
+        "expected host path in stderr, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn test_remove_handles_missing_settings_json() {
+    // `agentspec remove` against a config dir that has no settings.json yet
+    // (e.g. user never synced hooks) must succeed silently.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    write_remove_config(&dir, &[("claude", "user")]);
+    let home = dir.join("home");
+
+    let remove =
+        run_agentspec(&["remove", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(
+        remove.status.success(),
+        "remove with no settings.json should succeed:\n{}",
+        String::from_utf8_lossy(&remove.stderr)
+    );
+    assert!(
+        !home.join(".claude/settings.json").exists(),
+        "remove must not create settings.json"
+    );
+}
+
+#[test]
+fn test_remove_preserves_jsonc_comments_in_settings_json() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    write_remove_config(&dir, &[("claude", "user")]);
+    let home = dir.join("home");
+
+    let settings = home.join(".claude/settings.json");
+    std::fs::create_dir_all(settings.parent().expect("parent")).expect("mkdir");
+    let initial = r#"{
+  // user line comment
+  /* block comment */
+  "hooks": {
+    "SessionStart": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "u.sh" }] }
+    ]
+  }
+}
+"#;
+    std::fs::write(&settings, initial).expect("write initial");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(sync.status.success());
+
+    let remove =
+        run_agentspec(&["remove", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(remove.status.success());
+
+    let post = std::fs::read_to_string(&settings).expect("read settings.json");
+    assert!(
+        post.contains("// user line comment"),
+        "line comment should survive, got:\n{post}"
+    );
+    assert!(
+        post.contains("/* block comment */"),
+        "block comment should survive, got:\n{post}"
+    );
+}
+
+#[test]
+fn test_remove_empirical_check_jsonc_parser_last_element_comma() {
+    // Empirical check from the plan: a user entry followed by an agentspec
+    // entry as the last element. The strong assertion is that
+    // remove(sync(initial)) is semantically equivalent to `initial`. The
+    // weaker `\n\n\n` backstop catches trivia mishandling around the
+    // removed last element.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    write_remove_config(&dir, &[("claude", "user")]);
+    let home = dir.join("home");
+
+    let settings = home.join(".claude/settings.json");
+    std::fs::create_dir_all(settings.parent().expect("parent")).expect("mkdir");
+    let initial = r#"{
+  "hooks": {
+    "SessionStart": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "user.sh" }] }
+    ]
+  }
+}
+"#;
+    std::fs::write(&settings, initial).expect("write initial");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(sync.status.success());
+
+    let remove =
+        run_agentspec(&["remove", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(remove.status.success());
+
+    // Strong assertion: round-trip restores the user-only state.
+    let initial_path = dir.join("settings.initial.json");
+    std::fs::write(&initial_path, initial).expect("write initial copy");
+    let initial_value = read_jsonc_normalized(&initial_path);
+    let post_value = read_jsonc_normalized(&settings);
+    assert_eq!(
+        post_value, initial_value,
+        "round-trip should restore the user-only state"
+    );
+
+    // Backstop: no stray blank lines from trivia mishandling on the last element.
+    let post = std::fs::read_to_string(&settings).expect("read");
+    assert!(
+        !post.contains("\n\n\n"),
+        "stray blank line(s) after remove, got:\n{post}"
+    );
+}
+
+#[test]
+fn test_remove_dry_run_suppresses_zero_count_summary() {
+    // With no pre-existing user entries, dry-run remove must NOT emit a
+    // "0 user-authored entries remain" line — the print is gated on
+    // `count > 0` for both live and dry-run paths to avoid noise on the
+    // common fresh-config path.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    write_remove_config(&dir, &[("claude", "user")]);
+    let home = dir.join("home");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(sync.status.success());
+
+    let remove = run_agentspec(
+        &["remove", "--provider", "claude", "--dry-run"],
+        &dir,
+        &home,
+    )
+    .expect("agentspec spawn");
+    let stderr = String::from_utf8_lossy(&remove.stderr);
+    assert!(remove.status.success(), "dry-run failed:\n{stderr}");
+    assert!(
+        !stderr.contains("user-authored entry remain")
+            && !stderr.contains("user-authored entries remain"),
+        "dry-run should suppress 0-count summary, got:\n{stderr}"
     );
 }

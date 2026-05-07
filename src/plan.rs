@@ -139,6 +139,41 @@ pub trait PostWriteHook: std::fmt::Debug {
     fn run(&self, dry_run: bool) -> anyhow::Result<()>;
 }
 
+/// Outcome of a per-provider remove patch.
+///
+/// Currently produced by Claude's settings tidy and Cursor's hooks tidy
+/// (Phase 3). `OpenCode`'s instructions filter joins in Phase 4 and consumes
+/// the same shape. The count is informational; callers use it to decide
+/// whether to print a summary line.
+#[derive(Debug, Default)]
+pub struct RemovePatchReport {
+    pub host_path: PathBuf,
+    pub user_entries_remaining: usize,
+}
+
+impl RemovePatchReport {
+    /// Prints "`M` user-authored entr{y|ies} remain in `<host_path>`" to
+    /// stderr when `user_entries_remaining > 0`. Suppressed otherwise to
+    /// avoid noisy "0 user-authored entries remain" lines on the common
+    /// fresh-config path. Both the live and dry-run flows share the same
+    /// gate — the user-visible "[dry-run] " prefix is set elsewhere.
+    pub fn print_summary(&self) {
+        if self.user_entries_remaining == 0 {
+            return;
+        }
+        let entry_word = if self.user_entries_remaining == 1 {
+            "entry"
+        } else {
+            "entries"
+        };
+        eprintln!(
+            "{count} user-authored {entry_word} remain in {path}",
+            count = self.user_entries_remaining,
+            path = self.host_path.display(),
+        );
+    }
+}
+
 /// A complete write plan: files to write followed by post-write hooks to run.
 ///
 /// Hooks always run after all writes (e.g. `OpenCode` patching needs rule files

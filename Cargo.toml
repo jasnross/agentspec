@@ -13,7 +13,7 @@ globset = "0.4"
 gray_matter = "0.3"
 home = "0.5"
 indexmap = { version = "2", features = ["serde"] }
-jsonc-parser = { version = "0.32.3", features = ["cst"] }
+jsonc-parser = { version = "0.32.3", features = ["cst", "serde_json"] }
 jsonschema = "0.28"
 minijinja = "2"
 serde = { version = "1", features = ["derive"] }

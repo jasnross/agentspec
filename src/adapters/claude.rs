@@ -453,6 +453,50 @@ pub fn post_write_hook(
     }))
 }
 
+/// Post-write hook that strips agentspec-owned hook entries from Claude's
+/// `settings.json` and tidies emptied containers, paralleling
+/// [`ClaudeHooksPatch`] but in reverse.
+///
+/// The patch identifies its own entries via the on-disk `_agentspec_id`
+/// sentinel — no in-memory owned-entries list is needed (compare
+/// [`ClaudeHooksPatch`], which receives the sync's emitted-entries vector).
+#[derive(Debug)]
+pub struct ClaudeRemoveHooksPatch {
+    settings_path: std::path::PathBuf,
+}
+
+impl PostWriteHook for ClaudeRemoveHooksPatch {
+    fn run(&self, dry_run: bool) -> Result<()> {
+        let report = crate::hooks_merge::remove_claude_settings(&self.settings_path, dry_run)?;
+        report.print_summary();
+        Ok(())
+    }
+}
+
+/// Factory for Claude's remove post-write hook.
+///
+/// Mirrors [`post_write_hook`] but drops the unused `dest` parameter — remove
+/// identifies its targets by reading on-disk `_agentspec_id` sentinels, so the
+/// per-kind dest dir doesn't matter to the patch. Returns `None` for
+/// non-`Hooks` kinds and for non-Merged emit modes (Path mode owns
+/// `hooks/hooks.json` outright — its cleanup is handled by `remove_batch`'s
+/// dest-dir teardown, not via a settings.json patch).
+pub fn remove_post_write_hook(
+    kind: FileKind,
+    config_dir: &Path,
+    emit_mode: HookEmitMode,
+) -> Option<Box<dyn PostWriteHook>> {
+    if kind != FileKind::Hooks {
+        return None;
+    }
+    if !emit_mode.is_merged() {
+        return None;
+    }
+    Some(Box::new(ClaudeRemoveHooksPatch {
+        settings_path: config_dir.join("settings.json"),
+    }))
+}
+
 /// Returns the name the AI model uses to reference this spec.
 ///
 /// For Claude, all spec types use `{content_prefix}{id}` when a content prefix

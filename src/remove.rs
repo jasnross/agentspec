@@ -1,12 +1,13 @@
 use std::path::Path;
 
-use agentspec::plan::{FileWrite, WriteMode, WritePlan, file_kinds};
+use agentspec::adapters::{claude_remove_post_write_hook, cursor_remove_post_write_hook};
+use agentspec::plan::{FileKind, FileWrite, WriteMode, WritePlan, file_kinds};
 use agentspec::provider::Provider;
 use anyhow::{Result, bail};
 
 use crate::cli::RemoveArgs;
 use crate::config::{AgentspecConfig, SyncFlags, SyncTargetConfig};
-use crate::sync;
+use crate::sync::{self, opencode_config_dir, provider_config_dir};
 
 /// Validates and resolves remove targets from config and CLI args.
 ///
@@ -66,8 +67,20 @@ pub fn remove_plan(
     cwd: &Path,
 ) -> Result<WritePlan> {
     let mut writes = Vec::new();
+    let mut post_write_hooks = Vec::new();
 
     for (provider, target) in targets {
+        let emit_mode = target.mode.to_hook_emit_mode();
+        // Hoist `config_dir` out of the inner loop and the per-provider
+        // dispatch — mirrors `sync_plan`'s shape (`sync.rs:38-43`) and means
+        // the dispatch arms below are pure factory calls.
+        let config_dir = match *provider {
+            Provider::Claude | Provider::Cursor => {
+                provider_config_dir(*provider, target, home, cwd)
+            }
+            Provider::OpenCode => opencode_config_dir(target, home, cwd),
+        };
+
         for kind in file_kinds(*provider) {
             let destination = sync::resolve_dest_dir(*provider, kind, target, home, cwd)?;
             writes.push(FileWrite {
@@ -79,10 +92,25 @@ pub fn remove_plan(
                 overwrite: false,
             });
         }
+
+        // Pure dispatch — every adapter exposes the same factory shape.
+        // Phase 4 fills in the OpenCode arm with `opencode_remove_post_write_hook`.
+        let hook = match *provider {
+            Provider::Claude => {
+                claude_remove_post_write_hook(FileKind::Hooks, &config_dir, emit_mode)
+            }
+            Provider::Cursor => {
+                cursor_remove_post_write_hook(FileKind::Hooks, &config_dir, emit_mode)
+            }
+            Provider::OpenCode => None,
+        };
+        if let Some(h) = hook {
+            post_write_hooks.push(h);
+        }
     }
 
     Ok(WritePlan {
         writes,
-        post_write_hooks: Vec::new(),
+        post_write_hooks,
     })
 }

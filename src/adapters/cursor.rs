@@ -334,6 +334,44 @@ pub fn post_write_hook(
     }))
 }
 
+/// Post-write hook that strips agentspec-owned hook entries from Cursor's
+/// `hooks.json` and tidies emptied containers, paralleling
+/// [`CursorHooksPatch`] but in reverse. Ownership is identified by the
+/// on-disk `_agentspec_id` sentinel.
+#[derive(Debug)]
+pub struct CursorRemoveHooksPatch {
+    hooks_path: std::path::PathBuf,
+}
+
+impl PostWriteHook for CursorRemoveHooksPatch {
+    fn run(&self, dry_run: bool) -> Result<()> {
+        let report = crate::hooks_merge::remove_cursor_hooks(&self.hooks_path, dry_run)?;
+        report.print_summary();
+        Ok(())
+    }
+}
+
+/// Factory for Cursor's remove post-write hook.
+///
+/// Mirrors [`post_write_hook`] but drops the unused `dest` parameter (remove
+/// identifies its targets by on-disk `_agentspec_id` sentinels). Returns
+/// `None` for non-`Hooks` kinds and non-Merged emit modes.
+pub fn remove_post_write_hook(
+    kind: FileKind,
+    config_dir: &Path,
+    emit_mode: HookEmitMode,
+) -> Option<Box<dyn PostWriteHook>> {
+    if kind != FileKind::Hooks {
+        return None;
+    }
+    if !emit_mode.is_merged() {
+        return None;
+    }
+    Some(Box::new(CursorRemoveHooksPatch {
+        hooks_path: config_dir.join("hooks.json"),
+    }))
+}
+
 /// Returns the name the AI model uses to reference this spec.
 ///
 /// For Cursor, all spec types use `{content_prefix}{id}` when a content prefix
