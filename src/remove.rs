@@ -1,11 +1,12 @@
 use std::path::Path;
 
-use agentspec::plan::WritePlan;
+use agentspec::plan::{FileWrite, WriteMode, WritePlan, file_kinds};
 use agentspec::provider::Provider;
 use anyhow::{Result, bail};
 
 use crate::cli::RemoveArgs;
 use crate::config::{AgentspecConfig, SyncFlags, SyncTargetConfig};
+use crate::sync;
 
 /// Validates and resolves remove targets from config and CLI args.
 ///
@@ -53,18 +54,35 @@ pub fn resolve_remove_targets(
 
 /// Builds a `WritePlan` that reverses a prior sync.
 ///
-/// Phase 1 stub: returns an empty plan. Phase 2 populates `writes` with one
-/// `FileWrite::Remove` per `(provider, kind)` dest dir; Phase 3+4 populate
-/// `post_write_hooks` with the per-provider CST/JSON tidy patches.
-#[allow(dead_code)] // wired in by Phase 2's main.rs dispatch arm
-#[allow(clippy::unnecessary_wraps)] // Phases 2+ introduce fallible work; keep the signature stable.
+/// One `FileWrite { mode: WriteMode::Remove, .. }` is produced per
+/// `(provider, kind)` dest dir. `files` is empty and `overwrite` is `false`
+/// for every entry — the manifest at `destination/.agentspec-manifest.json` is
+/// the source of truth at execution time. `post_write_hooks` is populated by
+/// later phases (Claude/Cursor settings tidy in Phase 3, `OpenCode` instructions
+/// tidy in Phase 4).
 pub fn remove_plan(
-    _targets: &[(Provider, SyncTargetConfig)],
-    _home: &Path,
-    _cwd: &Path,
+    targets: &[(Provider, SyncTargetConfig)],
+    home: &Path,
+    cwd: &Path,
 ) -> Result<WritePlan> {
+    let mut writes = Vec::new();
+
+    for (provider, target) in targets {
+        for kind in file_kinds(*provider) {
+            let destination = sync::resolve_dest_dir(*provider, kind, target, home, cwd)?;
+            writes.push(FileWrite {
+                provider: *provider,
+                kind: Some(kind),
+                destination,
+                files: Vec::new(),
+                mode: WriteMode::Remove,
+                overwrite: false,
+            });
+        }
+    }
+
     Ok(WritePlan {
-        writes: Vec::new(),
+        writes,
         post_write_hooks: Vec::new(),
     })
 }

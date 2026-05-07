@@ -1813,6 +1813,39 @@ fn test_remove_help_lists_subcommand() {
     );
 }
 
+/// Helper: write a minimal agentspec.toml that configures sync for the named providers.
+///
+/// Each entry is a (provider, mode) pair, e.g. `("claude", "user")`.
+fn write_remove_config(dir: &Path, providers: &[(&str, &str)]) {
+    use std::fmt::Write as _;
+    let mut sections = String::from(
+        r#"
+[presets.default]
+claude = { model = "sonnet" }
+opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
+cursor = { model = "fast" }
+"#,
+    );
+    for (provider, mode) in providers {
+        // Writes to a `String` are infallible.
+        let _ = writeln!(sections, "\n[sync.{provider}]\nmode = \"{mode}\"");
+    }
+    let r = std::fs::write(dir.join("agentspec.toml"), sections);
+    assert!(r.is_ok(), "failed to write agentspec.toml: {r:?}");
+}
+
+/// Helper: run `agentspec` with HOME set; return the captured Output.
+///
+/// Returns `io::Result` so spawn failures bubble to the calling test, where
+/// `.expect()` is permitted by `clippy.toml`'s `allow-expect-in-tests`.
+fn run_agentspec(args: &[&str], dir: &Path, home: &Path) -> std::io::Result<std::process::Output> {
+    std::process::Command::new(agentspec())
+        .args(args)
+        .env("HOME", home)
+        .current_dir(dir)
+        .output()
+}
+
 #[test]
 fn test_remove_with_no_providers_configured_is_clean_exit() {
     // No `[sync.*]` blocks: `agentspec remove` must exit 0 and report
@@ -1844,5 +1877,329 @@ sources_dir = "spec"
     assert!(
         stderr.contains("nothing to remove"),
         "expected 'nothing to remove' in stderr, got:\n{stderr}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// `agentspec remove` tests (Phase 2: standalone file removal)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_remove_after_sync_user_mode_deletes_all_tracked_files() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    write_remove_config(&dir, &[("claude", "user")]);
+    let home = dir.join("home");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    let stderr = String::from_utf8_lossy(&sync.stderr);
+    assert!(sync.status.success(), "sync failed:\n{stderr}");
+    assert!(
+        home.join(".claude/agents/test-agent.md").exists(),
+        "sync did not write agent file"
+    );
+    assert!(
+        home.join(".claude/skills/basic-skill/SKILL.md").exists(),
+        "sync did not write skill"
+    );
+
+    let remove =
+        run_agentspec(&["remove", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    let stderr = String::from_utf8_lossy(&remove.stderr);
+    assert!(remove.status.success(), "remove failed:\n{stderr}");
+
+    // Tracked files and manifests are gone.
+    assert!(
+        !home.join(".claude/agents/test-agent.md").exists(),
+        "agent file should have been removed"
+    );
+    assert!(
+        !home.join(".claude/agents").exists(),
+        "agents kind dir should have been rmdir'd"
+    );
+    assert!(
+        !home.join(".claude/skills").exists(),
+        "skills kind dir should have been rmdir'd"
+    );
+    assert!(
+        !home.join(".claude/rules").exists(),
+        "rules kind dir should have been rmdir'd"
+    );
+    // Parent of kind dirs is left alone — remove never touches it.
+    assert!(home.join(".claude").exists(), "parent .claude dir survives");
+}
+
+#[test]
+fn test_remove_after_sync_project_mode_deletes_all_tracked_files() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    write_remove_config(&dir, &[("claude", "project")]);
+    let home = dir.join("home");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(
+        sync.status.success(),
+        "sync failed:\n{}",
+        String::from_utf8_lossy(&sync.stderr)
+    );
+    // Project mode writes to `<cwd>/.claude/...`
+    assert!(
+        dir.join(".claude/agents/test-agent.md").exists(),
+        "project sync did not write agent"
+    );
+
+    let remove =
+        run_agentspec(&["remove", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(
+        remove.status.success(),
+        "remove failed:\n{}",
+        String::from_utf8_lossy(&remove.stderr)
+    );
+
+    assert!(!dir.join(".claude/agents").exists());
+    assert!(!dir.join(".claude/skills").exists());
+    assert!(!dir.join(".claude/rules").exists());
+}
+
+#[test]
+fn test_remove_per_provider_scoping_leaves_other_providers_intact() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    write_remove_config(&dir, &[("claude", "user"), ("cursor", "user")]);
+    let home = dir.join("home");
+
+    let sync = run_agentspec(&["sync"], &dir, &home).expect("agentspec spawn");
+    assert!(
+        sync.status.success(),
+        "sync failed:\n{}",
+        String::from_utf8_lossy(&sync.stderr)
+    );
+    assert!(home.join(".claude/agents/test-agent.md").exists());
+    assert!(home.join(".cursor/agents/test-agent.md").exists());
+
+    // Remove only claude — cursor should be untouched.
+    let remove =
+        run_agentspec(&["remove", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(
+        remove.status.success(),
+        "remove failed:\n{}",
+        String::from_utf8_lossy(&remove.stderr)
+    );
+
+    assert!(
+        !home.join(".claude/agents").exists(),
+        "claude should be cleaned up"
+    );
+    assert!(
+        home.join(".cursor/agents/test-agent.md").exists(),
+        "cursor must not be affected by --provider claude"
+    );
+}
+
+#[test]
+fn test_remove_without_prior_sync_is_no_op() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    write_remove_config(&dir, &[("claude", "user")]);
+    let home = dir.join("home");
+
+    // No sync first — every dest dir is missing.
+    let remove =
+        run_agentspec(&["remove", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    let stderr = String::from_utf8_lossy(&remove.stderr);
+    assert!(remove.status.success(), "remove failed:\n{stderr}");
+    // The pipeline runs without error; nothing to report (no manifests existed).
+}
+
+#[test]
+fn test_remove_idempotent() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    write_remove_config(&dir, &[("claude", "user")]);
+    let home = dir.join("home");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(sync.status.success());
+
+    let remove1 =
+        run_agentspec(&["remove", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(
+        remove1.status.success(),
+        "first remove failed:\n{}",
+        String::from_utf8_lossy(&remove1.stderr)
+    );
+
+    let remove2 =
+        run_agentspec(&["remove", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(
+        remove2.status.success(),
+        "second remove (idempotent) failed:\n{}",
+        String::from_utf8_lossy(&remove2.stderr)
+    );
+}
+
+#[test]
+fn test_remove_dry_run_writes_nothing() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    write_remove_config(&dir, &[("claude", "user")]);
+    let home = dir.join("home");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(sync.status.success());
+    let agent_path = home.join(".claude/agents/test-agent.md");
+    assert!(agent_path.exists());
+
+    let remove = run_agentspec(
+        &["remove", "--provider", "claude", "--dry-run"],
+        &dir,
+        &home,
+    )
+    .expect("agentspec spawn");
+    let stderr = String::from_utf8_lossy(&remove.stderr);
+    assert!(remove.status.success(), "dry-run remove failed:\n{stderr}");
+    assert!(
+        stderr.starts_with("[dry-run] "),
+        "stderr should start with '[dry-run] ', got:\n{stderr}"
+    );
+    // Files survive a dry run.
+    assert!(agent_path.exists(), "dry-run remove must not delete files");
+    assert!(
+        home.join(".claude/agents/.agentspec-manifest.json")
+            .exists(),
+        "dry-run must not delete manifests"
+    );
+}
+
+#[test]
+fn test_remove_tolerates_missing_manifest() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    write_remove_config(&dir, &[("claude", "user")]);
+    let home = dir.join("home");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(sync.status.success());
+
+    // Hand-delete the agents manifest (simulating a partial cleanup).
+    let manifest = home.join(".claude/agents/.agentspec-manifest.json");
+    std::fs::remove_file(&manifest).expect("failed to delete manifest");
+
+    let remove =
+        run_agentspec(&["remove", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(
+        remove.status.success(),
+        "remove with missing manifest should succeed:\n{}",
+        String::from_utf8_lossy(&remove.stderr)
+    );
+    // The agents/ directory + files survive (manifest is the source of truth).
+    assert!(
+        home.join(".claude/agents/test-agent.md").exists(),
+        "files in a manifest-less dir are left alone"
+    );
+}
+
+#[test]
+fn test_remove_tolerates_pre_deleted_tracked_file() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    write_remove_config(&dir, &[("claude", "user")]);
+    let home = dir.join("home");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(sync.status.success());
+
+    // Hand-delete one tracked file before remove.
+    let agent = home.join(".claude/agents/test-agent.md");
+    std::fs::remove_file(&agent).expect("failed to pre-delete tracked file");
+
+    let remove =
+        run_agentspec(&["remove", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    let stderr = String::from_utf8_lossy(&remove.stderr);
+    assert!(
+        remove.status.success(),
+        "remove with pre-deleted file should succeed:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("warning") && stderr.contains("test-agent.md"),
+        "expected warning about absent file, got:\n{stderr}"
+    );
+    // The dir is otherwise cleaned up.
+    assert!(!home.join(".claude/agents").exists());
+}
+
+#[test]
+fn test_remove_leaves_unmanaged_files_in_dest_dir() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    write_remove_config(&dir, &[("claude", "user")]);
+    let home = dir.join("home");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(sync.status.success());
+
+    // Drop a user-authored file into the agents dest dir.
+    let user_file = home.join(".claude/agents/user-authored.md");
+    std::fs::write(&user_file, "user content\n").expect("failed to write user file");
+
+    let remove =
+        run_agentspec(&["remove", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(
+        remove.status.success(),
+        "remove failed:\n{}",
+        String::from_utf8_lossy(&remove.stderr)
+    );
+    assert!(user_file.exists(), "user-authored file must survive");
+    // The dir is not rmdir'd because the user file makes it non-empty.
+    assert!(
+        home.join(".claude/agents").exists(),
+        "dest dir must remain (rmdir would have failed with NotEmpty)"
+    );
+    // Tracked files are gone.
+    assert!(!home.join(".claude/agents/test-agent.md").exists());
+    assert!(
+        !home
+            .join(".claude/agents/.agentspec-manifest.json")
+            .exists(),
+        "manifest is removed even when dir survives"
+    );
+}
+
+#[test]
+fn test_remove_refuses_higher_manifest_version() {
+    // Deferred from Phase 1: now lands because Phase 2's `remove_batch`
+    // calls `Manifest::load_strict`, which is the only path that triggers
+    // the version-mismatch error end-to-end.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    write_remove_config(&dir, &[("claude", "user")]);
+    let home = dir.join("home");
+
+    // Plant a manifest with version > MANIFEST_VERSION.
+    let agents_dir = home.join(".claude/agents");
+    std::fs::create_dir_all(&agents_dir).expect("create agents dir");
+    std::fs::write(
+        agents_dir.join(".agentspec-manifest.json"),
+        r#"{"version":999,"files":{}}"#,
+    )
+    .expect("write forward-incompatible manifest");
+
+    let remove =
+        run_agentspec(&["remove", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    let stderr = String::from_utf8_lossy(&remove.stderr);
+    assert!(
+        !remove.status.success(),
+        "remove should fail on version mismatch, got success:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("version 999") && stderr.contains("upgrade agentspec"),
+        "expected version-refusal error message, got:\n{stderr}"
     );
 }

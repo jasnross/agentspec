@@ -96,18 +96,16 @@ fn main() -> Result<()> {
             emit(&plan, sync_args.dry_run, sync_args.common.verbose)?;
         }
         Command::Remove(remove_args) => {
-            // Phase 1 stub: validate the invocation by resolving targets, then
-            // emit a one-line "would remove" message to stderr. Phases 2–4 add
-            // the actual plan + emit pipeline.
             let targets = remove::resolve_remove_targets(&config, remove_args)?;
             if targets.is_empty() {
                 eprintln!("nothing to remove");
             } else {
-                let n = targets.len();
-                eprintln!(
-                    "would remove for {n} {}",
-                    if n == 1 { "provider" } else { "providers" }
-                );
+                if remove_args.dry_run {
+                    eprint!("[dry-run] ");
+                }
+                let home = home_dir()?;
+                let plan = remove::remove_plan(&targets, &home, &cwd)?;
+                emit(&plan, remove_args.dry_run, remove_args.common.verbose)?;
             }
         }
         Command::Compile(compile_args) => {

@@ -27,6 +27,20 @@ impl BatchStats {
     }
 }
 
+/// Aggregated remove stats for a single (provider, kind) destination.
+///
+/// Sibling of [`BatchStats`] used by `WriteMode::Remove`. Tracks how many
+/// manifest-listed files were deleted, whether the manifest itself was
+/// removed, and whether the dest dir was rmdir'd.
+pub(crate) struct RemoveStats {
+    pub provider: Provider,
+    pub kind: FileKind,
+    pub destination: PathBuf,
+    pub files_removed: usize,
+    pub manifest_removed: bool,
+    pub dir_rmdir: bool,
+}
+
 /// The outcome of a single file sync operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum SyncAction {
@@ -41,17 +55,36 @@ pub(crate) enum SyncAction {
 }
 
 /// Execute a write plan: write all file batches, then run post-write hooks.
+///
+/// Each `FileWrite` is dispatched on its `WriteMode`: `CleanSlate` and
+/// `ManifestTracked` go to `write_batch` (producing `BatchStats`), `Remove`
+/// goes to `remove_batch` (producing `RemoveStats`). The two stat streams are
+/// rendered separately to stderr.
 pub fn emit(plan: &WritePlan, dry_run: bool, verbose: bool) -> Result<()> {
-    let mut all_stats: Vec<BatchStats> = Vec::new();
+    let mut sync_stats: Vec<BatchStats> = Vec::new();
+    let mut remove_stats: Vec<RemoveStats> = Vec::new();
     for w in &plan.writes {
-        if let Some(stats) = write_batch(w, dry_run)? {
-            all_stats.push(stats);
+        match w.mode {
+            WriteMode::CleanSlate | WriteMode::ManifestTracked => {
+                if let Some(stats) = write_batch(w, dry_run)? {
+                    sync_stats.push(stats);
+                }
+            }
+            WriteMode::Remove => {
+                if let Some(stats) = remove_batch(w, dry_run)? {
+                    remove_stats.push(stats);
+                }
+            }
         }
     }
-    if !all_stats.is_empty() {
+    if !sync_stats.is_empty() {
         let mut stderr = std::io::stderr();
         // Stderr write failures are not actionable — don't fail the sync for them.
-        let _ = render_sync_report(&mut stderr, &all_stats, dry_run, verbose);
+        let _ = render_sync_report(&mut stderr, &sync_stats, dry_run, verbose);
+    }
+    if !remove_stats.is_empty() {
+        let mut stderr = std::io::stderr();
+        let _ = render_remove_report(&mut stderr, &remove_stats, dry_run);
     }
     for hook in &plan.post_write_hooks {
         hook.run(dry_run)?;
@@ -218,6 +251,64 @@ fn render_table(
     Ok(())
 }
 
+/// Renders a compact remove report to the given writer.
+///
+/// One line per touched (provider, kind) destination, followed by a totals
+/// footer. Dry-run prefixes the action verb with "would". The host-file
+/// patches (settings.json, hooks.json, opencode.json) are owned by post-write
+/// hooks and report themselves separately — this function only summarises the
+/// `WriteMode::Remove` batches (manifest-tracked file deletions).
+fn render_remove_report(
+    out: &mut dyn std::io::Write,
+    stats: &[RemoveStats],
+    dry_run: bool,
+) -> std::io::Result<()> {
+    let action = if dry_run { "would remove" } else { "removed" };
+    let rmdir_phrase = if dry_run { "would rmdir" } else { "rmdir'd" };
+
+    writeln!(out)?;
+    for s in stats {
+        let manifest_clause = if s.manifest_removed {
+            " + manifest"
+        } else {
+            ""
+        };
+        let dir_clause = if s.dir_rmdir {
+            format!("; {rmdir_phrase} dest dir")
+        } else {
+            String::new()
+        };
+        writeln!(
+            out,
+            "{} {} ({}): {action} {} file(s){}{}",
+            s.provider.display_name(),
+            s.kind.dir_name(),
+            s.destination.display(),
+            s.files_removed,
+            manifest_clause,
+            dir_clause,
+        )?;
+    }
+
+    let total_files: usize = stats.iter().map(|s| s.files_removed).sum();
+    let total_manifests: usize = stats.iter().filter(|s| s.manifest_removed).count();
+    let total_dirs: usize = stats.iter().filter(|s| s.dir_rmdir).count();
+    let n_dests = stats.len();
+    let dest_word = if n_dests == 1 {
+        "destination"
+    } else {
+        "destinations"
+    };
+
+    writeln!(out)?;
+    writeln!(
+        out,
+        "{n_dests} {dest_word}; {action} {total_files} file(s), \
+         {total_manifests} manifest(s), {total_dirs} dir(s) rmdir'd"
+    )?;
+    Ok(())
+}
+
 /// Renders the summary footer line.
 fn render_footer(
     out: &mut dyn std::io::Write,
@@ -242,8 +333,15 @@ fn render_footer(
     }
 }
 
+// `write_batch` covers two modes (CleanSlate / ManifestTracked) inline; the
+// `Remove` arm pushes it just past the 100-line ceiling. Extracting one arm
+// per helper would obscure the dispatch shape for a 1-line gain.
+#[allow(clippy::too_many_lines)]
 fn write_batch(w: &FileWrite, dry_run: bool) -> Result<Option<BatchStats>> {
     match w.mode {
+        WriteMode::Remove => {
+            unreachable!("WriteMode::Remove is dispatched to remove_batch by emit()")
+        }
         WriteMode::CleanSlate => {
             if !dry_run {
                 if w.destination.exists() {
@@ -357,6 +455,141 @@ fn write_batch(w: &FileWrite, dry_run: bool) -> Result<Option<BatchStats>> {
             }))
         }
     }
+}
+
+/// Prunes empty intermediate subdirectories that agentspec created inside
+/// `dest_dir` for the listed `manifest_files`.
+///
+/// Spec output is nested (e.g. skills produce `basic-skill/SKILL.md` and
+/// `scripted-skill/scripts/helper.sh`). After tracked files are deleted the
+/// intermediate subdirs still exist and would block a dest-dir rmdir. This
+/// walks each tracked file's relative ancestor chain, dedups, and removes
+/// each subdir deepest-first; subdirs that still hold user-authored content
+/// hit `DirectoryNotEmpty` and are left in place.
+fn prune_empty_subdirs<I, S>(dest_dir: &Path, manifest_files: I) -> Result<()>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut subdirs: HashSet<PathBuf> = HashSet::new();
+    for rel in manifest_files {
+        let mut p = PathBuf::from(rel.as_ref());
+        while let Some(parent) = p.parent() {
+            if parent.as_os_str().is_empty() {
+                break;
+            }
+            subdirs.insert(parent.to_path_buf());
+            p = parent.to_path_buf();
+        }
+    }
+    let mut sorted: Vec<PathBuf> = subdirs.into_iter().collect();
+    sorted.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
+
+    for sub in sorted {
+        let abs = dest_dir.join(&sub);
+        match fs::remove_dir(&abs) {
+            Ok(()) => {}
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::DirectoryNotEmpty | std::io::ErrorKind::NotFound
+                ) => {}
+            Err(e) => {
+                return Err(e).with_context(|| format!("failed to rmdir {}", abs.display()));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Tries `fs::remove_dir(dir)`; returns `Ok(true)` on success, `Ok(false)` if
+/// the dir is non-empty or missing. Any other I/O error propagates.
+fn try_rmdir_if_empty(dir: &Path) -> Result<bool> {
+    match fs::remove_dir(dir) {
+        Ok(()) => Ok(true),
+        Err(e)
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::DirectoryNotEmpty | std::io::ErrorKind::NotFound
+            ) =>
+        {
+            Ok(false)
+        }
+        Err(e) => Err(e).with_context(|| format!("failed to rmdir {}", dir.display())),
+    }
+}
+
+/// Reverses a prior `ManifestTracked` write: deletes every file the manifest
+/// records, deletes the manifest itself, and rmdir's the dest dir if empty.
+///
+/// Returns `Ok(None)` when no manifest is present (idempotent / tolerant of
+/// missing state). Returns `Err` only on `load_strict` version refusal or an
+/// I/O error other than `NotFound` / `DirectoryNotEmpty` — files the user
+/// already deleted are warned-and-skipped.
+fn remove_batch(w: &FileWrite, dry_run: bool) -> Result<Option<RemoveStats>> {
+    debug_assert!(
+        w.files.is_empty(),
+        "WriteMode::Remove FileWrite must have empty files"
+    );
+    debug_assert!(
+        !w.overwrite,
+        "WriteMode::Remove FileWrite must not set overwrite"
+    );
+
+    let kind = w
+        .kind
+        .context("WriteMode::Remove writes must have a kind")?;
+
+    let manifest_path = Manifest::path(&w.destination);
+    if !manifest_path.exists() {
+        return Ok(None);
+    }
+
+    let manifest = Manifest::load_strict(&w.destination)?;
+
+    let mut files_removed = 0usize;
+    for rel_path in manifest.files.keys() {
+        let dest_file = w.destination.join(rel_path);
+        if !dry_run {
+            match fs::remove_file(&dest_file) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    eprintln!(
+                        "warning: tracked file {} was already absent",
+                        dest_file.display()
+                    );
+                }
+                Err(e) => {
+                    return Err(e).with_context(|| {
+                        format!("failed to remove tracked file {}", dest_file.display())
+                    });
+                }
+            }
+        }
+        files_removed += 1;
+    }
+
+    if !dry_run {
+        Manifest::delete(&w.destination)?;
+    }
+    // We entered this branch because the manifest existed; in both dry-run
+    // and live mode, we report the intent to remove it.
+    let manifest_removed = true;
+
+    let mut dir_rmdir = false;
+    if !dry_run {
+        prune_empty_subdirs(&w.destination, manifest.files.keys())?;
+        dir_rmdir = try_rmdir_if_empty(&w.destination)?;
+    }
+
+    Ok(Some(RemoveStats {
+        provider: w.provider,
+        kind,
+        destination: w.destination.clone(),
+        files_removed,
+        manifest_removed,
+        dir_rmdir,
+    }))
 }
 
 /// Writes `content` to `dest` with manifest tracking.

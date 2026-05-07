@@ -69,7 +69,6 @@ impl Manifest {
     /// an older binary that can't reason about its contents. Returns the
     /// default empty manifest if the file is absent (matching `load`'s
     /// missing-file behavior).
-    #[allow(dead_code)] // wired in by Phase 2's `remove_batch`
     pub fn load_strict(dir: &Path) -> Result<Self> {
         let path = Self::path(dir);
         if !path.exists() {
@@ -103,7 +102,6 @@ impl Manifest {
 
     /// Deletes the manifest file in `dir`, if present. Treats `NotFound` as
     /// success so callers can use this as an idempotent cleanup step.
-    #[allow(dead_code)] // wired in by Phase 2's `remove_batch`
     pub fn delete(dir: &Path) -> Result<()> {
         let path = Self::path(dir);
         match std::fs::remove_file(&path) {

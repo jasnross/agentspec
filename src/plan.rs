@@ -158,6 +158,10 @@ pub enum WriteMode {
     /// This directory may contain files agentspec does not own (e.g. user-created skills).
     /// Only create, update, or remove files tracked in the manifest.
     ManifestTracked,
+    /// Reverses `ManifestTracked`: read the manifest, delete every file it
+    /// tracks, delete the manifest itself, then rmdir the dest dir if empty.
+    /// `FileWrite.files` and `FileWrite.overwrite` are unused for this variant.
+    Remove,
 }
 
 /// A batch of files to write to a single destination directory.
