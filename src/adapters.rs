@@ -17,4 +17,5 @@ pub use cursor::{
 pub use opencode::{
     adapt_opencode, body_tool_name as opencode_body_tool_name,
     model_facing_name as opencode_model_facing_name, post_write_hook as opencode_post_write_hook,
+    remove_post_write_hook as opencode_remove_post_write_hook,
 };

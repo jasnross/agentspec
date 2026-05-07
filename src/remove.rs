@@ -1,7 +1,9 @@
 use std::path::Path;
 
-use agentspec::adapters::{claude_remove_post_write_hook, cursor_remove_post_write_hook};
-use agentspec::plan::{FileKind, FileWrite, WriteMode, WritePlan, file_kinds};
+use agentspec::adapters::{
+    claude_remove_post_write_hook, cursor_remove_post_write_hook, opencode_remove_post_write_hook,
+};
+use agentspec::plan::{FileWrite, WriteMode, WritePlan, file_kinds};
 use agentspec::provider::Provider;
 use anyhow::{Result, bail};
 
@@ -71,9 +73,8 @@ pub fn remove_plan(
 
     for (provider, target) in targets {
         let emit_mode = target.mode.to_hook_emit_mode();
-        // Hoist `config_dir` out of the inner loop and the per-provider
-        // dispatch — mirrors `sync_plan`'s shape (`sync.rs:38-43`) and means
-        // the dispatch arms below are pure factory calls.
+        // Hoist `config_dir` out of the inner loop — mirrors `sync_plan`'s
+        // shape (`sync.rs:38-43`).
         let config_dir = match *provider {
             Provider::Claude | Provider::Cursor => {
                 provider_config_dir(*provider, target, home, cwd)
@@ -81,8 +82,30 @@ pub fn remove_plan(
             Provider::OpenCode => opencode_config_dir(target, home, cwd),
         };
 
+        // Each (provider, kind) gets a Remove batch; alongside, every
+        // adapter's `remove_post_write_hook` is offered the chance to claim
+        // this kind. Each factory returns `None` for kinds it doesn't care
+        // about (Claude/Cursor key off `Hooks`; `OpenCode` keys off `Rules`),
+        // so the per-arm shape is uniform — no provider-specific logic
+        // leaks into this dispatch.
         for kind in file_kinds(*provider) {
             let destination = sync::resolve_dest_dir(*provider, kind, target, home, cwd)?;
+
+            let hook = match *provider {
+                Provider::Claude => {
+                    claude_remove_post_write_hook(kind, &destination, &config_dir, emit_mode)
+                }
+                Provider::Cursor => {
+                    cursor_remove_post_write_hook(kind, &destination, &config_dir, emit_mode)
+                }
+                Provider::OpenCode => {
+                    opencode_remove_post_write_hook(kind, &destination, &config_dir, emit_mode)
+                }
+            };
+            if let Some(h) = hook {
+                post_write_hooks.push(h);
+            }
+
             writes.push(FileWrite {
                 provider: *provider,
                 kind: Some(kind),
@@ -91,21 +114,6 @@ pub fn remove_plan(
                 mode: WriteMode::Remove,
                 overwrite: false,
             });
-        }
-
-        // Pure dispatch — every adapter exposes the same factory shape.
-        // Phase 4 fills in the OpenCode arm with `opencode_remove_post_write_hook`.
-        let hook = match *provider {
-            Provider::Claude => {
-                claude_remove_post_write_hook(FileKind::Hooks, &config_dir, emit_mode)
-            }
-            Provider::Cursor => {
-                cursor_remove_post_write_hook(FileKind::Hooks, &config_dir, emit_mode)
-            }
-            Provider::OpenCode => None,
-        };
-        if let Some(h) = hook {
-            post_write_hooks.push(h);
         }
     }
 

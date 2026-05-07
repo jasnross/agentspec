@@ -8,7 +8,7 @@ use strum::VariantArray as _;
 use walkdir::WalkDir;
 
 use crate::compile::{AdapterConfig, GeneratedFile};
-use crate::plan::{FileKind, PostWriteHook};
+use crate::plan::{FileKind, PostWriteHook, RemovePatchReport};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
 use crate::spec::{
@@ -233,6 +233,157 @@ pub fn post_write_hook(
         rules_dest_dir: dest.to_path_buf(),
         config_dir: config_dir.to_path_buf(),
     }))
+}
+
+/// Post-write hook that strips `instructions[]` entries pointing into
+/// agentspec's rules dest dir.
+///
+/// Mirrors [`OpenCodeInstructionsPatch`] but inverted: instead of appending
+/// the current set of rules, it filters out everything whose path starts
+/// with `rules_dest_dir`. The host file (`opencode.json`) is **never**
+/// deleted; if `instructions[]` becomes `[]`, the key is dropped instead.
+///
+/// Note: like the sync-side patcher, this uses plain `serde_json` rather
+/// than the CST-aware `jsonc-parser`, so comments and formatting trivia in
+/// `opencode.json` are not preserved across the cycle. This is the
+/// pre-existing behavior of `patch_opencode_instructions`, not a
+/// regression introduced by remove.
+#[derive(Debug)]
+pub struct OpenCodeRemoveInstructionsPatch {
+    rules_dest_dir: PathBuf,
+    config_dir: PathBuf,
+}
+
+impl PostWriteHook for OpenCodeRemoveInstructionsPatch {
+    fn run(&self, dry_run: bool) -> Result<()> {
+        let report = remove_opencode_instructions(&self.rules_dest_dir, &self.config_dir, dry_run)?;
+        report.print_summary();
+        Ok(())
+    }
+}
+
+/// Factory for `OpenCode`'s remove post-write hook.
+///
+/// Signature mirrors Claude/Cursor's `remove_post_write_hook` so
+/// `remove.rs`'s dispatch routes through identically-shaped match arms.
+/// `_emit_mode` is accepted for symmetry — `OpenCode` doesn't have a
+/// merged-vs-bundled split for `instructions[]`; `opencode.json` is always
+/// the host file. Returns `Some` for `FileKind::Rules`, `None` otherwise.
+pub fn remove_post_write_hook(
+    kind: FileKind,
+    dest: &Path,
+    config_dir: &Path,
+    _emit_mode: crate::compile::HookEmitMode,
+) -> Option<Box<dyn PostWriteHook>> {
+    if kind != FileKind::Rules {
+        return None;
+    }
+    Some(Box::new(OpenCodeRemoveInstructionsPatch {
+        rules_dest_dir: dest.to_path_buf(),
+        config_dir: config_dir.to_path_buf(),
+    }))
+}
+
+/// Reverses `patch_opencode_instructions`'s effect on
+/// `<config_dir>/opencode.json`.
+///
+/// Drops every `instructions[]` entry whose path starts with
+/// `rules_dest_dir`; if the array becomes empty, the `instructions` key is
+/// removed entirely. Returns the count of surviving user-authored entries
+/// for `RemovePatchReport::print_summary`. The host file is never deleted
+/// — when no other top-level keys exist it is rewritten as `{}`.
+///
+/// Short-circuits when no agentspec entries are present (so a no-op cycle
+/// doesn't bump the file's mtime). Emits a "would tidy …" line under
+/// `dry_run` for parity with the sync-side patcher and the Claude/Cursor
+/// remove patches.
+fn remove_opencode_instructions(
+    rules_dest_dir: &Path,
+    opencode_config_dir: &Path,
+    dry_run: bool,
+) -> Result<RemovePatchReport> {
+    let config_path = opencode_config_dir.join("opencode.json");
+
+    if !config_path.exists() {
+        return Ok(RemovePatchReport::default());
+    }
+
+    let content = fs::read_to_string(&config_path)
+        .with_context(|| format!("failed to read {}", config_path.display()))?;
+    let mut config: serde_json::Value = serde_json::from_str(&content)
+        .with_context(|| format!("failed to parse {}", config_path.display()))?;
+
+    let Some(obj) = config.as_object_mut() else {
+        // Match the Claude/Cursor tidy path: warn so the user knows their
+        // hand-edited config looked unusual, then return the empty report.
+        eprintln!(
+            "warning: {} has a non-object root; skipping tidy",
+            config_path.display()
+        );
+        return Ok(RemovePatchReport {
+            host_path: config_path,
+            user_entries_remaining: 0,
+        });
+    };
+
+    let pre_count = obj
+        .get("instructions")
+        .and_then(|v| v.as_array())
+        .map_or(0, Vec::len);
+
+    let user_entries: Vec<serde_json::Value> = obj
+        .get("instructions")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter(|v| {
+                    v.as_str()
+                        .is_none_or(|p| !Path::new(p).starts_with(rules_dest_dir))
+                })
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    let user_entries_remaining = user_entries.len();
+    let agentspec_entries_removed = pre_count.saturating_sub(user_entries_remaining);
+
+    if user_entries.is_empty() {
+        obj.remove("instructions");
+    } else {
+        obj.insert(
+            "instructions".to_string(),
+            serde_json::Value::Array(user_entries),
+        );
+    }
+
+    // No-op short-circuit: if no agentspec-owned entries were found AND no
+    // pre-existing `instructions` key was dropped, skip the rewrite to avoid
+    // bumping mtime on what is functionally a read-only cycle.
+    let nothing_to_persist = agentspec_entries_removed == 0 && pre_count == user_entries_remaining;
+    if nothing_to_persist {
+        return Ok(RemovePatchReport {
+            host_path: config_path,
+            user_entries_remaining,
+        });
+    }
+
+    if dry_run {
+        eprintln!(
+            "would tidy {} agentspec instruction(s) from {}",
+            agentspec_entries_removed,
+            config_path.display()
+        );
+    } else {
+        let serialized =
+            serde_json::to_string_pretty(&config).context("failed to serialize opencode.json")?;
+        fs::write(&config_path, format!("{serialized}\n"))
+            .with_context(|| format!("failed to write {}", config_path.display()))?;
+    }
+
+    Ok(RemovePatchReport {
+        host_path: config_path,
+        user_entries_remaining,
+    })
 }
 
 /// Resolve a canonical tool to the name an `OpenCode` spec body (or frontmatter
@@ -647,6 +798,160 @@ mod tests {
         assert!(
             !tmp.path().join("opencode.json").exists(),
             "dry_run must not create file"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // remove_opencode_instructions tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_remove_opencode_missing_file_is_no_op() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let rules_dir = tmp.path().join("rules");
+        let report = remove_opencode_instructions(&rules_dir, tmp.path(), false).expect("ok");
+        assert_eq!(report.user_entries_remaining, 0);
+        assert!(
+            !tmp.path().join("opencode.json").exists(),
+            "host file must not be created"
+        );
+    }
+
+    #[test]
+    fn test_remove_opencode_drops_only_agentspec_entries() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let rules_dir = tmp.path().join("rules");
+        let config_path = tmp.path().join("opencode.json");
+
+        let initial = serde_json::json!({
+            "instructions": [
+                rules_dir.join("a/AGENTS.md").to_string_lossy(),
+                "~/notes/personal.md",
+                rules_dir.join("b/AGENTS.md").to_string_lossy(),
+            ]
+        });
+        std::fs::write(
+            &config_path,
+            serde_json::to_string_pretty(&initial).expect("ser"),
+        )
+        .expect("write");
+
+        let report = remove_opencode_instructions(&rules_dir, tmp.path(), false).expect("ok");
+        assert_eq!(report.user_entries_remaining, 1);
+
+        let content = std::fs::read_to_string(&config_path).expect("read");
+        let parsed: serde_json::Value = serde_json::from_str(&content).expect("parse");
+        let arr = parsed
+            .get("instructions")
+            .and_then(|v| v.as_array())
+            .expect("array");
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0].as_str(), Some("~/notes/personal.md"));
+    }
+
+    #[test]
+    fn test_remove_opencode_drops_instructions_key_when_empty() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let rules_dir = tmp.path().join("rules");
+        let config_path = tmp.path().join("opencode.json");
+
+        let initial = serde_json::json!({
+            "instructions": [rules_dir.join("a/AGENTS.md").to_string_lossy()]
+        });
+        std::fs::write(
+            &config_path,
+            serde_json::to_string_pretty(&initial).expect("ser"),
+        )
+        .expect("write");
+
+        let report = remove_opencode_instructions(&rules_dir, tmp.path(), false).expect("ok");
+        assert_eq!(report.user_entries_remaining, 0);
+
+        let content = std::fs::read_to_string(&config_path).expect("read");
+        let parsed: serde_json::Value = serde_json::from_str(&content).expect("parse");
+        assert!(
+            parsed.get("instructions").is_none(),
+            "instructions key should be dropped when array empties"
+        );
+    }
+
+    #[test]
+    fn test_remove_opencode_dry_run_does_not_write() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let rules_dir = tmp.path().join("rules");
+        let config_path = tmp.path().join("opencode.json");
+
+        let initial = serde_json::json!({
+            "instructions": [rules_dir.join("a/AGENTS.md").to_string_lossy()]
+        });
+        let initial_serialized = serde_json::to_string_pretty(&initial).expect("ser");
+        std::fs::write(&config_path, &initial_serialized).expect("write");
+
+        let report = remove_opencode_instructions(&rules_dir, tmp.path(), true).expect("ok");
+        assert_eq!(report.user_entries_remaining, 0);
+
+        // File content unchanged.
+        let post = std::fs::read_to_string(&config_path).expect("read");
+        assert_eq!(post, initial_serialized, "dry-run must not write");
+    }
+
+    #[test]
+    fn test_remove_opencode_no_op_when_no_agentspec_entries_present() {
+        // Pre-existing config with only user entries should not be rewritten —
+        // mtime stays unchanged.
+        let tmp = tempfile::tempdir().expect("tmp");
+        let rules_dir = tmp.path().join("rules");
+        let config_path = tmp.path().join("opencode.json");
+
+        let initial = serde_json::json!({
+            "model": "haiku",
+            "instructions": ["~/notes/personal.md"]
+        });
+        let initial_serialized = serde_json::to_string_pretty(&initial).expect("ser");
+        std::fs::write(&config_path, &initial_serialized).expect("write");
+
+        let pre_mtime = std::fs::metadata(&config_path)
+            .expect("meta")
+            .modified()
+            .expect("mtime");
+
+        // Tiny delay so a stray rewrite would produce a detectably-newer mtime.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        let report = remove_opencode_instructions(&rules_dir, tmp.path(), false).expect("ok");
+        assert_eq!(report.user_entries_remaining, 1);
+
+        let post_mtime = std::fs::metadata(&config_path)
+            .expect("meta")
+            .modified()
+            .expect("mtime");
+        assert_eq!(pre_mtime, post_mtime, "no-op cycle must not bump mtime");
+    }
+
+    #[test]
+    fn test_remove_opencode_preserves_other_top_level_keys() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let rules_dir = tmp.path().join("rules");
+        let config_path = tmp.path().join("opencode.json");
+
+        let initial = serde_json::json!({
+            "model": "haiku",
+            "instructions": [rules_dir.join("a/AGENTS.md").to_string_lossy()]
+        });
+        std::fs::write(
+            &config_path,
+            serde_json::to_string_pretty(&initial).expect("ser"),
+        )
+        .expect("write");
+
+        remove_opencode_instructions(&rules_dir, tmp.path(), false).expect("ok");
+
+        let content = std::fs::read_to_string(&config_path).expect("read");
+        let parsed: serde_json::Value = serde_json::from_str(&content).expect("parse");
+        assert_eq!(
+            parsed.get("model").and_then(|v| v.as_str()),
+            Some("haiku"),
+            "top-level keys other than `instructions` must round-trip"
         );
     }
 }

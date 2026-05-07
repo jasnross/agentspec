@@ -2621,3 +2621,223 @@ fn test_remove_dry_run_suppresses_zero_count_summary() {
         "dry-run should suppress 0-count summary, got:\n{stderr}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// `agentspec remove` tests (Phase 4: OpenCode instructions tidy)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_remove_strips_agentspec_instructions_from_opencode_json() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    write_remove_config(&dir, &[("opencode", "user")]);
+    let home = dir.join("home");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "opencode"], &dir, &home).expect("agentspec spawn");
+    assert!(
+        sync.status.success(),
+        "sync failed:\n{}",
+        String::from_utf8_lossy(&sync.stderr)
+    );
+    let opencode = home.join(".config/opencode/opencode.json");
+    assert!(opencode.exists(), "sync should write opencode.json");
+
+    let pre_value = read_jsonc_normalized(&opencode);
+    let pre_instructions = pre_value
+        .get("instructions")
+        .and_then(|v| v.as_array())
+        .expect("sync should populate instructions[]");
+    assert!(
+        !pre_instructions.is_empty(),
+        "sync should leave at least one rule path"
+    );
+
+    let remove =
+        run_agentspec(&["remove", "--provider", "opencode"], &dir, &home).expect("agentspec spawn");
+    assert!(
+        remove.status.success(),
+        "remove failed:\n{}",
+        String::from_utf8_lossy(&remove.stderr)
+    );
+
+    assert!(
+        opencode.exists(),
+        "remove must not delete the host opencode.json"
+    );
+    let post_value = read_jsonc_normalized(&opencode);
+    let rules_root = home.join(".config/opencode/rules");
+    let rules_root_str = rules_root.to_string_lossy().into_owned();
+    let leftover_under_rules = post_value
+        .get("instructions")
+        .and_then(|v| v.as_array())
+        .is_some_and(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .any(|s| s.starts_with(&rules_root_str))
+        });
+    assert!(
+        !leftover_under_rules,
+        "no instructions[] entry should remain under {rules_root_str}, got: {post_value:?}"
+    );
+    // Tighter guarantee: with no user-authored instructions, the key should be
+    // absent (or the array empty) — not simply "no leftover under rules".
+    let post_instructions = post_value.get("instructions");
+    let absent_or_empty = post_instructions.is_none()
+        || post_instructions
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(Vec::is_empty);
+    assert!(
+        absent_or_empty,
+        "instructions should be absent or empty after remove, got: {post_value:?}"
+    );
+}
+
+#[test]
+fn test_remove_drops_instructions_key_when_empty() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    write_remove_config(&dir, &[("opencode", "user")]);
+    let home = dir.join("home");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "opencode"], &dir, &home).expect("agentspec spawn");
+    assert!(sync.status.success());
+
+    let remove =
+        run_agentspec(&["remove", "--provider", "opencode"], &dir, &home).expect("agentspec spawn");
+    assert!(remove.status.success());
+
+    let opencode = home.join(".config/opencode/opencode.json");
+    let parsed = read_jsonc_normalized(&opencode);
+    assert!(
+        parsed.get("instructions").is_none(),
+        "instructions key should be dropped when array would be empty, got: {parsed:?}"
+    );
+}
+
+#[test]
+fn test_remove_preserves_user_authored_opencode_instructions() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    write_remove_config(&dir, &[("opencode", "user")]);
+    let home = dir.join("home");
+
+    let opencode = home.join(".config/opencode/opencode.json");
+    std::fs::create_dir_all(opencode.parent().expect("parent")).expect("mkdir");
+    let initial = r#"{
+  "model": "haiku",
+  "instructions": ["~/notes/personal.md"]
+}
+"#;
+    std::fs::write(&opencode, initial).expect("write initial");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "opencode"], &dir, &home).expect("agentspec spawn");
+    assert!(sync.status.success());
+
+    let remove =
+        run_agentspec(&["remove", "--provider", "opencode"], &dir, &home).expect("agentspec spawn");
+    assert!(remove.status.success());
+
+    let parsed = read_jsonc_normalized(&opencode);
+    let model = parsed.get("model").and_then(|v| v.as_str());
+    assert_eq!(model, Some("haiku"), "model must survive: {parsed:?}");
+    let instructions = parsed
+        .get("instructions")
+        .and_then(|v| v.as_array())
+        .expect("user instructions[] must survive");
+    let strs: Vec<&str> = instructions.iter().filter_map(|v| v.as_str()).collect();
+    assert_eq!(
+        strs,
+        vec!["~/notes/personal.md"],
+        "user-authored instruction must survive verbatim, got: {parsed:?}"
+    );
+}
+
+#[test]
+fn test_remove_dry_run_reports_opencode_user_entries_remaining() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    write_remove_config(&dir, &[("opencode", "user")]);
+    let home = dir.join("home");
+
+    let opencode = home.join(".config/opencode/opencode.json");
+    std::fs::create_dir_all(opencode.parent().expect("parent")).expect("mkdir");
+    let initial = r#"{
+  "instructions": ["~/notes/u1.md"]
+}
+"#;
+    std::fs::write(&opencode, initial).expect("write initial");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "opencode"], &dir, &home).expect("agentspec spawn");
+    assert!(sync.status.success());
+
+    let remove = run_agentspec(
+        &["remove", "--provider", "opencode", "--dry-run"],
+        &dir,
+        &home,
+    )
+    .expect("agentspec spawn");
+    let stderr = String::from_utf8_lossy(&remove.stderr);
+    assert!(remove.status.success(), "dry-run failed:\n{stderr}");
+    assert!(
+        stderr.contains("1 user-authored entry remain"),
+        "expected user-entries-remaining count, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("opencode.json"),
+        "expected host path in stderr, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn test_remove_opencode_handles_missing_config_file() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    write_remove_config(&dir, &[("opencode", "user")]);
+    let home = dir.join("home");
+
+    // No prior sync → no opencode.json.
+    let remove =
+        run_agentspec(&["remove", "--provider", "opencode"], &dir, &home).expect("agentspec spawn");
+    assert!(
+        remove.status.success(),
+        "remove with no opencode.json should succeed:\n{}",
+        String::from_utf8_lossy(&remove.stderr)
+    );
+    assert!(
+        !home.join(".config/opencode/opencode.json").exists(),
+        "remove must not create opencode.json"
+    );
+}
+
+#[test]
+fn test_remove_opencode_does_not_delete_host_file_when_only_agentspec_entries_present() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    write_remove_config(&dir, &[("opencode", "user")]);
+    let home = dir.join("home");
+
+    // Sync writes the only entries (no user content); remove must keep the
+    // file even though it ends up as `{}` after dropping the instructions
+    // key. The empty-object steady state is the intentional contract — a
+    // future regression that deletes the file would still pass an `exists()`
+    // check on its own, so we also verify post-state shape.
+    let sync =
+        run_agentspec(&["sync", "--provider", "opencode"], &dir, &home).expect("agentspec spawn");
+    assert!(sync.status.success());
+
+    let remove =
+        run_agentspec(&["remove", "--provider", "opencode"], &dir, &home).expect("agentspec spawn");
+    assert!(remove.status.success());
+
+    let opencode = home.join(".config/opencode/opencode.json");
+    assert!(opencode.exists(), "host file must survive even when empty");
+    let parsed = read_jsonc_normalized(&opencode);
+    assert!(
+        parsed.get("instructions").is_none(),
+        "instructions key should be dropped, got: {parsed:?}"
+    );
+}

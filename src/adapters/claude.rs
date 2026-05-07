@@ -475,14 +475,18 @@ impl PostWriteHook for ClaudeRemoveHooksPatch {
 
 /// Factory for Claude's remove post-write hook.
 ///
-/// Mirrors [`post_write_hook`] but drops the unused `dest` parameter — remove
-/// identifies its targets by reading on-disk `_agentspec_id` sentinels, so the
-/// per-kind dest dir doesn't matter to the patch. Returns `None` for
-/// non-`Hooks` kinds and for non-Merged emit modes (Path mode owns
-/// `hooks/hooks.json` outright — its cleanup is handled by `remove_batch`'s
-/// dest-dir teardown, not via a settings.json patch).
+/// `_dest` is accepted for signature symmetry with the `OpenCode` factory and
+/// `sync`'s `post_write_hook` — Claude's remove patch identifies its targets
+/// by reading on-disk `_agentspec_id` sentinels, so the per-kind dest dir
+/// doesn't affect what gets removed. The uniform signature lets `remove.rs`
+/// dispatch each provider's factory through the same `match` arm shape.
+///
+/// Returns `None` for non-`Hooks` kinds and for non-Merged emit modes (Path
+/// mode owns `hooks/hooks.json` outright — its cleanup is handled by
+/// `remove_batch`'s dest-dir teardown, not via a settings.json patch).
 pub fn remove_post_write_hook(
     kind: FileKind,
+    _dest: &Path,
     config_dir: &Path,
     emit_mode: HookEmitMode,
 ) -> Option<Box<dyn PostWriteHook>> {

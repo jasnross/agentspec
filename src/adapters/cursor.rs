@@ -353,11 +353,13 @@ impl PostWriteHook for CursorRemoveHooksPatch {
 
 /// Factory for Cursor's remove post-write hook.
 ///
-/// Mirrors [`post_write_hook`] but drops the unused `dest` parameter (remove
-/// identifies its targets by on-disk `_agentspec_id` sentinels). Returns
-/// `None` for non-`Hooks` kinds and non-Merged emit modes.
+/// `_dest` is accepted for signature symmetry with the `OpenCode` factory and
+/// `sync`'s `post_write_hook` — Cursor identifies its targets by on-disk
+/// `_agentspec_id` sentinels. The uniform signature lets `remove.rs`
+/// dispatch through identically-shaped match arms.
 pub fn remove_post_write_hook(
     kind: FileKind,
+    _dest: &Path,
     config_dir: &Path,
     emit_mode: HookEmitMode,
 ) -> Option<Box<dyn PostWriteHook>> {
