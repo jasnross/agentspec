@@ -297,6 +297,14 @@ pub fn remove_post_write_hook(
 /// doesn't bump the file's mtime). Emits a "would tidy …" line under
 /// `dry_run` for parity with the sync-side patcher and the Claude/Cursor
 /// remove patches.
+///
+/// **Trivia caveat:** like its sync-side counterpart
+/// [`patch_opencode_instructions`], this function uses plain `serde_json`
+/// rather than the CST-aware `jsonc-parser`. Comments and formatting trivia
+/// in `opencode.json` are not preserved across a remove cycle. This is a
+/// pre-existing limitation inherited from the sync path, not a regression
+/// introduced by remove. Claude's and Cursor's remove patches go through
+/// `hooks_merge::tidy_jsonc_file`, which preserves comments and trivia.
 fn remove_opencode_instructions(
     rules_dest_dir: &Path,
     opencode_config_dir: &Path,

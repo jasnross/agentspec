@@ -2841,3 +2841,212 @@ fn test_remove_opencode_does_not_delete_host_file_when_only_agentspec_entries_pr
         "instructions key should be dropped, got: {parsed:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// `agentspec remove` tests (Phase 5: cross-cutting round-trip)
+// ---------------------------------------------------------------------------
+
+#[test]
+#[allow(clippy::too_many_lines)] // narrative end-to-end test; extracting subroutines obscures it
+fn test_full_round_trip_all_providers() {
+    // End-to-end: pre-populate each provider's host config file
+    // (settings.json / hooks.json / opencode.json) with one user-authored
+    // entry, sync all three providers, then remove all three. Every host
+    // file must survive with semantic equality to its initial contents;
+    // every dest dir, every manifest must be gone. Sync's spec-file dest
+    // dirs (agents/, skills/, rules/, hooks/) start empty so no collision
+    // arises — `--force` isn't needed. The contract for unmanaged files
+    // *inside* dest dirs is exercised separately by Phase 2's
+    // `test_remove_leaves_unmanaged_files_in_dest_dir`.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    write_remove_config(
+        &dir,
+        &[("claude", "user"), ("cursor", "user"), ("opencode", "user")],
+    );
+    let home = dir.join("home");
+
+    // Seed each host file with one user-authored entry. Use file paths the
+    // adapters won't touch:
+    //   - Claude: a SessionStart entry under a unique matcher
+    //   - Cursor: a SessionStart entry tagged with no _agentspec_id
+    //   - OpenCode: an instruction outside the rules dest dir
+    let claude_settings = home.join(".claude/settings.json");
+    let cursor_hooks = home.join(".cursor/hooks.json");
+    let opencode_config = home.join(".config/opencode/opencode.json");
+    for parent in [
+        claude_settings.parent(),
+        cursor_hooks.parent(),
+        opencode_config.parent(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        std::fs::create_dir_all(parent).expect("mkdir host parent");
+    }
+
+    let claude_initial = serde_json::json!({
+        "hooks": {
+            "SessionStart": [
+                { "matcher": "user", "hooks": [{ "type": "command", "command": "u.sh" }] }
+            ]
+        }
+    });
+    let cursor_initial = serde_json::json!({
+        "version": 1,
+        "hooks": {
+            "SessionStart": [{ "type": "command", "command": "user.sh" }]
+        }
+    });
+    let opencode_initial = serde_json::json!({
+        "instructions": ["~/notes/personal.md"]
+    });
+    std::fs::write(
+        &claude_settings,
+        serde_json::to_string_pretty(&claude_initial).expect("ser"),
+    )
+    .expect("seed claude");
+    std::fs::write(
+        &cursor_hooks,
+        serde_json::to_string_pretty(&cursor_initial).expect("ser"),
+    )
+    .expect("seed cursor");
+    std::fs::write(
+        &opencode_config,
+        serde_json::to_string_pretty(&opencode_initial).expect("ser"),
+    )
+    .expect("seed opencode");
+
+    // Sync all configured providers.
+    let sync = run_agentspec(&["sync"], &dir, &home).expect("agentspec spawn");
+    assert!(
+        sync.status.success(),
+        "sync failed:\n{}",
+        String::from_utf8_lossy(&sync.stderr)
+    );
+
+    // Sanity: each provider got both user content + agentspec content.
+    // Walk the parsed value rather than relying on byte-level `.contains()`,
+    // so a future formatter change doesn't silently break the assertion and
+    // the merge layer's grouping is verified — the user's matcher group must
+    // still appear at `SessionStart[0]`, distinct from the agentspec group.
+    let claude_synced = read_jsonc_normalized(&claude_settings);
+    let claude_sessions = claude_synced
+        .pointer("/hooks/SessionStart")
+        .and_then(|v| v.as_array())
+        .expect("SessionStart array after sync");
+    let user_group_command = claude_sessions.iter().find_map(|g| {
+        let m = g.get("matcher").and_then(|v| v.as_str())?;
+        (m == "user")
+            .then(|| g.pointer("/hooks/0/command").and_then(|v| v.as_str()))
+            .flatten()
+    });
+    assert_eq!(
+        user_group_command,
+        Some("u.sh"),
+        "user matcher group must survive sync verbatim"
+    );
+    // agentspec hooks land under whatever event the spec declares — the
+    // fixture's `init-thoughts` is `user_prompt_submit`, not `SessionStart`,
+    // so walk every event under `/hooks`.
+    let claude_hooks_obj = claude_synced
+        .pointer("/hooks")
+        .and_then(|v| v.as_object())
+        .expect("Claude hooks object after sync");
+    let agentspec_present = claude_hooks_obj.values().any(|event_arr| {
+        event_arr.as_array().is_some_and(|groups| {
+            groups.iter().any(|g| {
+                g.pointer("/hooks")
+                    .and_then(|h| h.as_array())
+                    .is_some_and(|hs| hs.iter().any(|h| h.get("_agentspec_id").is_some()))
+            })
+        })
+    });
+    assert!(
+        agentspec_present,
+        "agentspec entry must be present somewhere in Claude hooks after sync"
+    );
+
+    let cursor_synced = read_jsonc_normalized(&cursor_hooks);
+    let cursor_sessions = cursor_synced
+        .pointer("/hooks/SessionStart")
+        .and_then(|v| v.as_array())
+        .expect("Cursor SessionStart array after sync");
+    let cursor_user_present = cursor_sessions
+        .iter()
+        .any(|e| e.get("command").and_then(|v| v.as_str()) == Some("user.sh"));
+    assert!(cursor_user_present, "user entry must survive Cursor sync");
+
+    // Cursor's hooks shape is flatter (no matcher-group wrapper). Walk every
+    // event for an agentspec-tagged entry — `init-thoughts` lives under
+    // `UserPromptSubmit`, not `SessionStart`.
+    let cursor_hooks_obj = cursor_synced
+        .pointer("/hooks")
+        .and_then(|v| v.as_object())
+        .expect("Cursor hooks object after sync");
+    let cursor_agentspec_present = cursor_hooks_obj.values().any(|event_arr| {
+        event_arr
+            .as_array()
+            .is_some_and(|entries| entries.iter().any(|e| e.get("_agentspec_id").is_some()))
+    });
+    assert!(
+        cursor_agentspec_present,
+        "agentspec entry must be present somewhere in Cursor hooks after sync"
+    );
+
+    let opencode_synced = read_jsonc_normalized(&opencode_config);
+    let synced_paths: Vec<&str> = opencode_synced
+        .get("instructions")
+        .and_then(|v| v.as_array())
+        .expect("instructions array")
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(synced_paths.iter().any(|p| p == &"~/notes/personal.md"));
+    assert!(synced_paths.iter().any(|p| p.contains("/rules/")));
+
+    // Reverse the sync.
+    let remove = run_agentspec(&["remove"], &dir, &home).expect("agentspec spawn");
+    assert!(
+        remove.status.success(),
+        "remove failed:\n{}",
+        String::from_utf8_lossy(&remove.stderr)
+    );
+
+    // Every manifest-tracked dest dir is gone.
+    for kind_dir in [
+        ".claude/agents",
+        ".claude/skills",
+        ".claude/rules",
+        ".claude/hooks",
+        ".cursor/agents",
+        ".cursor/skills",
+        ".cursor/rules",
+        ".cursor/hooks",
+        ".config/opencode/agents",
+        ".config/opencode/commands",
+        ".config/opencode/rules",
+        ".config/opencode/skills",
+    ] {
+        let p = home.join(kind_dir);
+        assert!(!p.exists(), "kind dir should be gone: {}", p.display());
+    }
+
+    // Every host file survives with semantic equality to its initial state.
+    let claude_post = read_jsonc_normalized(&claude_settings);
+    assert_eq!(
+        claude_post, claude_initial,
+        "claude settings.json must round-trip"
+    );
+    let cursor_post = read_jsonc_normalized(&cursor_hooks);
+    assert_eq!(
+        cursor_post, cursor_initial,
+        "cursor hooks.json must round-trip"
+    );
+    let opencode_post = read_jsonc_normalized(&opencode_config);
+    assert_eq!(
+        opencode_post, opencode_initial,
+        "opencode.json must round-trip"
+    );
+}
