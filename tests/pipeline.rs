@@ -2096,6 +2096,59 @@ fn test_remove_dry_run_writes_nothing() {
 }
 
 #[test]
+fn test_remove_dry_run_predicts_dest_dir_rmdir() {
+    // Pins the dry-run preview behavior for dest-dir teardown: when only
+    // tracked content lives under the dest dir, dry-run must report "would
+    // rmdir dest dir"; when an unmanaged file is present it must not.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    write_remove_config(&dir, &[("claude", "user")]);
+    let home = dir.join("home");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(sync.status.success());
+
+    // Clean dest dir: only manifest + tracked files. Dry-run should predict rmdir.
+    let remove = run_agentspec(
+        &["remove", "--provider", "claude", "--dry-run"],
+        &dir,
+        &home,
+    )
+    .expect("agentspec spawn");
+    let stderr = String::from_utf8_lossy(&remove.stderr);
+    assert!(remove.status.success(), "dry-run failed:\n{stderr}");
+    assert!(
+        stderr.contains("would rmdir dest dir"),
+        "dry-run should predict dest-dir rmdir when only tracked content remains, got:\n{stderr}"
+    );
+
+    // Drop an unmanaged file into agents dest dir. Dry-run must no longer
+    // claim "would rmdir dest dir" for that destination.
+    let user_file = home.join(".claude/agents/user-authored.md");
+    std::fs::write(&user_file, "user content\n").expect("failed to write user file");
+
+    let remove = run_agentspec(
+        &["remove", "--provider", "claude", "--dry-run"],
+        &dir,
+        &home,
+    )
+    .expect("agentspec spawn");
+    let stderr = String::from_utf8_lossy(&remove.stderr);
+    assert!(remove.status.success(), "dry-run failed:\n{stderr}");
+    // The agents-line should report "would remove N file(s) + manifest" without
+    // the dest-dir rmdir clause.
+    let agents_line = stderr
+        .lines()
+        .find(|l| l.contains("agents") && l.contains("would remove"))
+        .unwrap_or_else(|| panic!("expected an agents 'would remove' line, got:\n{stderr}"));
+    assert!(
+        !agents_line.contains("would rmdir"),
+        "agents line must not predict rmdir while unmanaged file is present, got:\n{agents_line}"
+    );
+}
+
+#[test]
 fn test_remove_tolerates_missing_manifest() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);

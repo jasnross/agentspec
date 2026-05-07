@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use agentspec::plan::{FileKind, FileWrite, WriteMode, WritePlan};
 use agentspec::provider::Provider;
 use anyhow::{Context, Result, bail};
+use walkdir::WalkDir;
 
 use crate::sync::manifest::{Manifest, ManifestEntry};
 
@@ -502,6 +503,63 @@ where
     Ok(())
 }
 
+/// Predicts whether `try_rmdir_if_empty` would succeed in live mode after
+/// removing every manifest-tracked file plus the manifest itself and pruning
+/// empty intermediate subdirs.
+///
+/// Returns `true` iff every entry under `dest_dir` is either:
+/// - a file equal to the manifest, or
+/// - a file whose absolute path is in `manifest.files`, or
+/// - a directory that is an ancestor of some tracked file (and would therefore
+///   be a `prune_empty_subdirs` candidate).
+///
+/// Any survivor — an untracked file, a non-ancestor empty directory, a
+/// symlink — blocks the live rmdir, so the prediction conservatively returns
+/// `false`. Walk errors are treated as survivors for the same reason.
+fn predict_dir_rmdir(dest_dir: &Path, manifest: &Manifest) -> bool {
+    let tracked_files: HashSet<PathBuf> = manifest
+        .files
+        .keys()
+        .map(|rel| dest_dir.join(rel))
+        .collect();
+    let manifest_path = Manifest::path(dest_dir);
+
+    let mut prune_dirs: HashSet<PathBuf> = HashSet::new();
+    for rel in manifest.files.keys() {
+        let mut p = PathBuf::from(rel);
+        while let Some(parent) = p.parent() {
+            if parent.as_os_str().is_empty() {
+                break;
+            }
+            prune_dirs.insert(dest_dir.join(parent));
+            p = parent.to_path_buf();
+        }
+    }
+
+    for entry in WalkDir::new(dest_dir).follow_links(false).min_depth(1) {
+        let Ok(entry) = entry else {
+            return false;
+        };
+        let path = entry.path();
+        let ft = entry.file_type();
+        if ft.is_file() {
+            if path == manifest_path {
+                continue;
+            }
+            if !tracked_files.contains(path) {
+                return false;
+            }
+        } else if ft.is_dir() {
+            if !prune_dirs.contains(path) {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+    true
+}
+
 /// Tries `fs::remove_dir(dir)`; returns `Ok(true)` on success, `Ok(false)` if
 /// the dir is non-empty or missing. Any other I/O error propagates.
 fn try_rmdir_if_empty(dir: &Path) -> Result<bool> {
@@ -576,11 +634,12 @@ fn remove_batch(w: &FileWrite, dry_run: bool) -> Result<Option<RemoveStats>> {
     // and live mode, we report the intent to remove it.
     let manifest_removed = true;
 
-    let mut dir_rmdir = false;
-    if !dry_run {
+    let dir_rmdir = if dry_run {
+        predict_dir_rmdir(&w.destination, &manifest)
+    } else {
         prune_empty_subdirs(&w.destination, manifest.files.keys())?;
-        dir_rmdir = try_rmdir_if_empty(&w.destination)?;
-    }
+        try_rmdir_if_empty(&w.destination)?
+    };
 
     Ok(Some(RemoveStats {
         provider: w.provider,
