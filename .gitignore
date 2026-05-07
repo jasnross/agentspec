@@ -13,3 +13,8 @@ Thumbs.db
 
 # Local config files
 .claude/settings.local.json
+
+# graphify
+graphify-out/manifest.json
+graphify-out/cost.json
+graphify-out/cache/
