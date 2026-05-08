@@ -2,9 +2,6 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
-use crate::adapters::{
-    claude_model_facing_name, cursor_model_facing_name, opencode_model_facing_name,
-};
 use crate::compile::AdapterConfig;
 use crate::provider::Provider;
 use crate::spec::NormalizedSpec;
@@ -141,14 +138,9 @@ impl TemplateContext {
         provider: Provider,
         adapter_config: Option<&AdapterConfig>,
     ) -> Self {
-        let name_fn: fn(&NormalizedSpec, Option<&AdapterConfig>) -> String = match provider {
-            Provider::Claude => claude_model_facing_name,
-            Provider::Cursor => cursor_model_facing_name,
-            Provider::OpenCode => opencode_model_facing_name,
-        };
-
+        let adapter = provider.adapter();
         Self {
-            specs: build_context(specs, |s| name_fn(s, adapter_config)),
+            specs: build_context(specs, |s| adapter.model_facing_name(s, adapter_config)),
         }
     }
 }

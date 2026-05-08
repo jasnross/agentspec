@@ -321,6 +321,20 @@ impl SyncMode {
             Self::Project => HookEmitMode::MergedProject,
         }
     }
+
+    /// Translate the binary-side `SyncMode` to the library-side
+    /// `SyncDestinationMode` consumed by `ProviderAdapter::config_dir`.
+    ///
+    /// Lives here for the same reason as `to_hook_emit_mode`: the library
+    /// must not import `SyncMode`, so the binary translates at the boundary.
+    pub fn to_destination_mode(self) -> agentspec::adapters::SyncDestinationMode {
+        use agentspec::adapters::SyncDestinationMode;
+        match self {
+            Self::User => SyncDestinationMode::User,
+            Self::Project => SyncDestinationMode::Project,
+            Self::Path => SyncDestinationMode::Path,
+        }
+    }
 }
 
 /// CLI flag overrides for sync target resolution.

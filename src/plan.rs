@@ -48,49 +48,10 @@ impl std::fmt::Display for FileKind {
     }
 }
 
-/// Returns the file kinds generated for a given provider.
-///
-/// `Hooks` is included only for `Claude` and `Cursor`; `OpenCode` does not
-/// receive hook output in v1 (the hook-skip warning is surfaced separately
-/// via compile-time diagnostics).
-pub fn file_kinds(provider: Provider) -> Vec<FileKind> {
-    match provider {
-        Provider::Claude | Provider::Cursor => vec![
-            FileKind::Agents,
-            FileKind::Rules,
-            FileKind::Skills,
-            FileKind::Hooks,
-        ],
-        Provider::OpenCode => vec![
-            FileKind::Agents,
-            FileKind::Commands,
-            FileKind::Rules,
-            FileKind::Skills,
-        ],
-    }
-}
-
-// ── Destination resolution helpers ──────────────────────────────────────────
-
-/// Returns the user-level destination directory for a provider/kind pair
-/// (e.g. `~/.claude/agents`, `~/.config/opencode/skills`).
-pub fn user_dest_dir(provider: Provider, kind: FileKind, home: &Path) -> PathBuf {
-    match provider {
-        Provider::Claude => home.join(".claude").join(kind.dir_name()),
-        Provider::Cursor => home.join(".cursor").join(kind.dir_name()),
-        Provider::OpenCode => home.join(".config").join("opencode").join(kind.dir_name()),
-    }
-}
-
-/// Returns the project-local destination directory for a provider/kind pair.
-pub fn project_dest_dir(provider: Provider, kind: FileKind, cwd: &Path) -> PathBuf {
-    let tool_dir = match provider {
-        Provider::Claude => ".claude",
-        Provider::Cursor => ".cursor",
-        Provider::OpenCode => ".opencode",
-    };
-    cwd.join(tool_dir).join(kind.dir_name())
-}
+// File-kind enumeration and per-provider dest-dir resolution moved to the
+// `ProviderAdapter` trait (`file_kinds`, `user_dest_dir`, `project_dest_dir`).
+// Reach them via `provider.adapter().<method>()` so non-adapter modules don't
+// branch on `Provider`.
 
 /// Builds a plan that writes compiled files to an output directory (e.g. `generated/`).
 ///
@@ -329,35 +290,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_file_kinds_claude() {
-        let kinds = file_kinds(Provider::Claude);
-        assert!(kinds.contains(&FileKind::Agents));
-        assert!(kinds.contains(&FileKind::Rules));
-        assert!(kinds.contains(&FileKind::Skills));
-        assert!(kinds.contains(&FileKind::Hooks));
-        assert!(!kinds.contains(&FileKind::Commands));
-    }
-
-    #[test]
-    fn test_file_kinds_opencode_excludes_hooks() {
-        let kinds = file_kinds(Provider::OpenCode);
-        assert!(kinds.contains(&FileKind::Agents));
-        assert!(kinds.contains(&FileKind::Commands));
-        assert!(kinds.contains(&FileKind::Rules));
-        assert!(kinds.contains(&FileKind::Skills));
-        assert!(
-            !kinds.contains(&FileKind::Hooks),
-            "OpenCode does not receive hook output in v1"
-        );
-    }
-
-    #[test]
-    fn test_file_kinds_cursor_includes_hooks() {
-        let kinds = file_kinds(Provider::Cursor);
-        assert!(kinds.contains(&FileKind::Hooks));
-    }
-
-    #[test]
     fn test_file_kind_hooks_dir_name() {
         assert_eq!(FileKind::Hooks.dir_name(), "hooks");
     }
@@ -377,22 +309,6 @@ mod tests {
     fn test_expand_tilde_absolute_unchanged() {
         let result = expand_tilde("/absolute/path", Path::new("/home/user"));
         assert_eq!(result, PathBuf::from("/absolute/path"));
-    }
-
-    #[test]
-    fn test_user_dest_dir_claude_agents() {
-        let result = user_dest_dir(Provider::Claude, FileKind::Agents, Path::new("/home/user"));
-        assert_eq!(result, PathBuf::from("/home/user/.claude/agents"));
-    }
-
-    #[test]
-    fn test_project_dest_dir_cursor_skills() {
-        let result = project_dest_dir(
-            Provider::Cursor,
-            FileKind::Skills,
-            Path::new("/work/project"),
-        );
-        assert_eq!(result, PathBuf::from("/work/project/.cursor/skills"));
     }
 
     #[test]

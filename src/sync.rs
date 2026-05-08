@@ -2,14 +2,8 @@ pub(crate) mod manifest;
 
 use std::path::{Path, PathBuf};
 
-use agentspec::adapters::{
-    claude_post_write_hook, cursor_post_write_hook, opencode_post_write_hook,
-};
 use agentspec::compile::{CompileResult, EmittedHookEntry, GeneratedFile};
-use agentspec::plan::{
-    FileKind, ManifestTrackedWrite, SyncPlan, expand_tilde, file_kinds, project_dest_dir,
-    user_dest_dir,
-};
+use agentspec::plan::{FileKind, ManifestTrackedWrite, SyncPlan, expand_tilde};
 use agentspec::provider::Provider;
 use anyhow::{Context, Result, bail};
 
@@ -30,19 +24,20 @@ pub fn sync_plan(
     let mut post_write_hooks = Vec::new();
 
     for (provider, target) in targets {
+        let adapter = provider.adapter();
         let emit_mode = target.mode.to_hook_emit_mode();
         let owned_entries: &[EmittedHookEntry] =
             result.hooks.get(provider).map_or(&[], Vec::as_slice);
         // `config_dir` does not depend on `kind`, so compute it once per
         // (provider, target) and reuse across the inner loop.
-        let config_dir = match *provider {
-            Provider::Claude | Provider::Cursor => {
-                provider_config_dir(*provider, target, home, cwd)
-            }
-            Provider::OpenCode => opencode_config_dir(target, home, cwd),
-        };
+        let config_dir = adapter.config_dir(
+            target.mode.to_destination_mode(),
+            target.dir.as_deref(),
+            home,
+            cwd,
+        );
 
-        for kind in file_kinds(*provider) {
+        for &kind in adapter.file_kinds() {
             let dest = resolve_dest_dir(*provider, kind, target, home, cwd)?;
             let files = files_for_kind(result, *provider, kind);
 
@@ -58,28 +53,15 @@ pub fn sync_plan(
             // `target.overwrite` reflects `--force`; the Claude/Cursor merge
             // patchers consume it to decide whether to replace a user-authored
             // non-object `hooks` value with `{}`. OpenCode's instructions
-            // patcher doesn't use it.
-            let hook = match *provider {
-                Provider::Claude => claude_post_write_hook(
-                    kind,
-                    &dest,
-                    &config_dir,
-                    emit_mode,
-                    owned_entries,
-                    target.overwrite,
-                ),
-                Provider::Cursor => cursor_post_write_hook(
-                    kind,
-                    &dest,
-                    &config_dir,
-                    emit_mode,
-                    owned_entries,
-                    target.overwrite,
-                ),
-                Provider::OpenCode => {
-                    opencode_post_write_hook(kind, &dest, &config_dir, emit_mode, owned_entries)
-                }
-            };
+            // patcher ignores it.
+            let hook = adapter.post_write_hook(
+                kind,
+                &dest,
+                &config_dir,
+                emit_mode,
+                owned_entries,
+                target.overwrite,
+            );
             if let Some(h) = hook {
                 post_write_hooks.push(h);
             }
@@ -137,8 +119,8 @@ pub fn resolve_sync_targets(
 
 /// Resolves the destination directory for a provider/kind pair from a `SyncTargetConfig`.
 ///
-/// - `User` → `user_dest_dir`
-/// - `Project` → `project_dest_dir`
+/// - `User` → `ProviderAdapter::user_dest_dir`
+/// - `Project` → `ProviderAdapter::project_dest_dir`
 /// - `Path` → per-kind explicit field from `config`; error if the kind's field is `None`
 pub(crate) fn resolve_dest_dir(
     provider: Provider,
@@ -147,9 +129,10 @@ pub(crate) fn resolve_dest_dir(
     home: &Path,
     cwd: &Path,
 ) -> Result<PathBuf> {
+    let adapter = provider.adapter();
     match config.mode {
-        SyncMode::User => Ok(user_dest_dir(provider, kind, home)),
-        SyncMode::Project => Ok(project_dest_dir(provider, kind, cwd)),
+        SyncMode::User => Ok(adapter.user_dest_dir(home, kind)),
+        SyncMode::Project => Ok(adapter.project_dest_dir(cwd, kind)),
         SyncMode::Path => {
             let base = config.dir.as_deref().with_context(|| {
                 format!("sync mode is 'path' but no `dir` configured for provider '{provider}'")
@@ -187,55 +170,6 @@ fn files_for_kind(
         .filter(|f| f.path.starts_with(kind.dir_name()))
         .cloned()
         .collect()
-}
-
-/// Resolves the `OpenCode` config directory for a sync target.
-///
-/// In `Path` mode, derives the config dir from the rules path's parent (convention:
-/// `opencode.json` lives one level above `rules/`). Falls back to the user-level
-/// config dir if the rules path is absent or has no parent.
-pub(crate) fn opencode_config_dir(target: &SyncTargetConfig, home: &Path, cwd: &Path) -> PathBuf {
-    match target.mode {
-        SyncMode::User => home.join(".config").join("opencode"),
-        SyncMode::Project => cwd.join(".opencode"),
-        SyncMode::Path => target.dir.as_deref().map_or_else(
-            || home.join(".config").join("opencode"),
-            |d| expand_tilde(d, home),
-        ),
-    }
-}
-
-/// Resolves a provider's config directory (e.g., `~/.claude`, `.claude`,
-/// `<plugin>/`) for use as the parent of the hooks destination and the
-/// containing directory of the hooks-merge target file (`settings.json` for
-/// Claude, `hooks.json` for Cursor). Diverges from `opencode_config_dir`
-/// because Claude and Cursor use single-level dotdirs (`.claude` / `.cursor`)
-/// while `OpenCode` lives under `~/.config/opencode`.
-pub(crate) fn provider_config_dir(
-    provider: Provider,
-    target: &SyncTargetConfig,
-    home: &Path,
-    cwd: &Path,
-) -> PathBuf {
-    // `OpenCode` is intentionally absent: `sync_plan` routes it through
-    // `opencode_config_dir`, so reaching this arm would mean a future refactor
-    // wired OpenCode in incorrectly. Panic loudly rather than returning a
-    // silently-wrong Claude-shaped path.
-    let dotdir = match provider {
-        Provider::Claude => ".claude",
-        Provider::Cursor => ".cursor",
-        Provider::OpenCode => {
-            unreachable!("OpenCode is routed through opencode_config_dir, not provider_config_dir")
-        }
-    };
-    match target.mode {
-        SyncMode::User => home.join(dotdir),
-        SyncMode::Project => cwd.join(dotdir),
-        SyncMode::Path => target
-            .dir
-            .as_deref()
-            .map_or_else(|| home.join(dotdir), |d| expand_tilde(d, home)),
-    }
 }
 
 #[cfg(test)]

@@ -7,7 +7,6 @@ use minijinja::{Environment, Value};
 use walkdir::WalkDir;
 
 use super::context::TemplateContext;
-use crate::adapters::{claude_body_tool_name, cursor_body_tool_name, opencode_body_tool_name};
 use crate::provider::Provider;
 use crate::spec::{NormalizedSpec, ToolFrontmatter};
 
@@ -122,13 +121,10 @@ fn resolve_tool(name: &str, provider: Option<Provider>) -> Result<String, miniji
             format!("unknown canonical tool name '{name}'"),
         )
     })?;
-    let resolved = match provider {
-        Some(Provider::Claude) => claude_body_tool_name(&tool),
-        Some(Provider::Cursor) => cursor_body_tool_name(&tool),
-        Some(Provider::OpenCode) => opencode_body_tool_name(&tool),
-        None => return Ok(name.to_owned()),
+    let Some(p) = provider else {
+        return Ok(name.to_owned());
     };
-    Ok(resolved.to_owned())
+    Ok(p.adapter().body_tool_name(&tool).to_owned())
 }
 
 #[cfg(test)]

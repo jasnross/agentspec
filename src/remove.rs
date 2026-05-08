@@ -1,15 +1,12 @@
 use std::path::Path;
 
-use agentspec::adapters::{
-    claude_remove_post_write_hook, cursor_remove_post_write_hook, opencode_remove_post_write_hook,
-};
-use agentspec::plan::{RemovePlan, RemoveWrite, file_kinds};
+use agentspec::plan::{RemovePlan, RemoveWrite};
 use agentspec::provider::Provider;
 use anyhow::{Result, bail};
 
 use crate::cli::RemoveArgs;
 use crate::config::{AgentspecConfig, SyncFlags, SyncTargetConfig};
-use crate::sync::{self, opencode_config_dir, provider_config_dir};
+use crate::sync;
 
 /// Validates and resolves remove targets from config and CLI args.
 ///
@@ -74,36 +71,24 @@ pub fn remove_plan(
     let mut post_write_hooks = Vec::new();
 
     for (provider, target) in targets {
+        let adapter = provider.adapter();
         let emit_mode = target.mode.to_hook_emit_mode();
-        // Hoist `config_dir` out of the inner loop — mirrors `sync_plan`'s
-        // shape (`sync.rs:38-43`).
-        let config_dir = match *provider {
-            Provider::Claude | Provider::Cursor => {
-                provider_config_dir(*provider, target, home, cwd)
-            }
-            Provider::OpenCode => opencode_config_dir(target, home, cwd),
-        };
+        // Hoist `config_dir` out of the inner loop — mirrors `sync_plan`'s shape.
+        let config_dir = adapter.config_dir(
+            target.mode.to_destination_mode(),
+            target.dir.as_deref(),
+            home,
+            cwd,
+        );
 
-        // Each (provider, kind) gets a Remove batch; alongside, every
-        // adapter's `remove_post_write_hook` is offered the chance to claim
-        // this kind. Each factory returns `None` for kinds it doesn't care
-        // about (Claude/Cursor key off `Hooks`; `OpenCode` keys off `Rules`),
-        // so the per-arm shape is uniform — no provider-specific logic
-        // leaks into this dispatch.
-        for kind in file_kinds(*provider) {
+        // Each (provider, kind) gets a Remove batch; the adapter's
+        // `remove_post_write_hook` is offered the chance to claim this kind.
+        // Each factory returns `None` for kinds it doesn't care about
+        // (Claude/Cursor key off `Hooks`; `OpenCode` keys off `Rules`).
+        for &kind in adapter.file_kinds() {
             let destination = sync::resolve_dest_dir(*provider, kind, target, home, cwd)?;
 
-            let hook = match *provider {
-                Provider::Claude => {
-                    claude_remove_post_write_hook(kind, &destination, &config_dir, emit_mode)
-                }
-                Provider::Cursor => {
-                    cursor_remove_post_write_hook(kind, &destination, &config_dir, emit_mode)
-                }
-                Provider::OpenCode => {
-                    opencode_remove_post_write_hook(kind, &destination, &config_dir, emit_mode)
-                }
-            };
+            let hook = adapter.remove_post_write_hook(kind, &destination, &config_dir, emit_mode);
             if let Some(h) = hook {
                 post_write_hooks.push(h);
             }

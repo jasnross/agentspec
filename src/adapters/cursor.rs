@@ -1,14 +1,15 @@
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
 
+use super::{HookAdapter, ProviderAdapter, SyncDestinationMode};
 use crate::compile::{
     AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode, HookSynthesis,
     build_emitted_hook_entries, build_hook_script_files,
 };
-use crate::plan::{FileKind, PostWriteHook};
+use crate::plan::{FileKind, PostWriteHook, expand_tilde};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
 use crate::spec::{
@@ -41,18 +42,211 @@ struct CursorRuleFrontmatter {
     always_apply: bool,
 }
 
-pub fn adapt_cursor(
-    spec: NormalizedSpec,
-    presets: &ProviderPresetsMap,
-    cfg: Option<&AdapterConfig>,
-) -> Result<Vec<GeneratedFile>> {
-    match spec {
-        NormalizedSpec::Agent(s) => adapt_agent_spec(s, presets, cfg),
-        NormalizedSpec::Skill(s) => adapt_skill_spec(s, cfg),
-        NormalizedSpec::Rule(s) => adapt_rule_spec(s, cfg),
-        // Hook scripts are emitted by `synthesize_hooks` once per provider —
-        // see the matching note in `claude.rs::adapt_claude` for the rationale.
-        NormalizedSpec::Hook(_) => Ok(Vec::new()),
+/// Zero-sized adapter for the Cursor provider.
+pub struct CursorAdapter;
+
+impl ProviderAdapter for CursorAdapter {
+    fn adapt(
+        &self,
+        spec: NormalizedSpec,
+        presets: &ProviderPresetsMap,
+        cfg: Option<&AdapterConfig>,
+    ) -> Result<Vec<GeneratedFile>> {
+        match spec {
+            NormalizedSpec::Agent(s) => adapt_agent_spec(s, presets, cfg),
+            NormalizedSpec::Skill(s) => adapt_skill_spec(s, cfg),
+            NormalizedSpec::Rule(s) => adapt_rule_spec(s, cfg),
+            // Hook scripts are emitted by `synthesize_hooks` once per provider —
+            // see the matching note in `claude::ClaudeAdapter::adapt` for the
+            // rationale.
+            NormalizedSpec::Hook(_) => Ok(Vec::new()),
+        }
+    }
+
+    /// Resolve a canonical tool to the name a Cursor spec body should reference.
+    ///
+    /// Returns either a display label sourced from `cursor.com/docs/agent/tools`
+    /// (or `cursor.com/docs/subagents` for `Subagent`) or a descriptive phrase
+    /// when Cursor documents no equivalent capability. Descriptive-phrase arms
+    /// are marked inline.
+    fn body_tool_name(&self, tool: &ToolFrontmatter) -> &'static str {
+        match tool {
+            ToolFrontmatter::Read => "Read files",
+            ToolFrontmatter::Write | ToolFrontmatter::Edit => "Edit files",
+            ToolFrontmatter::Grep | ToolFrontmatter::Glob => "Search files and folders",
+            ToolFrontmatter::Bash => "Run shell commands",
+            ToolFrontmatter::WebSearch => "Web",
+            ToolFrontmatter::WebFetch => "URL fetcher", // descriptive: Cursor docs name no URL-fetch tool
+            ToolFrontmatter::Question => "Ask questions",
+            ToolFrontmatter::Tasks => "TODO tracker", // descriptive: Cursor docs name no TODO-list tool
+            ToolFrontmatter::Subagent => "Task",
+            ToolFrontmatter::Skill => "Skill runner", // descriptive: Cursor docs name no skill-invocation tool
+        }
+    }
+
+    /// Returns the name the AI model uses to reference this spec.
+    ///
+    /// For Cursor, all spec types use `{content_prefix}{id}` when a content prefix
+    /// is configured (either explicitly or derived from `prefix`).
+    fn model_facing_name(&self, spec: &NormalizedSpec, cfg: Option<&AdapterConfig>) -> String {
+        let id = spec.id();
+        match cfg.and_then(AdapterConfig::content_prefix) {
+            Some(prefix) => format!("{prefix}{id}"),
+            None => id.to_owned(),
+        }
+    }
+
+    fn post_write_hook(
+        &self,
+        kind: FileKind,
+        _dest: &Path,
+        config_dir: &Path,
+        emit_mode: HookEmitMode,
+        owned_entries: &[EmittedHookEntry],
+        overwrite: bool,
+    ) -> Option<Box<dyn PostWriteHook>> {
+        if kind != FileKind::Hooks {
+            return None;
+        }
+        if !emit_mode.is_merged() {
+            return None;
+        }
+        Some(Box::new(CursorHooksPatch {
+            hooks_path: config_dir.join("hooks.json"),
+            owned_entries: owned_entries.to_vec(),
+            force: overwrite,
+        }))
+    }
+
+    /// Factory for Cursor's remove post-write hook.
+    ///
+    /// `_dest` is accepted for signature symmetry — Cursor identifies its
+    /// targets by on-disk `_agentspec_id` sentinels.
+    fn remove_post_write_hook(
+        &self,
+        kind: FileKind,
+        _dest: &Path,
+        config_dir: &Path,
+        emit_mode: HookEmitMode,
+    ) -> Option<Box<dyn PostWriteHook>> {
+        if kind != FileKind::Hooks {
+            return None;
+        }
+        if !emit_mode.is_merged() {
+            return None;
+        }
+        Some(Box::new(CursorRemoveHooksPatch {
+            hooks_path: config_dir.join("hooks.json"),
+        }))
+    }
+
+    fn file_kinds(&self) -> &'static [FileKind] {
+        &[
+            FileKind::Agents,
+            FileKind::Rules,
+            FileKind::Skills,
+            FileKind::Hooks,
+        ]
+    }
+
+    fn user_dest_dir(&self, home: &Path, kind: FileKind) -> PathBuf {
+        home.join(".cursor").join(kind.dir_name())
+    }
+
+    fn project_dest_dir(&self, cwd: &Path, kind: FileKind) -> PathBuf {
+        cwd.join(".cursor").join(kind.dir_name())
+    }
+
+    fn config_dir(
+        &self,
+        mode: SyncDestinationMode,
+        dir: Option<&str>,
+        home: &Path,
+        cwd: &Path,
+    ) -> PathBuf {
+        match mode {
+            SyncDestinationMode::User => home.join(".cursor"),
+            SyncDestinationMode::Project => cwd.join(".cursor"),
+            SyncDestinationMode::Path => {
+                dir.map_or_else(|| home.join(".cursor"), |d| expand_tilde(d, home))
+            }
+        }
+    }
+}
+
+impl HookAdapter for CursorAdapter {
+    /// Synthesize the per-provider `hooks/hooks.json` plus the canonical entry
+    /// list for the downstream merged-mode merge.
+    fn synthesize_hooks(
+        &self,
+        specs: &[&NormalizedHookSpec],
+        cfg: Option<&AdapterConfig>,
+    ) -> Result<HookSynthesis> {
+        if specs.is_empty() {
+            return Ok(HookSynthesis::default());
+        }
+
+        let emit_mode = cfg
+            .and_then(|c| c.hook_emit_mode)
+            .unwrap_or(HookEmitMode::Bundled);
+
+        let entries = build_emitted_hook_entries(specs, Provider::Cursor, emit_mode);
+        let mut files = build_hook_script_files(Provider::Cursor, specs);
+        if matches!(emit_mode, HookEmitMode::Bundled) {
+            let json = build_cursor_hooks_json(&entries)?;
+            files.push(GeneratedFile::text(
+                Provider::Cursor,
+                Path::new("hooks").join("hooks.json"),
+                json,
+            ));
+        }
+        Ok(HookSynthesis { entries, files })
+    }
+
+    /// Translate a canonical `HookEvent` to Cursor's camelCase event name.
+    ///
+    /// Note that `user_prompt_submit` maps to `beforeSubmitPrompt` — not a simple
+    /// casing transform. See `thoughts/research/2026-05-03-provider-agnostic-hooks-comparison.md`
+    /// §2.3 for the documented event list. Several mappings (postToolUseFailure,
+    /// sessionStart, sessionEnd, subagentStart, subagentStop) are based on the
+    /// research doc's listing and may need adjustment if Cursor's docs diverge —
+    /// empirical verification against a real Cursor build is still pending.
+    fn event_name(&self, event: HookEvent) -> &'static str {
+        match event {
+            HookEvent::PreToolUse => "preToolUse",
+            HookEvent::PostToolUse => "postToolUse",
+            HookEvent::PostToolUseFailure => "postToolUseFailure",
+            HookEvent::SessionStart => "sessionStart",
+            HookEvent::SessionEnd => "sessionEnd",
+            HookEvent::Stop => "stop",
+            HookEvent::PreCompact => "preCompact",
+            HookEvent::SubagentStart => "subagentStart",
+            HookEvent::SubagentStop => "subagentStop",
+            HookEvent::UserPromptSubmit => "beforeSubmitPrompt",
+        }
+    }
+
+    /// Build the JSON object for one entry in Cursor's `hooks.json` event array.
+    /// Cursor differs from Claude by placing `matcher` on each entry directly
+    /// (Claude wraps entries in matcher groups). The `_agentspec_id` sentinel is
+    /// emitted in both shapes for symmetric ownership tracking.
+    fn entry_to_json(&self, e: &EmittedHookEntry) -> serde_json::Value {
+        use serde_json::{Map, json};
+        let mut obj = Map::new();
+        obj.insert("type".to_string(), json!("command"));
+        if let Some(m) = &e.matcher {
+            obj.insert("matcher".to_string(), json!(m));
+        }
+        obj.insert("command".to_string(), json!(e.command));
+        if let Some(t) = e.timeout {
+            obj.insert("timeout".to_string(), json!(t));
+        }
+        obj.insert("_agentspec_id".to_string(), json!(e.agentspec_id));
+        serde_json::Value::Object(obj)
+    }
+
+    fn hook_command_dotdir(&self) -> &'static str {
+        ".cursor"
     }
 }
 
@@ -158,122 +352,29 @@ fn adapt_rule_spec(
     Ok(vec![GeneratedFile::text(Provider::Cursor, path, content)])
 }
 
-/// Resolve a canonical tool to the name a Cursor spec body should reference.
-///
-/// Returns either a display label sourced from `cursor.com/docs/agent/tools`
-/// (or `cursor.com/docs/subagents` for `Subagent`) or a descriptive phrase
-/// when Cursor documents no equivalent capability. Descriptive-phrase arms
-/// are marked inline.
-pub fn body_tool_name(tool: &ToolFrontmatter) -> &'static str {
-    match tool {
-        ToolFrontmatter::Read => "Read files",
-        ToolFrontmatter::Write | ToolFrontmatter::Edit => "Edit files",
-        ToolFrontmatter::Grep | ToolFrontmatter::Glob => "Search files and folders",
-        ToolFrontmatter::Bash => "Run shell commands",
-        ToolFrontmatter::WebSearch => "Web",
-        ToolFrontmatter::WebFetch => "URL fetcher", // descriptive: Cursor docs name no URL-fetch tool
-        ToolFrontmatter::Question => "Ask questions",
-        ToolFrontmatter::Tasks => "TODO tracker", // descriptive: Cursor docs name no TODO-list tool
-        ToolFrontmatter::Subagent => "Task",
-        ToolFrontmatter::Skill => "Skill runner", // descriptive: Cursor docs name no skill-invocation tool
-    }
-}
-
 // ── hooks.json synthesis ────────────────────────────────────────────────────
 
 // Cursor's documented `hooks.json` shape (see <https://cursor.com/docs/hooks>):
 //   { "version": 1, "hooks": { "<eventName>": [<entry>, <entry>, ...] } }
 //
-// `entry_to_cursor_json` is the per-entry shape (matcher per-entry, sentinel
-// field). Mirrors `claude::entry_to_claude_json`; the CST-aware merge layer
-// imports both helpers so the two emission paths stay in lockstep.
-
-/// Build the JSON object for one entry in Cursor's `hooks.json` event array.
-/// Cursor differs from Claude by placing `matcher` on each entry directly
-/// (Claude wraps entries in matcher groups). The `_agentspec_id` sentinel is
-/// emitted in both shapes for symmetric ownership tracking.
-pub fn entry_to_cursor_json(e: &EmittedHookEntry) -> serde_json::Value {
-    use serde_json::{Map, json};
-    let mut obj = Map::new();
-    obj.insert("type".to_string(), json!("command"));
-    if let Some(m) = &e.matcher {
-        obj.insert("matcher".to_string(), json!(m));
-    }
-    obj.insert("command".to_string(), json!(e.command));
-    if let Some(t) = e.timeout {
-        obj.insert("timeout".to_string(), json!(t));
-    }
-    obj.insert("_agentspec_id".to_string(), json!(e.agentspec_id));
-    serde_json::Value::Object(obj)
-}
-
-/// Translate a canonical `HookEvent` to Cursor's camelCase event name.
-///
-/// Exposed publicly so the CST-aware merge layer (`hooks_merge`) can
-/// resolve event names without re-deriving the mapping.
-///
-/// Note that `user_prompt_submit` maps to `beforeSubmitPrompt` — not a simple
-/// casing transform. See `thoughts/research/2026-05-03-provider-agnostic-hooks-comparison.md`
-/// §2.3 for the documented event list. Several mappings (postToolUseFailure,
-/// sessionStart, sessionEnd, subagentStart, subagentStop) are based on the
-/// research doc's listing and may need adjustment if Cursor's docs diverge —
-/// empirical verification against a real Cursor build is still pending.
-pub fn cursor_event_name(event: HookEvent) -> &'static str {
-    match event {
-        HookEvent::PreToolUse => "preToolUse",
-        HookEvent::PostToolUse => "postToolUse",
-        HookEvent::PostToolUseFailure => "postToolUseFailure",
-        HookEvent::SessionStart => "sessionStart",
-        HookEvent::SessionEnd => "sessionEnd",
-        HookEvent::Stop => "stop",
-        HookEvent::PreCompact => "preCompact",
-        HookEvent::SubagentStart => "subagentStart",
-        HookEvent::SubagentStop => "subagentStop",
-        HookEvent::UserPromptSubmit => "beforeSubmitPrompt",
-    }
-}
-
-/// Synthesize the per-provider `hooks/hooks.json` plus the canonical entry
-/// list for the downstream merged-mode merge.
-pub fn synthesize_hooks(
-    specs: &[&NormalizedHookSpec],
-    cfg: Option<&AdapterConfig>,
-) -> Result<HookSynthesis> {
-    if specs.is_empty() {
-        return Ok(HookSynthesis::default());
-    }
-
-    let emit_mode = cfg
-        .and_then(|c| c.hook_emit_mode)
-        .unwrap_or(HookEmitMode::Bundled);
-
-    let entries = build_emitted_hook_entries(specs, Provider::Cursor, emit_mode);
-    let mut files = build_hook_script_files(Provider::Cursor, specs);
-    if matches!(emit_mode, HookEmitMode::Bundled) {
-        let json = build_cursor_hooks_json(&entries)?;
-        files.push(GeneratedFile::text(
-            Provider::Cursor,
-            Path::new("hooks").join("hooks.json"),
-            json,
-        ));
-    }
-    Ok(HookSynthesis { entries, files })
-}
+// Per-entry shape lives on `HookAdapter::entry_to_json` (matcher per-entry,
+// sentinel field). The CST-aware merge layer calls it via the trait so the
+// two emission paths stay in lockstep.
 
 /// Cursor places the `matcher` on each entry directly; entries within an
 /// event preserve insertion order from the spec list. Per-entry serialization
-/// delegates to the local `entry_to_cursor_json` helper so the bundled
-/// emission path and the merged-mode merge layer share one source of truth
-/// for the entry shape.
+/// delegates to `CursorAdapter::entry_to_json` so the bundled emission path
+/// and the merged-mode merge layer share one source of truth for the entry
+/// shape.
 fn build_cursor_hooks_json(entries: &[EmittedHookEntry]) -> Result<String> {
     use serde_json::{Map, Value, json};
 
     let mut by_event: BTreeMap<&'static str, Vec<Value>> = BTreeMap::new();
     for entry in entries {
         by_event
-            .entry(cursor_event_name(entry.event))
+            .entry(CursorAdapter.event_name(entry.event))
             .or_default()
-            .push(entry_to_cursor_json(entry));
+            .push(CursorAdapter.entry_to_json(entry));
     }
 
     let mut hooks_map = Map::new();
@@ -296,7 +397,7 @@ fn build_cursor_hooks_json(entries: &[EmittedHookEntry]) -> Result<String> {
 /// modes; Path mode emits the file directly.
 #[derive(Debug)]
 pub struct CursorHooksPatch {
-    hooks_path: std::path::PathBuf,
+    hooks_path: PathBuf,
     owned_entries: Vec<EmittedHookEntry>,
     /// `--force`/`overwrite=true`: replace a non-object `hooks` value with
     /// `{}` before merging, instead of erroring.
@@ -314,34 +415,13 @@ impl PostWriteHook for CursorHooksPatch {
     }
 }
 
-pub fn post_write_hook(
-    kind: FileKind,
-    _dest: &Path,
-    config_dir: &Path,
-    emit_mode: HookEmitMode,
-    owned_entries: &[EmittedHookEntry],
-    force: bool,
-) -> Option<Box<dyn PostWriteHook>> {
-    if kind != FileKind::Hooks {
-        return None;
-    }
-    if !emit_mode.is_merged() {
-        return None;
-    }
-    Some(Box::new(CursorHooksPatch {
-        hooks_path: config_dir.join("hooks.json"),
-        owned_entries: owned_entries.to_vec(),
-        force,
-    }))
-}
-
 /// Post-write hook that strips agentspec-owned hook entries from Cursor's
 /// `hooks.json` and tidies emptied containers, paralleling
 /// [`CursorHooksPatch`] but in reverse. Ownership is identified by the
 /// on-disk `_agentspec_id` sentinel.
 #[derive(Debug)]
 pub struct CursorRemoveHooksPatch {
-    hooks_path: std::path::PathBuf,
+    hooks_path: PathBuf,
 }
 
 impl PostWriteHook for CursorRemoveHooksPatch {
@@ -349,41 +429,6 @@ impl PostWriteHook for CursorRemoveHooksPatch {
         let report = crate::hooks_merge::remove_cursor_hooks(&self.hooks_path, dry_run)?;
         report.print_summary(dry_run);
         Ok(())
-    }
-}
-
-/// Factory for Cursor's remove post-write hook.
-///
-/// `_dest` is accepted for signature symmetry with the `OpenCode` factory and
-/// `sync`'s `post_write_hook` — Cursor identifies its targets by on-disk
-/// `_agentspec_id` sentinels. The uniform signature lets `remove.rs`
-/// dispatch through identically-shaped match arms.
-pub fn remove_post_write_hook(
-    kind: FileKind,
-    _dest: &Path,
-    config_dir: &Path,
-    emit_mode: HookEmitMode,
-) -> Option<Box<dyn PostWriteHook>> {
-    if kind != FileKind::Hooks {
-        return None;
-    }
-    if !emit_mode.is_merged() {
-        return None;
-    }
-    Some(Box::new(CursorRemoveHooksPatch {
-        hooks_path: config_dir.join("hooks.json"),
-    }))
-}
-
-/// Returns the name the AI model uses to reference this spec.
-///
-/// For Cursor, all spec types use `{content_prefix}{id}` when a content prefix
-/// is configured (either explicitly or derived from `prefix`).
-pub fn model_facing_name(spec: &NormalizedSpec, cfg: Option<&AdapterConfig>) -> String {
-    let id = spec.id();
-    match cfg.and_then(AdapterConfig::content_prefix) {
-        Some(prefix) => format!("{prefix}{id}"),
-        None => id.to_owned(),
     }
 }
 
@@ -411,7 +456,9 @@ mod tests {
             body: "Body.".to_string(),
         });
 
-        let files = adapt_cursor(spec, &HashMap::new(), None).expect("expected value");
+        let files = CursorAdapter
+            .adapt(spec, &HashMap::new(), None)
+            .expect("expected value");
         let content = String::from_utf8(files[0].content.clone()).expect("expected value");
 
         let expected = concat!(
@@ -445,7 +492,9 @@ mod tests {
             body: "Body.".to_string(),
         });
 
-        let files = adapt_cursor(spec, &HashMap::new(), Some(&cfg)).expect("expected value");
+        let files = CursorAdapter
+            .adapt(spec, &HashMap::new(), Some(&cfg))
+            .expect("expected value");
         assert_eq!(files[0].path.to_string_lossy(), "agents/tw-test-agent.md");
         let content = String::from_utf8(files[0].content.clone()).expect("expected value");
         assert!(
@@ -476,7 +525,9 @@ mod tests {
             supporting_files: vec![],
         });
 
-        let files = adapt_cursor(spec, &HashMap::new(), Some(&cfg)).expect("expected value");
+        let files = CursorAdapter
+            .adapt(spec, &HashMap::new(), Some(&cfg))
+            .expect("expected value");
         assert_eq!(
             files[0].path.to_string_lossy(),
             "skills/tw-test-skill/SKILL.md"
@@ -490,24 +541,54 @@ mod tests {
 
     #[test]
     fn test_body_tool_name_full_mapping() {
-        assert_eq!(body_tool_name(&ToolFrontmatter::Read), "Read files");
-        assert_eq!(body_tool_name(&ToolFrontmatter::Write), "Edit files");
-        assert_eq!(body_tool_name(&ToolFrontmatter::Edit), "Edit files");
         assert_eq!(
-            body_tool_name(&ToolFrontmatter::Grep),
+            CursorAdapter.body_tool_name(&ToolFrontmatter::Read),
+            "Read files"
+        );
+        assert_eq!(
+            CursorAdapter.body_tool_name(&ToolFrontmatter::Write),
+            "Edit files"
+        );
+        assert_eq!(
+            CursorAdapter.body_tool_name(&ToolFrontmatter::Edit),
+            "Edit files"
+        );
+        assert_eq!(
+            CursorAdapter.body_tool_name(&ToolFrontmatter::Grep),
             "Search files and folders"
         );
         assert_eq!(
-            body_tool_name(&ToolFrontmatter::Glob),
+            CursorAdapter.body_tool_name(&ToolFrontmatter::Glob),
             "Search files and folders"
         );
-        assert_eq!(body_tool_name(&ToolFrontmatter::Bash), "Run shell commands");
-        assert_eq!(body_tool_name(&ToolFrontmatter::WebSearch), "Web");
-        assert_eq!(body_tool_name(&ToolFrontmatter::WebFetch), "URL fetcher");
-        assert_eq!(body_tool_name(&ToolFrontmatter::Question), "Ask questions");
-        assert_eq!(body_tool_name(&ToolFrontmatter::Tasks), "TODO tracker");
-        assert_eq!(body_tool_name(&ToolFrontmatter::Subagent), "Task");
-        assert_eq!(body_tool_name(&ToolFrontmatter::Skill), "Skill runner");
+        assert_eq!(
+            CursorAdapter.body_tool_name(&ToolFrontmatter::Bash),
+            "Run shell commands"
+        );
+        assert_eq!(
+            CursorAdapter.body_tool_name(&ToolFrontmatter::WebSearch),
+            "Web"
+        );
+        assert_eq!(
+            CursorAdapter.body_tool_name(&ToolFrontmatter::WebFetch),
+            "URL fetcher"
+        );
+        assert_eq!(
+            CursorAdapter.body_tool_name(&ToolFrontmatter::Question),
+            "Ask questions"
+        );
+        assert_eq!(
+            CursorAdapter.body_tool_name(&ToolFrontmatter::Tasks),
+            "TODO tracker"
+        );
+        assert_eq!(
+            CursorAdapter.body_tool_name(&ToolFrontmatter::Subagent),
+            "Task"
+        );
+        assert_eq!(
+            CursorAdapter.body_tool_name(&ToolFrontmatter::Skill),
+            "Skill runner"
+        );
     }
 
     // -- Hook synthesis tests --
@@ -533,25 +614,46 @@ mod tests {
     fn test_cursor_event_name_user_prompt_submit_special_case() {
         // The one mapping that isn't a simple casing transform.
         assert_eq!(
-            cursor_event_name(HookEvent::UserPromptSubmit),
+            CursorAdapter.event_name(HookEvent::UserPromptSubmit),
             "beforeSubmitPrompt"
         );
     }
 
     #[test]
     fn test_cursor_event_name_full_mapping() {
-        assert_eq!(cursor_event_name(HookEvent::PreToolUse), "preToolUse");
-        assert_eq!(cursor_event_name(HookEvent::PostToolUse), "postToolUse");
         assert_eq!(
-            cursor_event_name(HookEvent::PostToolUseFailure),
+            CursorAdapter.event_name(HookEvent::PreToolUse),
+            "preToolUse"
+        );
+        assert_eq!(
+            CursorAdapter.event_name(HookEvent::PostToolUse),
+            "postToolUse"
+        );
+        assert_eq!(
+            CursorAdapter.event_name(HookEvent::PostToolUseFailure),
             "postToolUseFailure"
         );
-        assert_eq!(cursor_event_name(HookEvent::SessionStart), "sessionStart");
-        assert_eq!(cursor_event_name(HookEvent::SessionEnd), "sessionEnd");
-        assert_eq!(cursor_event_name(HookEvent::Stop), "stop");
-        assert_eq!(cursor_event_name(HookEvent::PreCompact), "preCompact");
-        assert_eq!(cursor_event_name(HookEvent::SubagentStart), "subagentStart");
-        assert_eq!(cursor_event_name(HookEvent::SubagentStop), "subagentStop");
+        assert_eq!(
+            CursorAdapter.event_name(HookEvent::SessionStart),
+            "sessionStart"
+        );
+        assert_eq!(
+            CursorAdapter.event_name(HookEvent::SessionEnd),
+            "sessionEnd"
+        );
+        assert_eq!(CursorAdapter.event_name(HookEvent::Stop), "stop");
+        assert_eq!(
+            CursorAdapter.event_name(HookEvent::PreCompact),
+            "preCompact"
+        );
+        assert_eq!(
+            CursorAdapter.event_name(HookEvent::SubagentStart),
+            "subagentStart"
+        );
+        assert_eq!(
+            CursorAdapter.event_name(HookEvent::SubagentStop),
+            "subagentStop"
+        );
     }
 
     #[test]
@@ -561,7 +663,9 @@ mod tests {
         // a description on the spec must not appear in the emitted JSON.
         let mut spec = make_hook_spec("init", HookEvent::SessionStart, None);
         spec.frontmatter.description = Some("informational note".to_string());
-        let result = synthesize_hooks(&[&spec], None).expect("expected value");
+        let result = CursorAdapter
+            .synthesize_hooks(&[&spec], None)
+            .expect("expected value");
         let content = String::from_utf8(
             result
                 .files
@@ -581,7 +685,9 @@ mod tests {
     #[test]
     fn test_synthesize_hooks_emits_version_field() {
         let spec = make_hook_spec("init", HookEvent::SessionStart, None);
-        let result = synthesize_hooks(&[&spec], None).expect("expected value");
+        let result = CursorAdapter
+            .synthesize_hooks(&[&spec], None)
+            .expect("expected value");
         let content = String::from_utf8(
             result
                 .files
@@ -603,7 +709,9 @@ mod tests {
         // Cursor places `matcher` on each entry; verify it appears alongside
         // `command` in a single object literal (not as a group key).
         let spec = make_hook_spec("audit", HookEvent::PreToolUse, Some("Bash"));
-        let result = synthesize_hooks(&[&spec], None).expect("expected value");
+        let result = CursorAdapter
+            .synthesize_hooks(&[&spec], None)
+            .expect("expected value");
         let content = String::from_utf8(
             result
                 .files
@@ -632,7 +740,9 @@ mod tests {
             ..AdapterConfig::default()
         };
         let spec = make_hook_spec("init", HookEvent::SessionStart, None);
-        let result = synthesize_hooks(&[&spec], Some(&cfg)).expect("expected ok");
+        let result = CursorAdapter
+            .synthesize_hooks(&[&spec], Some(&cfg))
+            .expect("expected ok");
         assert_eq!(result.entries.len(), 1);
         assert!(
             !result
@@ -667,7 +777,14 @@ mod tests {
             body: "Rule body.".to_string(),
         });
 
-        let files = adapt_cursor(spec, &HashMap::new(), Some(&cfg)).expect("expected value");
+        let files = CursorAdapter
+            .adapt(spec, &HashMap::new(), Some(&cfg))
+            .expect("expected value");
         assert_eq!(files[0].path.to_str(), Some("rules/tw-test-rule.mdc"));
+    }
+
+    #[test]
+    fn test_file_kinds_includes_hooks() {
+        assert!(CursorAdapter.file_kinds().contains(&FileKind::Hooks));
     }
 }

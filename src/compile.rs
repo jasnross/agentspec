@@ -3,9 +3,6 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use crate::adapters::{
-    adapt_claude, adapt_cursor, adapt_opencode, claude_synthesize_hooks, cursor_synthesize_hooks,
-};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
 use crate::spec::{HookEvent, NormalizedHookSpec, NormalizedSpec};
@@ -187,15 +184,12 @@ fn hook_command_anchor(provider: Provider, emit_mode: HookEmitMode, filename: &s
     if matches!(emit_mode, HookEmitMode::Bundled) {
         return format!("${{CLAUDE_PLUGIN_ROOT}}/hooks/scripts/{filename}");
     }
-    let dotdir = match provider {
-        Provider::Claude => ".claude",
-        Provider::Cursor => ".cursor",
-        Provider::OpenCode => {
-            unreachable!(
-                "OpenCode short-circuits in compile_specs and never reaches hook_command_anchor"
-            )
-        }
+    let Some(hook_adapter) = provider.hook_adapter() else {
+        unreachable!(
+            "OpenCode short-circuits in compile_specs and never reaches hook_command_anchor"
+        )
     };
+    let dotdir = hook_adapter.hook_command_dotdir();
     let var_anchor = match emit_mode {
         HookEmitMode::Bundled => {
             unreachable!("Bundled returns early at the top of hook_command_anchor")
@@ -353,17 +347,17 @@ pub(crate) fn compile_specs(
         let resolved = resolve_fragments(specs.to_vec(), &env, &context)?;
 
         let mut hook_specs: Vec<&NormalizedHookSpec> = Vec::new();
+        let provider_emits_hooks = provider.hook_adapter().is_some();
         for spec in &resolved {
-            let mut adapter_files = match provider {
-                Provider::Claude => adapt_claude(spec.clone(), presets, adapter_config)?,
-                Provider::Cursor => adapt_cursor(spec.clone(), presets, adapter_config)?,
-                Provider::OpenCode => adapt_opencode(spec.clone(), presets, adapter_config)?,
-            };
+            let mut adapter_files =
+                provider
+                    .adapter()
+                    .adapt(spec.clone(), presets, adapter_config)?;
             files.append(&mut adapter_files);
 
             if let NormalizedSpec::Hook(h) = spec {
                 hook_specs.push(h);
-                if matches!(provider, Provider::OpenCode) {
+                if !provider_emits_hooks {
                     diagnostics.skipped_hooks.push(SkippedHook {
                         provider,
                         hook_id: spec.id().to_string(),
@@ -374,14 +368,13 @@ pub(crate) fn compile_specs(
 
         // Per-provider hook synthesis — runs once per provider with the full
         // hook list because `hooks.json` is one shared file and the `scripts/`
-        // tree is shared across all hooks in the spec set.
-        let synthesis = match provider {
-            Provider::Claude => claude_synthesize_hooks(&hook_specs, adapter_config)?,
-            Provider::Cursor => cursor_synthesize_hooks(&hook_specs, adapter_config)?,
-            // OpenCode does not emit hooks in v1; skips are recorded in
-            // `diagnostics.skipped_hooks` above.
-            Provider::OpenCode => HookSynthesis::default(),
-        };
+        // tree is shared across all hooks in the spec set. Providers without a
+        // hook adapter (`OpenCode`) short-circuit to an empty `HookSynthesis`;
+        // their per-spec skips are recorded in `diagnostics.skipped_hooks` above.
+        let synthesis = provider.hook_adapter().map_or_else(
+            || Ok(HookSynthesis::default()),
+            |h| h.synthesize_hooks(&hook_specs, adapter_config),
+        )?;
         files.extend(synthesis.files);
         if !synthesis.entries.is_empty() {
             hooks_map.insert(provider, synthesis.entries);

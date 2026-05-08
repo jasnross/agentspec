@@ -7,8 +7,9 @@ use serde::Serialize;
 use strum::VariantArray as _;
 use walkdir::WalkDir;
 
-use crate::compile::{AdapterConfig, GeneratedFile};
-use crate::plan::{FileKind, PostWriteHook, RemovePatchReport};
+use super::{ProviderAdapter, SyncDestinationMode};
+use crate::compile::{AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode};
+use crate::plan::{FileKind, PostWriteHook, RemovePatchReport, expand_tilde};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
 use crate::spec::{
@@ -45,18 +46,145 @@ struct OpenCodeSkillFrontmatter {
     tools: IndexMap<String, bool>,
 }
 
-pub fn adapt_opencode(
-    spec: NormalizedSpec,
-    presets: &ProviderPresetsMap,
-    cfg: Option<&AdapterConfig>,
-) -> Result<Vec<GeneratedFile>> {
-    match spec {
-        NormalizedSpec::Agent(s) => adapt_agent_spec(s, presets, cfg),
-        NormalizedSpec::Skill(s) => adapt_skill_spec(s, presets, cfg),
-        NormalizedSpec::Rule(s) => Ok(adapt_rule_spec(&s, cfg)),
-        // hooks are not emitted for OpenCode in v1; the per-provider warning
-        // is surfaced from `run_compile` via `CompileDiagnostics::skipped_hooks`.
-        NormalizedSpec::Hook(_) => Ok(Vec::new()),
+/// Zero-sized adapter for the `OpenCode` provider.
+pub struct OpenCodeAdapter;
+
+impl ProviderAdapter for OpenCodeAdapter {
+    fn adapt(
+        &self,
+        spec: NormalizedSpec,
+        presets: &ProviderPresetsMap,
+        cfg: Option<&AdapterConfig>,
+    ) -> Result<Vec<GeneratedFile>> {
+        match spec {
+            NormalizedSpec::Agent(s) => adapt_agent_spec(s, presets, cfg),
+            NormalizedSpec::Skill(s) => adapt_skill_spec(s, presets, cfg),
+            NormalizedSpec::Rule(s) => Ok(adapt_rule_spec(&s, cfg)),
+            // hooks are not emitted for OpenCode in v1; the per-provider warning
+            // is surfaced from `run_compile` via `CompileDiagnostics::skipped_hooks`.
+            NormalizedSpec::Hook(_) => Ok(Vec::new()),
+        }
+    }
+
+    /// Resolve a canonical tool to the name an `OpenCode` spec body (or
+    /// frontmatter tool map) should reference.
+    fn body_tool_name(&self, tool: &ToolFrontmatter) -> &'static str {
+        match tool {
+            ToolFrontmatter::Read => "read",
+            ToolFrontmatter::Write => "write",
+            ToolFrontmatter::Edit => "edit",
+            ToolFrontmatter::Grep => "grep",
+            ToolFrontmatter::Glob => "glob",
+            ToolFrontmatter::Bash => "bash",
+            ToolFrontmatter::WebFetch => "webfetch",
+            ToolFrontmatter::WebSearch => "websearch",
+            ToolFrontmatter::Question => "question",
+            ToolFrontmatter::Tasks => "todowrite",
+            ToolFrontmatter::Subagent => "task",
+            ToolFrontmatter::Skill => "skill",
+        }
+    }
+
+    /// Returns the name the AI model uses to reference this spec.
+    ///
+    /// - **Agents**: the model-facing name is prefixed via `content_prefix()`,
+    ///   which may differ from the file-path prefix.
+    /// - **Skills**: the frontmatter `name` field uses the unprefixed canonical ID
+    ///   (the prefix only appears in the directory path). User-invocable skills
+    ///   (commands) are also derived from `NormalizedSpec::Skill` — there is no
+    ///   separate `Command` variant — and follow the same unprefixed convention.
+    /// - **Rules**: have no model-facing name (auto-loaded content). Returns the
+    ///   canonical ID as a best-effort fallback; spec authors should not typically
+    ///   reference rules by name.
+    fn model_facing_name(&self, spec: &NormalizedSpec, cfg: Option<&AdapterConfig>) -> String {
+        let id = spec.id();
+        match spec {
+            NormalizedSpec::Agent(_) => match cfg.and_then(AdapterConfig::content_prefix) {
+                Some(prefix) => format!("{prefix}{id}"),
+                None => id.to_owned(),
+            },
+            NormalizedSpec::Skill(_) | NormalizedSpec::Rule(_) | NormalizedSpec::Hook(_) => {
+                id.to_owned()
+            }
+        }
+    }
+
+    /// `emit_mode`, `owned_entries`, and `_overwrite` are accepted for
+    /// signature symmetry with the Claude/Cursor factories — `OpenCode` does
+    /// not emit hooks in v1, so they are unused here. Keeping the signatures
+    /// aligned lets the trait dispatch uniformly per provider.
+    fn post_write_hook(
+        &self,
+        kind: FileKind,
+        dest: &Path,
+        config_dir: &Path,
+        _emit_mode: HookEmitMode,
+        _owned_entries: &[EmittedHookEntry],
+        _overwrite: bool,
+    ) -> Option<Box<dyn PostWriteHook>> {
+        if kind != FileKind::Rules {
+            return None;
+        }
+        Some(Box::new(OpenCodeInstructionsPatch {
+            rules_dest_dir: dest.to_path_buf(),
+            config_dir: config_dir.to_path_buf(),
+        }))
+    }
+
+    /// Factory for `OpenCode`'s remove post-write hook.
+    ///
+    /// Signature mirrors Claude/Cursor's `remove_post_write_hook`. `_emit_mode`
+    /// is accepted for symmetry — `OpenCode` doesn't have a merged-vs-bundled
+    /// split for `instructions[]`; `opencode.json` is always the host file.
+    /// Returns `Some` for `FileKind::Rules`, `None` otherwise.
+    fn remove_post_write_hook(
+        &self,
+        kind: FileKind,
+        dest: &Path,
+        config_dir: &Path,
+        _emit_mode: HookEmitMode,
+    ) -> Option<Box<dyn PostWriteHook>> {
+        if kind != FileKind::Rules {
+            return None;
+        }
+        Some(Box::new(OpenCodeRemoveInstructionsPatch {
+            rules_dest_dir: dest.to_path_buf(),
+            config_dir: config_dir.to_path_buf(),
+        }))
+    }
+
+    fn file_kinds(&self) -> &'static [FileKind] {
+        &[
+            FileKind::Agents,
+            FileKind::Commands,
+            FileKind::Rules,
+            FileKind::Skills,
+        ]
+    }
+
+    fn user_dest_dir(&self, home: &Path, kind: FileKind) -> PathBuf {
+        home.join(".config").join("opencode").join(kind.dir_name())
+    }
+
+    fn project_dest_dir(&self, cwd: &Path, kind: FileKind) -> PathBuf {
+        cwd.join(".opencode").join(kind.dir_name())
+    }
+
+    fn config_dir(
+        &self,
+        mode: SyncDestinationMode,
+        dir: Option<&str>,
+        home: &Path,
+        cwd: &Path,
+    ) -> PathBuf {
+        match mode {
+            SyncDestinationMode::User => home.join(".config").join("opencode"),
+            SyncDestinationMode::Project => cwd.join(".opencode"),
+            SyncDestinationMode::Path => dir.map_or_else(
+                || home.join(".config").join("opencode"),
+                |d| expand_tilde(d, home),
+            ),
+        }
     }
 }
 
@@ -215,26 +343,6 @@ impl PostWriteHook for OpenCodeInstructionsPatch {
     }
 }
 
-/// `emit_mode` and `owned_entries` are accepted for signature symmetry with
-/// the Claude/Cursor factories — `OpenCode` does not emit hooks in v1, so
-/// they are unused here. Keeping the signatures aligned lets `sync.rs`
-/// dispatch uniformly per provider.
-pub fn post_write_hook(
-    kind: FileKind,
-    dest: &Path,
-    config_dir: &Path,
-    _emit_mode: crate::compile::HookEmitMode,
-    _owned_entries: &[crate::compile::EmittedHookEntry],
-) -> Option<Box<dyn PostWriteHook>> {
-    if kind != FileKind::Rules {
-        return None;
-    }
-    Some(Box::new(OpenCodeInstructionsPatch {
-        rules_dest_dir: dest.to_path_buf(),
-        config_dir: config_dir.to_path_buf(),
-    }))
-}
-
 /// Post-write hook that strips `instructions[]` entries pointing into
 /// agentspec's rules dest dir.
 ///
@@ -265,28 +373,6 @@ impl PostWriteHook for OpenCodeRemoveInstructionsPatch {
     }
 }
 
-/// Factory for `OpenCode`'s remove post-write hook.
-///
-/// Signature mirrors Claude/Cursor's `remove_post_write_hook` so
-/// `remove.rs`'s dispatch routes through identically-shaped match arms.
-/// `_emit_mode` is accepted for symmetry — `OpenCode` doesn't have a
-/// merged-vs-bundled split for `instructions[]`; `opencode.json` is always
-/// the host file. Returns `Some` for `FileKind::Rules`, `None` otherwise.
-pub fn remove_post_write_hook(
-    kind: FileKind,
-    dest: &Path,
-    config_dir: &Path,
-    _emit_mode: crate::compile::HookEmitMode,
-) -> Option<Box<dyn PostWriteHook>> {
-    if kind != FileKind::Rules {
-        return None;
-    }
-    Some(Box::new(OpenCodeRemoveInstructionsPatch {
-        rules_dest_dir: dest.to_path_buf(),
-        config_dir: config_dir.to_path_buf(),
-    }))
-}
-
 /// Reverses `patch_opencode_instructions`'s effect on
 /// `<config_dir>/opencode.json`.
 ///
@@ -314,13 +400,13 @@ pub fn remove_post_write_hook(
 /// pre-existing limitation inherited from the sync path, not a regression
 /// introduced by remove. Claude's and Cursor's remove patches go through
 /// `hooks_merge::tidy_jsonc_file`, which preserves comments and trivia.
-/// Tracked for parity work under TODO #16.
+/// Tracked for parity work under TODO #14 (CST-aware tidy for `opencode.json`).
 fn remove_opencode_instructions(
     rules_dest_dir: &Path,
-    opencode_config_dir: &Path,
+    config_dir: &Path,
     dry_run: bool,
 ) -> Result<RemovePatchReport> {
-    let config_path = opencode_config_dir.join("opencode.json");
+    let config_path = config_dir.join("opencode.json");
 
     if !config_path.exists() {
         return Ok(RemovePatchReport::default());
@@ -401,9 +487,7 @@ fn remove_opencode_instructions(
     // AND no other top-level keys survive. Same semantic as the Claude
     // predicate, different machinery — Claude uses `CstObject::properties()`
     // on a jsonc-parser CST, OpenCode uses `serde_json::Map::is_empty()` on
-    // a serde_json mutation. The two paths can't share an `is_empty` helper
-    // until OpenCode migrates to a CST-aware tidy (TODO #16). OpenCode has
-    // no version carve-out — that's Cursor-specific.
+    // a serde_json mutation.
     if obj.is_empty() {
         let parent_rmdir = crate::plan::delete_host_file_and_rmdir_parent(&config_path, dry_run)?;
         return Ok(RemovePatchReport {
@@ -435,25 +519,6 @@ fn remove_opencode_instructions(
     })
 }
 
-/// Resolve a canonical tool to the name an `OpenCode` spec body (or frontmatter
-/// tool map) should reference.
-pub fn body_tool_name(tool: &ToolFrontmatter) -> &'static str {
-    match tool {
-        ToolFrontmatter::Read => "read",
-        ToolFrontmatter::Write => "write",
-        ToolFrontmatter::Edit => "edit",
-        ToolFrontmatter::Grep => "grep",
-        ToolFrontmatter::Glob => "glob",
-        ToolFrontmatter::Bash => "bash",
-        ToolFrontmatter::WebFetch => "webfetch",
-        ToolFrontmatter::WebSearch => "websearch",
-        ToolFrontmatter::Question => "question",
-        ToolFrontmatter::Tasks => "todowrite",
-        ToolFrontmatter::Subagent => "task",
-        ToolFrontmatter::Skill => "skill",
-    }
-}
-
 /// Build the boolean tool map used by `OpenCode` agents and agent-invocable skills.
 ///
 /// Initializes all `ToolFrontmatter`-expressible `OpenCode` tools to false, then enables
@@ -467,11 +532,11 @@ pub fn body_tool_name(tool: &ToolFrontmatter) -> &'static str {
 fn build_tool_map(tools: &[ToolFrontmatter]) -> IndexMap<String, bool> {
     let mut map: IndexMap<String, bool> = ToolFrontmatter::VARIANTS
         .iter()
-        .map(|t| (body_tool_name(t).to_string(), false))
+        .map(|t| (OpenCodeAdapter.body_tool_name(t).to_string(), false))
         .collect();
 
     for tool in tools {
-        map.insert(body_tool_name(tool).to_string(), true);
+        map.insert(OpenCodeAdapter.body_tool_name(tool).to_string(), true);
     }
 
     map.sort_keys();
@@ -491,7 +556,7 @@ fn is_agentspec_instruction(entry_path: &str, rules_dest_dir: &Path) -> bool {
     Path::new(entry_path).starts_with(rules_dest_dir)
 }
 
-/// Patches the `instructions` array in `opencode_config_dir/opencode.json`.
+/// Patches the `instructions` array in `config_dir/opencode.json`.
 ///
 /// Ownership contract: agentspec owns any entry whose path falls under `rules_dest_dir`.
 /// On each sync those entries are replaced wholesale; all other entries are preserved.
@@ -501,10 +566,10 @@ fn is_agentspec_instruction(entry_path: &str, rules_dest_dir: &Path) -> bool {
 /// When `dry_run` is true, prints the planned diff but does not write the file.
 fn patch_opencode_instructions(
     rules_dest_dir: &Path,
-    opencode_config_dir: &Path,
+    config_dir: &Path,
     dry_run: bool,
 ) -> Result<()> {
-    let config_path = opencode_config_dir.join("opencode.json");
+    let config_path = config_dir.join("opencode.json");
 
     // Read existing config (or start with empty object)
     let mut config: serde_json::Value = if config_path.exists() {
@@ -586,30 +651,6 @@ fn patch_opencode_instructions(
     Ok(())
 }
 
-/// Returns the name the AI model uses to reference this spec.
-///
-/// - **Agents**: the model-facing name is prefixed via `content_prefix()`,
-///   which may differ from the file-path prefix.
-/// - **Skills**: the frontmatter `name` field uses the unprefixed canonical ID
-///   (the prefix only appears in the directory path). User-invocable skills
-///   (commands) are also derived from `NormalizedSpec::Skill` — there is no
-///   separate `Command` variant — and follow the same unprefixed convention.
-/// - **Rules**: have no model-facing name (auto-loaded content). Returns the
-///   canonical ID as a best-effort fallback; spec authors should not typically
-///   reference rules by name.
-pub fn model_facing_name(spec: &NormalizedSpec, cfg: Option<&AdapterConfig>) -> String {
-    let id = spec.id();
-    match spec {
-        NormalizedSpec::Agent(_) => match cfg.and_then(AdapterConfig::content_prefix) {
-            Some(prefix) => format!("{prefix}{id}"),
-            None => id.to_owned(),
-        },
-        NormalizedSpec::Skill(_) | NormalizedSpec::Rule(_) | NormalizedSpec::Hook(_) => {
-            id.to_owned()
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -623,17 +664,26 @@ mod tests {
 
     #[test]
     fn test_body_tool_name_tasks_maps_to_todowrite() {
-        assert_eq!(body_tool_name(&ToolFrontmatter::Tasks), "todowrite");
+        assert_eq!(
+            OpenCodeAdapter.body_tool_name(&ToolFrontmatter::Tasks),
+            "todowrite"
+        );
     }
 
     #[test]
     fn test_body_tool_name_subagent_maps_to_task() {
-        assert_eq!(body_tool_name(&ToolFrontmatter::Subagent), "task");
+        assert_eq!(
+            OpenCodeAdapter.body_tool_name(&ToolFrontmatter::Subagent),
+            "task"
+        );
     }
 
     #[test]
     fn test_body_tool_name_skill_identity() {
-        assert_eq!(body_tool_name(&ToolFrontmatter::Skill), "skill");
+        assert_eq!(
+            OpenCodeAdapter.body_tool_name(&ToolFrontmatter::Skill),
+            "skill"
+        );
     }
 
     #[test]
@@ -663,7 +713,9 @@ mod tests {
             body: "Body.".to_string(),
         });
 
-        let files = adapt_opencode(spec, &HashMap::new(), None).expect("expected value");
+        let files = OpenCodeAdapter
+            .adapt(spec, &HashMap::new(), None)
+            .expect("expected value");
         let content = String::from_utf8(files[0].content.clone()).expect("expected value");
 
         let expected = concat!(
@@ -712,7 +764,9 @@ mod tests {
             supporting_files: vec![],
         });
 
-        let files = adapt_opencode(spec, &HashMap::new(), Some(&cfg)).expect("expected value");
+        let files = OpenCodeAdapter
+            .adapt(spec, &HashMap::new(), Some(&cfg))
+            .expect("expected value");
         assert_eq!(files.len(), 1);
         assert_eq!(
             files[0].path.to_str(),
@@ -1079,5 +1133,22 @@ mod tests {
             Some("haiku"),
             "top-level keys other than `instructions` must round-trip"
         );
+    }
+
+    #[test]
+    fn test_file_kinds_includes_commands() {
+        assert!(OpenCodeAdapter.file_kinds().contains(&FileKind::Commands));
+    }
+
+    #[test]
+    fn test_user_dest_dir_is_xdg_style() {
+        let result = OpenCodeAdapter.user_dest_dir(Path::new("/home/user"), FileKind::Skills);
+        assert_eq!(result, PathBuf::from("/home/user/.config/opencode/skills"));
+    }
+
+    #[test]
+    fn test_project_dest_dir_is_flat() {
+        let result = OpenCodeAdapter.project_dest_dir(Path::new("/work/project"), FileKind::Agents);
+        assert_eq!(result, PathBuf::from("/work/project/.opencode/agents"));
     }
 }

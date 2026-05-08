@@ -23,9 +23,7 @@ use jsonc_parser::ParseOptions;
 use jsonc_parser::cst::{CstInputValue, CstObject, CstRootNode};
 use serde_json::{Map, Value, json};
 
-use crate::adapters::{
-    claude_event_name, cursor_event_name, entry_to_claude_json, entry_to_cursor_json,
-};
+use crate::adapters::{ClaudeAdapter, CursorAdapter, HookAdapter};
 use crate::compile::EmittedHookEntry;
 use crate::plan::{RemovePatchReport, delete_host_file_and_rmdir_parent};
 
@@ -141,7 +139,7 @@ pub fn merge_claude_settings(
         std::collections::BTreeMap::new();
     for e in owned_entries {
         grouped
-            .entry(claude_event_name(e.event))
+            .entry(ClaudeAdapter.event_name(e.event))
             .or_default()
             .push(e);
     }
@@ -177,7 +175,7 @@ pub fn merge_claude_settings(
             }
             let inner: Vec<Value> = group_entries
                 .iter()
-                .map(|e| entry_to_claude_json(e))
+                .map(|e| ClaudeAdapter.entry_to_json(e))
                 .collect();
             wrapper.insert("hooks".to_string(), Value::Array(inner));
             event_arr.append(value_to_cst_input(Value::Object(wrapper)));
@@ -321,7 +319,7 @@ pub fn merge_cursor_hooks(
         std::collections::BTreeMap::new();
     for e in owned_entries {
         by_event
-            .entry(cursor_event_name(e.event))
+            .entry(CursorAdapter.event_name(e.event))
             .or_default()
             .push(e);
     }
@@ -341,7 +339,7 @@ pub fn merge_cursor_hooks(
                 })?
         };
         for &e in entries {
-            event_arr.append(value_to_cst_input(entry_to_cursor_json(e)));
+            event_arr.append(value_to_cst_input(CursorAdapter.entry_to_json(e)));
         }
     }
 
@@ -1270,7 +1268,7 @@ mod tests {
     #[test]
     fn test_entry_to_claude_json_includes_sentinel() {
         let e = entry("init", HookEvent::SessionStart, "/path/to/script.sh");
-        let v = entry_to_claude_json(&e);
+        let v = ClaudeAdapter.entry_to_json(&e);
         assert_eq!(v["type"], "command");
         assert_eq!(v["command"], "/path/to/script.sh");
         assert_eq!(v["_agentspec_id"], "init");
@@ -1283,7 +1281,7 @@ mod tests {
     #[test]
     fn test_entry_to_cursor_json_places_matcher_on_entry() {
         let e = entry_with_matcher("audit", HookEvent::PreToolUse, "Bash", "/path/to/script.sh");
-        let v = entry_to_cursor_json(&e);
+        let v = CursorAdapter.entry_to_json(&e);
         assert_eq!(v["matcher"], "Bash");
         assert_eq!(v["_agentspec_id"], "audit");
     }

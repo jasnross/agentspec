@@ -78,3 +78,9 @@
     - Decide what `verbose` means on the remove path: show per-file deletions? show destinations that had no manifest (currently silently skipped)? emit the same line shape `render_remove_report` already produces but unconditionally regardless of activity?
     - Likely shape: add `verbose: bool` to `emit_remove`'s signature, thread into a new branch in `render_remove_report` that surfaces destinations where `Ok(None)` from `remove_manifest_tracked` was returned (today these are invisible)
     - Surfaced by code review of the FileWrite typestate refactor; out of scope for that branch
+16. Adapter API consolidation (next phase after the `ProviderAdapter` trait extraction)
+    - The new trait still exposes a multi-method surface (`adapt`, `synthesize_hooks`, `post_write_hook`, `remove_post_write_hook`) plus separate path-resolution methods (`user_dest_dir`, `project_dest_dir`, `config_dir`)
+    - A future refactor could (a) unify file-channel and config-channel outputs into a single `AdapterOutput { files, patches }` returned from one `compile`/`uncompile` pair, (b) move absolute-path resolution fully into adapters by passing a `CompileCtx` and having adapters return `GeneratedFile`s with absolute paths (eliminating path methods from the trait surface entirely), and (c) switch from per-spec `adapt(spec)` to per-provider `compile(specs)` so cross-spec aggregation (hooks, OpenCode `instructions[]` registration) becomes ordinary output rather than special-cased synthesis
+    - Generalizes / supersedes the path-method-shape concerns in #5 and the JSON-merge concerns in #11; pairs naturally with #14's CST-aware tidy and #12's payload translation shim
+    - Refine framing once concrete dispatch sites surface awkward shapes (e.g., `config_dir` taking `(SyncDestinationMode, Option<&str>, &Path, &Path)` instead of a context struct, or `post_write_hook` having a 6-arg list)
+    - Out of scope for the trait-extraction branch; landed as a follow-on
