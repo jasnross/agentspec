@@ -19,10 +19,7 @@
 6. Consider merging `bash` and `powershell` under a single `shell` canonical tool
    - `ToolFrontmatter::Bash` currently maps to `Bash` in Claude but Claude supports both `PowerShell` and `Bash`
    - Expanding the `shell` canonical tool to both `Bash` and `PowerShell` for Claude would help cover both
-7. Separate `FileWrite` into typed variants for `CleanSlate` vs `ManifestTracked`
-   - `FileWrite` uses `kind: Option<FileKind>` where `None` means `CleanSlate` (compile) and `Some` means `ManifestTracked` (sync) — this is a runtime invariant enforced via `anyhow::Context`
-   - Separate structs (or an enum with per-variant fields) would make this compile-time safe
-   - Would also let `emit()` accept sync-specific params (like `verbose`) only for the sync path, rather than threading them through the shared signature
+7. _Done — see `thoughts/plans/2026-05-07-filewrite-typestate-refactor.md`._ `FileWrite`/`WriteMode`/`WritePlan` were replaced with three per-mode write structs (`CleanSlateWrite`, `ManifestTrackedWrite`, `RemoveWrite`) and three plan types (`CompilePlan`, `SyncPlan`, `RemovePlan`); `emit()` was split into `emit_compile`/`emit_sync`/`emit_remove`. Slot kept to preserve numbering of subsequent items referenced from `.claude/rules/` and source comments.
 8. Support executing skills in forked subagents
    - Claude supports running skills in forked subprocesses via frontmatter fields
    - OpenCode has a similar concept for command execution
@@ -89,3 +86,9 @@
     - Likely shape: switch `sync`'s call site to `load_strict`, surface forward-incompatible manifests as actionable errors with the same upgrade-or-remove guidance the remove path already uses
     - A doc comment on `Manifest::load` (this branch) calls out the asymmetry inline so a future reader sees it at the call site
     - Out of scope for the remove-pipeline branch; address before the first manifest schema bump
+18. Verbose parity for `agentspec remove`
+    - `emit_sync(plan, dry_run, verbose)` threads `--verbose` into `render_sync_report` to show unchanged destinations and the `Unchanged` column; `emit_remove(plan, dry_run)` does not accept a `verbose` parameter at all
+    - `RemoveArgs.common.verbose` is silently ignored — the typestate refactor (TODO #7) made the asymmetry visible by giving `emit_remove` its own signature, but did not change the underlying behavior (the prior unified `emit()` only routed `verbose` into `render_sync_report`)
+    - Decide what `verbose` means on the remove path: show per-file deletions? show destinations that had no manifest (currently silently skipped)? emit the same line shape `render_remove_report` already produces but unconditionally regardless of activity?
+    - Likely shape: add `verbose: bool` to `emit_remove`'s signature, thread into a new branch in `render_remove_report` that surfaces destinations where `Ok(None)` from `remove_manifest_tracked` was returned (today these are invisible)
+    - Surfaced by code review of the FileWrite typestate refactor; out of scope for that branch
