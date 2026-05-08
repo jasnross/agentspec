@@ -597,7 +597,7 @@ fn try_rmdir_if_empty(dir: &Path) -> Result<bool> {
 /// records, deletes the manifest itself, and rmdir's the dest dir if empty.
 ///
 /// Returns `Ok(None)` when no manifest is present (idempotent / tolerant of
-/// missing state). Returns `Err` only on `load_strict` version refusal or an
+/// missing state). Returns `Err` only on manifest version refusal or an
 /// I/O error other than `NotFound` / `DirectoryNotEmpty` — files the user
 /// already deleted are warned-and-skipped.
 fn remove_manifest_tracked(w: &RemoveWrite, dry_run: bool) -> Result<Option<RemoveStats>> {
@@ -606,7 +606,7 @@ fn remove_manifest_tracked(w: &RemoveWrite, dry_run: bool) -> Result<Option<Remo
         return Ok(None);
     }
 
-    let manifest = Manifest::load_strict(&w.destination)?;
+    let manifest = Manifest::load(&w.destination)?;
 
     let mut files_removed = 0usize;
     for rel_path in manifest.files.keys() {

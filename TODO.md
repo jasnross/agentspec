@@ -79,13 +79,7 @@
     - Fix: route OpenCode's instructions tidy through a CST-aware helper analogous to `tidy_jsonc_file`, with a per-provider strategy (the array shape is `instructions: [string, ...]` rather than the nested matcher-group shape Claude uses); pairs naturally with TODO #13's broader migration of provider-specific JSON-merge knowledge into adapters
     - The doc comment on `remove_opencode_instructions` already calls out this asymmetry as pre-existing; the TODO entry pins it for tracking against pre-1.0 work
     - Out of scope for the remove-pipeline branch; revisit alongside TODO #13
-17. Make `Manifest::load` strict-by-default (parity with `load_strict`)
-    - `Manifest::load` (used by `sync` at `emit.rs:393`) silently accepts any version, including future-version manifests; `Manifest::load_strict` (used by `remove`) refuses any manifest whose `version > MANIFEST_VERSION`
-    - A user who upgrades to a future agentspec, then runs an older agentspec's `sync`, would have the future-version manifest deserialized into the older shape and silently rewritten at the older version on save — destroying any future-version-specific fields
-    - Today the schema is `MANIFEST_VERSION = 1` so the risk is dormant. The asymmetry only matters when the schema bumps; mitigating before the first bump is the right time
-    - Likely shape: switch `sync`'s call site to `load_strict`, surface forward-incompatible manifests as actionable errors with the same upgrade-or-remove guidance the remove path already uses
-    - A doc comment on `Manifest::load` (this branch) calls out the asymmetry inline so a future reader sees it at the call site
-    - Out of scope for the remove-pipeline branch; address before the first manifest schema bump
+17. _Done — see `thoughts/plans/2026-05-07-manifest-load-strict-by-default.md`._ `Manifest::load` is now strict-by-default; the tolerant variant was deleted and `Manifest::load_strict` renamed to `Manifest::load`. Slot kept to preserve numbering of subsequent items.
 18. Verbose parity for `agentspec remove`
     - `emit_sync(plan, dry_run, verbose)` threads `--verbose` into `render_sync_report` to show unchanged destinations and the `Unchanged` column; `emit_remove(plan, dry_run)` does not accept a `verbose` parameter at all
     - `RemoveArgs.common.verbose` is silently ignored — the typestate refactor (TODO #7) made the asymmetry visible by giving `emit_remove` its own signature, but did not change the underlying behavior (the prior unified `emit()` only routed `verbose` into `render_sync_report`)
@@ -97,3 +91,15 @@
     - The phases are now landed and the labels rot in place — they're noise for readers who didn't follow the development sequence
     - Likely shape: a single doc-only pass that replaces "Phase N" references with descriptive labels (e.g., "Phase 2's CST-aware merge layer" → "the CST-aware merge layer in `hooks_merge`") or removes them where the surrounding paragraph already conveys the context
     - Out of scope for the FileWrite typestate refactor; surfaced during its code review
+20. Remove empty `settings.json` if empty when cleaning up hooks
+    - Currently when running `agentspec remove --mode project --provider claude` (or similar) the .claude/settings.json file remains even if removing hooks resulted in the file's contents being reduced to `{}`.
+    - We should clean up the directory as it being empty after removing indicates that only agentspec-managed content was present in it
+    - Example of project mode files: (empty)
+      - .claude/settings.json: `{}`
+      - .cursor/hooks.json: `{version: 1}` (while the file isn't completely empty it is left with a single `version` field)
+      - .opencode/opencode.json: `{}` (empty)
+21. Rename the `write_remove_config` test helper now that it serves both sync and remove tests
+    - `write_remove_config` (`tests/pipeline.rs:1819`) writes an `agentspec.toml` containing `[sync.<provider>]` blocks; despite its name, the TOML it produces is consumed by both `agentspec sync` and `agentspec remove` integration tests
+    - The new `test_sync_refuses_higher_manifest_version` (added in `thoughts/plans/.done/2026-05-07-manifest-load-strict-by-default.md`) is the first sync-side caller, making the misnomer reader-visible — it suggests the helper is remove-specific when it isn't
+    - Likely shape: rename to `write_sync_config` (the helper does, in fact, configure sync; remove just consumes whatever sync wrote) and update the ~15 existing remove-test call sites in one mechanical pass
+    - Surfaced by code review of the `Manifest::load` strict-by-default refactor; out of scope for that branch

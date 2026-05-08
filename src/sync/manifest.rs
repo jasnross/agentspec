@@ -8,9 +8,8 @@ const MANIFEST_FILE: &str = ".agentspec-manifest.json";
 
 /// Manifest schema version written by this binary.
 ///
-/// Bumped when the on-disk shape changes. `Manifest::load_strict` (used by
-/// `remove`) refuses any manifest whose `version` exceeds this constant; older
-/// versions are accepted best-effort.
+/// Bumped when the on-disk shape changes. [`Manifest::load`] refuses any
+/// manifest whose `version` exceeds this constant.
 pub const MANIFEST_VERSION: u32 = 1;
 
 /// Tracks files copied by agentspec so we can detect stale entries and avoid clobbering
@@ -51,34 +50,12 @@ impl Manifest {
 
     /// Loads `.agentspec-manifest.json` from `dir`. Returns an empty manifest if absent.
     ///
-    /// **Silent-clobber caveat:** unlike [`load_strict`](Self::load_strict),
-    /// this function accepts any `version` field and ignores unknown entry
-    /// fields. If a future agentspec writes a manifest with `version > 1`,
-    /// an older binary's `sync` (which calls this function) will deserialize
-    /// it into the current shape and rewrite it at the older version on
-    /// `save`, destroying any future-version-specific fields. Today the
-    /// schema is `MANIFEST_VERSION = 1` so the risk is dormant — captured
-    /// for tracking under TODO #17.
+    /// Refuses any manifest whose `version` exceeds [`MANIFEST_VERSION`] — a
+    /// forward-incompatible manifest written by a newer agentspec is never
+    /// silently rewritten at the older version on `save`, which would destroy
+    /// any future-version-specific fields. The error message tells the user
+    /// to upgrade agentspec or remove the manifest manually.
     pub fn load(dir: &Path) -> Result<Self> {
-        let path = Self::path(dir);
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-        let content = std::fs::read_to_string(&path)
-            .with_context(|| format!("failed to read manifest {}", path.display()))?;
-        let manifest: Self = serde_json::from_str(&content)
-            .with_context(|| format!("failed to parse manifest {}", path.display()))?;
-        Ok(manifest)
-    }
-
-    /// Loads with strict version compatibility: refuses any manifest whose
-    /// `version` exceeds [`MANIFEST_VERSION`].
-    ///
-    /// Used by `remove` so a forward-incompatible manifest is never deleted by
-    /// an older binary that can't reason about its contents. Returns the
-    /// default empty manifest if the file is absent (matching `load`'s
-    /// missing-file behavior).
-    pub fn load_strict(dir: &Path) -> Result<Self> {
         let path = Self::path(dir);
         if !path.exists() {
             return Ok(Self::default());
@@ -169,7 +146,7 @@ mod tests {
     }
 
     #[test]
-    fn test_load_strict_refuses_higher_version() {
+    fn test_load_refuses_higher_version() {
         let t = tmp();
         std::fs::write(
             t.path().join(".agentspec-manifest.json"),
@@ -177,25 +154,17 @@ mod tests {
         )
         .expect("expected value");
 
-        let err = Manifest::load_strict(t.path()).expect_err("expected version refusal");
+        let err = Manifest::load(t.path()).expect_err("expected version refusal");
         let full = format!("{err:#}");
         assert!(full.contains("version 2"), "error: {full}");
         assert!(full.contains("version 1"), "error: {full}");
         assert!(full.contains("upgrade agentspec"), "error: {full}");
     }
 
-    // No `test_load_strict_accepts_lower_version` — `MANIFEST_VERSION` is `1`,
-    // so a "lower than 1" manifest cannot be constructed without writing
+    // No `test_load_accepts_lower_version` — `MANIFEST_VERSION` is `1`, so a
+    // "lower than 1" manifest cannot be constructed without writing
     // `version: 0`, which has never been a real value. Add this case once
     // `MANIFEST_VERSION > 1`.
-
-    #[test]
-    fn test_load_strict_returns_default_for_missing_file() {
-        let t = tmp();
-        let manifest = Manifest::load_strict(t.path()).expect("missing manifest is fine");
-        assert_eq!(manifest.version, MANIFEST_VERSION);
-        assert!(manifest.files.is_empty());
-    }
 
     #[test]
     fn test_delete_is_no_op_when_missing() {

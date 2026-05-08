@@ -1796,6 +1796,43 @@ mode = "user"
 }
 
 // ---------------------------------------------------------------------------
+// `agentspec sync` manifest-version refusal
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_sync_refuses_higher_manifest_version() {
+    // Parity with `test_remove_refuses_higher_manifest_version`: a manifest
+    // whose `version` exceeds `MANIFEST_VERSION` must abort `sync` instead of
+    // being silently rewritten at the older version (which would destroy any
+    // future-version-specific fields).
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    write_remove_config(&dir, &[("claude", "user")]);
+    let home = dir.join("home");
+
+    // Plant a manifest with version > MANIFEST_VERSION.
+    let agents_dir = home.join(".claude/agents");
+    std::fs::create_dir_all(&agents_dir).expect("create agents dir");
+    std::fs::write(
+        agents_dir.join(".agentspec-manifest.json"),
+        r#"{"version":999,"files":{}}"#,
+    )
+    .expect("write forward-incompatible manifest");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    let stderr = String::from_utf8_lossy(&sync.stderr);
+    assert!(
+        !sync.status.success(),
+        "sync should fail on version mismatch, got success:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("version 999") && stderr.contains("upgrade agentspec"),
+        "expected version-refusal error message, got:\n{stderr}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // `agentspec remove` tests (Phase 1: CLI scaffold)
 // ---------------------------------------------------------------------------
 
@@ -2254,9 +2291,9 @@ fn test_remove_leaves_unmanaged_files_in_dest_dir() {
 
 #[test]
 fn test_remove_refuses_higher_manifest_version() {
-    // Deferred from Phase 1: now lands because Phase 2's
-    // `remove_manifest_tracked` calls `Manifest::load_strict`, which is the
-    // only path that triggers the version-mismatch error end-to-end.
+    // Parity with `test_sync_refuses_higher_manifest_version`: both call sites
+    // share the strict-by-default `Manifest::load`, so a forward-incompatible
+    // manifest is rejected end-to-end on the remove path too.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     write_remove_config(&dir, &[("claude", "user")]);
