@@ -15,7 +15,7 @@ A useful test when writing a function: **could a new provider be added by writin
 
 ### Bad
 
-Real example from `src/plan.rs:75-91` — directory names are baked into a non-adapter module:
+Directory names baked into a non-adapter module:
 
 ```rust
 pub fn user_dest_dir(provider: Provider, kind: FileKind, home: &Path) -> PathBuf {
@@ -49,13 +49,13 @@ pub fn user_dest_dir(provider: Provider, kind: FileKind, home: &Path) -> PathBuf
 }
 ```
 
-Once an adapter trait exists (TODO #5), the dispatch arms collapse to `provider.adapter().user_dest_dir(home, kind)` and `plan.rs` no longer mentions specific providers at all. Until the trait lands, this dispatch-only `match` is acceptable: it knows _that_ there are three providers but nothing about _what_ they do.
+Once an adapter trait exists, the dispatch arms collapse to `provider.adapter().user_dest_dir(home, kind)` and `plan.rs` no longer mentions specific providers at all. Until the trait lands, this dispatch-only `match` is acceptable: it knows _that_ there are several providers but nothing about _what_ they do.
 
 ## Hardcoded behavior via match
 
 ### Bad
 
-Real example from `src/sync.rs:59-69` — a `match` block that calls three near-identically-shaped per-adapter functions:
+A `match` block that calls near-identically-shaped per-adapter functions:
 
 ```rust
 let hook = match *provider {
@@ -87,7 +87,7 @@ The dispatch is a one-liner and `sync.rs` stops naming individual providers enti
 
 ### Bad
 
-Real example from `src/plan.rs:54-69` — which file kinds each provider supports is encoded in `plan.rs`:
+Which file kinds each provider supports is encoded in `plan.rs`:
 
 ```rust
 pub fn file_kinds(provider: Provider) -> Vec<FileKind> {
@@ -126,6 +126,6 @@ Same pattern — `plan.rs` keeps a thin dispatch arm but no longer encodes which
 
 ## When dispatch is unavoidable
 
-Sometimes the calling module legitimately needs to dispatch by provider — that's what an adapter trait is for. Until TODO #5 lands, dispatch-only `match provider` blocks (where every arm calls the same-shaped per-adapter function) are an acceptable interim shape. What's never acceptable: a `match provider` block where each arm contains _different logic_, _different field names_, _different paths_, or _different JSON shapes_. That's not dispatch; that's provider knowledge embedded in the wrong file.
+Sometimes the calling module legitimately needs to dispatch by provider — that's what an adapter trait is for. Until that trait lands, dispatch-only `match provider` blocks (where every arm calls the same-shaped per-adapter function) are an acceptable interim shape. What's never acceptable: a `match provider` block where each arm contains _different logic_, _different field names_, _different paths_, or _different JSON shapes_. That's not dispatch; that's provider knowledge embedded in the wrong file.
 
 If you find yourself writing `if provider == Provider::X` to special-case behavior, stop and add the capability to the adapter (or its trait) instead.
