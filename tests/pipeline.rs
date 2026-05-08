@@ -321,20 +321,7 @@ fn test_compile_script_is_executable() {
 fn test_sync_prefix() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    std::fs::write(
-        dir.join("agentspec.toml"),
-        r#"
-[presets.default]
-claude = { model = "sonnet" }
-opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
-cursor = { model = "fast" }
-
-[sync.claude]
-mode = "user"
-prefix = "tw"
-"#,
-    )
-    .expect("failed to write agentspec.toml");
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user").with_prefix("tw")]);
 
     let home = dir.join("home");
     let output = std::process::Command::new(agentspec())
@@ -364,20 +351,10 @@ fn test_sync_opencode_commands_prefix_subdir() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
 
-    std::fs::write(
-        dir.join("agentspec.toml"),
-        r#"
-[presets.default]
-claude = { model = "sonnet" }
-opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
-cursor = { model = "fast" }
-
-[sync.opencode]
-mode = "user"
-prefix = "tw"
-"#,
-    )
-    .expect("failed to write agentspec.toml");
+    write_sync_config(
+        &dir,
+        &[SyncEntry::new("opencode", "user").with_prefix("tw")],
+    );
 
     let home = dir.join("home");
     let output = std::process::Command::new(agentspec())
@@ -431,19 +408,7 @@ fn test_sync_without_target_only_syncs_configured_providers() {
     let dir = setup(&tmp);
     let home = dir.join("home");
 
-    std::fs::write(
-        dir.join("agentspec.toml"),
-        r#"
-[presets.default]
-claude = { model = "sonnet" }
-opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
-cursor = { model = "fast" }
-
-[sync.cursor]
-mode = "user"
-"#,
-    )
-    .expect("failed to write agentspec.toml");
+    write_sync_config(&dir, &[SyncEntry::new("cursor", "user")]);
 
     let output = std::process::Command::new(agentspec())
         .args(["sync"])
@@ -595,6 +560,10 @@ fn test_sync_invalid_base_sync_config_surfaces_parse_error() {
     let dir = setup(&tmp);
     let home = dir.join("home");
 
+    // Inline write retained intentionally: this test verifies the parser
+    // surfaces an `unknown field` error for an invalid [sync.<provider>]
+    // block. Routing through `write_sync_config` would emit a valid block
+    // and defeat the test.
     std::fs::write(
         dir.join("agentspec.toml"),
         r#"
@@ -652,20 +621,10 @@ fn test_sync_dest_without_provider_errors() {
 fn test_sync_cli_prefix_overrides_config() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    std::fs::write(
-        dir.join("agentspec.toml"),
-        r#"
-[presets.default]
-claude = { model = "sonnet" }
-opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
-cursor = { model = "fast" }
-
-[sync.claude]
-mode = "user"
-prefix = "original"
-"#,
-    )
-    .expect("failed to write agentspec.toml");
+    write_sync_config(
+        &dir,
+        &[SyncEntry::new("claude", "user").with_prefix("original")],
+    );
 
     let home = dir.join("home");
     let output = std::process::Command::new(agentspec())
@@ -695,19 +654,7 @@ prefix = "original"
 fn test_sync_cli_prefix_without_config_prefix() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    std::fs::write(
-        dir.join("agentspec.toml"),
-        r#"
-[presets.default]
-claude = { model = "sonnet" }
-opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
-cursor = { model = "fast" }
-
-[sync.claude]
-mode = "user"
-"#,
-    )
-    .expect("failed to write agentspec.toml");
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
 
     let home = dir.join("home");
     let output = std::process::Command::new(agentspec())
@@ -737,20 +684,7 @@ mode = "user"
 fn test_sync_prefix_resolves_spec_references() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    std::fs::write(
-        dir.join("agentspec.toml"),
-        r#"
-[presets.default]
-claude = { model = "sonnet" }
-opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
-cursor = { model = "fast" }
-
-[sync.claude]
-mode = "user"
-prefix = "tw"
-"#,
-    )
-    .expect("failed to write agentspec.toml");
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user").with_prefix("tw")]);
 
     let home = dir.join("home");
     let output = std::process::Command::new(agentspec())
@@ -780,20 +714,10 @@ prefix = "tw"
 fn test_sync_opencode_spec_references_agent_prefixed() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    std::fs::write(
-        dir.join("agentspec.toml"),
-        r#"
-[presets.default]
-claude = { model = "sonnet" }
-opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
-cursor = { model = "fast" }
-
-[sync.opencode]
-mode = "user"
-prefix = "tw"
-"#,
-    )
-    .expect("failed to write agentspec.toml");
+    write_sync_config(
+        &dir,
+        &[SyncEntry::new("opencode", "user").with_prefix("tw")],
+    );
 
     let home = dir.join("home");
     let output = std::process::Command::new(agentspec())
@@ -854,20 +778,10 @@ fn test_compile_nonexistent_spec_reference_errors() {
 fn test_sync_content_prefix_without_file_prefix() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    std::fs::write(
-        dir.join("agentspec.toml"),
-        r#"
-[presets.default]
-claude = { model = "sonnet" }
-opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
-cursor = { model = "fast" }
-
-[sync.claude]
-mode = "user"
-content-prefix = "tw:"
-"#,
-    )
-    .expect("failed to write agentspec.toml");
+    write_sync_config(
+        &dir,
+        &[SyncEntry::new("claude", "user").with_content_prefix("tw:")],
+    );
 
     let home = dir.join("home");
     let output = std::process::Command::new(agentspec())
@@ -902,21 +816,12 @@ content-prefix = "tw:"
 fn test_sync_prefix_and_content_prefix() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    std::fs::write(
-        dir.join("agentspec.toml"),
-        r#"
-[presets.default]
-claude = { model = "sonnet" }
-opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
-cursor = { model = "fast" }
-
-[sync.claude]
-mode = "user"
-prefix = "tw"
-content-prefix = "tw:"
-"#,
-    )
-    .expect("failed to write agentspec.toml");
+    write_sync_config(
+        &dir,
+        &[SyncEntry::new("claude", "user")
+            .with_prefix("tw")
+            .with_content_prefix("tw:")],
+    );
 
     let home = dir.join("home");
     let output = std::process::Command::new(agentspec())
@@ -951,20 +856,10 @@ content-prefix = "tw:"
 fn test_sync_cli_content_prefix_overrides_config() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    std::fs::write(
-        dir.join("agentspec.toml"),
-        r#"
-[presets.default]
-claude = { model = "sonnet" }
-opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
-cursor = { model = "fast" }
-
-[sync.claude]
-mode = "user"
-content-prefix = "original:"
-"#,
-    )
-    .expect("failed to write agentspec.toml");
+    write_sync_config(
+        &dir,
+        &[SyncEntry::new("claude", "user").with_content_prefix("original:")],
+    );
 
     let home = dir.join("home");
     let output = std::process::Command::new(agentspec())
@@ -1257,7 +1152,10 @@ fn test_sync_dry_run_lists_ignored() {
         "bats test\n",
     )
     .expect("failed to write bats file");
-    // write_ignore_config omits sync config — sync --dry-run requires one.
+    // Inline write retained intentionally: this test verifies that
+    // `--dry-run` honours `[spec] ignore` patterns. The `ignore` field is
+    // the configuration under test; `write_sync_config` does not emit
+    // top-level [spec] blocks.
     std::fs::write(
         dir.join("agentspec.toml"),
         r#"
@@ -1627,23 +1525,10 @@ fn test_sync_claude_path_mode_writes_hooks() {
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
     let dest = dir.join("plugin-claude");
-    std::fs::write(
-        dir.join("agentspec.toml"),
-        format!(
-            r#"
-[presets.default]
-claude = {{ model = "sonnet" }}
-opencode = {{ model = "anthropic/claude-sonnet-4-5", variant = "high" }}
-cursor = {{ model = "fast" }}
-
-[sync.claude]
-mode = "path"
-dir = "{}"
-"#,
-            dest.display()
-        ),
-    )
-    .expect("failed to write agentspec.toml");
+    write_sync_config(
+        &dir,
+        &[SyncEntry::new("claude", "path").with_dir(dest.to_str().expect("dest path utf-8"))],
+    );
 
     let home = dir.join("home");
     let output = std::process::Command::new(agentspec())
@@ -1679,19 +1564,7 @@ fn test_sync_claude_project_mode_merges_hooks_into_settings_json() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    std::fs::write(
-        dir.join("agentspec.toml"),
-        r#"
-[presets.default]
-claude = { model = "sonnet" }
-opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
-cursor = { model = "fast" }
-
-[sync.claude]
-mode = "project"
-"#,
-    )
-    .expect("failed to write agentspec.toml");
+    write_sync_config(&dir, &[SyncEntry::new("claude", "project")]);
 
     let output = std::process::Command::new(agentspec())
         .args(["sync", "--provider", "claude"])
@@ -1743,19 +1616,7 @@ fn test_sync_claude_user_mode_merges_hooks_into_settings_json() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    std::fs::write(
-        dir.join("agentspec.toml"),
-        r#"
-[presets.default]
-claude = { model = "sonnet" }
-opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
-cursor = { model = "fast" }
-
-[sync.claude]
-mode = "user"
-"#,
-    )
-    .expect("failed to write agentspec.toml");
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
 
     let home = dir.join("home");
     let output = std::process::Command::new(agentspec())
@@ -1807,7 +1668,7 @@ fn test_sync_refuses_higher_manifest_version() {
     // future-version-specific fields).
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_sync_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
     let home = dir.join("home");
 
     // Plant a manifest with version > MANIFEST_VERSION.
@@ -1836,10 +1697,57 @@ fn test_sync_refuses_higher_manifest_version() {
 // Shared helpers used by sync and remove tests
 // ---------------------------------------------------------------------------
 
+/// Describes one `[sync.<provider>]` block emitted by `write_sync_config`.
+///
+/// Use `SyncEntry::new(provider, mode)` for the canonical `mode = "..."`-only
+/// form. Chain `.with_prefix("...")`, `.with_content_prefix("...")`, or
+/// `.with_dir("...")` to add optional per-block fields.
+struct SyncEntry<'a> {
+    provider: &'a str,
+    mode: &'a str,
+    prefix: Option<&'a str>,
+    content_prefix: Option<&'a str>,
+    dir: Option<&'a str>,
+}
+
+impl<'a> SyncEntry<'a> {
+    fn new(provider: &'a str, mode: &'a str) -> Self {
+        Self {
+            provider,
+            mode,
+            prefix: None,
+            content_prefix: None,
+            dir: None,
+        }
+    }
+
+    fn with_prefix(mut self, prefix: &'a str) -> Self {
+        self.prefix = Some(prefix);
+        self
+    }
+
+    fn with_content_prefix(mut self, content_prefix: &'a str) -> Self {
+        self.content_prefix = Some(content_prefix);
+        self
+    }
+
+    fn with_dir(mut self, dir: &'a str) -> Self {
+        self.dir = Some(dir);
+        self
+    }
+}
+
 /// Helper: write a minimal agentspec.toml that configures sync for the named providers.
 ///
-/// Each entry is a (provider, mode) pair, e.g. `("claude", "user")`.
-fn write_sync_config(dir: &Path, providers: &[(&str, &str)]) {
+/// Each entry is a `SyncEntry`, e.g. `SyncEntry::new(provider, mode).with_prefix("tw")`.
+///
+/// Deliberately builds the TOML by string interpolation rather than typed
+/// serialization (cf. `.claude/rules/design-principles.md`): all callers pass
+/// literal-string fixtures or tempdir paths that contain no TOML metacharacters,
+/// and the inline shape keeps the helper trivial to read alongside the inline
+/// fixtures it replaces. Add a typed struct + `toml::to_string` if a future
+/// caller ever needs to inject untrusted input.
+fn write_sync_config(dir: &Path, entries: &[SyncEntry<'_>]) {
     use std::fmt::Write as _;
     let mut sections = String::from(
         r#"
@@ -1849,9 +1757,22 @@ opencode = { model = "anthropic/claude-sonnet-4-5", variant = "high" }
 cursor = { model = "fast" }
 "#,
     );
-    for (provider, mode) in providers {
+    for entry in entries {
         // Writes to a `String` are infallible.
-        let _ = writeln!(sections, "\n[sync.{provider}]\nmode = \"{mode}\"");
+        let _ = writeln!(
+            sections,
+            "\n[sync.{}]\nmode = \"{}\"",
+            entry.provider, entry.mode
+        );
+        if let Some(prefix) = entry.prefix {
+            let _ = writeln!(sections, "prefix = \"{prefix}\"");
+        }
+        if let Some(content_prefix) = entry.content_prefix {
+            let _ = writeln!(sections, "content-prefix = \"{content_prefix}\"");
+        }
+        if let Some(dir_val) = entry.dir {
+            let _ = writeln!(sections, "dir = \"{dir_val}\"");
+        }
     }
     let r = std::fs::write(dir.join("agentspec.toml"), sections);
     assert!(r.is_ok(), "failed to write agentspec.toml: {r:?}");
@@ -1949,7 +1870,7 @@ sources_dir = "spec"
 fn test_remove_after_sync_user_mode_deletes_all_tracked_files() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_sync_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -1995,7 +1916,7 @@ fn test_remove_after_sync_user_mode_deletes_all_tracked_files() {
 fn test_remove_after_sync_project_mode_deletes_all_tracked_files() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_sync_config(&dir, &[("claude", "project")]);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "project")]);
     let home = dir.join("home");
 
     let sync =
@@ -2028,7 +1949,13 @@ fn test_remove_after_sync_project_mode_deletes_all_tracked_files() {
 fn test_remove_per_provider_scoping_leaves_other_providers_intact() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_sync_config(&dir, &[("claude", "user"), ("cursor", "user")]);
+    write_sync_config(
+        &dir,
+        &[
+            SyncEntry::new("claude", "user"),
+            SyncEntry::new("cursor", "user"),
+        ],
+    );
     let home = dir.join("home");
 
     let sync = run_agentspec(&["sync"], &dir, &home).expect("agentspec spawn");
@@ -2063,7 +1990,7 @@ fn test_remove_per_provider_scoping_leaves_other_providers_intact() {
 fn test_remove_without_prior_sync_is_no_op() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_sync_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
     let home = dir.join("home");
 
     // No sync first — every dest dir is missing.
@@ -2078,7 +2005,7 @@ fn test_remove_without_prior_sync_is_no_op() {
 fn test_remove_idempotent() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_sync_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -2106,7 +2033,7 @@ fn test_remove_idempotent() {
 fn test_remove_dry_run_writes_nothing() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_sync_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -2150,7 +2077,7 @@ fn test_remove_dry_run_predicts_dest_dir_rmdir() {
     // rmdir dest dir"; when an unmanaged file is present it must not.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_sync_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -2200,7 +2127,7 @@ fn test_remove_dry_run_predicts_dest_dir_rmdir() {
 fn test_remove_tolerates_missing_manifest() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_sync_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -2229,7 +2156,7 @@ fn test_remove_tolerates_missing_manifest() {
 fn test_remove_tolerates_pre_deleted_tracked_file() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_sync_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -2259,7 +2186,7 @@ fn test_remove_tolerates_pre_deleted_tracked_file() {
 fn test_remove_leaves_unmanaged_files_in_dest_dir() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_sync_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -2300,7 +2227,7 @@ fn test_remove_refuses_higher_manifest_version() {
     // manifest is rejected end-to-end on the remove path too.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_sync_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
     let home = dir.join("home");
 
     // Plant a manifest with version > MANIFEST_VERSION.
@@ -2337,7 +2264,7 @@ fn test_remove_strips_claude_owned_entries_from_settings_json() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_sync_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
     let home = dir.join("home");
     let settings = home.join(".claude/settings.json");
     std::fs::create_dir_all(settings.parent().expect("parent")).expect("mkdir");
@@ -2391,7 +2318,7 @@ fn test_remove_strips_cursor_owned_entries_from_hooks_json() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_sync_config(&dir, &[("cursor", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("cursor", "user")]);
     let home = dir.join("home");
     let hooks = home.join(".cursor/hooks.json");
     std::fs::create_dir_all(hooks.parent().expect("parent")).expect("mkdir");
@@ -2433,7 +2360,7 @@ fn test_remove_preserves_user_authored_entries_in_settings_json() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_sync_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
     let home = dir.join("home");
 
     // Pre-populate settings.json with a user-authored entry plus a non-hooks key.
@@ -2481,7 +2408,7 @@ fn test_remove_drops_empty_event_arrays_in_settings_json() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_sync_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
     let home = dir.join("home");
     let settings = home.join(".claude/settings.json");
     std::fs::create_dir_all(settings.parent().expect("parent")).expect("mkdir");
@@ -2518,7 +2445,7 @@ fn test_remove_deletes_settings_when_only_agentspec_content_was_present() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_sync_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -2545,7 +2472,7 @@ fn test_remove_preserves_top_level_hooks_key_when_user_entries_remain() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_sync_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
     let home = dir.join("home");
 
     let settings = home.join(".claude/settings.json");
@@ -2580,7 +2507,7 @@ fn test_remove_dry_run_reports_user_entries_remaining() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_sync_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
     let home = dir.join("home");
 
     let settings = home.join(".claude/settings.json");
@@ -2628,7 +2555,7 @@ fn test_remove_handles_missing_settings_json() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_sync_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
     let home = dir.join("home");
 
     let remove =
@@ -2649,7 +2576,7 @@ fn test_remove_preserves_jsonc_comments_in_settings_json() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_sync_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
     let home = dir.join("home");
 
     let settings = home.join(".claude/settings.json");
@@ -2695,7 +2622,7 @@ fn test_remove_empirical_check_jsonc_parser_last_element_comma() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_sync_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
     let home = dir.join("home");
 
     let settings = home.join(".claude/settings.json");
@@ -2745,7 +2672,7 @@ fn test_remove_dry_run_suppresses_zero_count_summary() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_sync_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -2778,7 +2705,7 @@ fn test_remove_strips_agentspec_instructions_from_opencode_json() {
     // `instructions[]` shape would be vacuous.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_sync_config(&dir, &[("opencode", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("opencode", "user")]);
     let home = dir.join("home");
     let opencode = home.join(".config/opencode/opencode.json");
     std::fs::create_dir_all(opencode.parent().expect("parent")).expect("mkdir");
@@ -2857,7 +2784,7 @@ fn test_remove_deletes_opencode_when_only_agentspec_content_was_present() {
     // TODO.md #20). The .config/opencode parent is rmdir'd as well.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_sync_config(&dir, &[("opencode", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("opencode", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -2883,7 +2810,7 @@ fn test_remove_deletes_opencode_when_only_agentspec_content_was_present() {
 fn test_remove_preserves_user_authored_opencode_instructions() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_sync_config(&dir, &[("opencode", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("opencode", "user")]);
     let home = dir.join("home");
 
     let opencode = home.join(".config/opencode/opencode.json");
@@ -2922,7 +2849,7 @@ fn test_remove_preserves_user_authored_opencode_instructions() {
 fn test_remove_dry_run_reports_opencode_user_entries_remaining() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_sync_config(&dir, &[("opencode", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("opencode", "user")]);
     let home = dir.join("home");
 
     let opencode = home.join(".config/opencode/opencode.json");
@@ -2963,7 +2890,7 @@ fn test_remove_keeps_settings_when_user_authored_keys_present() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_sync_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
     let home = dir.join("home");
     let settings = home.join(".claude/settings.json");
     std::fs::create_dir_all(settings.parent().expect("parent")).expect("mkdir");
@@ -3010,7 +2937,7 @@ fn test_remove_keeps_cursor_hooks_when_user_event_arrays_present() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_sync_config(&dir, &[("cursor", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("cursor", "user")]);
     let home = dir.join("home");
     let hooks = home.join(".cursor/hooks.json");
     std::fs::create_dir_all(hooks.parent().expect("parent")).expect("mkdir");
@@ -3066,7 +2993,7 @@ fn test_remove_does_not_delete_when_no_agentspec_content_was_present() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_sync_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
     let home = dir.join("home");
     let settings = home.join(".claude/settings.json");
     std::fs::create_dir_all(settings.parent().expect("parent")).expect("mkdir");
@@ -3101,7 +3028,7 @@ fn test_remove_dry_run_does_not_delete_host_file() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_sync_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -3136,7 +3063,7 @@ fn test_remove_dry_run_does_not_delete_host_file() {
 fn test_remove_opencode_handles_missing_config_file() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_sync_config(&dir, &[("opencode", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("opencode", "user")]);
     let home = dir.join("home");
 
     // No prior sync → no opencode.json.
@@ -3162,7 +3089,7 @@ fn test_remove_deletes_opencode_host_file_when_only_agentspec_entries_present() 
     // is informationally equivalent to no file, and is cleaned up.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_sync_config(&dir, &[("opencode", "user")]);
+    write_sync_config(&dir, &[SyncEntry::new("opencode", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -3205,7 +3132,11 @@ fn test_full_round_trip_all_providers() {
     install_hook_fixture(&dir);
     write_sync_config(
         &dir,
-        &[("claude", "user"), ("cursor", "user"), ("opencode", "user")],
+        &[
+            SyncEntry::new("claude", "user"),
+            SyncEntry::new("cursor", "user"),
+            SyncEntry::new("opencode", "user"),
+        ],
     );
     let home = dir.join("home");
 
