@@ -92,3 +92,8 @@
     - Decide what `verbose` means on the remove path: show per-file deletions? show destinations that had no manifest (currently silently skipped)? emit the same line shape `render_remove_report` already produces but unconditionally regardless of activity?
     - Likely shape: add `verbose: bool` to `emit_remove`'s signature, thread into a new branch in `render_remove_report` that surfaces destinations where `Ok(None)` from `remove_manifest_tracked` was returned (today these are invisible)
     - Surfaced by code review of the FileWrite typestate refactor; out of scope for that branch
+19. Scrub "Phase N" milestone language from doc comments
+    - Doc comments across `src/plan.rs:139-142`, `src/remove.rs:62-63`, `src/hooks_merge.rs:4,15,38`, `src/compile.rs:46,56,64-65,75,81,86,130,273`, `src/adapters/cursor.rs:188,212,220,237,265`, and `src/adapters/claude.rs:283` reference "Phase 1"/"Phase 2"/"Phase 3"/"Phase 4" milestones from the in-flight hooks-pipeline branch work
+    - The phases are now landed and the labels rot in place — they're noise for readers who didn't follow the development sequence
+    - Likely shape: a single doc-only pass that replaces "Phase N" references with descriptive labels (e.g., "Phase 2's CST-aware merge layer" → "the CST-aware merge layer in `hooks_merge`") or removes them where the surrounding paragraph already conveys the context
+    - Out of scope for the FileWrite typestate refactor; surfaced during its code review
