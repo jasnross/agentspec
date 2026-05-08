@@ -280,13 +280,13 @@ pub fn body_tool_name(tool: &ToolFrontmatter) -> &'static str {
 //   { "hooks": { "<EventName>": [ { "matcher": "...", "hooks": [<entry>, ...] }, ... ] } }
 //
 // `entry_to_claude_json` is provider-specific JSON shaping that lives here
-// (per CLAUDE.md's "Provider-specific logic belongs in adapters"); the Phase 2
-// merge layer (`hooks_merge`) imports it so both emission paths share one
-// source of truth for the `_agentspec_id` sentinel and entry shape.
+// (per CLAUDE.md's "Provider-specific logic belongs in adapters"); the
+// CST-aware merge layer (`hooks_merge`) imports it so both emission paths
+// share one source of truth for the `_agentspec_id` sentinel and entry shape.
 
 /// Build the JSON object for one entry in Claude's `hooks.json` matcher group.
-/// Used by both Phase 1's whole-file synthesis (`build_claude_hooks_json`)
-/// and Phase 2's CST merge (`hooks_merge::merge_claude_settings`).
+/// Used by both the bundled-mode whole-file synthesis (`build_claude_hooks_json`)
+/// and the merged-mode CST merge (`hooks_merge::merge_claude_settings`).
 pub fn entry_to_claude_json(e: &EmittedHookEntry) -> serde_json::Value {
     use serde_json::{Map, json};
     let mut obj = Map::new();
@@ -302,7 +302,7 @@ pub fn entry_to_claude_json(e: &EmittedHookEntry) -> serde_json::Value {
 /// Translate a canonical `HookEvent` to Claude's `PascalCase` event name.
 ///
 /// Provider-specific naming lives here per `CLAUDE.md`'s "Provider-specific
-/// logic belongs in adapters" principle. Exposed publicly so the Phase 2 CST
+/// logic belongs in adapters" principle. Exposed publicly so the CST-aware
 /// merge layer (`hooks_merge`) can resolve event names without re-deriving
 /// the mapping.
 pub fn claude_event_name(event: HookEvent) -> &'static str {
@@ -321,10 +321,12 @@ pub fn claude_event_name(event: HookEvent) -> &'static str {
 }
 
 /// Synthesize the per-provider `hooks/hooks.json` plus the canonical entry
-/// list for downstream merge in Phase 2.
+/// list for the downstream merged-mode merge.
 ///
-/// Returns an empty `HookSynthesis` when there are no hook specs. Returns an
-/// error when `hook_emit_mode == Some(Merged)` (Phase 2's responsibility).
+/// Returns an empty `HookSynthesis` when there are no hook specs. In merged
+/// modes, `entries` is populated for the post-write patcher to consume but
+/// `files` omits `hooks/hooks.json` (the patcher edits the host
+/// `settings.json` instead).
 pub fn synthesize_hooks(
     specs: &[&NormalizedHookSpec],
     cfg: Option<&AdapterConfig>,
@@ -359,8 +361,9 @@ pub fn synthesize_hooks(
 /// Within an event, matcher groups preserve first-seen order — propagated from
 /// the spec list, which itself preserves `IndexMap` authoring order from the
 /// `hooks.toml` file. The per-entry serialization delegates to the local
-/// `entry_to_claude_json` helper so Phase 1 and Phase 2 share one source of
-/// truth for the entry shape (including the `_agentspec_id` sentinel).
+/// `entry_to_claude_json` helper so the bundled emission path and the
+/// merged-mode merge layer share one source of truth for the entry shape
+/// (including the `_agentspec_id` sentinel).
 fn build_claude_hooks_json(entries: &[EmittedHookEntry]) -> Result<String> {
     use serde_json::{Map, Value, json};
 

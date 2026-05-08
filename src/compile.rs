@@ -42,9 +42,9 @@ pub struct AdapterConfig {
 ///
 /// User vs. Project is split because the script command path-anchoring
 /// differs: User mode emits `$HOME/.claude/hooks/scripts/<f>`, Project mode
-/// emits `${CLAUDE_PROJECT_DIR}/.claude/hooks/scripts/<f>`. Plan originally
-/// had two variants — split during Phase 2 because per-mode anchoring isn't
-/// derivable from a single Merged variant.
+/// emits `${CLAUDE_PROJECT_DIR}/.claude/hooks/scripts/<f>`. Per-mode anchoring
+/// isn't derivable from a single Merged variant, so each mode gets its own
+/// enum variant.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HookEmitMode {
     Bundled,
@@ -53,7 +53,7 @@ pub enum HookEmitMode {
 }
 
 impl HookEmitMode {
-    /// Whether this mode requires the post-write merge patcher (Phase 2 path).
+    /// Whether this mode requires the post-write merge patcher.
     pub fn is_merged(self) -> bool {
         matches!(self, Self::MergedUser | Self::MergedProject)
     }
@@ -61,8 +61,9 @@ impl HookEmitMode {
 
 /// A single canonical hook entry, computed once per provider during compile.
 ///
-/// Both Phase 1's `synthesize_hooks_json` (which writes a self-contained
-/// `hooks.json`) and Phase 2's CST-aware merge layer consume the same shape.
+/// Both the bundled-mode `synthesize_hooks` path (which writes a
+/// self-contained `hooks.json`) and the merged-mode CST-aware merge layer
+/// consume the same shape.
 /// Provider-specific JSON wrapping (Claude grouping by matcher vs. Cursor's
 /// per-entry matcher) is applied at JSON-emission time, not stored here.
 #[derive(Clone, Debug)]
@@ -72,18 +73,18 @@ pub struct EmittedHookEntry {
     pub command: String,
     pub timeout: Option<u32>,
     /// Stable identifier emitted as `_agentspec_id` in the JSON output —
-    /// the sentinel Phase 2's merge layer uses to identify owned entries.
+    /// the sentinel the merged-mode merge layer uses to identify owned entries.
     pub agentspec_id: String,
 }
 
 /// What an adapter's `synthesize_hooks` step returns.
 ///
-/// `entries` is always populated (so Phase 2's patcher can consume them
-/// regardless of emit mode). `files` carries the full bundle for
+/// `entries` is always populated (so the merged-mode patcher can consume
+/// them regardless of emit mode). `files` carries the full bundle for
 /// `HookEmitMode::Bundled` — both `hooks/hooks.json` AND every file under
 /// `hooks/scripts/`, since helpers (e.g., `_common.sh`) that an entry script
 /// `source`s also need to land at the destination. Merged-mode emission goes
-/// through the post-write patcher; `files` is empty in that mode (Phase 2).
+/// through the post-write patcher; `files` is empty in that mode.
 #[derive(Debug, Default)]
 pub struct HookSynthesis {
     pub entries: Vec<EmittedHookEntry>,
@@ -127,7 +128,8 @@ pub fn build_hook_script_files(
 ///   because Claude's hook-command runtime isn't documented to expand `~`).
 /// - `MergedProject`: `${CLAUDE_PROJECT_DIR}/.<dotdir>/hooks/scripts/<f>`.
 ///   Cursor's behavior with `${CLAUDE_PROJECT_DIR}` outside plugin scope is
-///   not documented — Phase 2's manual verification gate covers this.
+///   not documented — must be verified empirically against a real Cursor
+///   build before 1.0.
 pub fn build_emitted_hook_entries(
     specs: &[&NormalizedHookSpec],
     provider: Provider,
@@ -270,8 +272,8 @@ pub struct CompileResult {
     pub files: Vec<GeneratedFile>,
     /// Per-provider hook entries, populated whenever any `NormalizedSpec::Hook`
     /// is in the input. Empty for providers that don't emit hooks (`OpenCode`)
-    /// or when no hook specs exist. Phase 2's merge layer consumes this map
-    /// directly so it doesn't have to re-parse the emitted JSON.
+    /// or when no hook specs exist. The merged-mode merge layer consumes this
+    /// map directly so it doesn't have to re-parse the emitted JSON.
     pub hooks: HashMap<Provider, Vec<EmittedHookEntry>>,
 }
 

@@ -1,19 +1,19 @@
 //! CST-aware merge of agentspec-emitted hook entries into hand-edited
 //! `.claude/settings.json` and `.cursor/hooks.json` files.
 //!
-//! Phase 1's plugin-scope path writes complete `hooks.json` files. Phase 2's
-//! Project/User-scope path can't replace the host config — it carries
-//! permissions, env config, allowlists, and user-authored hooks that must
-//! survive the sync. The merge layer uses `jsonc-parser`'s CST so comments,
-//! trailing commas, key ordering, and untouched whitespace round-trip
-//! byte-identical.
+//! The Bundled (plugin-scope) emission path writes complete `hooks.json` files.
+//! The Merged (Project/User-scope) path can't replace the host config — it
+//! carries permissions, env config, allowlists, and user-authored hooks that
+//! must survive the sync. The merge layer uses `jsonc-parser`'s CST so
+//! comments, trailing commas, key ordering, and untouched whitespace
+//! round-trip byte-identical.
 //!
 //! Ownership is identified by the `_agentspec_id` sentinel field on each
 //! entry: agentspec-owned entries are replaced wholesale on each sync; entries
 //! lacking the sentinel are user-authored and stay byte-identical. This is
 //! the contingent design from `thoughts/research/2026-05-04-tool-managed-json-config-merge-patterns.md` —
-//! Phase 2 step 5's empirical validation gate covers the case where a provider
-//! rejects the unknown sub-field.
+//! empirical verification against real provider builds covers the case where
+//! a provider rejects the unknown sub-field.
 
 use std::fs;
 use std::path::Path;
@@ -35,7 +35,7 @@ use crate::plan::RemovePatchReport;
 ///
 /// The two enums are isomorphic; this is a mechanical recursive walk. Lives
 /// here rather than in `compile.rs` because it's only needed for CST insertion
-/// (Phase 1's emission path serializes `Value` directly via `serde_json`).
+/// (the bundled emission path serializes `Value` directly via `serde_json`).
 ///
 /// Caller contract: `Number` values reaching this function today are integers
 /// only (the `timeout` field on `EmittedHookEntry` is `u32`). `n.to_string()`

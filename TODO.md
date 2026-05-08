@@ -40,7 +40,7 @@
       - Event-name mappings (`postToolUseFailure`, `sessionStart`, `sessionEnd`, `subagentStart`, `subagentStop`, `beforeSubmitPrompt`) — see `cursor.rs:215-220`
       - `${CLAUDE_PROJECT_DIR}` resolution outside plugin scope in `MergedProject` mode — see `compile.rs:128-130`
       - `${CLAUDE_PLUGIN_ROOT}` aliasing in Bundled (Path) mode — Cursor's documented hook env only mentions `CLAUDE_PROJECT_DIR`, so the bundled-mode command literal `${CLAUDE_PLUGIN_ROOT}/hooks/scripts/<f>` may not resolve at runtime
-      - Whether Cursor accepts unknown sub-fields like `_agentspec_id` in hook entries (Phase 2's contingent design depends on this)
+      - Whether Cursor accepts unknown sub-fields like `_agentspec_id` in hook entries (the merged-mode contingent design depends on this)
     - All four are blockers for confident Cursor support — verify before 1.0 against a real Cursor build and document the actual behavior
     - If Cursor doesn't alias `CLAUDE_PLUGIN_ROOT` in Bundled mode, the fix is likely to mirror the Merged-mode pattern: emit `CLAUDE_PLUGIN_ROOT=<derived> <command>` for Cursor specifically
 12. Preserve verbatim file modes for all `SupportingFile` emission
@@ -86,11 +86,7 @@
     - Decide what `verbose` means on the remove path: show per-file deletions? show destinations that had no manifest (currently silently skipped)? emit the same line shape `render_remove_report` already produces but unconditionally regardless of activity?
     - Likely shape: add `verbose: bool` to `emit_remove`'s signature, thread into a new branch in `render_remove_report` that surfaces destinations where `Ok(None)` from `remove_manifest_tracked` was returned (today these are invisible)
     - Surfaced by code review of the FileWrite typestate refactor; out of scope for that branch
-19. Scrub "Phase N" milestone language from doc comments
-    - Doc comments across `src/plan.rs:139-142`, `src/remove.rs:62-63`, `src/hooks_merge.rs:4,15,38`, `src/compile.rs:46,56,64-65,75,81,86,130,273`, `src/adapters/cursor.rs:188,212,220,237,265`, and `src/adapters/claude.rs:283` reference "Phase 1"/"Phase 2"/"Phase 3"/"Phase 4" milestones from the in-flight hooks-pipeline branch work
-    - The phases are now landed and the labels rot in place — they're noise for readers who didn't follow the development sequence
-    - Likely shape: a single doc-only pass that replaces "Phase N" references with descriptive labels (e.g., "Phase 2's CST-aware merge layer" → "the CST-aware merge layer in `hooks_merge`") or removes them where the surrounding paragraph already conveys the context
-    - Out of scope for the FileWrite typestate refactor; surfaced during its code review
+19. _Done — see `thoughts/plans/2026-05-07-scrub-phase-n-doc-labels.md`._ All "Phase 1/2/3/4" milestone references in production-source doc comments and in `TODO.md` prose were replaced with descriptive labels (Bundled/Merged emission modes, Claude/Cursor settings tidy, `OpenCode` instructions tidy); a stale "Returns an error" doc claim at `src/adapters/claude.rs:325-327` was corrected as part of the same pass. The only surviving "Phase 2" reference is a test-body comment at `src/adapters/claude.rs:901` that describes the runtime mode being tested rather than an architectural milestone — left intentionally per the plan's scope. Slot kept to preserve numbering of subsequent items.
 20. Remove empty `settings.json` if empty when cleaning up hooks
     - Currently when running `agentspec remove --mode project --provider claude` (or similar) the .claude/settings.json file remains even if removing hooks resulted in the file's contents being reduced to `{}`.
     - We should clean up the directory as it being empty after removing indicates that only agentspec-managed content was present in it

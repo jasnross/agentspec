@@ -185,7 +185,7 @@ pub fn body_tool_name(tool: &ToolFrontmatter) -> &'static str {
 //   { "version": 1, "hooks": { "<eventName>": [<entry>, <entry>, ...] } }
 //
 // `entry_to_cursor_json` is the per-entry shape (matcher per-entry, sentinel
-// field). Mirrors `claude::entry_to_claude_json`; Phase 2's merge layer
+// field). Mirrors `claude::entry_to_claude_json`; the CST-aware merge layer
 // imports both helpers so the two emission paths stay in lockstep.
 
 /// Build the JSON object for one entry in Cursor's `hooks.json` event array.
@@ -209,7 +209,7 @@ pub fn entry_to_cursor_json(e: &EmittedHookEntry) -> serde_json::Value {
 
 /// Translate a canonical `HookEvent` to Cursor's camelCase event name.
 ///
-/// Exposed publicly so the Phase 2 CST merge layer (`hooks_merge`) can
+/// Exposed publicly so the CST-aware merge layer (`hooks_merge`) can
 /// resolve event names without re-deriving the mapping.
 ///
 /// Note that `user_prompt_submit` maps to `beforeSubmitPrompt` — not a simple
@@ -217,7 +217,7 @@ pub fn entry_to_cursor_json(e: &EmittedHookEntry) -> serde_json::Value {
 /// §2.3 for the documented event list. Several mappings (postToolUseFailure,
 /// sessionStart, sessionEnd, subagentStart, subagentStop) are based on the
 /// research doc's listing and may need adjustment if Cursor's docs diverge —
-/// the plan calls out an empirical verification step before Phase 2 ships.
+/// empirical verification against a real Cursor build is still pending.
 pub fn cursor_event_name(event: HookEvent) -> &'static str {
     match event {
         HookEvent::PreToolUse => "preToolUse",
@@ -234,7 +234,7 @@ pub fn cursor_event_name(event: HookEvent) -> &'static str {
 }
 
 /// Synthesize the per-provider `hooks/hooks.json` plus the canonical entry
-/// list for downstream merge in Phase 2.
+/// list for the downstream merged-mode merge.
 pub fn synthesize_hooks(
     specs: &[&NormalizedHookSpec],
     cfg: Option<&AdapterConfig>,
@@ -262,8 +262,9 @@ pub fn synthesize_hooks(
 
 /// Cursor places the `matcher` on each entry directly; entries within an
 /// event preserve insertion order from the spec list. Per-entry serialization
-/// delegates to the local `entry_to_cursor_json` helper so Phase 1 and Phase 2
-/// share one source of truth for the entry shape.
+/// delegates to the local `entry_to_cursor_json` helper so the bundled
+/// emission path and the merged-mode merge layer share one source of truth
+/// for the entry shape.
 fn build_cursor_hooks_json(entries: &[EmittedHookEntry]) -> Result<String> {
     use serde_json::{Map, Value, json};
 

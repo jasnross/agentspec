@@ -59,8 +59,8 @@ pub fn resolve_remove_targets(
 /// One `RemoveWrite` is produced per `(provider, kind)` dest dir. The manifest at
 /// `destination/.agentspec-manifest.json` is the source of truth at execution time;
 /// no file content is carried because every tracked file is deleted.
-/// `post_write_hooks` is populated by later phases (Claude/Cursor settings tidy in
-/// Phase 3, `OpenCode` instructions tidy in Phase 4).
+/// `post_write_hooks` is populated by Claude/Cursor settings tidy and
+/// `OpenCode` instructions tidy.
 pub fn remove_plan(
     targets: &[(Provider, SyncTargetConfig)],
     home: &Path,

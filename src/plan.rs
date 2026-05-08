@@ -135,10 +135,9 @@ pub trait PostWriteHook: std::fmt::Debug {
 
 /// Outcome of a per-provider remove patch.
 ///
-/// Currently produced by Claude's settings tidy and Cursor's hooks tidy
-/// (Phase 3). `OpenCode`'s instructions filter joins in Phase 4 and consumes
-/// the same shape. The count is informational; callers use it to decide
-/// whether to print a summary line.
+/// Produced by Claude's settings tidy, Cursor's hooks tidy, and `OpenCode`'s
+/// instructions filter — all three consume the same shape. The count is
+/// informational; callers use it to decide whether to print a summary line.
 #[derive(Debug, Default)]
 pub struct RemovePatchReport {
     pub host_path: PathBuf,
