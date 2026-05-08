@@ -2331,11 +2331,21 @@ fn test_remove_refuses_higher_manifest_version() {
 
 #[test]
 fn test_remove_strips_claude_owned_entries_from_settings_json() {
+    // Seed a user-authored top-level key (`permissions`) so the host file
+    // survives the remove cleanup — otherwise the new delete-on-empty
+    // behavior removes it and the strip assertion becomes vacuous.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
     write_sync_config(&dir, &[("claude", "user")]);
     let home = dir.join("home");
+    let settings = home.join(".claude/settings.json");
+    std::fs::create_dir_all(settings.parent().expect("parent")).expect("mkdir");
+    std::fs::write(
+        &settings,
+        "{\n  \"permissions\": { \"allow\": [\"Read\"] }\n}\n",
+    )
+    .expect("seed user settings.json");
 
     let sync =
         run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
@@ -2344,7 +2354,6 @@ fn test_remove_strips_claude_owned_entries_from_settings_json() {
         "sync failed:\n{}",
         String::from_utf8_lossy(&sync.stderr)
     );
-    let settings = home.join(".claude/settings.json");
     assert!(settings.exists(), "settings.json should exist after sync");
     let pre = std::fs::read_to_string(&settings).expect("read settings.json");
     assert!(
@@ -2360,27 +2369,42 @@ fn test_remove_strips_claude_owned_entries_from_settings_json() {
         String::from_utf8_lossy(&remove.stderr)
     );
 
-    assert!(settings.exists(), "settings.json must not be deleted");
+    assert!(
+        settings.exists(),
+        "settings.json must survive when user-authored top-level keys remain"
+    );
     let post = std::fs::read_to_string(&settings).expect("read settings.json");
     assert!(
         !post.contains("\"_agentspec_id\""),
         "sentinels must be gone, got:\n{post}"
     );
+    assert!(
+        post.contains("\"permissions\""),
+        "user-authored permissions must round-trip, got:\n{post}"
+    );
 }
 
 #[test]
 fn test_remove_strips_cursor_owned_entries_from_hooks_json() {
+    // Seed a user-authored top-level key (`customKey`) — beyond the
+    // version-only Cursor carve-out — so the host file survives remove.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
     write_sync_config(&dir, &[("cursor", "user")]);
     let home = dir.join("home");
+    let hooks = home.join(".cursor/hooks.json");
+    std::fs::create_dir_all(hooks.parent().expect("parent")).expect("mkdir");
+    std::fs::write(
+        &hooks,
+        "{\n  \"version\": 1,\n  \"customKey\": \"value\"\n}\n",
+    )
+    .expect("seed user hooks.json");
 
     let sync =
         run_agentspec(&["sync", "--provider", "cursor"], &dir, &home).expect("agentspec spawn");
     assert!(sync.status.success());
 
-    let hooks = home.join(".cursor/hooks.json");
     assert!(hooks.exists());
     let pre = std::fs::read_to_string(&hooks).expect("read hooks.json");
     assert!(pre.contains("\"_agentspec_id\""));
@@ -2389,11 +2413,18 @@ fn test_remove_strips_cursor_owned_entries_from_hooks_json() {
         run_agentspec(&["remove", "--provider", "cursor"], &dir, &home).expect("agentspec spawn");
     assert!(remove.status.success());
 
-    assert!(hooks.exists(), "hooks.json must not be deleted");
+    assert!(
+        hooks.exists(),
+        "hooks.json must survive when user-authored top-level keys remain"
+    );
     let post = std::fs::read_to_string(&hooks).expect("read hooks.json");
     assert!(
         !post.contains("\"_agentspec_id\""),
         "sentinels must be gone, got:\n{post}"
+    );
+    assert!(
+        post.contains("\"customKey\""),
+        "user-authored top-level key must round-trip, got:\n{post}"
     );
 }
 
@@ -2445,12 +2476,20 @@ fn test_remove_preserves_user_authored_entries_in_settings_json() {
 fn test_remove_drops_empty_event_arrays_in_settings_json() {
     // After remove, any event array that becomes empty (because all its
     // entries were agentspec-owned) is dropped — leaving no `SessionStart`
-    // key behind.
+    // key behind. Seed a user-authored top-level key so the host file
+    // survives the new delete-on-empty cleanup.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
     write_sync_config(&dir, &[("claude", "user")]);
     let home = dir.join("home");
+    let settings = home.join(".claude/settings.json");
+    std::fs::create_dir_all(settings.parent().expect("parent")).expect("mkdir");
+    std::fs::write(
+        &settings,
+        "{\n  \"permissions\": { \"allow\": [\"Read\"] }\n}\n",
+    )
+    .expect("seed user settings.json");
 
     let sync =
         run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
@@ -2460,7 +2499,6 @@ fn test_remove_drops_empty_event_arrays_in_settings_json() {
         run_agentspec(&["remove", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
     assert!(remove.status.success());
 
-    let settings = home.join(".claude/settings.json");
     let parsed = read_jsonc_normalized(&settings);
     // No SessionStart key should remain.
     let session_start = parsed.pointer("/hooks/SessionStart");
@@ -2471,9 +2509,12 @@ fn test_remove_drops_empty_event_arrays_in_settings_json() {
 }
 
 #[test]
-fn test_remove_drops_top_level_hooks_key_when_empty() {
+fn test_remove_deletes_settings_when_only_agentspec_content_was_present() {
     // settings.json starts empty (no user content), sync adds agentspec
-    // hooks, remove must drop the entire top-level `hooks` object.
+    // hooks, remove must delete the host file outright (the prior contract
+    // — "drop the hooks key, leave settings.json as `{}`" — was inverted
+    // for TODO.md #20). The .claude parent directory is rmdir'd as well
+    // because all kind dirs and the host file are gone.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
@@ -2489,10 +2530,13 @@ fn test_remove_drops_top_level_hooks_key_when_empty() {
     assert!(remove.status.success());
 
     let settings = home.join(".claude/settings.json");
-    let parsed = read_jsonc_normalized(&settings);
     assert!(
-        parsed.get("hooks").is_none(),
-        "top-level hooks key should be dropped, got: {parsed:?}"
+        !settings.exists(),
+        "settings.json should be deleted when only agentspec content was present"
+    );
+    assert!(
+        !home.join(".claude").exists(),
+        ".claude should be rmdir'd when settings.json is the last thing in it"
     );
 }
 
@@ -2729,10 +2773,16 @@ fn test_remove_dry_run_suppresses_zero_count_summary() {
 
 #[test]
 fn test_remove_strips_agentspec_instructions_from_opencode_json() {
+    // Seed a user-authored top-level key (`model`) so the host file survives
+    // the new delete-on-empty cleanup — otherwise the strip assertions on
+    // `instructions[]` shape would be vacuous.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     write_sync_config(&dir, &[("opencode", "user")]);
     let home = dir.join("home");
+    let opencode = home.join(".config/opencode/opencode.json");
+    std::fs::create_dir_all(opencode.parent().expect("parent")).expect("mkdir");
+    std::fs::write(&opencode, "{\n  \"model\": \"haiku\"\n}\n").expect("seed user opencode.json");
 
     let sync =
         run_agentspec(&["sync", "--provider", "opencode"], &dir, &home).expect("agentspec spawn");
@@ -2741,8 +2791,7 @@ fn test_remove_strips_agentspec_instructions_from_opencode_json() {
         "sync failed:\n{}",
         String::from_utf8_lossy(&sync.stderr)
     );
-    let opencode = home.join(".config/opencode/opencode.json");
-    assert!(opencode.exists(), "sync should write opencode.json");
+    assert!(opencode.exists(), "sync should preserve opencode.json");
 
     let pre_value = read_jsonc_normalized(&opencode);
     let pre_instructions = pre_value
@@ -2764,7 +2813,7 @@ fn test_remove_strips_agentspec_instructions_from_opencode_json() {
 
     assert!(
         opencode.exists(),
-        "remove must not delete the host opencode.json"
+        "remove must not delete opencode.json when user-authored keys remain"
     );
     let post_value = read_jsonc_normalized(&opencode);
     let rules_root = home.join(".config/opencode/rules");
@@ -2792,10 +2841,20 @@ fn test_remove_strips_agentspec_instructions_from_opencode_json() {
         absent_or_empty,
         "instructions should be absent or empty after remove, got: {post_value:?}"
     );
+    // User-authored `model` must round-trip.
+    assert_eq!(
+        post_value.get("model").and_then(|v| v.as_str()),
+        Some("haiku"),
+        "user-authored model must round-trip, got: {post_value:?}"
+    );
 }
 
 #[test]
-fn test_remove_drops_instructions_key_when_empty() {
+fn test_remove_deletes_opencode_when_only_agentspec_content_was_present() {
+    // opencode.json starts empty, sync adds agentspec instructions, remove
+    // must delete the host file outright (the prior contract — "drop the
+    // instructions key, leave opencode.json as `{}`" — was inverted for
+    // TODO.md #20). The .config/opencode parent is rmdir'd as well.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     write_sync_config(&dir, &[("opencode", "user")]);
@@ -2810,10 +2869,13 @@ fn test_remove_drops_instructions_key_when_empty() {
     assert!(remove.status.success());
 
     let opencode = home.join(".config/opencode/opencode.json");
-    let parsed = read_jsonc_normalized(&opencode);
     assert!(
-        parsed.get("instructions").is_none(),
-        "instructions key should be dropped when array would be empty, got: {parsed:?}"
+        !opencode.exists(),
+        "opencode.json should be deleted when only agentspec content was present"
+    );
+    assert!(
+        !home.join(".config/opencode").exists(),
+        ".config/opencode should be rmdir'd when opencode.json is the last thing in it"
     );
 }
 
@@ -2894,6 +2956,183 @@ fn test_remove_dry_run_reports_opencode_user_entries_remaining() {
 }
 
 #[test]
+fn test_remove_keeps_settings_when_user_authored_keys_present() {
+    // Pre-authored permissions key + agentspec hooks. After remove, the
+    // permissions key survives, the hooks block is gone, and the parent
+    // directory is left in place.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    write_sync_config(&dir, &[("claude", "user")]);
+    let home = dir.join("home");
+    let settings = home.join(".claude/settings.json");
+    std::fs::create_dir_all(settings.parent().expect("parent")).expect("mkdir");
+    std::fs::write(
+        &settings,
+        "{\n  \"permissions\": { \"allow\": [\"Read\", \"Bash\"] }\n}\n",
+    )
+    .expect("seed user settings.json");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(sync.status.success());
+    let remove =
+        run_agentspec(&["remove", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(remove.status.success());
+
+    assert!(
+        settings.exists(),
+        "settings.json must survive when user-authored top-level keys remain"
+    );
+    assert!(
+        home.join(".claude").exists(),
+        ".claude parent must survive while settings.json is still present"
+    );
+    let parsed = read_jsonc_normalized(&settings);
+    assert!(
+        parsed.get("hooks").is_none(),
+        "hooks key should be dropped when no entries remain, got: {parsed:?}"
+    );
+    let allow = parsed
+        .pointer("/permissions/allow")
+        .and_then(|v| v.as_array());
+    assert!(
+        allow.is_some_and(|a| a.iter().any(|v| v.as_str() == Some("Read"))),
+        "user permissions must round-trip, got: {parsed:?}"
+    );
+}
+
+#[test]
+fn test_remove_keeps_cursor_hooks_when_user_event_arrays_present() {
+    // User has a hand-authored hook entry (no `_agentspec_id`) under a
+    // different event from agentspec's. Sync adds agentspec entries; remove
+    // strips them but the user's event array survives — file stays.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    write_sync_config(&dir, &[("cursor", "user")]);
+    let home = dir.join("home");
+    let hooks = home.join(".cursor/hooks.json");
+    std::fs::create_dir_all(hooks.parent().expect("parent")).expect("mkdir");
+    // Hand-authored entry under PreToolUse (agentspec fixture installs a
+    // SessionStart hook — separate event), so the user's event array is
+    // disjoint from agentspec's.
+    std::fs::write(
+        &hooks,
+        r#"{
+  "version": 1,
+  "hooks": {
+    "PreToolUse": [
+      { "type": "command", "command": "user-pretool.sh", "matcher": "Bash" }
+    ]
+  }
+}
+"#,
+    )
+    .expect("seed user hooks.json");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "cursor"], &dir, &home).expect("agentspec spawn");
+    assert!(sync.status.success());
+    let remove =
+        run_agentspec(&["remove", "--provider", "cursor"], &dir, &home).expect("agentspec spawn");
+    assert!(remove.status.success());
+
+    assert!(
+        hooks.exists(),
+        "hooks.json must survive when user hook entries remain"
+    );
+    assert!(
+        home.join(".cursor").exists(),
+        ".cursor parent must survive while hooks.json is still present"
+    );
+    let post = std::fs::read_to_string(&hooks).expect("read hooks.json");
+    assert!(
+        post.contains("user-pretool.sh"),
+        "user hook command must round-trip, got:\n{post}"
+    );
+    assert!(
+        !post.contains("\"_agentspec_id\""),
+        "agentspec sentinels must be gone, got:\n{post}"
+    );
+}
+
+#[test]
+fn test_remove_does_not_delete_when_no_agentspec_content_was_present() {
+    // Hand-authored settings.json without ever running sync — `removed_owned`
+    // is 0, so the delete-on-empty branch must not fire even though the file
+    // (after a no-op tidy) is structurally minimal. Pins the `removed_owned > 0`
+    // guard end-to-end.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    write_sync_config(&dir, &[("claude", "user")]);
+    let home = dir.join("home");
+    let settings = home.join(".claude/settings.json");
+    std::fs::create_dir_all(settings.parent().expect("parent")).expect("mkdir");
+    let initial = "{\n  \"permissions\": { \"allow\": [\"Read\"] }\n}\n";
+    std::fs::write(&settings, initial).expect("seed user settings.json");
+
+    // No sync — go straight to remove.
+    let remove =
+        run_agentspec(&["remove", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(remove.status.success());
+
+    assert!(
+        settings.exists(),
+        "settings.json must survive when no agentspec content was present"
+    );
+    let post = std::fs::read_to_string(&settings).expect("read settings.json");
+    assert_eq!(
+        post, initial,
+        "no-op remove must round-trip the file byte-identical"
+    );
+    assert!(
+        home.join(".claude").exists(),
+        ".claude parent must not be touched"
+    );
+}
+
+#[test]
+fn test_remove_dry_run_does_not_delete_host_file() {
+    // A full sync followed by `agentspec remove --dry-run` must leave the
+    // host file (and its parent) untouched, even though the predicate would
+    // delete the file under a live run.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    write_sync_config(&dir, &[("claude", "user")]);
+    let home = dir.join("home");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(sync.status.success());
+
+    let settings = home.join(".claude/settings.json");
+    let pre = std::fs::read_to_string(&settings).expect("read settings.json");
+
+    let remove = run_agentspec(
+        &["remove", "--provider", "claude", "--dry-run"],
+        &dir,
+        &home,
+    )
+    .expect("agentspec spawn");
+    assert!(
+        remove.status.success(),
+        "dry-run remove failed:\n{}",
+        String::from_utf8_lossy(&remove.stderr)
+    );
+
+    assert!(settings.exists(), "dry-run must not delete the host file");
+    assert!(
+        home.join(".claude").exists(),
+        "dry-run must not rmdir the parent"
+    );
+    let post = std::fs::read_to_string(&settings).expect("read settings.json");
+    assert_eq!(post, pre, "dry-run must not modify the host file");
+}
+
+#[test]
 fn test_remove_opencode_handles_missing_config_file() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
@@ -2915,17 +3154,17 @@ fn test_remove_opencode_handles_missing_config_file() {
 }
 
 #[test]
-fn test_remove_opencode_does_not_delete_host_file_when_only_agentspec_entries_present() {
+fn test_remove_deletes_opencode_host_file_when_only_agentspec_entries_present() {
+    // Sync writes the only entries (no user content); remove must DELETE
+    // the host file rather than leaving it as a `{}` residue. The new
+    // contract (TODO.md #20) inverts the prior "host file must survive
+    // even when empty" guarantee — a file containing only agentspec content
+    // is informationally equivalent to no file, and is cleaned up.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     write_sync_config(&dir, &[("opencode", "user")]);
     let home = dir.join("home");
 
-    // Sync writes the only entries (no user content); remove must keep the
-    // file even though it ends up as `{}` after dropping the instructions
-    // key. The empty-object steady state is the intentional contract — a
-    // future regression that deletes the file would still pass an `exists()`
-    // check on its own, so we also verify post-state shape.
     let sync =
         run_agentspec(&["sync", "--provider", "opencode"], &dir, &home).expect("agentspec spawn");
     assert!(sync.status.success());
@@ -2935,11 +3174,13 @@ fn test_remove_opencode_does_not_delete_host_file_when_only_agentspec_entries_pr
     assert!(remove.status.success());
 
     let opencode = home.join(".config/opencode/opencode.json");
-    assert!(opencode.exists(), "host file must survive even when empty");
-    let parsed = read_jsonc_normalized(&opencode);
     assert!(
-        parsed.get("instructions").is_none(),
-        "instructions key should be dropped, got: {parsed:?}"
+        !opencode.exists(),
+        "host file should be deleted when only agentspec entries were present"
+    );
+    assert!(
+        !home.join(".config/opencode").exists(),
+        ".config/opencode parent should be rmdir'd"
     );
 }
 

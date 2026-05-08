@@ -240,8 +240,11 @@ pub fn post_write_hook(
 ///
 /// Mirrors [`OpenCodeInstructionsPatch`] but inverted: instead of appending
 /// the current set of rules, it filters out everything whose path starts
-/// with `rules_dest_dir`. The host file (`opencode.json`) is **never**
-/// deleted; if `instructions[]` becomes `[]`, the key is dropped instead.
+/// with `rules_dest_dir`. If `instructions[]` becomes `[]`, the key is
+/// dropped; if the residual file is then `{}` AND tidy actually removed
+/// at least one agentspec entry, the host file (`opencode.json`) is
+/// deleted and its parent directory best-effort `rmdir`'d. User-authored
+/// top-level keys (e.g. `model`) keep the file alive.
 ///
 /// Note: like the sync-side patcher, this uses plain `serde_json` rather
 /// than the CST-aware `jsonc-parser`, so comments and formatting trivia in
@@ -290,8 +293,14 @@ pub fn remove_post_write_hook(
 /// Drops every `instructions[]` entry whose path starts with
 /// `rules_dest_dir`; if the array becomes empty, the `instructions` key is
 /// removed entirely. Returns the count of surviving user-authored entries
-/// for `RemovePatchReport::print_summary`. The host file is never deleted
-/// — when no other top-level keys exist it is rewritten as `{}`.
+/// for `RemovePatchReport::print_summary`.
+///
+/// The host file is **deleted** when (a) tidy actually removed at least one
+/// agentspec instruction entry, and (b) no other top-level keys survive.
+/// After a delete, the host file's parent directory is best-effort
+/// `rmdir`'d. Any user-authored top-level keys (e.g. `model`) keep the
+/// file alive. `OpenCode`'s `opencode.json` doesn't use a `version` key, so
+/// there's no version carve-out — that's Cursor-specific.
 ///
 /// Short-circuits when no agentspec entries are present (so a no-op cycle
 /// doesn't bump the file's mtime). Emits a "would tidy …" line under
@@ -333,6 +342,8 @@ fn remove_opencode_instructions(
         return Ok(RemovePatchReport {
             host_path: config_path,
             user_entries_remaining: 0,
+            host_file_deleted: false,
+            parent_rmdir: false,
         });
     };
 
@@ -372,11 +383,34 @@ fn remove_opencode_instructions(
 
     // No-op short-circuit: if no agentspec-owned entries were removed, skip
     // the rewrite to avoid bumping mtime on what is functionally a read-only
-    // cycle.
+    // cycle. This branch also doubles as the `removed_owned > 0` guard for
+    // the delete-on-empty predicate below — anything that reaches the
+    // `obj.is_empty()` check is guaranteed to have removed at least one
+    // agentspec entry, mirroring the Claude/Cursor `removed_owned > 0` gate.
     if agentspec_entries_removed == 0 {
         return Ok(RemovePatchReport {
             host_path: config_path,
             user_entries_remaining,
+            host_file_deleted: false,
+            parent_rmdir: false,
+        });
+    }
+
+    // OpenCode predicate: delete the host file iff we actually removed at
+    // least one agentspec instruction (guaranteed by the short-circuit above)
+    // AND no other top-level keys survive. Same semantic as the Claude
+    // predicate, different machinery — Claude uses `CstObject::properties()`
+    // on a jsonc-parser CST, OpenCode uses `serde_json::Map::is_empty()` on
+    // a serde_json mutation. The two paths can't share an `is_empty` helper
+    // until OpenCode migrates to a CST-aware tidy (TODO #16). OpenCode has
+    // no version carve-out — that's Cursor-specific.
+    if obj.is_empty() {
+        let parent_rmdir = crate::plan::delete_host_file_and_rmdir_parent(&config_path, dry_run)?;
+        return Ok(RemovePatchReport {
+            host_path: config_path,
+            user_entries_remaining: 0,
+            host_file_deleted: true,
+            parent_rmdir,
         });
     }
 
@@ -396,6 +430,8 @@ fn remove_opencode_instructions(
     Ok(RemovePatchReport {
         host_path: config_path,
         user_entries_remaining,
+        host_file_deleted: false,
+        parent_rmdir: false,
     })
 }
 
@@ -875,10 +911,15 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_opencode_drops_instructions_key_when_empty() {
+    fn test_remove_opencode_deletes_file_when_only_agentspec_instructions_were_present() {
+        // The host file is deleted when (a) tidy actually removed at least one
+        // agentspec entry, and (b) no other top-level keys survive. The
+        // parent directory is best-effort rmdir'd as well.
         let tmp = tempfile::tempdir().expect("tmp");
+        let parent = tmp.path().join("opencode-config");
+        std::fs::create_dir_all(&parent).expect("mkdir parent");
         let rules_dir = tmp.path().join("rules");
-        let config_path = tmp.path().join("opencode.json");
+        let config_path = parent.join("opencode.json");
 
         let initial = serde_json::json!({
             "instructions": [rules_dir.join("a/AGENTS.md").to_string_lossy()]
@@ -889,8 +930,47 @@ mod tests {
         )
         .expect("write");
 
-        let report = remove_opencode_instructions(&rules_dir, tmp.path(), false).expect("ok");
+        let report = remove_opencode_instructions(&rules_dir, &parent, false).expect("ok");
+
+        assert!(
+            !config_path.exists(),
+            "host file should be deleted when only agentspec instructions were present"
+        );
+        assert!(
+            !parent.exists(),
+            "parent dir should be rmdir'd when it becomes empty after host-file delete"
+        );
+        assert!(report.host_file_deleted);
+        assert!(report.parent_rmdir);
         assert_eq!(report.user_entries_remaining, 0);
+    }
+
+    #[test]
+    fn test_remove_opencode_keeps_file_when_user_top_level_keys_remain() {
+        // A user-authored top-level key (e.g. `model`) keeps the host file
+        // alive — only the `instructions` key is dropped.
+        let tmp = tempfile::tempdir().expect("tmp");
+        let rules_dir = tmp.path().join("rules");
+        let config_path = tmp.path().join("opencode.json");
+
+        let initial = serde_json::json!({
+            "model": "haiku",
+            "instructions": [rules_dir.join("a/AGENTS.md").to_string_lossy()]
+        });
+        std::fs::write(
+            &config_path,
+            serde_json::to_string_pretty(&initial).expect("ser"),
+        )
+        .expect("write");
+
+        let report = remove_opencode_instructions(&rules_dir, tmp.path(), false).expect("ok");
+
+        assert!(
+            config_path.exists(),
+            "host file must survive when user-authored top-level keys remain"
+        );
+        assert!(!report.host_file_deleted);
+        assert!(!report.parent_rmdir);
 
         let content = std::fs::read_to_string(&config_path).expect("read");
         let parsed: serde_json::Value = serde_json::from_str(&content).expect("parse");
@@ -898,13 +978,23 @@ mod tests {
             parsed.get("instructions").is_none(),
             "instructions key should be dropped when array empties"
         );
+        assert_eq!(
+            parsed.get("model").and_then(|v| v.as_str()),
+            Some("haiku"),
+            "user-authored top-level key must round-trip"
+        );
     }
 
     #[test]
-    fn test_remove_opencode_dry_run_does_not_write() {
+    fn test_remove_opencode_dry_run_does_not_delete_or_rmdir() {
+        // Dry-run must not touch the filesystem, but the returned report
+        // should still carry `host_file_deleted: true` so the implementer can
+        // see what the live run would do.
         let tmp = tempfile::tempdir().expect("tmp");
+        let parent = tmp.path().join("opencode-config");
+        std::fs::create_dir_all(&parent).expect("mkdir parent");
         let rules_dir = tmp.path().join("rules");
-        let config_path = tmp.path().join("opencode.json");
+        let config_path = parent.join("opencode.json");
 
         let initial = serde_json::json!({
             "instructions": [rules_dir.join("a/AGENTS.md").to_string_lossy()]
@@ -912,12 +1002,23 @@ mod tests {
         let initial_serialized = serde_json::to_string_pretty(&initial).expect("ser");
         std::fs::write(&config_path, &initial_serialized).expect("write");
 
-        let report = remove_opencode_instructions(&rules_dir, tmp.path(), true).expect("ok");
-        assert_eq!(report.user_entries_remaining, 0);
+        let report = remove_opencode_instructions(&rules_dir, &parent, true).expect("ok");
 
-        // File content unchanged.
+        // File still exists, content unchanged.
+        assert!(
+            config_path.exists(),
+            "dry-run must not delete the host file"
+        );
         let post = std::fs::read_to_string(&config_path).expect("read");
         assert_eq!(post, initial_serialized, "dry-run must not write");
+        // Parent untouched.
+        assert!(parent.exists(), "dry-run must not rmdir the parent");
+        // Report reflects the would-be outcome.
+        assert!(
+            report.host_file_deleted,
+            "dry-run report should still carry host_file_deleted: true"
+        );
+        assert_eq!(report.user_entries_remaining, 0);
     }
 
     #[test]

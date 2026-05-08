@@ -27,7 +27,18 @@ use crate::adapters::{
     claude_event_name, cursor_event_name, entry_to_claude_json, entry_to_cursor_json,
 };
 use crate::compile::EmittedHookEntry;
-use crate::plan::RemovePatchReport;
+use crate::plan::{RemovePatchReport, delete_host_file_and_rmdir_parent};
+
+/// Outcome of a per-provider tidy closure. The closure mutates the post-tidy
+/// CST root in place and reports both how many user-authored entries survived
+/// (for the existing summary line) and whether the file is effectively empty
+/// per the provider's predicate (the new delete-on-empty branch in
+/// [`tidy_jsonc_file`]). `removed_owned` is informational here — the closure
+/// itself uses it to gate `file_should_be_deleted`.
+struct TidyOutcome {
+    user_entries_remaining: usize,
+    file_should_be_deleted: bool,
+}
 
 // ── serde_json::Value → CstInputValue bridge ────────────────────────────────
 
@@ -114,8 +125,9 @@ pub fn merge_claude_settings(
 
     // Step 1 — Remove every agentspec-owned entry under every event. We can't
     // restrict to events present in `owned_entries` because re-syncing with one
-    // fewer hook must remove the orphan from its old event too.
-    remove_claude_owned_entries(&hooks_obj);
+    // fewer hook must remove the orphan from its old event too. Sync doesn't
+    // care about the removed-count, so discard.
+    let _ = remove_claude_owned_entries(&hooks_obj);
 
     // Step 2 — Append new entries grouped by `(event, matcher)`. Each new
     // matcher group is appended fresh; we don't merge into existing user-owned
@@ -180,7 +192,13 @@ pub fn merge_claude_settings(
 /// array, the group itself is removed (no point keeping a wrapper around
 /// nothing). Empty event arrays are left alone — the user might still have
 /// entries to add later.
-fn remove_claude_owned_entries(hooks_obj: &CstObject) {
+///
+/// Returns the count of `_agentspec_id`-tagged entries that were removed.
+/// The remove-side tidy uses this as the "we actually owned something here"
+/// guard before deciding whether the host file is effectively empty; sync
+/// callers can ignore the count.
+fn remove_claude_owned_entries(hooks_obj: &CstObject) -> usize {
+    let mut removed = 0usize;
     let event_props: Vec<_> = hooks_obj.properties();
     for event_prop in event_props {
         let Some(event_arr) = event_prop.array_value() else {
@@ -202,6 +220,7 @@ fn remove_claude_owned_entries(hooks_obj: &CstObject) {
             for entry in inner_entries {
                 if is_owned_entry(&entry) {
                     entry.remove();
+                    removed += 1;
                 }
             }
             // If the group's hooks array is now empty, prune the wrapper.
@@ -213,6 +232,7 @@ fn remove_claude_owned_entries(hooks_obj: &CstObject) {
             }
         }
     }
+    removed
 }
 
 fn is_owned_entry(node: &jsonc_parser::cst::CstNode) -> bool {
@@ -290,8 +310,9 @@ pub fn merge_cursor_hooks(
         })?
     };
 
-    // Step 1 — remove every agentspec-owned entry under every event.
-    remove_cursor_owned_entries(&hooks_obj);
+    // Step 1 — remove every agentspec-owned entry under every event. Sync
+    // doesn't care about the removed-count, so discard.
+    let _ = remove_cursor_owned_entries(&hooks_obj);
 
     // Step 2 — append new entries directly under their event arrays.
     // `BTreeMap` sort order matches the Claude path (and the build_*_hooks_json
@@ -327,7 +348,12 @@ pub fn merge_cursor_hooks(
     finish(&root, hooks_path, dry_run)
 }
 
-fn remove_cursor_owned_entries(hooks_obj: &CstObject) {
+/// Cursor analog of [`remove_claude_owned_entries`]. Cursor's shape is one
+/// nesting level shallower (no matcher-group wrapper), so this walks
+/// `hooks.<event>[]` directly. Returns the count of `_agentspec_id`-tagged
+/// entries removed; sync callers can ignore the count.
+fn remove_cursor_owned_entries(hooks_obj: &CstObject) -> usize {
+    let mut removed = 0usize;
     let event_props: Vec<_> = hooks_obj.properties();
     for event_prop in event_props {
         let Some(event_arr) = event_prop.array_value() else {
@@ -337,9 +363,11 @@ fn remove_cursor_owned_entries(hooks_obj: &CstObject) {
         for entry in entries {
             if is_owned_entry(&entry) {
                 entry.remove();
+                removed += 1;
             }
         }
     }
+    removed
 }
 
 // ── remove (tidy) entry points ──────────────────────────────────────────────
@@ -356,8 +384,13 @@ fn remove_cursor_owned_entries(hooks_obj: &CstObject) {
 /// tidy: empty matcher-group wrappers (handled by `remove_claude_owned_entries`),
 /// empty event arrays, and the top-level `hooks` key when it becomes `{}`.
 /// User-authored entries, comments, and surrounding formatting round-trip
-/// unchanged via the `jsonc-parser` CST API. The host file is **never**
-/// deleted.
+/// unchanged via the `jsonc-parser` CST API.
+///
+/// The host file is **deleted** when (a) tidy actually removed at least one
+/// agentspec-owned entry, and (b) no top-level keys survive the tidy. After
+/// a delete, the host file's parent directory is best-effort `rmdir`'d. If
+/// the user had any non-hook top-level keys (e.g. `permissions`, `env`),
+/// the file survives untouched.
 ///
 /// Tidy contract diverges from sync's `remove_claude_owned_entries` (which
 /// deliberately leaves empty event arrays alone — locked by
@@ -373,23 +406,34 @@ pub fn remove_claude_settings(settings_path: &Path, dry_run: bool) -> Result<Rem
 /// Cursor's hooks shape is one nesting level shallower than Claude's (no
 /// matcher-group wrapper), so tidy is correspondingly simpler: drop owned
 /// entries, drop empty event arrays, drop the top-level `hooks` key if it
-/// becomes `{}`. User-authored entries and `version: 1` (or any other
-/// top-level keys) survive untouched.
+/// becomes `{}`. User-authored top-level keys (other than `version`) survive
+/// untouched.
+///
+/// The host file is **deleted** when (a) tidy actually removed at least one
+/// agentspec-owned entry, and (b) the residual file is either empty or
+/// contains only a `version` key (any value). After a delete, the host
+/// file's parent directory is best-effort `rmdir`'d. The `version`-only
+/// carve-out is Cursor-specific — sync injects `version: 1` if absent and
+/// never overwrites a user value, so a residual `{version: <n>}` carries no
+/// information beyond file existence and is informationally equivalent to
+/// no file.
 pub fn remove_cursor_hooks(hooks_path: &Path, dry_run: bool) -> Result<RemovePatchReport> {
     tidy_jsonc_file(hooks_path, dry_run, tidy_cursor_hooks_after_remove)
 }
 
 /// Shared body for [`remove_claude_settings`] and [`remove_cursor_hooks`]:
-/// read the host file, run the provider-specific tidy, write back atomically
-/// (or skip the write under `dry_run` — `finish` already gates internally),
-/// and return a [`RemovePatchReport`].
+/// read the host file, run the provider-specific tidy, then either delete
+/// the host file (when the closure reports `file_should_be_deleted`) or
+/// write back atomically. After a delete, the host file's parent directory
+/// is best-effort `rmdir`'d via [`try_rmdir_if_empty`]; the parent stays if
+/// it has any other content.
 ///
 /// Returns the default report when the host file is absent, or a
 /// zero-entry-count report (with a warning to stderr) when the file's root
 /// is not an object — both states are tolerated as "nothing to clean".
 fn tidy_jsonc_file<F>(path: &Path, dry_run: bool, tidy: F) -> Result<RemovePatchReport>
 where
-    F: FnOnce(&CstObject) -> usize,
+    F: FnOnce(&CstObject) -> TidyOutcome,
 {
     if !path.is_file() {
         return Ok(RemovePatchReport::default());
@@ -407,36 +451,55 @@ where
         return Ok(RemovePatchReport {
             host_path: path.to_path_buf(),
             user_entries_remaining: 0,
+            host_file_deleted: false,
+            parent_rmdir: false,
         });
     };
 
-    let user_entries_remaining = tidy(&top);
+    let outcome = tidy(&top);
+
+    if outcome.file_should_be_deleted {
+        let parent_rmdir = delete_host_file_and_rmdir_parent(path, dry_run)?;
+        return Ok(RemovePatchReport {
+            host_path: path.to_path_buf(),
+            user_entries_remaining: 0,
+            host_file_deleted: true,
+            parent_rmdir,
+        });
+    }
 
     finish(&root, path, dry_run)?;
 
     Ok(RemovePatchReport {
         host_path: path.to_path_buf(),
-        user_entries_remaining,
+        user_entries_remaining: outcome.user_entries_remaining,
+        host_file_deleted: false,
+        parent_rmdir: false,
     })
 }
 
 /// Removes every `_agentspec_id`-tagged Claude hook entry, then prunes empty
 /// containers up the tree (matcher groups → event arrays → top-level `hooks`).
-/// Returns the count of surviving user-authored entries.
+/// Returns a [`TidyOutcome`] describing surviving user entries and whether
+/// the host file is now effectively empty (the predicate that drives the
+/// delete-on-empty branch in [`tidy_jsonc_file`]).
 ///
 /// `top` mutates via `jsonc-parser`'s interior-mutability CST API — the
 /// `&CstObject` signature reads as inspection-only, but `.remove()` calls on
 /// child nodes propagate through to the shared root.
-fn tidy_claude_settings_after_remove(top: &CstObject) -> usize {
+fn tidy_claude_settings_after_remove(top: &CstObject) -> TidyOutcome {
     let Some(hooks_obj) = top.object_value("hooks") else {
-        return 0;
+        return TidyOutcome {
+            user_entries_remaining: 0,
+            file_should_be_deleted: false,
+        };
     };
 
     // Step 1 — defer to the existing sync helper for the inner-most layer
     // (entry removal + matcher-group pruning when the inner `hooks` array
     // empties). Reusing the helper keeps sync's contract — and its locked
     // test — unchanged.
-    remove_claude_owned_entries(&hooks_obj);
+    let removed_owned = remove_claude_owned_entries(&hooks_obj);
 
     // Step 2 — drop event arrays that are now empty. Sync deliberately
     // doesn't do this (so user keys survive cross-sync), but on remove there
@@ -466,21 +529,41 @@ fn tidy_claude_settings_after_remove(top: &CstObject) -> usize {
         hooks_prop.remove();
     }
 
-    count_claude_user_entries(top)
+    // Claude predicate: delete the host file iff we actually removed at
+    // least one agentspec-owned entry AND no top-level keys survive. Claude
+    // settings.json doesn't use a `version` key, so there's no carve-out —
+    // any surviving top-level key (e.g. `permissions`, `env`) keeps the file.
+    let file_should_be_deleted = removed_owned > 0 && top.properties().is_empty();
+
+    TidyOutcome {
+        user_entries_remaining: count_claude_user_entries(top),
+        file_should_be_deleted,
+    }
 }
 
 /// Cursor analog of [`tidy_claude_settings_after_remove`]. The structure is
 /// shallower (each event maps directly to a list of entries — no
 /// matcher-group wrapper), so tidy is one level less deep.
 ///
+/// The Cursor predicate is **the only place** where `version: <n>` residue
+/// is tolerated. Sync injects `version: 1` if absent and never overwrites a
+/// user value, so a file containing only `{version: <n>}` after tidy is
+/// either agentspec's injection or a near-empty hand-edit. The
+/// `removed_owned > 0` guard makes deletion safe in both cases — the user
+/// invited cleanup by running remove, and the residual `version` key
+/// carries no information beyond file existence.
+///
 /// `top` mutates via interior mutability; see the Claude variant's docstring
 /// for the contract.
-fn tidy_cursor_hooks_after_remove(top: &CstObject) -> usize {
+fn tidy_cursor_hooks_after_remove(top: &CstObject) -> TidyOutcome {
     let Some(hooks_obj) = top.object_value("hooks") else {
-        return 0;
+        return TidyOutcome {
+            user_entries_remaining: 0,
+            file_should_be_deleted: false,
+        };
     };
 
-    remove_cursor_owned_entries(&hooks_obj);
+    let removed_owned = remove_cursor_owned_entries(&hooks_obj);
 
     let event_props: Vec<_> = hooks_obj.properties();
     for event_prop in event_props {
@@ -498,7 +581,19 @@ fn tidy_cursor_hooks_after_remove(top: &CstObject) -> usize {
         hooks_prop.remove();
     }
 
-    count_cursor_user_entries(top)
+    // Cursor predicate: delete the host file iff we actually removed at
+    // least one agentspec-owned entry AND the residual content is either
+    // empty OR exactly one `version` key (any value). Cursor-exclusive —
+    // Claude/OpenCode predicates don't tolerate residue.
+    let surviving = top.properties();
+    let only_version_remains = surviving.len() == 1 && top.get("version").is_some();
+    let file_should_be_deleted =
+        removed_owned > 0 && (surviving.is_empty() || only_version_remains);
+
+    TidyOutcome {
+        user_entries_remaining: count_cursor_user_entries(top),
+        file_should_be_deleted,
+    }
 }
 
 /// Counts user-authored Claude hook entries: walks every surviving matcher
@@ -1191,5 +1286,238 @@ mod tests {
         let v = entry_to_cursor_json(&e);
         assert_eq!(v["matcher"], "Bash");
         assert_eq!(v["_agentspec_id"], "audit");
+    }
+
+    // ── delete-on-empty tidy tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_tidy_claude_deletes_settings_when_only_agentspec_content_was_present() {
+        // Sync seeds one owned entry; remove now finds the file effectively
+        // empty after tidy and deletes it. The parent directory is rmdir'd
+        // when it becomes empty.
+        let tmp = TempDir::new().expect("tmp");
+        let parent = tmp.path().join("claude");
+        std::fs::create_dir_all(&parent).expect("mkdir");
+        let path = parent.join("settings.json");
+        let entries = vec![entry("init", HookEvent::SessionStart, "INIT")];
+        merge_claude_settings(&path, &entries, false, false).expect("seed");
+
+        let report = remove_claude_settings(&path, false).expect("tidy");
+
+        assert!(
+            !path.exists(),
+            "host file should be deleted when only agentspec content was present"
+        );
+        assert!(!parent.exists(), "parent should be rmdir'd when empty");
+        assert!(report.host_file_deleted);
+        assert!(report.parent_rmdir);
+        assert_eq!(report.user_entries_remaining, 0);
+    }
+
+    #[test]
+    fn test_tidy_claude_keeps_settings_when_user_content_remains() {
+        // User has a `permissions` key alongside agentspec hooks. After tidy,
+        // permissions survives and the file stays.
+        let tmp = TempDir::new().expect("tmp");
+        let path = tmp.path().join("settings.json");
+        let initial = r#"{
+  "permissions": { "allow": ["Read"] },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "OWNED", "_agentspec_id": "init" }
+        ]
+      }
+    ]
+  }
+}
+"#;
+        std::fs::write(&path, initial).expect("write");
+
+        let report = remove_claude_settings(&path, false).expect("tidy");
+
+        assert!(
+            path.exists(),
+            "host file must survive when user-authored top-level keys remain"
+        );
+        assert!(!report.host_file_deleted);
+        assert!(!report.parent_rmdir);
+        let after = std::fs::read_to_string(&path).expect("read");
+        assert!(
+            after.contains("\"permissions\""),
+            "permissions must round-trip, got:\n{after}"
+        );
+        assert!(
+            !after.contains("\"_agentspec_id\""),
+            "owned entry must be stripped, got:\n{after}"
+        );
+    }
+
+    #[test]
+    fn test_tidy_claude_keeps_settings_when_no_owned_content_was_removed() {
+        // No agentspec entries to remove → file unchanged byte-for-byte.
+        // Pins the `removed_owned > 0` guard for Claude.
+        let tmp = TempDir::new().expect("tmp");
+        let path = tmp.path().join("settings.json");
+        let initial = "{\n  \"permissions\": { \"allow\": [\"Read\"] }\n}\n";
+        std::fs::write(&path, initial).expect("write");
+
+        let report = remove_claude_settings(&path, false).expect("tidy");
+
+        assert!(
+            path.exists(),
+            "host file must not be deleted when no owned entries were removed"
+        );
+        assert!(!report.host_file_deleted);
+        let after = std::fs::read_to_string(&path).expect("read");
+        assert_eq!(after, initial, "no-op tidy must round-trip byte-identical");
+    }
+
+    #[test]
+    fn test_tidy_cursor_deletes_hooks_when_only_agentspec_content_was_present_with_default_version()
+    {
+        // Standard fresh-Cursor case: sync injected version: 1 + a hook
+        // entry. Remove tidy deletes the file.
+        let tmp = TempDir::new().expect("tmp");
+        let parent = tmp.path().join("cursor");
+        std::fs::create_dir_all(&parent).expect("mkdir");
+        let path = parent.join("hooks.json");
+        let entries = vec![entry("init", HookEvent::SessionStart, "INIT")];
+        merge_cursor_hooks(&path, &entries, false, false).expect("seed");
+
+        let report = remove_cursor_hooks(&path, false).expect("tidy");
+
+        assert!(
+            !path.exists(),
+            "host file should be deleted with default version: 1"
+        );
+        assert!(!parent.exists(), "parent should be rmdir'd");
+        assert!(report.host_file_deleted);
+        assert!(report.parent_rmdir);
+    }
+
+    #[test]
+    fn test_tidy_cursor_deletes_hooks_when_only_agentspec_content_was_present_with_custom_version()
+    {
+        // User hand-set version: 2 before sync. After remove, residual is
+        // {version: 2} — the `removed_owned > 0` guard makes deletion safe
+        // even with a non-default version.
+        let tmp = TempDir::new().expect("tmp");
+        let parent = tmp.path().join("cursor");
+        std::fs::create_dir_all(&parent).expect("mkdir");
+        let path = parent.join("hooks.json");
+        std::fs::write(
+            &path,
+            r#"{
+  "version": 2,
+  "hooks": {
+    "SessionStart": [
+      { "type": "command", "command": "OWNED", "_agentspec_id": "init" }
+    ]
+  }
+}
+"#,
+        )
+        .expect("write");
+
+        let report = remove_cursor_hooks(&path, false).expect("tidy");
+
+        assert!(
+            !path.exists(),
+            "host file should be deleted even with version: 2"
+        );
+        assert!(!parent.exists(), "parent should be rmdir'd");
+        assert!(report.host_file_deleted);
+    }
+
+    #[test]
+    fn test_tidy_cursor_keeps_hooks_when_no_owned_content_was_removed() {
+        // No agentspec entries at all → file unchanged byte-for-byte.
+        // Pins the `removed_owned > 0` guard for Cursor — without it, the
+        // version-only carve-out would delete a file the user authored.
+        let tmp = TempDir::new().expect("tmp");
+        let path = tmp.path().join("hooks.json");
+        let initial = "{\n  \"version\": 2\n}\n";
+        std::fs::write(&path, initial).expect("write");
+
+        let report = remove_cursor_hooks(&path, false).expect("tidy");
+
+        assert!(
+            path.exists(),
+            "host file must not be deleted when no owned entries were removed"
+        );
+        assert!(!report.host_file_deleted);
+        let after = std::fs::read_to_string(&path).expect("read");
+        assert_eq!(after, initial, "no-op tidy must round-trip byte-identical");
+    }
+
+    #[test]
+    fn test_tidy_cursor_keeps_hooks_when_user_keys_remain() {
+        // Cursor file has version + a custom user key + agentspec hooks.
+        // After tidy, version + user key remain → predicate fails (more
+        // than one surviving key) → file stays.
+        let tmp = TempDir::new().expect("tmp");
+        let path = tmp.path().join("hooks.json");
+        std::fs::write(
+            &path,
+            r#"{
+  "version": 1,
+  "customKey": "value",
+  "hooks": {
+    "SessionStart": [
+      { "type": "command", "command": "OWNED", "_agentspec_id": "init" }
+    ]
+  }
+}
+"#,
+        )
+        .expect("write");
+
+        let report = remove_cursor_hooks(&path, false).expect("tidy");
+
+        assert!(
+            path.exists(),
+            "host file must survive when user keys remain"
+        );
+        assert!(!report.host_file_deleted);
+        let after = std::fs::read_to_string(&path).expect("read");
+        assert!(
+            after.contains("\"customKey\""),
+            "custom user key must round-trip, got:\n{after}"
+        );
+        assert!(
+            after.contains("\"version\""),
+            "version must round-trip, got:\n{after}"
+        );
+        assert!(
+            !after.contains("\"_agentspec_id\""),
+            "owned entry must be stripped, got:\n{after}"
+        );
+    }
+
+    #[test]
+    fn test_tidy_dry_run_does_not_delete_or_rmdir() {
+        // Dry-run must not touch the filesystem, but the returned report
+        // should still carry `host_file_deleted: true` so the caller can
+        // see what the live run would do.
+        let tmp = TempDir::new().expect("tmp");
+        let parent = tmp.path().join("claude");
+        std::fs::create_dir_all(&parent).expect("mkdir");
+        let path = parent.join("settings.json");
+        let entries = vec![entry("init", HookEvent::SessionStart, "INIT")];
+        merge_claude_settings(&path, &entries, false, false).expect("seed");
+        let pre = std::fs::read_to_string(&path).expect("read pre");
+
+        let report = remove_claude_settings(&path, true).expect("dry-run tidy");
+
+        assert!(path.exists(), "dry-run must not delete the host file");
+        assert!(parent.exists(), "dry-run must not rmdir the parent");
+        let post = std::fs::read_to_string(&path).expect("read post");
+        assert_eq!(post, pre, "dry-run must not modify the file");
+        assert!(
+            report.host_file_deleted,
+            "dry-run report should still carry host_file_deleted: true"
+        );
     }
 }

@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use anyhow::Context;
+
 use crate::compile::{CompileResult, GeneratedFile};
 use crate::provider::Provider;
 
@@ -123,6 +125,59 @@ pub fn expand_tilde(path: &str, home: &Path) -> PathBuf {
     }
 }
 
+/// Tries `fs::remove_dir(dir)`; returns `Ok(true)` on success, `Ok(false)` when
+/// the dir is non-empty or already missing. Any other I/O error propagates with
+/// context.
+pub fn try_rmdir_if_empty(dir: &Path) -> anyhow::Result<bool> {
+    match std::fs::remove_dir(dir) {
+        Ok(()) => Ok(true),
+        Err(e)
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::DirectoryNotEmpty | std::io::ErrorKind::NotFound
+            ) =>
+        {
+            Ok(false)
+        }
+        Err(e) => Err(e).with_context(|| format!("failed to rmdir {}", dir.display())),
+    }
+}
+
+/// Deletes `host_path` and best-effort `rmdir`'s its parent directory.
+/// Returns whether the parent was successfully `rmdir`'d.
+///
+/// Pure I/O: this helper does not write to stderr. User-facing messaging
+/// for the delete-on-empty branch lives in [`RemovePatchReport::print_summary`]
+/// so there's a single source of truth for the wording across dry-run and
+/// live runs.
+///
+/// Under `dry_run` no filesystem changes occur; instead the function predicts
+/// whether the parent rmdir would succeed (only the host file remains in it).
+/// The empty-iterator default of `Iterator::all` correctly returns `true` for
+/// a directory whose only entry is the host file we're about to "remove" —
+/// `iter` becomes empty after we reject everything that isn't the host path,
+/// matching the live-mode order of `remove_file` then `rmdir`.
+///
+/// This is the shared "delete-on-empty" tail used by every adapter's remove
+/// post-write hook (Claude/Cursor via `hooks_merge::tidy_jsonc_file`;
+/// `OpenCode` via `adapters::opencode::remove_opencode_instructions`).
+pub fn delete_host_file_and_rmdir_parent(host_path: &Path, dry_run: bool) -> anyhow::Result<bool> {
+    let parent = host_path.parent();
+    if dry_run {
+        let predicted_parent_rmdir = parent.is_some_and(|p| {
+            std::fs::read_dir(p)
+                .is_ok_and(|mut iter| iter.all(|entry| entry.is_ok_and(|e| e.path() == host_path)))
+        });
+        return Ok(predicted_parent_rmdir);
+    }
+    std::fs::remove_file(host_path)
+        .with_context(|| format!("failed to remove empty host file {}", host_path.display()))?;
+    match parent {
+        Some(p) => try_rmdir_if_empty(p),
+        None => Ok(false),
+    }
+}
+
 // ── Plan types ──────────────────────────────────────────────────────────────
 
 /// A post-write action that runs after all file writes complete.
@@ -136,21 +191,70 @@ pub trait PostWriteHook: std::fmt::Debug {
 /// Outcome of a per-provider remove patch.
 ///
 /// Produced by Claude's settings tidy, Cursor's hooks tidy, and `OpenCode`'s
-/// instructions filter — all three consume the same shape. The count is
-/// informational; callers use it to decide whether to print a summary line.
+/// instructions filter — all three consume the same shape. The counts are
+/// informational; callers use them to decide whether to print a summary line.
+/// `host_file_deleted` and `parent_rmdir` capture the new "delete-on-empty"
+/// outcomes added in 0.x — when the patch removes any owned content **and**
+/// the residual file is effectively empty per the provider's predicate, the
+/// host file is deleted and the parent directory is best-effort `rmdir`'d.
 #[derive(Debug, Default)]
 pub struct RemovePatchReport {
     pub host_path: PathBuf,
     pub user_entries_remaining: usize,
+    pub host_file_deleted: bool,
+    pub parent_rmdir: bool,
 }
 
 impl RemovePatchReport {
-    /// Prints "`M` user-authored entr{y|ies} remain in `<host_path>`" to
-    /// stderr when `user_entries_remaining > 0`. Suppressed otherwise to
-    /// avoid noisy "0 user-authored entries remain" lines on the common
-    /// fresh-config path. Under `dry_run` the line is prefixed with
-    /// `[dry-run] ` so it's distinguishable in piped stderr.
+    /// Prints a one-line summary to stderr based on what happened.
+    ///
+    /// - `host_file_deleted` → `"removed empty <host>; rmdir'd <parent>"` (or
+    ///   `"removed empty <host>; kept parent <parent> (non-empty)"` if the
+    ///   parent had other content). Under `dry_run` the verbs become
+    ///   `"would remove empty"` and `"would rmdir"` / `"would keep parent"`.
+    /// - `user_entries_remaining > 0` → `"M user-authored entr{y|ies} remain in <host>"`.
+    /// - Both zero/false → suppressed (avoids noisy "0 entries remain" lines on the common fresh-config path).
+    ///
+    /// Under `dry_run` every line is prefixed with `[dry-run] ` so it's
+    /// distinguishable in piped stderr.
+    ///
+    /// The first two outputs are mutually exclusive in practice — a delete
+    /// only fires when no user entries remain — but a `debug_assert!` pins
+    /// the invariant so a future refactor can't silently drift.
+    ///
+    /// This is the **single source of truth** for delete-on-empty messaging.
+    /// `delete_host_file_and_rmdir_parent` is a pure I/O helper and emits no
+    /// output of its own; both dry-run and live verbs are produced here so
+    /// users see one consistent line per remove event.
     pub fn print_summary(&self, dry_run: bool) {
+        debug_assert!(
+            !(self.host_file_deleted && self.user_entries_remaining > 0),
+            "host_file_deleted should never coexist with surviving user entries; \
+             saw host_file_deleted=true and user_entries_remaining={}",
+            self.user_entries_remaining,
+        );
+        let prefix = if dry_run { "[dry-run] " } else { "" };
+
+        if self.host_file_deleted {
+            let remove_verb = if dry_run { "would remove" } else { "removed" };
+            let parent_clause = match (self.host_path.parent(), self.parent_rmdir) {
+                (Some(parent), true) => {
+                    let rmdir_verb = if dry_run { "would rmdir" } else { "rmdir'd" };
+                    format!("; {rmdir_verb} {}", parent.display())
+                }
+                (Some(parent), false) => {
+                    let keep_verb = if dry_run { "would keep" } else { "kept" };
+                    format!("; {keep_verb} parent {} (non-empty)", parent.display())
+                }
+                (None, _) => String::new(),
+            };
+            eprintln!(
+                "{prefix}{remove_verb} empty {path}{parent_clause}",
+                path = self.host_path.display(),
+            );
+            return;
+        }
+
         if self.user_entries_remaining == 0 {
             return;
         }
@@ -159,7 +263,6 @@ impl RemovePatchReport {
         } else {
             "entries"
         };
-        let prefix = if dry_run { "[dry-run] " } else { "" };
         eprintln!(
             "{prefix}{count} user-authored {entry_word} remain in {path}",
             count = self.user_entries_remaining,

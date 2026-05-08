@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agentspec::plan::{
-    CleanSlateWrite, CompilePlan, FileKind, ManifestTrackedWrite, RemovePlan, RemoveWrite, SyncPlan,
+    CleanSlateWrite, CompilePlan, FileKind, ManifestTrackedWrite, RemovePlan, RemoveWrite,
+    SyncPlan, try_rmdir_if_empty,
 };
 use agentspec::provider::Provider;
 use anyhow::{Context, Result, bail};
@@ -576,23 +577,6 @@ fn predict_dir_rmdir(dest_dir: &Path, manifest: &Manifest) -> bool {
     true
 }
 
-/// Tries `fs::remove_dir(dir)`; returns `Ok(true)` on success, `Ok(false)` if
-/// the dir is non-empty or missing. Any other I/O error propagates.
-fn try_rmdir_if_empty(dir: &Path) -> Result<bool> {
-    match fs::remove_dir(dir) {
-        Ok(()) => Ok(true),
-        Err(e)
-            if matches!(
-                e.kind(),
-                std::io::ErrorKind::DirectoryNotEmpty | std::io::ErrorKind::NotFound
-            ) =>
-        {
-            Ok(false)
-        }
-        Err(e) => Err(e).with_context(|| format!("failed to rmdir {}", dir.display())),
-    }
-}
-
 /// Reverses a prior `ManifestTracked` write: deletes every file the manifest
 /// records, deletes the manifest itself, and rmdir's the dest dir if empty.
 ///
@@ -600,6 +584,13 @@ fn try_rmdir_if_empty(dir: &Path) -> Result<bool> {
 /// missing state). Returns `Err` only on manifest version refusal or an
 /// I/O error other than `NotFound` / `DirectoryNotEmpty` — files the user
 /// already deleted are warned-and-skipped.
+///
+/// `dest_dir` here is the per-kind directory (e.g. `.claude/agents`). The
+/// parent of kind dirs (e.g. `.claude`) is intentionally left alone by
+/// this function. The cleanup of that parent — when the post-write hooks
+/// have also deleted the host config file — happens inside each adapter's
+/// remove patch (see `hooks_merge::tidy_jsonc_file` and
+/// `adapters::opencode::remove_opencode_instructions`).
 fn remove_manifest_tracked(w: &RemoveWrite, dry_run: bool) -> Result<Option<RemoveStats>> {
     let manifest_path = Manifest::path(&w.destination);
     if !manifest_path.exists() {
