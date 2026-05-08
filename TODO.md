@@ -52,14 +52,14 @@
     - Cross-provider field-name divergence in hook stdin payloads: `tool_name`/`input.tool`, `tool_use_id`/`callID`, `session_id`/`conversation_id`. Tool-result types diverge on `PostToolUse` (object-or-string vs JSON-encoded string). `user_prompt_submit` renames payload fields under Cursor's `beforeSubmitPrompt`. (See `thoughts/ideas/.done/2026-05-04-agentspec-provider-agnostic-hooks.md`, sections "Findings from follow-up research" and "Open Questions" #1.)
     - Today agentspec's value prop assumes a hook script written against one schema works across providers. The assumption breaks the moment a script reads any field beyond the lowest common denominator.
     - Likely shape: each adapter generates a per-event wrapper that reads the provider's stdin, re-shapes it to a canonical agentspec schema, and execs the user's script. The wrapper lives alongside the user's script (e.g., `hooks/scripts/_agentspec/preToolUse.sh`); the emitted command in `hooks.json`/`settings.json` points at the wrapper. Per-event because the schema is event-specific.
-    - Adapters own the provider→canonical mapping; `compile.rs`/`sync.rs` stay provider-agnostic. Pairs with TODO #5 (Adapter trait) and TODO #13 (provider-specific JSON-merge into adapters) — the same architectural shift.
+    - Adapters own the provider→canonical mapping; `compile.rs`/`sync.rs` stay provider-agnostic. Pairs with TODO #5 (Adapter trait) and TODO #11 (provider-specific JSON-merge into adapters) — the same architectural shift.
     - Sub-questions for planning:
       - Canonical schema per event (one struct per `HookEvent`).
       - Passthrough policy: drop provider-only fields, or surface under a `_provider_extras` namespace?
       - Latency: stdin parse+serialize on every hook invocation; benchmark for high-frequency events (`pre_tool_use` on every Bash call).
       - Env var injection symmetry: the wrapper is the natural place to normalize env (e.g., synthesize `CLAUDE_PROJECT_DIR` if a provider doesn't set it).
     - References: idea doc at `thoughts/ideas/.done/2026-05-04-agentspec-provider-agnostic-hooks.md`; companion research at `thoughts/research/2026-05-04-hook-event-cross-provider-translation.md`.
-    - Out of scope for the hooks-pipeline branch; revisit alongside TODO #5/#13 as part of post-1.0 cross-provider ergonomics.
+    - Out of scope for the hooks-pipeline branch; revisit alongside TODO #5/#11 as part of post-1.0 cross-provider ergonomics.
 13. Allow specifying multiple events for a single hook in `hooks.toml`
     - Today `HookFrontmatter::event` is a single `HookEvent` value (`src/spec.rs:253`); a user who wants the same script on (e.g.) both `pre_tool_use` and `post_tool_use` must duplicate the `[hooks.<id>]` block under different IDs and point both at the same script
     - Likely shape: rename the field from `event` to `events: Vec<HookEvent>` in `hooks.toml` (always a list — single-event hooks just use a one-element array). Expand internally to N normalized hook entries — one per event — each carrying the same script reference, timeout, matcher, etc. This is a breaking change to the TOML schema; appropriate pre-1.0 but should be called out in the changelog.
@@ -70,12 +70,11 @@
 14. CST-aware tidy for `opencode.json` (parity with Claude/Cursor)
     - The `OpenCode` remove path (`remove_opencode_instructions`) and sync path (`patch_opencode_instructions`) both use plain `serde_json` to read/rewrite `opencode.json`, so any user-authored comments and formatting trivia are lost across a sync or remove cycle
     - Claude and Cursor go through `hooks_merge::tidy_jsonc_file` / `merge_*_settings`, both backed by `jsonc-parser`'s CST API, which preserves comments and trivia
-    - Fix: route OpenCode's instructions tidy through a CST-aware helper analogous to `tidy_jsonc_file`, with a per-provider strategy (the array shape is `instructions: [string, ...]` rather than the nested matcher-group shape Claude uses); pairs naturally with TODO #13's broader migration of provider-specific JSON-merge knowledge into adapters
+    - Fix: route OpenCode's instructions tidy through a CST-aware helper analogous to `tidy_jsonc_file`, with a per-provider strategy (the array shape is `instructions: [string, ...]` rather than the nested matcher-group shape Claude uses); pairs naturally with TODO #11's broader migration of provider-specific JSON-merge knowledge into adapters
     - The doc comment on `remove_opencode_instructions` already calls out this asymmetry as pre-existing; the TODO entry pins it for tracking against pre-1.0 work
-    - Out of scope for the remove-pipeline branch; revisit alongside TODO #13
 15. Verbose parity for `agentspec remove`
     - `emit_sync(plan, dry_run, verbose)` threads `--verbose` into `render_sync_report` to show unchanged destinations and the `Unchanged` column; `emit_remove(plan, dry_run)` does not accept a `verbose` parameter at all
-    - `RemoveArgs.common.verbose` is silently ignored — the typestate refactor (TODO #7) made the asymmetry visible by giving `emit_remove` its own signature, but did not change the underlying behavior (the prior unified `emit()` only routed `verbose` into `render_sync_report`)
+    - `RemoveArgs.common.verbose` is silently ignored — the typestate refactor made the asymmetry visible by giving `emit_remove` its own signature, but did not change the underlying behavior (the prior unified `emit()` only routed `verbose` into `render_sync_report`)
     - Decide what `verbose` means on the remove path: show per-file deletions? show destinations that had no manifest (currently silently skipped)? emit the same line shape `render_remove_report` already produces but unconditionally regardless of activity?
     - Likely shape: add `verbose: bool` to `emit_remove`'s signature, thread into a new branch in `render_remove_report` that surfaces destinations where `Ok(None)` from `remove_manifest_tracked` was returned (today these are invisible)
     - Surfaced by code review of the FileWrite typestate refactor; out of scope for that branch
