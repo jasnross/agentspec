@@ -94,8 +94,9 @@
       - .claude/settings.json: `{}`
       - .cursor/hooks.json: `{version: 1}` (while the file isn't completely empty it is left with a single `version` field)
       - .opencode/opencode.json: `{}` (empty)
-21. Rename the `write_remove_config` test helper now that it serves both sync and remove tests
-    - `write_remove_config` (`tests/pipeline.rs:1819`) writes an `agentspec.toml` containing `[sync.<provider>]` blocks; despite its name, the TOML it produces is consumed by both `agentspec sync` and `agentspec remove` integration tests
-    - The new `test_sync_refuses_higher_manifest_version` (added in `thoughts/plans/.done/2026-05-07-manifest-load-strict-by-default.md`) is the first sync-side caller, making the misnomer reader-visible — it suggests the helper is remove-specific when it isn't
-    - Likely shape: rename to `write_sync_config` (the helper does, in fact, configure sync; remove just consumes whatever sync wrote) and update the ~15 existing remove-test call sites in one mechanical pass
-    - Surfaced by code review of the `Manifest::load` strict-by-default refactor; out of scope for that branch
+21. _Done — see `thoughts/plans/2026-05-08-rename-write-remove-config-helper.md`._ The test helper was renamed from `write_remove_config` to `write_sync_config` across all 30 caller sites, and the helper cluster (`write_sync_config`, `run_agentspec`, `read_jsonc_normalized`) was relocated out of the `agentspec remove tests (Phase 1)` section into a new `// Shared helpers used by sync and remove tests` section between the sync and remove test groups. Slot kept to preserve numbering of subsequent items.
+22. Consolidate inline `[sync.<provider>]` config writes onto `write_sync_config` helper
+    - 15 sync integration tests in `tests/pipeline.rs` build their `agentspec.toml` inline by writing `[sync.<provider>]` blocks directly into `dir.join("agentspec.toml")` rather than calling `write_sync_config`. Discoverable via `rg -n '\[sync\.(claude|cursor|opencode)\]' tests/pipeline.rs` — count was 15 at the time this entry was written; the count is the migration progress indicator and reaches zero when consolidation is complete
+    - These predate the helper (which was introduced for the `agentspec remove` test suite); migrating them onto the renamed `write_sync_config` would consolidate the configuration shape and prevent inline-write churn from drifting out of sync with the helper's `[presets.default]` block
+    - Likely shape: replace each inline `std::fs::write(dir.join("agentspec.toml"), ...)` call with `write_sync_config(&dir, &[(provider, mode)])`. Some callers also write custom `[presets.<name>]` or feature-flag blocks alongside the sync block — those need either a richer helper signature or a follow-up `write_sync_config_with_presets` variant
+    - Surfaced during planning of `thoughts/plans/2026-05-08-rename-write-remove-config-helper.md`; out of scope for that plan to keep the rename diff mechanical

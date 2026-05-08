@@ -1807,7 +1807,7 @@ fn test_sync_refuses_higher_manifest_version() {
     // future-version-specific fields).
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_remove_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[("claude", "user")]);
     let home = dir.join("home");
 
     // Plant a manifest with version > MANIFEST_VERSION.
@@ -1833,27 +1833,13 @@ fn test_sync_refuses_higher_manifest_version() {
 }
 
 // ---------------------------------------------------------------------------
-// `agentspec remove` tests (Phase 1: CLI scaffold)
+// Shared helpers used by sync and remove tests
 // ---------------------------------------------------------------------------
-
-#[test]
-fn test_remove_help_lists_subcommand() {
-    let output = std::process::Command::new(agentspec())
-        .args(["--help"])
-        .output()
-        .expect("failed to run agentspec --help");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(output.status.success(), "--help failed:\n{stdout}");
-    assert!(
-        stdout.contains("remove"),
-        "expected `remove` in --help output, got:\n{stdout}"
-    );
-}
 
 /// Helper: write a minimal agentspec.toml that configures sync for the named providers.
 ///
 /// Each entry is a (provider, mode) pair, e.g. `("claude", "user")`.
-fn write_remove_config(dir: &Path, providers: &[(&str, &str)]) {
+fn write_sync_config(dir: &Path, providers: &[(&str, &str)]) {
     use std::fmt::Write as _;
     let mut sections = String::from(
         r#"
@@ -1903,6 +1889,24 @@ fn read_jsonc_normalized(path: &Path) -> serde_json::Value {
     root.to_serde_value().expect("jsonc to serde value")
 }
 
+// ---------------------------------------------------------------------------
+// `agentspec remove` tests (Phase 1: CLI scaffold)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_remove_help_lists_subcommand() {
+    let output = std::process::Command::new(agentspec())
+        .args(["--help"])
+        .output()
+        .expect("failed to run agentspec --help");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "--help failed:\n{stdout}");
+    assert!(
+        stdout.contains("remove"),
+        "expected `remove` in --help output, got:\n{stdout}"
+    );
+}
+
 #[test]
 fn test_remove_with_no_providers_configured_is_clean_exit() {
     // No `[sync.*]` blocks: `agentspec remove` must exit 0 and report
@@ -1945,7 +1949,7 @@ sources_dir = "spec"
 fn test_remove_after_sync_user_mode_deletes_all_tracked_files() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_remove_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[("claude", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -1991,7 +1995,7 @@ fn test_remove_after_sync_user_mode_deletes_all_tracked_files() {
 fn test_remove_after_sync_project_mode_deletes_all_tracked_files() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_remove_config(&dir, &[("claude", "project")]);
+    write_sync_config(&dir, &[("claude", "project")]);
     let home = dir.join("home");
 
     let sync =
@@ -2024,7 +2028,7 @@ fn test_remove_after_sync_project_mode_deletes_all_tracked_files() {
 fn test_remove_per_provider_scoping_leaves_other_providers_intact() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_remove_config(&dir, &[("claude", "user"), ("cursor", "user")]);
+    write_sync_config(&dir, &[("claude", "user"), ("cursor", "user")]);
     let home = dir.join("home");
 
     let sync = run_agentspec(&["sync"], &dir, &home).expect("agentspec spawn");
@@ -2059,7 +2063,7 @@ fn test_remove_per_provider_scoping_leaves_other_providers_intact() {
 fn test_remove_without_prior_sync_is_no_op() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_remove_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[("claude", "user")]);
     let home = dir.join("home");
 
     // No sync first — every dest dir is missing.
@@ -2074,7 +2078,7 @@ fn test_remove_without_prior_sync_is_no_op() {
 fn test_remove_idempotent() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_remove_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[("claude", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -2102,7 +2106,7 @@ fn test_remove_idempotent() {
 fn test_remove_dry_run_writes_nothing() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_remove_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[("claude", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -2146,7 +2150,7 @@ fn test_remove_dry_run_predicts_dest_dir_rmdir() {
     // rmdir dest dir"; when an unmanaged file is present it must not.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_remove_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[("claude", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -2196,7 +2200,7 @@ fn test_remove_dry_run_predicts_dest_dir_rmdir() {
 fn test_remove_tolerates_missing_manifest() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_remove_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[("claude", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -2225,7 +2229,7 @@ fn test_remove_tolerates_missing_manifest() {
 fn test_remove_tolerates_pre_deleted_tracked_file() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_remove_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[("claude", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -2255,7 +2259,7 @@ fn test_remove_tolerates_pre_deleted_tracked_file() {
 fn test_remove_leaves_unmanaged_files_in_dest_dir() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_remove_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[("claude", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -2296,7 +2300,7 @@ fn test_remove_refuses_higher_manifest_version() {
     // manifest is rejected end-to-end on the remove path too.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_remove_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[("claude", "user")]);
     let home = dir.join("home");
 
     // Plant a manifest with version > MANIFEST_VERSION.
@@ -2330,7 +2334,7 @@ fn test_remove_strips_claude_owned_entries_from_settings_json() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_remove_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[("claude", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -2369,7 +2373,7 @@ fn test_remove_strips_cursor_owned_entries_from_hooks_json() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_remove_config(&dir, &[("cursor", "user")]);
+    write_sync_config(&dir, &[("cursor", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -2398,7 +2402,7 @@ fn test_remove_preserves_user_authored_entries_in_settings_json() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_remove_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[("claude", "user")]);
     let home = dir.join("home");
 
     // Pre-populate settings.json with a user-authored entry plus a non-hooks key.
@@ -2445,7 +2449,7 @@ fn test_remove_drops_empty_event_arrays_in_settings_json() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_remove_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[("claude", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -2473,7 +2477,7 @@ fn test_remove_drops_top_level_hooks_key_when_empty() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_remove_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[("claude", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -2497,7 +2501,7 @@ fn test_remove_preserves_top_level_hooks_key_when_user_entries_remain() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_remove_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[("claude", "user")]);
     let home = dir.join("home");
 
     let settings = home.join(".claude/settings.json");
@@ -2532,7 +2536,7 @@ fn test_remove_dry_run_reports_user_entries_remaining() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_remove_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[("claude", "user")]);
     let home = dir.join("home");
 
     let settings = home.join(".claude/settings.json");
@@ -2580,7 +2584,7 @@ fn test_remove_handles_missing_settings_json() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_remove_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[("claude", "user")]);
     let home = dir.join("home");
 
     let remove =
@@ -2601,7 +2605,7 @@ fn test_remove_preserves_jsonc_comments_in_settings_json() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_remove_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[("claude", "user")]);
     let home = dir.join("home");
 
     let settings = home.join(".claude/settings.json");
@@ -2647,7 +2651,7 @@ fn test_remove_empirical_check_jsonc_parser_last_element_comma() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_remove_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[("claude", "user")]);
     let home = dir.join("home");
 
     let settings = home.join(".claude/settings.json");
@@ -2697,7 +2701,7 @@ fn test_remove_dry_run_suppresses_zero_count_summary() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_remove_config(&dir, &[("claude", "user")]);
+    write_sync_config(&dir, &[("claude", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -2727,7 +2731,7 @@ fn test_remove_dry_run_suppresses_zero_count_summary() {
 fn test_remove_strips_agentspec_instructions_from_opencode_json() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_remove_config(&dir, &[("opencode", "user")]);
+    write_sync_config(&dir, &[("opencode", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -2794,7 +2798,7 @@ fn test_remove_strips_agentspec_instructions_from_opencode_json() {
 fn test_remove_drops_instructions_key_when_empty() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_remove_config(&dir, &[("opencode", "user")]);
+    write_sync_config(&dir, &[("opencode", "user")]);
     let home = dir.join("home");
 
     let sync =
@@ -2817,7 +2821,7 @@ fn test_remove_drops_instructions_key_when_empty() {
 fn test_remove_preserves_user_authored_opencode_instructions() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_remove_config(&dir, &[("opencode", "user")]);
+    write_sync_config(&dir, &[("opencode", "user")]);
     let home = dir.join("home");
 
     let opencode = home.join(".config/opencode/opencode.json");
@@ -2856,7 +2860,7 @@ fn test_remove_preserves_user_authored_opencode_instructions() {
 fn test_remove_dry_run_reports_opencode_user_entries_remaining() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_remove_config(&dir, &[("opencode", "user")]);
+    write_sync_config(&dir, &[("opencode", "user")]);
     let home = dir.join("home");
 
     let opencode = home.join(".config/opencode/opencode.json");
@@ -2893,7 +2897,7 @@ fn test_remove_dry_run_reports_opencode_user_entries_remaining() {
 fn test_remove_opencode_handles_missing_config_file() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_remove_config(&dir, &[("opencode", "user")]);
+    write_sync_config(&dir, &[("opencode", "user")]);
     let home = dir.join("home");
 
     // No prior sync → no opencode.json.
@@ -2914,7 +2918,7 @@ fn test_remove_opencode_handles_missing_config_file() {
 fn test_remove_opencode_does_not_delete_host_file_when_only_agentspec_entries_present() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
-    write_remove_config(&dir, &[("opencode", "user")]);
+    write_sync_config(&dir, &[("opencode", "user")]);
     let home = dir.join("home");
 
     // Sync writes the only entries (no user content); remove must keep the
@@ -2958,7 +2962,7 @@ fn test_full_round_trip_all_providers() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
-    write_remove_config(
+    write_sync_config(
         &dir,
         &[("claude", "user"), ("cursor", "user"), ("opencode", "user")],
     );
