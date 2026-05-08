@@ -184,7 +184,7 @@ fn adapt_skill_spec(
                 Provider::OpenCode,
                 skill_dir.join(&sf.relative_path),
                 sf.content,
-                if sf.executable { Some(0o755) } else { None },
+                Some(sf.mode),
             ));
         }
     }

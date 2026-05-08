@@ -831,6 +831,44 @@ mod tests {
     }
 
     #[test]
+    fn test_write_preserves_non_executable_mode() {
+        // Locks the emit-layer contract: mode in == mode on disk.
+        // A 0o600 input must land on disk as 0o600 (not collapse to
+        // umask-default 0o644). Counterpart to `test_write_executable_permission`
+        // — together they cover both the executable and non-executable
+        // halves of verbatim mode preservation.
+        let tmp = TempDir::new().expect("expected value");
+        let output_dir = tmp.path().join("generated");
+
+        let plan = CompilePlan {
+            writes: vec![CleanSlateWrite {
+                provider: Provider::Claude,
+                destination: output_dir.join("claude"),
+                files: vec![GeneratedFile::binary(
+                    Provider::Claude,
+                    "skills/gh-safe/config.toml",
+                    b"token = \"redacted\"\n".to_vec(),
+                    Some(0o600),
+                )],
+            }],
+        };
+
+        emit_compile(&plan, false).expect("expected value");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let meta = fs::metadata(output_dir.join("claude/skills/gh-safe/config.toml"))
+                .expect("expected value");
+            assert_eq!(
+                meta.permissions().mode() & 0o0777,
+                0o600,
+                "exact mode should be preserved verbatim"
+            );
+        }
+    }
+
+    #[test]
     fn test_manifest_tracked_creates_file_and_writes_manifest() {
         let tmp = TempDir::new().expect("expected value");
         let dest = tmp.path().join("skills");

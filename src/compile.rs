@@ -113,7 +113,7 @@ pub fn build_hook_script_files(
                 provider,
                 Path::new("hooks").join(&sf.relative_path),
                 sf.content.clone(),
-                if sf.executable { Some(0o755) } else { None },
+                Some(sf.mode),
             )
         })
         .collect()

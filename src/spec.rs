@@ -340,6 +340,12 @@ pub struct SupportingFile {
     pub relative_path: PathBuf,
     /// Raw file content
     pub content: Vec<u8>,
-    /// Whether the file has executable permission
-    pub executable: bool,
+    /// Standard rwx permission bits (mode & 0o0777) sourced from the
+    /// source file's filesystem mode at load time. Setuid/setgid/sticky
+    /// bits (`0o7000`) are deliberately masked away — agentspec is a
+    /// build tool and faithful copying of those bits would be a security
+    /// footgun. Always populated; emitted unchanged at write time so
+    /// user-set ergonomic modes (0o600, 0o400, etc.) survive the
+    /// compile/sync pipeline.
+    pub mode: u32,
 }

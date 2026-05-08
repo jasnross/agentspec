@@ -318,6 +318,51 @@ fn test_compile_script_is_executable() {
 }
 
 #[test]
+#[cfg(unix)]
+fn test_compile_preserves_non_executable_supporting_file_mode() {
+    // E2E counterpart to `test_compile_script_is_executable`: a deliberately
+    // non-executable supporting file (config.toml at 0o600) must round-trip
+    // through the binary CLI and land on disk with its mode preserved
+    // verbatim, not collapsed to umask-default 0o644.
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    // Drop the non-executable supporting file programmatically (rather than
+    // via the shared fixture) so unrelated tests that scan `scripted-skill/`
+    // aren't affected by its presence — same pattern as
+    // `test_compile_ignores_bats_files`'s programmatic `test_helper.bats`.
+    let source_config = dir.join("spec/skills/scripted-skill/scripts/config.toml");
+    std::fs::write(&source_config, "[example]\nkey = \"value\"\n")
+        .expect("failed to write source config.toml");
+    std::fs::set_permissions(&source_config, std::fs::Permissions::from_mode(0o600))
+        .expect("failed to chmod source config.toml");
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+
+    assert!(
+        output.status.success(),
+        "compile failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let generated = dir.join("generated/claude/skills/scripted-skill/scripts/config.toml");
+    assert!(generated.exists(), "config.toml not generated");
+
+    let metadata = std::fs::metadata(&generated).expect("failed to stat generated config.toml");
+    assert_eq!(
+        metadata.permissions().mode() & 0o0777,
+        0o600,
+        "generated supporting file should preserve 0o600 verbatim"
+    );
+}
+
+#[test]
 fn test_sync_prefix() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);

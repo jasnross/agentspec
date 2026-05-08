@@ -487,12 +487,12 @@ fn load_single_skill(
             .with_context(|| format!("failed to read {}", entry_path.display()))?;
         let metadata = fs::metadata(entry_path)
             .with_context(|| format!("failed to stat {}", entry_path.display()))?;
-        let executable = metadata.permissions().mode() & 0o111 != 0;
+        let mode = metadata.permissions().mode() & 0o0777;
 
         supporting_files.push(SupportingFile {
             relative_path,
             content: file_content,
-            executable,
+            mode,
         });
     }
     supporting_files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
@@ -856,11 +856,11 @@ fn collect_hook_scripts(
             .with_context(|| format!("failed to read {}", entry_path.display()))?;
         let metadata = fs::metadata(entry_path)
             .with_context(|| format!("failed to stat {}", entry_path.display()))?;
-        let executable = metadata.permissions().mode() & 0o111 != 0;
+        let mode = metadata.permissions().mode() & 0o0777;
         files.push(SupportingFile {
             relative_path: relative_path.to_path_buf(),
             content,
-            executable,
+            mode,
         });
     }
     files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
@@ -980,7 +980,38 @@ Agent body.
             s.supporting_files[0].relative_path,
             std::path::PathBuf::from("scripts/helper.sh")
         );
-        assert!(s.supporting_files[0].executable);
+        assert_eq!(s.supporting_files[0].mode, 0o755);
+    }
+
+    #[test]
+    fn test_load_skill_specs_preserves_non_executable_mode() {
+        // Regression guard for verbatim mode preservation: a deliberately
+        // non-executable supporting file (e.g., 0o600 for secrets-style
+        // helpers) must round-trip through the loader without collapsing
+        // to umask-default. Pre-`mode: u32`, the loader stored only an
+        // `executable: bool`, losing the exact mode.
+        let tmp = tempfile::tempdir().expect("expected value");
+        let skills_dir = tmp.path().join("skills");
+        let skill_dir = skills_dir.join("my-skill");
+        fs::create_dir_all(&skill_dir).expect("expected value");
+
+        let spec_content = "---\nid: my-skill\ndescription: A test skill\nuser_invocable: true\nagent_invocable: false\n---\nSkill body.\n";
+        fs::write(skill_dir.join("SKILL.md"), spec_content).expect("expected value");
+
+        let scripts_dir = skill_dir.join("scripts");
+        fs::create_dir(&scripts_dir).expect("expected value");
+        let secret_path = scripts_dir.join("secret.conf");
+        fs::write(&secret_path, "token=redacted").expect("expected value");
+        fs::set_permissions(&secret_path, fs::Permissions::from_mode(0o600))
+            .expect("expected value");
+
+        let specs = load_skills_no_ignore(&skills_dir).expect("expected value");
+        assert_eq!(specs.len(), 1);
+        let Spec::Skill(ref s) = specs[0] else {
+            panic!("expected Skill variant")
+        };
+        assert_eq!(s.supporting_files.len(), 1);
+        assert_eq!(s.supporting_files[0].mode, 0o600);
     }
 
     #[test]
