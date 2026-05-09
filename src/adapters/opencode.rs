@@ -1,8 +1,9 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use indexmap::IndexMap;
+use jsonc_parser::ParseOptions;
+use jsonc_parser::cst::{CstInputValue, CstObject, CstRootNode};
 use serde::Serialize;
 use strum::VariantArray as _;
 use walkdir::WalkDir;
@@ -354,11 +355,9 @@ impl PostWriteHook for OpenCodeInstructionsPatch {
 /// deleted and its parent directory best-effort `rmdir`'d. User-authored
 /// top-level keys (e.g. `model`) keep the file alive.
 ///
-/// Note: like the sync-side patcher, this uses plain `serde_json` rather
-/// than the CST-aware `jsonc-parser`, so comments and formatting trivia in
-/// `opencode.json` are not preserved across the cycle. This is the
-/// pre-existing behavior of `patch_opencode_instructions`, not a
-/// regression introduced by remove.
+/// Trivia preservation: parses, mutates, and writes via `jsonc-parser`'s CST
+/// so user-authored comments, key ordering, trailing commas, and formatting
+/// whitespace round-trip across remove cycles.
 #[derive(Debug)]
 pub struct OpenCodeRemoveInstructionsPatch {
     rules_dest_dir: PathBuf,
@@ -393,14 +392,9 @@ impl PostWriteHook for OpenCodeRemoveInstructionsPatch {
 /// `dry_run` for parity with the sync-side patcher and the Claude/Cursor
 /// remove patches.
 ///
-/// **Trivia caveat:** like its sync-side counterpart
-/// [`patch_opencode_instructions`], this function uses plain `serde_json`
-/// rather than the CST-aware `jsonc-parser`. Comments and formatting trivia
-/// in `opencode.json` are not preserved across a remove cycle. This is a
-/// pre-existing limitation inherited from the sync path, not a regression
-/// introduced by remove. Claude's and Cursor's remove patches go through
-/// `hooks_merge::tidy_jsonc_file`, which preserves comments and trivia.
-/// Tracked for parity work under TODO #14 (CST-aware tidy for `opencode.json`).
+/// Trivia preservation: parses, mutates, and writes via `jsonc-parser`'s CST
+/// so user-authored comments, key ordering, trailing commas, and formatting
+/// whitespace round-trip across remove cycles.
 fn remove_opencode_instructions(
     rules_dest_dir: &Path,
     config_dir: &Path,
@@ -412,14 +406,11 @@ fn remove_opencode_instructions(
         return Ok(RemovePatchReport::default());
     }
 
-    let content = fs::read_to_string(&config_path)
-        .with_context(|| format!("failed to read {}", config_path.display()))?;
-    let mut config: serde_json::Value = serde_json::from_str(&content)
+    let content = crate::cst_io::read_or_empty_object(&config_path)?;
+    let root = CstRootNode::parse(&content, &ParseOptions::default())
         .with_context(|| format!("failed to parse {}", config_path.display()))?;
 
-    let Some(obj) = config.as_object_mut() else {
-        // Match the Claude/Cursor tidy path: warn so the user knows their
-        // hand-edited config looked unusual, then return the empty report.
+    let Some(top) = root.object_value_or_create() else {
         let prefix = if dry_run { "[dry-run] " } else { "" };
         eprintln!(
             "{prefix}warning: {} has a non-object root; skipping tidy",
@@ -433,47 +424,18 @@ fn remove_opencode_instructions(
         });
     };
 
-    let pre_count = obj
-        .get("instructions")
-        .and_then(|v| v.as_array())
-        .map_or(0, Vec::len);
-
-    let user_entries: Vec<serde_json::Value> = obj
-        .get("instructions")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter(|v| {
-                    v.as_str()
-                        .is_none_or(|p| !is_agentspec_instruction(p, rules_dest_dir))
-                })
-                .cloned()
-                .collect()
-        })
-        .unwrap_or_default();
-    let user_entries_remaining = user_entries.len();
-    debug_assert!(
-        pre_count >= user_entries_remaining,
-        "filter cannot grow the array: pre_count={pre_count}, remaining={user_entries_remaining}"
-    );
-    let agentspec_entries_removed = pre_count - user_entries_remaining;
-
-    if user_entries.is_empty() {
-        obj.remove("instructions");
-    } else {
-        obj.insert(
-            "instructions".to_string(),
-            serde_json::Value::Array(user_entries),
-        );
-    }
+    let TidyResult {
+        agentspec_removed,
+        user_entries_remaining,
+    } = tidy_instructions(&top, rules_dest_dir);
 
     // No-op short-circuit: if no agentspec-owned entries were removed, skip
     // the rewrite to avoid bumping mtime on what is functionally a read-only
     // cycle. This branch also doubles as the `removed_owned > 0` guard for
     // the delete-on-empty predicate below — anything that reaches the
-    // `obj.is_empty()` check is guaranteed to have removed at least one
-    // agentspec entry, mirroring the Claude/Cursor `removed_owned > 0` gate.
-    if agentspec_entries_removed == 0 {
+    // `top.properties().is_empty()` check is guaranteed to have removed at
+    // least one agentspec entry, mirroring the Claude/Cursor `removed_owned > 0` gate.
+    if agentspec_removed == 0 {
         return Ok(RemovePatchReport {
             host_path: config_path,
             user_entries_remaining,
@@ -482,13 +444,10 @@ fn remove_opencode_instructions(
         });
     }
 
-    // OpenCode predicate: delete the host file iff we actually removed at
-    // least one agentspec instruction (guaranteed by the short-circuit above)
-    // AND no other top-level keys survive. Same semantic as the Claude
-    // predicate, different machinery — Claude uses `CstObject::properties()`
-    // on a jsonc-parser CST, OpenCode uses `serde_json::Map::is_empty()` on
-    // a serde_json mutation.
-    if obj.is_empty() {
+    // Delete-on-empty: at least one agentspec entry was removed AND no other
+    // top-level keys survive. `delete_host_file_and_rmdir_parent` respects
+    // `dry_run` internally, so this branch covers both dry and live runs.
+    if top.properties().is_empty() {
         let parent_rmdir = crate::plan::delete_host_file_and_rmdir_parent(&config_path, dry_run)?;
         return Ok(RemovePatchReport {
             host_path: config_path,
@@ -500,16 +459,18 @@ fn remove_opencode_instructions(
 
     if dry_run {
         eprintln!(
-            "[dry-run] would tidy {} agentspec instruction(s) from {}",
-            agentspec_entries_removed,
+            "[dry-run] would tidy {agentspec_removed} agentspec instruction(s) from {}",
             config_path.display()
         );
-    } else {
-        let serialized =
-            serde_json::to_string_pretty(&config).context("failed to serialize opencode.json")?;
-        fs::write(&config_path, format!("{serialized}\n"))
-            .with_context(|| format!("failed to write {}", config_path.display()))?;
+        return Ok(RemovePatchReport {
+            host_path: config_path,
+            user_entries_remaining,
+            host_file_deleted: false,
+            parent_rmdir: false,
+        });
     }
+
+    crate::cst_io::finish(&root, &config_path)?;
 
     Ok(RemovePatchReport {
         host_path: config_path,
@@ -517,6 +478,52 @@ fn remove_opencode_instructions(
         host_file_deleted: false,
         parent_rmdir: false,
     })
+}
+
+struct TidyResult {
+    agentspec_removed: usize,
+    user_entries_remaining: usize,
+}
+
+/// Drop agentspec-owned string entries from `instructions[]`, preserving
+/// user-authored strings and any non-string elements verbatim. If the
+/// resulting array is empty, drop the `instructions` key entirely.
+///
+/// Returns the count of removed agentspec entries (for the no-op
+/// short-circuit) and the count of user-authored entries that survived (for
+/// the report).
+fn tidy_instructions(top: &CstObject, rules_dest_dir: &Path) -> TidyResult {
+    let Some(arr) = top.array_value("instructions") else {
+        return TidyResult {
+            agentspec_removed: 0,
+            user_entries_remaining: 0,
+        };
+    };
+
+    let mut agentspec_removed = 0usize;
+    let mut user_entries_remaining = 0usize;
+    for entry in arr.elements() {
+        match entry.as_string_lit().and_then(|s| s.decoded_value().ok()) {
+            Some(p) if is_agentspec_instruction(&p, rules_dest_dir) => {
+                entry.remove();
+                agentspec_removed += 1;
+            }
+            // Defensive: a non-string element (malformed user file) is kept
+            // verbatim and counted as a surviving user entry.
+            _ => user_entries_remaining += 1,
+        }
+    }
+
+    if arr.elements().is_empty()
+        && let Some(prop) = top.get("instructions")
+    {
+        prop.remove();
+    }
+
+    TidyResult {
+        agentspec_removed,
+        user_entries_remaining,
+    }
 }
 
 /// Build the boolean tool map used by `OpenCode` agents and agent-invocable skills.
@@ -564,6 +571,10 @@ fn is_agentspec_instruction(entry_path: &str, rules_dest_dir: &Path) -> bool {
 /// If `opencode.json` does not exist, it is created with just the `instructions` key.
 ///
 /// When `dry_run` is true, prints the planned diff but does not write the file.
+///
+/// Trivia preservation: parses, mutates, and writes via `jsonc-parser`'s CST so
+/// user-authored comments, key ordering, trailing commas, and formatting
+/// whitespace round-trip across sync cycles.
 fn patch_opencode_instructions(
     rules_dest_dir: &Path,
     config_dir: &Path,
@@ -571,34 +582,6 @@ fn patch_opencode_instructions(
 ) -> Result<()> {
     let config_path = config_dir.join("opencode.json");
 
-    // Read existing config (or start with empty object)
-    let mut config: serde_json::Value = if config_path.exists() {
-        let content = fs::read_to_string(&config_path)
-            .with_context(|| format!("failed to read {}", config_path.display()))?;
-        serde_json::from_str(&content)
-            .with_context(|| format!("failed to parse {}", config_path.display()))?
-    } else {
-        serde_json::Value::Object(serde_json::Map::new())
-    };
-
-    // Get the existing instructions array (default to [])
-    let existing: Vec<String> = config
-        .get("instructions")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(str::to_owned))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    // Split into user-owned and agentspec-owned
-    let user_entries: Vec<String> = existing
-        .into_iter()
-        .filter(|p| !is_agentspec_instruction(p, rules_dest_dir))
-        .collect();
-
-    // Enumerate current rule files in rules_dest_dir
     let mut new_rule_paths: Vec<String> = if rules_dest_dir.is_dir() {
         WalkDir::new(rules_dest_dir)
             .min_depth(1)
@@ -613,42 +596,77 @@ fn patch_opencode_instructions(
     };
     new_rule_paths.sort();
 
-    let mut updated_instructions = user_entries;
-    updated_instructions.extend(new_rule_paths);
-
-    // Skip writing entirely when the file doesn't exist yet and there's nothing to record.
-    // This avoids creating a spurious `opencode.json` when no rules have ever been synced.
-    if !config_path.exists() && updated_instructions.is_empty() {
+    // Skip writing entirely when the file doesn't exist yet and there's nothing
+    // to record. Avoids creating a spurious `opencode.json` when no rules have
+    // ever been synced.
+    if !config_path.exists() && new_rule_paths.is_empty() {
         return Ok(());
     }
+
+    let content = crate::cst_io::read_or_empty_object(&config_path)?;
+    let root = CstRootNode::parse(&content, &ParseOptions::default())
+        .with_context(|| format!("failed to parse {}", config_path.display()))?;
+
+    let Some(top) = root.object_value_or_create() else {
+        // Behavior change vs. the prior serde_json implementation: that one
+        // silently wrote the unmodified non-object value back. Aligning with
+        // the remove path's existing warn-and-no-op contract here.
+        let prefix = if dry_run { "[dry-run] " } else { "" };
+        eprintln!(
+            "{prefix}warning: {} has a non-object root; skipping patch",
+            config_path.display()
+        );
+        return Ok(());
+    };
 
     if dry_run {
         eprintln!(
             "[dry-run] would write {} instructions to {}",
-            updated_instructions.len(),
+            new_rule_paths.len(),
             config_path.display()
         );
         return Ok(());
     }
 
-    // Update the instructions key
-    let instructions_value: Vec<serde_json::Value> = updated_instructions
-        .into_iter()
-        .map(serde_json::Value::String)
-        .collect();
-    if let Some(obj) = config.as_object_mut() {
-        obj.insert(
-            "instructions".to_string(),
-            serde_json::Value::Array(instructions_value),
-        );
+    rewrite_instructions(&top, rules_dest_dir, &new_rule_paths);
+
+    crate::cst_io::finish(&root, &config_path)
+}
+
+/// Drop agentspec-owned string entries from `instructions[]`, preserving
+/// user-authored strings and any non-string elements verbatim. Append
+/// `new_paths` as fresh string entries. If `instructions[]` is absent, insert
+/// it as a new property when `new_paths` is non-empty.
+///
+/// Non-array existing values (e.g., `instructions: null`) are replaced with a
+/// fresh array via `array_value_or_set` when `new_paths` is non-empty;
+/// otherwise the value is left alone (a small refinement over the prior
+/// `serde_json` behavior, which would write `[]` over a `null`).
+fn rewrite_instructions(top: &CstObject, rules_dest_dir: &Path, new_paths: &[String]) {
+    if let Some(arr) = top.array_value("instructions") {
+        for entry in arr.elements() {
+            let is_owned = entry
+                .as_string_lit()
+                .and_then(|s| s.decoded_value().ok())
+                .is_some_and(|p| is_agentspec_instruction(&p, rules_dest_dir));
+            if is_owned {
+                entry.remove();
+            }
+        }
+        for path in new_paths {
+            arr.append(CstInputValue::String(path.clone()));
+        }
+        if arr.elements().is_empty()
+            && let Some(prop) = top.get("instructions")
+        {
+            prop.remove();
+        }
+    } else if !new_paths.is_empty() {
+        let arr = top.array_value_or_set("instructions");
+        for path in new_paths {
+            arr.append(CstInputValue::String(path.clone()));
+        }
     }
-
-    let content =
-        serde_json::to_string_pretty(&config).context("failed to serialize opencode.json")?;
-    fs::write(&config_path, format!("{content}\n"))
-        .with_context(|| format!("failed to write {}", config_path.display()))?;
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -1150,5 +1168,221 @@ mod tests {
     fn test_project_dest_dir_is_flat() {
         let result = OpenCodeAdapter.project_dest_dir(Path::new("/work/project"), FileKind::Agents);
         assert_eq!(result, PathBuf::from("/work/project/.opencode/agents"));
+    }
+
+    #[test]
+    fn test_patch_preserves_comments_and_trivia() {
+        // JSONC `opencode.json` with a comment and a `model` key authored before
+        // `instructions`. After patching, the comment, the `model` value, and
+        // the original key order must round-trip.
+        let tmp = tempfile::tempdir().expect("tmp");
+        let rules_dir = tmp.path().join("rules");
+        fs::create_dir_all(rules_dir.join("my-rule")).expect("mkdir rule");
+        fs::write(rules_dir.join("my-rule/AGENTS.md"), "rule").expect("write rule");
+
+        let config_path = tmp.path().join("opencode.json");
+        let initial = r#"{
+  // user comment about the model
+  "model": "haiku",
+  "instructions": []
+}
+"#;
+        fs::write(&config_path, initial).expect("write initial");
+
+        patch_opencode_instructions(&rules_dir, tmp.path(), false).expect("patch");
+
+        let after = fs::read_to_string(&config_path).expect("read");
+        assert!(
+            after.contains("// user comment about the model"),
+            "comment must round-trip, got:\n{after}"
+        );
+        assert!(
+            after.contains("\"model\": \"haiku\""),
+            "model value must round-trip, got:\n{after}"
+        );
+        let model_pos = after.find("\"model\"").expect("model present");
+        let instructions_pos = after
+            .find("\"instructions\"")
+            .expect("instructions present");
+        assert!(
+            model_pos < instructions_pos,
+            "model must precede instructions; got:\n{after}"
+        );
+        assert!(
+            after.contains("my-rule"),
+            "agentspec rule must be appended, got:\n{after}"
+        );
+    }
+
+    #[test]
+    fn test_patch_preserves_user_top_level_key_ordering() {
+        // User authored `model` and `permissions` before `instructions`. After
+        // sync, both keys round-trip in their original order with original
+        // formatting.
+        let tmp = tempfile::tempdir().expect("tmp");
+        let rules_dir = tmp.path().join("rules");
+        fs::create_dir_all(rules_dir.join("r")).expect("mkdir rule");
+        fs::write(rules_dir.join("r/AGENTS.md"), "rule").expect("write rule");
+
+        let config_path = tmp.path().join("opencode.json");
+        let initial = r#"{
+  "model": "haiku",
+  "permissions": ["read", "write"],
+  "instructions": ["~/notes/personal.md"]
+}
+"#;
+        fs::write(&config_path, initial).expect("write initial");
+
+        patch_opencode_instructions(&rules_dir, tmp.path(), false).expect("patch");
+
+        let after = fs::read_to_string(&config_path).expect("read");
+        let model_pos = after.find("\"model\"").expect("model");
+        let permissions_pos = after.find("\"permissions\"").expect("permissions");
+        let instructions_pos = after.find("\"instructions\"").expect("instructions");
+        assert!(
+            model_pos < permissions_pos && permissions_pos < instructions_pos,
+            "key ordering must round-trip; got:\n{after}"
+        );
+        assert!(
+            after.contains("\"haiku\"")
+                && after.contains("\"read\"")
+                && after.contains("\"write\""),
+            "user values must round-trip, got:\n{after}"
+        );
+        assert!(
+            after.contains("~/notes/personal.md"),
+            "user instruction entry must round-trip, got:\n{after}"
+        );
+    }
+
+    #[test]
+    fn test_remove_preserves_comments_and_trivia() {
+        // Seed with a comment, a user-authored `model` key, and a single
+        // agentspec entry under `instructions`. After remove, the comment,
+        // `model`, and the original formatting must survive; `instructions`
+        // is dropped because the array empties.
+        let tmp = tempfile::tempdir().expect("tmp");
+        let rules_dir = tmp.path().join("rules");
+        let config_path = tmp.path().join("opencode.json");
+
+        let agentspec_path = rules_dir.join("a/AGENTS.md");
+        let initial = format!(
+            "{{\n  // user note\n  \"model\": \"haiku\",\n  \"instructions\": [\"{}\"]\n}}\n",
+            agentspec_path.display()
+        );
+        fs::write(&config_path, &initial).expect("write initial");
+
+        remove_opencode_instructions(&rules_dir, tmp.path(), false).expect("remove");
+
+        let after = fs::read_to_string(&config_path).expect("read");
+        assert!(
+            after.contains("// user note"),
+            "comment must round-trip, got:\n{after}"
+        );
+        assert!(
+            after.contains("\"model\": \"haiku\""),
+            "model value must round-trip with original formatting, got:\n{after}"
+        );
+        assert!(
+            !after.contains("\"instructions\""),
+            "instructions key should be dropped when array empties, got:\n{after}"
+        );
+    }
+
+    #[test]
+    fn test_patch_idempotent_round_trip() {
+        // Calling patch twice with the same inputs must produce byte-identical
+        // output. Mirrors hooks_merge::test_merge_idempotent_round_trip.
+        let tmp = tempfile::tempdir().expect("tmp");
+        let rules_dir = tmp.path().join("rules");
+        fs::create_dir_all(rules_dir.join("r")).expect("mkdir rule");
+        fs::write(rules_dir.join("r/AGENTS.md"), "rule").expect("write rule");
+
+        patch_opencode_instructions(&rules_dir, tmp.path(), false).expect("patch 1");
+        let after_1 = fs::read_to_string(tmp.path().join("opencode.json")).expect("read 1");
+
+        patch_opencode_instructions(&rules_dir, tmp.path(), false).expect("patch 2");
+        let after_2 = fs::read_to_string(tmp.path().join("opencode.json")).expect("read 2");
+
+        assert_eq!(after_1, after_2, "patch must be idempotent");
+    }
+
+    #[test]
+    fn test_patch_handles_empty_file() {
+        // A zero-byte `opencode.json` must be treated as `{}` rather than
+        // failing the parser. With at least one rule under `rules_dest_dir`,
+        // the function proceeds past the short-circuit and creates a valid
+        // JSON object with the agentspec entry in `instructions[]`.
+        let tmp = tempfile::tempdir().expect("tmp");
+        let rules_dir = tmp.path().join("rules");
+        fs::create_dir_all(rules_dir.join("r")).expect("mkdir rule");
+        fs::write(rules_dir.join("r/AGENTS.md"), "rule").expect("write rule");
+
+        let config_path = tmp.path().join("opencode.json");
+        fs::write(&config_path, "").expect("touch empty file");
+
+        patch_opencode_instructions(&rules_dir, tmp.path(), false)
+            .expect("patch should succeed on empty file");
+
+        let after = fs::read_to_string(&config_path).expect("read");
+        let parsed: serde_json::Value = serde_json::from_str(&after).expect("must parse as JSON");
+        let arr = parsed
+            .get("instructions")
+            .and_then(|v| v.as_array())
+            .expect("instructions array");
+        assert_eq!(arr.len(), 1);
+        assert!(
+            arr[0]
+                .as_str()
+                .expect("string entry")
+                .contains("r/AGENTS.md"),
+            "agentspec rule path expected, got: {arr:?}"
+        );
+    }
+
+    #[test]
+    fn test_patch_warns_on_non_object_root() {
+        // A top-level array root should trigger the warn-and-no-op path:
+        // returns Ok, prints a warning, and leaves the file byte-identical.
+        let tmp = tempfile::tempdir().expect("tmp");
+        let rules_dir = tmp.path().join("rules");
+        fs::create_dir_all(rules_dir.join("r")).expect("mkdir rule");
+        fs::write(rules_dir.join("r/AGENTS.md"), "rule").expect("write rule");
+
+        let config_path = tmp.path().join("opencode.json");
+        let initial = "[]";
+        fs::write(&config_path, initial).expect("write initial");
+
+        patch_opencode_instructions(&rules_dir, tmp.path(), false)
+            .expect("patch returns Ok on non-object root");
+
+        let after = fs::read_to_string(&config_path).expect("read");
+        assert_eq!(
+            after, initial,
+            "non-object root must round-trip byte-identical (no rewrite to {{}})"
+        );
+    }
+
+    #[test]
+    fn test_remove_warns_on_non_object_root() {
+        // Symmetric for the remove path: non-object root → warn, return empty
+        // report, leave file byte-identical.
+        let tmp = tempfile::tempdir().expect("tmp");
+        let rules_dir = tmp.path().join("rules");
+        let config_path = tmp.path().join("opencode.json");
+        let initial = "[]";
+        fs::write(&config_path, initial).expect("write initial");
+
+        let report = remove_opencode_instructions(&rules_dir, tmp.path(), false)
+            .expect("remove returns Ok on non-object root");
+
+        assert!(!report.host_file_deleted);
+        assert_eq!(report.user_entries_remaining, 0);
+
+        let after = fs::read_to_string(&config_path).expect("read");
+        assert_eq!(
+            after, initial,
+            "non-object root must round-trip byte-identical"
+        );
     }
 }
