@@ -84,3 +84,7 @@
     - Generalizes / supersedes the path-method-shape concerns in #5 and the JSON-merge concerns in #11; pairs naturally with #14's CST-aware tidy and #12's payload translation shim
     - Refine framing once concrete dispatch sites surface awkward shapes (e.g., `config_dir` taking `(SyncDestinationMode, Option<&str>, &Path, &Path)` instead of a context struct, or `post_write_hook` having a 6-arg list)
     - Out of scope for the trait-extraction branch; landed as a follow-on
+17. Support sharing spec content (helper scripts, fragments) across multiple agentspec spec directories
+    - Use case: a user has two separate spec directories (e.g., work and personal) that share common hook scripts or `{% include %}` fragment files; today they must duplicate or manually symlink these
+    - Two candidate approaches: (a) agentspec follows symlinks during the load/walk phase, resolving them to their real content and copying that content into synced output — no config change required, but symlink semantics may be surprising across OS/VCS boundaries; (b) a new `[spec].extra_dirs` (or similar) config key lists additional root directories whose contents are merged into the spec search paths at load time, making sharing explicit and portable
+    - Open questions: does sharing apply only to fragment/supporting files, or also to full agent/skill/rule/hook specs? How do id collisions resolve when the same spec id appears in two roots? Does the manifest track provenance (which root a file came from) so `remove` knows which entries are local vs. shared?
