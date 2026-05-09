@@ -17,7 +17,6 @@
 //! trailing commas, key ordering, and untouched whitespace round-trip
 //! byte-identical via `jsonc-parser`'s CST API.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -26,6 +25,7 @@ use jsonc_parser::cst::CstRootNode;
 
 use crate::adapters::HookAdapter;
 use crate::compile::EmittedHookEntry;
+use crate::cst_io::{finish, read_or_empty_object};
 use crate::plan::{PostWriteHook, RemovePatchReport, delete_host_file_and_rmdir_parent};
 
 /// Merge agentspec-owned hook entries into the host config file at
@@ -68,7 +68,12 @@ pub fn merge_owned(
         .merge_into(&top, owned_entries, force)
         .with_context(|| format!("merge into {} failed", host_path.display()))?;
 
-    finish(&root, host_path, dry_run)
+    if dry_run {
+        eprintln!("[dry-run] would merge hooks into {}", host_path.display());
+        return Ok(());
+    }
+
+    finish(&root, host_path)
 }
 
 /// Strip agentspec-owned hook entries from the host config file at
@@ -112,7 +117,17 @@ pub fn remove_owned(
         });
     }
 
-    finish(&root, host_path, dry_run)?;
+    if dry_run {
+        eprintln!("[dry-run] would tidy hooks in {}", host_path.display());
+        return Ok(RemovePatchReport {
+            host_path: host_path.to_path_buf(),
+            user_entries_remaining: outcome.user_entries_remaining,
+            host_file_deleted: false,
+            parent_rmdir: false,
+        });
+    }
+
+    finish(&root, host_path)?;
 
     Ok(RemovePatchReport {
         host_path: host_path.to_path_buf(),
@@ -165,114 +180,6 @@ impl PostWriteHook for RemoveHooksPatch {
         report.print_summary(dry_run);
         Ok(())
     }
-}
-
-fn read_or_empty_object(path: &Path) -> Result<String> {
-    if !path.is_file() {
-        return Ok("{}".to_string());
-    }
-    let raw =
-        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
-    // Treat empty or whitespace-only files as `{}`. A zero-byte settings.json
-    // (e.g., from a partial write or `touch`) shouldn't fail the merge — it's
-    // equivalent to "no settings yet."
-    if raw.trim().is_empty() {
-        Ok("{}".to_string())
-    } else {
-        Ok(raw)
-    }
-}
-
-/// Serializes umask reads across concurrent `finish` callers.
-///
-/// `umask(2)` is process-global state and the only way to read it is the
-/// set-then-restore dance below — there's a brief window where umask is 0.
-/// Production agentspec is single-threaded, so the window is harmless. Under
-/// `cargo test`'s default parallel execution, two `finish` calls overlap;
-/// without this lock, one test's transient `umask=0` would leak overly
-/// permissive modes to another test's concurrent file creates.
-#[cfg(unix)]
-static UMASK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-/// Atomic write: serialize the CST, write to a sibling tempfile, rename into
-/// place. A dropped or crashed write leaves the original untouched.
-///
-/// `tempfile::NamedTempFile::new_in` creates files with mode 0600. We resolve
-/// the target mode once (preserving the original mode for an existing file,
-/// or honoring the process umask for a fresh file) and apply it to the
-/// tempfile *before* `persist`, so the rename delivers the file at the right
-/// mode atomically — no observable 0600 window.
-///
-/// # Multi-thread safety
-///
-/// The fresh-file branch reads the process umask. Because `umask(2)` mutates
-/// process-global state, concurrent `finish` calls are serialized via
-/// [`UMASK_LOCK`] — see its docstring for the failure mode this prevents.
-fn finish(root: &CstRootNode, path: &Path, dry_run: bool) -> Result<()> {
-    let output = root.to_string();
-
-    if dry_run {
-        eprintln!(
-            "[dry-run] would merge {} bytes into {}",
-            output.len(),
-            path.display()
-        );
-        return Ok(());
-    }
-
-    let parent = path.parent().with_context(|| {
-        format!(
-            "destination path {} has no parent directory",
-            path.display()
-        )
-    })?;
-    fs::create_dir_all(parent)
-        .with_context(|| format!("failed to create dir {}", parent.display()))?;
-
-    // Resolve target mode: existing file → preserve; fresh file → honor umask
-    // (the conventional shell behavior, matching how a user-authored
-    // `settings.json` would land).
-    #[cfg(unix)]
-    let target_mode: u32 = {
-        use std::os::unix::fs::PermissionsExt;
-        fs::metadata(path).ok().map_or_else(
-            || {
-                // `umask(2)` is the only way to read the current process
-                // umask — there is no stdlib accessor. Set-then-restore
-                // briefly flips umask to 0; serialize via UMASK_LOCK so
-                // overlapping callers don't leak modes to each other.
-                // `into_inner` recovers from a poisoned mutex — we don't
-                // hold any state inside the lock other than the umask
-                // syscall itself, so poison is harmless.
-                let _guard = UMASK_LOCK
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                let prev = unsafe { libc::umask(0) };
-                unsafe { libc::umask(prev) };
-                0o666 & !(u32::from(prev))
-            },
-            |m| m.permissions().mode(),
-        )
-    };
-
-    let tmp = tempfile::NamedTempFile::new_in(parent)
-        .with_context(|| format!("failed to create tempfile in {}", parent.display()))?;
-    fs::write(tmp.path(), output.as_bytes())
-        .with_context(|| format!("failed to write tempfile {}", tmp.path().display()))?;
-
-    // Apply target mode to the tempfile before persist so the rename
-    // delivers the file at the right mode atomically.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(tmp.path(), fs::Permissions::from_mode(target_mode))
-            .with_context(|| format!("failed to set tempfile mode for {}", path.display()))?;
-    }
-
-    tmp.persist(path)
-        .with_context(|| format!("failed to atomically rename into {}", path.display()))?;
-
-    Ok(())
 }
 
 #[cfg(test)]
