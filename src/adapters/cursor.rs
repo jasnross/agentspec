@@ -5,15 +5,13 @@ use anyhow::{Context, Result};
 use jsonc_parser::cst::{CstInputValue, CstObject};
 use serde::Serialize;
 
+use super::hook_compile::{build_emitted_hook_entries, build_hook_script_files};
 use super::hooks_helpers::{
     is_owned_entry, open_or_create_array, open_or_create_object, prune_empty_event_arrays,
     value_to_cst_input,
 };
 use super::{HookAdapter, ProviderAdapter, SyncDestinationMode, TidyOutcome};
-use crate::compile::{
-    AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode, HookSynthesis,
-    build_emitted_hook_entries, build_hook_script_files,
-};
+use crate::compile::{AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode, HookSynthesis};
 use crate::hooks_merge::{HooksPatch, RemoveHooksPatch};
 use crate::plan::{FileKind, PostWriteHook, expand_tilde};
 use crate::presets::ProviderPresetsMap;

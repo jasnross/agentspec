@@ -7,6 +7,7 @@
 
 mod claude;
 mod cursor;
+mod hook_compile;
 mod hooks_helpers;
 mod opencode;
 
@@ -143,10 +144,10 @@ pub trait HookAdapter: ProviderAdapter + std::fmt::Debug {
     fn entry_to_json(&self, entry: &EmittedHookEntry) -> serde_json::Value;
 
     /// String-fragment dotdir embedded in hook command shell paths
-    /// (e.g. `.claude` / `.cursor`). Scoped to `HookAdapter` because only
-    /// `compile::hook_command_anchor` needs the dotdir as a string fragment;
-    /// every other path consumer uses the `PathBuf`-returning methods on
-    /// `ProviderAdapter`.
+    /// (e.g. `.claude` / `.cursor`). Scoped to `HookAdapter` because only the
+    /// per-provider hook-command anchor builder needs the dotdir as a string
+    /// fragment; every other path consumer uses the `PathBuf`-returning
+    /// methods on `ProviderAdapter`.
     fn hook_command_dotdir(&self) -> &'static str;
 
     /// Filename within `<config_dir>/` that this provider's hook merge writes

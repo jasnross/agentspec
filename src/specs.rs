@@ -748,8 +748,8 @@ fn validate_hook_script_path(
         }
     }
     // Require the first meaningful component to be `scripts`. `collect_hook_scripts`
-    // only walks `<hooks_dir>/scripts/`, and `build_emitted_hook_entries` builds
-    // command anchors under `${ANCHOR}/hooks/scripts/<rel>`. A script outside
+    // only walks `<hooks_dir>/scripts/`, and the per-provider hook-command anchor
+    // builder formats commands as `${ANCHOR}/hooks/scripts/<rel>`. A script outside
     // `scripts/` (e.g., `init.sh` at `spec/hooks/init.sh`) would silently produce
     // a hook entry pointing at a never-emitted file.
     let first = script
