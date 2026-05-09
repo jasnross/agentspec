@@ -6,8 +6,6 @@ default:
 build:
     cargo build
 
-<<<<<<< Updated upstream
-=======
 # Run graphify
 graphify:
   graphify update .
@@ -16,7 +14,6 @@ graphify:
 graphify-watch:
   @watchexec -r -e rs 'cargo check && just graphify'
 
->>>>>>> Stashed changes
 # Run tests
 test:
     cargo test
@@ -36,14 +33,8 @@ lint:
 licenses:
     cargo deny check licenses
 
-<<<<<<< Updated upstream
 # Format + lint + test + licenses
 check: fmt lint build test licenses
-=======
-# Format + lint + cargo check + test + licenses
-check: fmt lint && test licenses
-  cargo check
->>>>>>> Stashed changes
 
 # Install binary locally
 install:
