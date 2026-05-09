@@ -21,7 +21,7 @@ pub use opencode::OpenCodeAdapter;
 use crate::compile::{AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode, HookSynthesis};
 use crate::plan::{FileKind, PostWriteHook};
 use crate::presets::ProviderPresetsMap;
-use crate::spec::{HookEvent, NormalizedHookSpec, NormalizedSpec, ToolFrontmatter};
+use crate::spec::{HookEvent, HookSpec, Spec, ToolFrontmatter};
 
 /// Library-side mirror of the binary's `SyncMode`.
 ///
@@ -43,10 +43,10 @@ pub enum SyncDestinationMode {
 /// specific adapter; the only exceptions are tests (which are exempt per the
 /// project rule) and `Provider::adapter()` itself.
 pub trait ProviderAdapter {
-    /// Adapt one normalized spec into provider-specific generated files.
+    /// Adapt one spec into provider-specific generated files.
     fn adapt(
         &self,
-        spec: NormalizedSpec,
+        spec: Spec,
         presets: &ProviderPresetsMap,
         cfg: Option<&AdapterConfig>,
     ) -> Result<Vec<GeneratedFile>>;
@@ -57,7 +57,7 @@ pub trait ProviderAdapter {
     fn body_tool_name(&self, tool: &ToolFrontmatter) -> &'static str;
 
     /// Compute the model-facing name for a spec (with prefix transforms applied).
-    fn model_facing_name(&self, spec: &NormalizedSpec, cfg: Option<&AdapterConfig>) -> String;
+    fn model_facing_name(&self, spec: &Spec, cfg: Option<&AdapterConfig>) -> String;
 
     /// Optional post-write hook for the sync pipeline.
     ///
@@ -132,7 +132,7 @@ pub trait HookAdapter: ProviderAdapter + std::fmt::Debug {
     /// mode, the `hooks/hooks.json` file).
     fn synthesize_hooks(
         &self,
-        specs: &[&NormalizedHookSpec],
+        specs: &[&HookSpec],
         cfg: Option<&AdapterConfig>,
     ) -> Result<HookSynthesis>;
 

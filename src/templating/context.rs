@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::compile::AdapterConfig;
 use crate::provider::Provider;
-use crate::spec::NormalizedSpec;
+use crate::spec::Spec;
 
 /// A single spec entry exposed to templates.
 #[derive(Clone, Debug, Serialize)]
@@ -54,10 +54,7 @@ fn normalize_key(id: &str) -> String {
 ///
 /// `name_fn` determines how each entry's `name` is computed: canonical ID for
 /// unprefixed contexts, or the model-facing name for provider-specific contexts.
-fn build_context(
-    specs: &[NormalizedSpec],
-    name_fn: impl Fn(&NormalizedSpec) -> String,
-) -> SpecsContext {
+fn build_context(specs: &[Spec], name_fn: impl Fn(&Spec) -> String) -> SpecsContext {
     let mut agents_list = Vec::new();
     let mut skills_list = Vec::new();
     let mut rules_list = Vec::new();
@@ -75,22 +72,22 @@ fn build_context(
         let key = normalize_key(spec.id());
 
         match spec {
-            NormalizedSpec::Agent(_) => {
+            Spec::Agent(_) => {
                 agent_map.insert(key, entry.clone());
                 agents_list.push(entry);
             }
-            NormalizedSpec::Skill(_) => {
+            Spec::Skill(_) => {
                 skill_map.insert(key, entry.clone());
                 skills_list.push(entry);
             }
-            NormalizedSpec::Rule(_) => {
+            Spec::Rule(_) => {
                 rule_map.insert(key, entry.clone());
                 rules_list.push(entry);
             }
             // Hooks aren't user-referenceable in templates (no `specs.hook.foo`
             // surface today); they participate in the pipeline but are absent
             // from `TemplateContext`. Adding them later is purely additive.
-            NormalizedSpec::Hook(_) => {}
+            Spec::Hook(_) => {}
         }
     }
 
@@ -121,7 +118,7 @@ impl TemplateContext {
     /// Build the template context from validated specs using canonical
     /// (unprefixed) IDs. Used by the `validate` command and as the default
     /// when no provider context is available.
-    pub fn from_specs(specs: &[NormalizedSpec]) -> Self {
+    pub fn from_specs(specs: &[Spec]) -> Self {
         Self {
             specs: build_context(specs, |s| s.id().to_owned()),
         }
@@ -134,7 +131,7 @@ impl TemplateContext {
     /// the target provider (e.g., `tw-gh-safe` for Claude, `gh-safe` for
     /// `OpenCode` skills).
     pub fn from_specs_for_provider(
-        specs: &[NormalizedSpec],
+        specs: &[Spec],
         provider: Provider,
         adapter_config: Option<&AdapterConfig>,
     ) -> Self {
@@ -149,22 +146,17 @@ impl TemplateContext {
 mod tests {
     use super::*;
     use crate::spec::{
-        NormalizedAgentFrontmatter, NormalizedAgentSpec, NormalizedRuleFrontmatter,
-        NormalizedRuleSpec, NormalizedSkillFrontmatter, NormalizedSkillSpec,
+        AgentFrontmatter, AgentSpec, RuleFrontmatter, RuleSpec, SkillFrontmatter, SkillSpec,
     };
 
-    fn make_agent(id: &str, description: &str) -> NormalizedSpec {
+    fn make_agent(id: &str, description: &str) -> Spec {
         make_agent_with_tags(id, description, None)
     }
 
-    fn make_agent_with_tags(
-        id: &str,
-        description: &str,
-        tags: Option<Vec<String>>,
-    ) -> NormalizedSpec {
-        NormalizedSpec::Agent(NormalizedAgentSpec {
+    fn make_agent_with_tags(id: &str, description: &str, tags: Option<Vec<String>>) -> Spec {
+        Spec::Agent(AgentSpec {
             path: format!("{id}.md").into(),
-            frontmatter: NormalizedAgentFrontmatter {
+            frontmatter: AgentFrontmatter {
                 id: id.to_owned(),
                 description: description.to_owned(),
                 tags,
@@ -175,10 +167,10 @@ mod tests {
         })
     }
 
-    fn make_skill(id: &str, description: Option<&str>) -> NormalizedSpec {
-        NormalizedSpec::Skill(NormalizedSkillSpec {
+    fn make_skill(id: &str, description: Option<&str>) -> Spec {
+        Spec::Skill(SkillSpec {
             path: format!("{id}.md").into(),
-            frontmatter: NormalizedSkillFrontmatter {
+            frontmatter: SkillFrontmatter {
                 id: id.to_owned(),
                 description: description.map(ToOwned::to_owned),
                 tags: None,
@@ -192,10 +184,10 @@ mod tests {
         })
     }
 
-    fn make_rule(id: &str, description: Option<&str>) -> NormalizedSpec {
-        NormalizedSpec::Rule(NormalizedRuleSpec {
+    fn make_rule(id: &str, description: Option<&str>) -> Spec {
+        Spec::Rule(RuleSpec {
             path: format!("{id}.md").into(),
-            frontmatter: NormalizedRuleFrontmatter {
+            frontmatter: RuleFrontmatter {
                 id: id.to_owned(),
                 description: description.map(ToOwned::to_owned),
                 tags: None,

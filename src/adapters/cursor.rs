@@ -18,10 +18,7 @@ use crate::hooks_merge::{HooksPatch, RemoveHooksPatch};
 use crate::plan::{FileKind, PostWriteHook, expand_tilde};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
-use crate::spec::{
-    HookEvent, NormalizedAgentSpec, NormalizedHookSpec, NormalizedRuleSpec, NormalizedSkillSpec,
-    NormalizedSpec, ToolFrontmatter,
-};
+use crate::spec::{AgentSpec, HookEvent, HookSpec, RuleSpec, SkillSpec, Spec, ToolFrontmatter};
 
 // See: https://cursor.com/docs/subagents#configuration-fields
 #[derive(Serialize)]
@@ -55,18 +52,18 @@ pub struct CursorAdapter;
 impl ProviderAdapter for CursorAdapter {
     fn adapt(
         &self,
-        spec: NormalizedSpec,
+        spec: Spec,
         presets: &ProviderPresetsMap,
         cfg: Option<&AdapterConfig>,
     ) -> Result<Vec<GeneratedFile>> {
         match spec {
-            NormalizedSpec::Agent(s) => adapt_agent_spec(s, presets, cfg),
-            NormalizedSpec::Skill(s) => adapt_skill_spec(s, cfg),
-            NormalizedSpec::Rule(s) => adapt_rule_spec(s, cfg),
+            Spec::Agent(s) => adapt_agent_spec(s, presets, cfg),
+            Spec::Skill(s) => adapt_skill_spec(s, cfg),
+            Spec::Rule(s) => adapt_rule_spec(s, cfg),
             // Hook scripts are emitted by `synthesize_hooks` once per provider —
             // see the matching note in `claude::ClaudeAdapter::adapt` for the
             // rationale.
-            NormalizedSpec::Hook(_) => Ok(Vec::new()),
+            Spec::Hook(_) => Ok(Vec::new()),
         }
     }
 
@@ -95,7 +92,7 @@ impl ProviderAdapter for CursorAdapter {
     ///
     /// For Cursor, all spec types use `{content_prefix}{id}` when a content prefix
     /// is configured (either explicitly or derived from `prefix`).
-    fn model_facing_name(&self, spec: &NormalizedSpec, cfg: Option<&AdapterConfig>) -> String {
+    fn model_facing_name(&self, spec: &Spec, cfg: Option<&AdapterConfig>) -> String {
         let id = spec.id();
         match cfg.and_then(AdapterConfig::content_prefix) {
             Some(prefix) => format!("{prefix}{id}"),
@@ -188,7 +185,7 @@ impl HookAdapter for CursorAdapter {
     /// list for the downstream merged-mode merge.
     fn synthesize_hooks(
         &self,
-        specs: &[&NormalizedHookSpec],
+        specs: &[&HookSpec],
         cfg: Option<&AdapterConfig>,
     ) -> Result<HookSynthesis> {
         if specs.is_empty() {
@@ -386,7 +383,7 @@ fn count_user_entries(top: &CstObject) -> usize {
 }
 
 fn adapt_agent_spec(
-    spec: NormalizedAgentSpec,
+    spec: AgentSpec,
     presets: &ProviderPresetsMap,
     cfg: Option<&AdapterConfig>,
 ) -> Result<Vec<GeneratedFile>> {
@@ -423,10 +420,7 @@ fn adapt_agent_spec(
     Ok(vec![GeneratedFile::text(Provider::Cursor, path, content)])
 }
 
-fn adapt_skill_spec(
-    spec: NormalizedSkillSpec,
-    cfg: Option<&AdapterConfig>,
-) -> Result<Vec<GeneratedFile>> {
+fn adapt_skill_spec(spec: SkillSpec, cfg: Option<&AdapterConfig>) -> Result<Vec<GeneratedFile>> {
     let id = spec.frontmatter.id;
     let description = spec.frontmatter.description.unwrap_or_default();
 
@@ -466,10 +460,7 @@ fn adapt_skill_spec(
     Ok(files)
 }
 
-fn adapt_rule_spec(
-    spec: NormalizedRuleSpec,
-    cfg: Option<&AdapterConfig>,
-) -> Result<Vec<GeneratedFile>> {
+fn adapt_rule_spec(spec: RuleSpec, cfg: Option<&AdapterConfig>) -> Result<Vec<GeneratedFile>> {
     let description = spec.frontmatter.description.unwrap_or_default();
 
     let frontmatter = CursorRuleFrontmatter {
@@ -529,15 +520,14 @@ mod tests {
 
     use super::*;
     use crate::spec::{
-        NormalizedAgentFrontmatter, NormalizedAgentSpec, NormalizedRuleFrontmatter,
-        NormalizedRuleSpec, NormalizedSkillFrontmatter, NormalizedSkillSpec,
+        AgentFrontmatter, AgentSpec, RuleFrontmatter, RuleSpec, SkillFrontmatter, SkillSpec,
     };
 
     #[test]
     fn test_adapt_agent_output_format() {
-        let spec = NormalizedSpec::Agent(NormalizedAgentSpec {
+        let spec = Spec::Agent(AgentSpec {
             path: "test.md".into(),
-            frontmatter: NormalizedAgentFrontmatter {
+            frontmatter: AgentFrontmatter {
                 id: "test-agent".to_string(),
                 description: "Test agent".to_string(),
                 tags: None,
@@ -571,9 +561,9 @@ mod tests {
             content_prefix: None,
             ..AdapterConfig::default()
         };
-        let spec = NormalizedSpec::Agent(NormalizedAgentSpec {
+        let spec = Spec::Agent(AgentSpec {
             path: "test.md".into(),
-            frontmatter: NormalizedAgentFrontmatter {
+            frontmatter: AgentFrontmatter {
                 id: "test-agent".to_string(),
                 description: "Test agent".to_string(),
                 tags: None,
@@ -601,9 +591,9 @@ mod tests {
             content_prefix: None,
             ..AdapterConfig::default()
         };
-        let spec = NormalizedSpec::Skill(NormalizedSkillSpec {
+        let spec = Spec::Skill(SkillSpec {
             path: "test.md".into(),
-            frontmatter: NormalizedSkillFrontmatter {
+            frontmatter: SkillFrontmatter {
                 id: "test-skill".to_string(),
                 description: Some("A test skill".to_string()),
                 tags: None,
@@ -684,10 +674,10 @@ mod tests {
 
     // -- Hook synthesis tests --
 
-    fn make_hook_spec(id: &str, event: HookEvent, matcher: Option<&str>) -> NormalizedHookSpec {
-        NormalizedHookSpec {
+    fn make_hook_spec(id: &str, event: HookEvent, matcher: Option<&str>) -> HookSpec {
+        HookSpec {
             path: std::path::PathBuf::from("/tmp/hooks.toml"),
-            frontmatter: crate::spec::NormalizedHookFrontmatter {
+            frontmatter: crate::spec::HookFrontmatter {
                 id: id.to_string(),
                 event,
                 script: format!("scripts/{id}.sh").into(),
@@ -858,9 +848,9 @@ mod tests {
             content_prefix: None,
             ..AdapterConfig::default()
         };
-        let spec = NormalizedSpec::Rule(NormalizedRuleSpec {
+        let spec = Spec::Rule(RuleSpec {
             path: "test.md".into(),
-            frontmatter: NormalizedRuleFrontmatter {
+            frontmatter: RuleFrontmatter {
                 id: "test-rule".to_string(),
                 description: Some("A test rule".to_string()),
                 tags: None,

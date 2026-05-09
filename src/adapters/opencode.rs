@@ -13,9 +13,7 @@ use crate::compile::{AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMod
 use crate::plan::{FileKind, PostWriteHook, RemovePatchReport, expand_tilde};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
-use crate::spec::{
-    NormalizedAgentSpec, NormalizedRuleSpec, NormalizedSkillSpec, NormalizedSpec, ToolFrontmatter,
-};
+use crate::spec::{AgentSpec, RuleSpec, SkillSpec, Spec, ToolFrontmatter};
 
 // See: https://opencode.ai/docs/agents/#markdown
 #[serde_with::skip_serializing_none]
@@ -53,17 +51,17 @@ pub struct OpenCodeAdapter;
 impl ProviderAdapter for OpenCodeAdapter {
     fn adapt(
         &self,
-        spec: NormalizedSpec,
+        spec: Spec,
         presets: &ProviderPresetsMap,
         cfg: Option<&AdapterConfig>,
     ) -> Result<Vec<GeneratedFile>> {
         match spec {
-            NormalizedSpec::Agent(s) => adapt_agent_spec(s, presets, cfg),
-            NormalizedSpec::Skill(s) => adapt_skill_spec(s, presets, cfg),
-            NormalizedSpec::Rule(s) => Ok(adapt_rule_spec(&s, cfg)),
+            Spec::Agent(s) => adapt_agent_spec(s, presets, cfg),
+            Spec::Skill(s) => adapt_skill_spec(s, presets, cfg),
+            Spec::Rule(s) => Ok(adapt_rule_spec(&s, cfg)),
             // hooks are not emitted for OpenCode in v1; the per-provider warning
             // is surfaced from `run_compile` via `CompileDiagnostics::skipped_hooks`.
-            NormalizedSpec::Hook(_) => Ok(Vec::new()),
+            Spec::Hook(_) => Ok(Vec::new()),
         }
     }
 
@@ -92,21 +90,19 @@ impl ProviderAdapter for OpenCodeAdapter {
     ///   which may differ from the file-path prefix.
     /// - **Skills**: the frontmatter `name` field uses the unprefixed canonical ID
     ///   (the prefix only appears in the directory path). User-invocable skills
-    ///   (commands) are also derived from `NormalizedSpec::Skill` — there is no
+    ///   (commands) are also derived from `Spec::Skill` — there is no
     ///   separate `Command` variant — and follow the same unprefixed convention.
     /// - **Rules**: have no model-facing name (auto-loaded content). Returns the
     ///   canonical ID as a best-effort fallback; spec authors should not typically
     ///   reference rules by name.
-    fn model_facing_name(&self, spec: &NormalizedSpec, cfg: Option<&AdapterConfig>) -> String {
+    fn model_facing_name(&self, spec: &Spec, cfg: Option<&AdapterConfig>) -> String {
         let id = spec.id();
         match spec {
-            NormalizedSpec::Agent(_) => match cfg.and_then(AdapterConfig::content_prefix) {
+            Spec::Agent(_) => match cfg.and_then(AdapterConfig::content_prefix) {
                 Some(prefix) => format!("{prefix}{id}"),
                 None => id.to_owned(),
             },
-            NormalizedSpec::Skill(_) | NormalizedSpec::Rule(_) | NormalizedSpec::Hook(_) => {
-                id.to_owned()
-            }
+            Spec::Skill(_) | Spec::Rule(_) | Spec::Hook(_) => id.to_owned(),
         }
     }
 
@@ -190,7 +186,7 @@ impl ProviderAdapter for OpenCodeAdapter {
 }
 
 fn adapt_agent_spec(
-    spec: NormalizedAgentSpec,
+    spec: AgentSpec,
     presets: &ProviderPresetsMap,
     cfg: Option<&AdapterConfig>,
 ) -> Result<Vec<GeneratedFile>> {
@@ -238,7 +234,7 @@ fn adapt_agent_spec(
 }
 
 fn adapt_skill_spec(
-    spec: NormalizedSkillSpec,
+    spec: SkillSpec,
     presets: &ProviderPresetsMap,
     cfg: Option<&AdapterConfig>,
 ) -> Result<Vec<GeneratedFile>> {
@@ -321,7 +317,7 @@ fn adapt_skill_spec(
     Ok(files)
 }
 
-fn adapt_rule_spec(spec: &NormalizedRuleSpec, cfg: Option<&AdapterConfig>) -> Vec<GeneratedFile> {
+fn adapt_rule_spec(spec: &RuleSpec, cfg: Option<&AdapterConfig>) -> Vec<GeneratedFile> {
     let content = format!("{}\n", spec.body.trim());
     let file_prefix = cfg.and_then(AdapterConfig::file_prefix).unwrap_or_default();
     let path = Path::new("rules")
@@ -675,10 +671,7 @@ mod tests {
     use std::fs;
 
     use super::*;
-    use crate::spec::{
-        NormalizedAgentFrontmatter, NormalizedAgentSpec, NormalizedSkillFrontmatter,
-        NormalizedSkillSpec,
-    };
+    use crate::spec::{AgentFrontmatter, AgentSpec, SkillFrontmatter, SkillSpec};
 
     #[test]
     fn test_body_tool_name_tasks_maps_to_todowrite() {
@@ -719,9 +712,9 @@ mod tests {
 
     #[test]
     fn test_adapt_agent_output_format() {
-        let spec = NormalizedSpec::Agent(NormalizedAgentSpec {
+        let spec = Spec::Agent(AgentSpec {
             path: "test.md".into(),
-            frontmatter: NormalizedAgentFrontmatter {
+            frontmatter: AgentFrontmatter {
                 id: "test-agent".to_string(),
                 description: "Test agent".to_string(),
                 tags: None,
@@ -767,9 +760,9 @@ mod tests {
             content_prefix: None,
             ..AdapterConfig::default()
         };
-        let spec = NormalizedSpec::Skill(NormalizedSkillSpec {
+        let spec = Spec::Skill(SkillSpec {
             path: "test.md".into(),
-            frontmatter: NormalizedSkillFrontmatter {
+            frontmatter: SkillFrontmatter {
                 id: "basic-skill".to_string(),
                 description: Some("A basic skill".to_string()),
                 tags: None,

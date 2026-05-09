@@ -3,11 +3,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use crate::presets::ProviderPresetsMap;
-use crate::spec::{
-    AgentSpec, HookSpec, NormalizedAgentFrontmatter, NormalizedAgentSpec,
-    NormalizedHookFrontmatter, NormalizedHookSpec, NormalizedRuleFrontmatter, NormalizedRuleSpec,
-    NormalizedSkillFrontmatter, NormalizedSkillSpec, NormalizedSpec, RuleSpec, SkillSpec, Spec,
-};
+use crate::spec::Spec;
 
 /// A semantic validation error.
 #[derive(Debug)]
@@ -24,95 +20,11 @@ impl fmt::Display for SemanticError {
 
 impl std::error::Error for SemanticError {}
 
-// TODO: move normalization into its own module
-pub fn normalize_specs(specs: Vec<Spec>) -> Vec<NormalizedSpec> {
-    specs
-        .into_iter()
-        .map(|spec| match spec {
-            Spec::Agent(s) => NormalizedSpec::Agent(normalize_agent_spec(s)),
-            Spec::Skill(s) => NormalizedSpec::Skill(normalize_skill_spec(s)),
-            Spec::Rule(s) => NormalizedSpec::Rule(normalize_rule_spec(s)),
-            Spec::Hook(s) => NormalizedSpec::Hook(normalize_hook_spec(s)),
-        })
-        .collect()
-}
-
-fn normalize_agent_spec(spec: AgentSpec) -> NormalizedAgentSpec {
-    let frontmatter = NormalizedAgentFrontmatter {
-        id: spec.frontmatter.id,
-        description: spec.frontmatter.description,
-        tags: spec.frontmatter.tags,
-        execution: spec.frontmatter.execution,
-        capabilities: spec.frontmatter.capabilities,
-    };
-
-    NormalizedAgentSpec {
-        path: spec.path,
-        frontmatter,
-        body: spec.body,
-    }
-}
-
-fn normalize_skill_spec(spec: SkillSpec) -> NormalizedSkillSpec {
-    let frontmatter = NormalizedSkillFrontmatter {
-        id: spec.frontmatter.id,
-        description: spec.frontmatter.description,
-        tags: spec.frontmatter.tags,
-        user_invocable: spec.frontmatter.user_invocable,
-        agent_invocable: spec.frontmatter.agent_invocable,
-        execution: spec.frontmatter.execution,
-        capabilities: spec.frontmatter.capabilities,
-    };
-
-    NormalizedSkillSpec {
-        path: spec.path,
-        frontmatter,
-        body: spec.body,
-        supporting_files: spec.supporting_files,
-    }
-}
-
-fn normalize_rule_spec(spec: RuleSpec) -> NormalizedRuleSpec {
-    let frontmatter = NormalizedRuleFrontmatter {
-        id: spec.frontmatter.id,
-        description: spec.frontmatter.description,
-        tags: spec.frontmatter.tags,
-    };
-
-    NormalizedRuleSpec {
-        path: spec.path,
-        frontmatter,
-        body: spec.body,
-    }
-}
-
-fn normalize_hook_spec(spec: HookSpec) -> NormalizedHookSpec {
-    let frontmatter = NormalizedHookFrontmatter {
-        id: spec.frontmatter.id,
-        event: spec.frontmatter.event,
-        script: spec.frontmatter.script,
-        matcher: spec.frontmatter.matcher,
-        timeout: spec.frontmatter.timeout,
-        description: spec.frontmatter.description,
-        tags: spec.frontmatter.tags,
-    };
-
-    NormalizedHookSpec {
-        path: spec.path,
-        frontmatter,
-        body: spec.body,
-        supporting_files: spec.supporting_files,
-    }
-}
-
-/// Run semantic validation checks on normalized specs.
+/// Run semantic validation checks on loaded specs.
 ///
 /// Returns all errors found. An empty vec means all checks pass.
 /// This function does no I/O and cannot fail structurally.
-pub fn validate_semantics(
-    specs: &[NormalizedSpec],
-    presets: &ProviderPresetsMap,
-) -> Vec<SemanticError> {
+pub fn validate_semantics(specs: &[Spec], presets: &ProviderPresetsMap) -> Vec<SemanticError> {
     let mut errors = Vec::new();
     let mut id_set = std::collections::HashSet::new();
 
@@ -128,7 +40,7 @@ pub fn validate_semantics(
         // Empty body check
         // Hook specs intentionally have empty bodies (they are TOML-driven, not
         // markdown-bodied), so they are exempt from this check.
-        if spec.body().is_empty() && !matches!(spec, NormalizedSpec::Hook(_)) {
+        if spec.body().is_empty() && !matches!(spec, Spec::Hook(_)) {
             errors.push(SemanticError {
                 path: spec.path().to_path_buf(),
                 message: "instruction body cannot be empty".to_string(),
@@ -136,7 +48,7 @@ pub fn validate_semantics(
         }
 
         // Skill invocability check
-        if let NormalizedSpec::Skill(skill_spec) = spec
+        if let Spec::Skill(skill_spec) = spec
             && !skill_spec.frontmatter.user_invocable
             && !skill_spec.frontmatter.agent_invocable
         {
@@ -150,7 +62,7 @@ pub fn validate_semantics(
         // Hook event/matcher compatibility: a `matcher` is only valid on the
         // tool-execute events. `HookEvent::allows_matcher` codifies the rule;
         // both providers agree on the answer, so it lives on the enum.
-        if let NormalizedSpec::Hook(hook_spec) = spec
+        if let Spec::Hook(hook_spec) = spec
             && hook_spec.frontmatter.matcher.is_some()
             && !hook_spec.frontmatter.event.allows_matcher()
         {
@@ -165,13 +77,9 @@ pub fn validate_semantics(
         }
 
         let execution = match spec {
-            NormalizedSpec::Agent(normalized_agent_spec) => {
-                &normalized_agent_spec.frontmatter.execution
-            }
-            NormalizedSpec::Skill(normalized_skill_spec) => {
-                &normalized_skill_spec.frontmatter.execution
-            }
-            NormalizedSpec::Rule(_) | NormalizedSpec::Hook(_) => &None,
+            Spec::Agent(agent_spec) => &agent_spec.frontmatter.execution,
+            Spec::Skill(skill_spec) => &skill_spec.frontmatter.execution,
+            Spec::Rule(_) | Spec::Hook(_) => &None,
         };
 
         // Preset validation (skip if no presets loaded)
@@ -235,16 +143,16 @@ mod tests {
     use super::*;
     use crate::presets::{ProviderPresets, ProviderPresetsMap};
     use crate::spec::{
-        AgentFrontmatter, ExecutionFrontmatter, HookEvent, NormalizedRuleFrontmatter,
-        NormalizedSkillFrontmatter, RuleFrontmatter, SkillFrontmatter,
+        AgentFrontmatter, AgentSpec, ExecutionFrontmatter, HookEvent, HookFrontmatter, HookSpec,
+        RuleFrontmatter, RuleSpec, SkillFrontmatter, SkillSpec,
     };
 
     // -- Helpers --
 
-    fn make_agent(id: &str, body: &str) -> NormalizedSpec {
-        NormalizedSpec::Agent(NormalizedAgentSpec {
+    fn make_agent(id: &str, body: &str) -> Spec {
+        Spec::Agent(AgentSpec {
             path: PathBuf::from(format!("{id}.md")),
-            frontmatter: NormalizedAgentFrontmatter {
+            frontmatter: AgentFrontmatter {
                 id: id.to_string(),
                 description: "test description".to_string(),
                 tags: None,
@@ -255,10 +163,10 @@ mod tests {
         })
     }
 
-    fn make_skill(id: &str, body: &str) -> NormalizedSpec {
-        NormalizedSpec::Skill(NormalizedSkillSpec {
+    fn make_skill(id: &str, body: &str) -> Spec {
+        Spec::Skill(SkillSpec {
             path: PathBuf::from(format!("{id}.md")),
-            frontmatter: NormalizedSkillFrontmatter {
+            frontmatter: SkillFrontmatter {
                 id: id.to_string(),
                 description: None,
                 tags: None,
@@ -272,10 +180,10 @@ mod tests {
         })
     }
 
-    fn make_rule(id: &str, body: &str) -> NormalizedSpec {
-        NormalizedSpec::Rule(NormalizedRuleSpec {
+    fn make_rule(id: &str, body: &str) -> Spec {
+        Spec::Rule(RuleSpec {
             path: PathBuf::from(format!("{id}.md")),
-            frontmatter: NormalizedRuleFrontmatter {
+            frontmatter: RuleFrontmatter {
                 id: id.to_string(),
                 description: None,
                 tags: None,
@@ -284,10 +192,10 @@ mod tests {
         })
     }
 
-    fn make_hook(id: &str, event: HookEvent, matcher: Option<&str>) -> NormalizedSpec {
-        NormalizedSpec::Hook(NormalizedHookSpec {
+    fn make_hook(id: &str, event: HookEvent, matcher: Option<&str>) -> Spec {
+        Spec::Hook(HookSpec {
             path: PathBuf::from("hooks.toml"),
-            frontmatter: NormalizedHookFrontmatter {
+            frontmatter: HookFrontmatter {
                 id: id.to_string(),
                 event,
                 script: PathBuf::from(format!("scripts/{id}.sh")),
@@ -299,152 +207,6 @@ mod tests {
             body: String::new(),
             supporting_files: Vec::new(),
         })
-    }
-
-    // -- Normalization tests --
-
-    #[test]
-    fn test_normalize_agent() {
-        let spec = Spec::Agent(AgentSpec {
-            path: PathBuf::from("test.md"),
-            frontmatter: AgentFrontmatter {
-                id: "my-agent".to_string(),
-                description: "An agent".to_string(),
-                tags: None,
-                execution: None,
-                capabilities: None,
-            },
-            body: "body text".to_string(),
-        });
-
-        let normalized = normalize_specs(vec![spec]);
-        assert_eq!(normalized.len(), 1);
-        let NormalizedSpec::Agent(ref n) = normalized[0] else {
-            panic!("expected Agent variant")
-        };
-        assert_eq!(n.frontmatter.id, "my-agent");
-        assert_eq!(n.frontmatter.description, "An agent");
-        assert_eq!(n.body, "body text");
-    }
-
-    #[test]
-    fn test_normalize_skill() {
-        let spec = Spec::Skill(SkillSpec {
-            path: PathBuf::from("test.md"),
-            frontmatter: SkillFrontmatter {
-                id: "my-skill".to_string(),
-                description: Some("A skill".to_string()),
-                tags: None,
-                user_invocable: true,
-                agent_invocable: false,
-                execution: None,
-                capabilities: None,
-            },
-            body: "body".to_string(),
-            supporting_files: vec![],
-        });
-
-        let normalized = normalize_specs(vec![spec]);
-        let NormalizedSpec::Skill(ref n) = normalized[0] else {
-            panic!("expected Skill variant")
-        };
-        assert_eq!(n.frontmatter.id, "my-skill");
-        assert_eq!(n.frontmatter.description.as_deref(), Some("A skill"));
-        assert!(n.frontmatter.user_invocable);
-        assert!(!n.frontmatter.agent_invocable);
-    }
-
-    #[test]
-    fn test_normalize_rule() {
-        let spec = Spec::Rule(RuleSpec {
-            path: PathBuf::from("test.md"),
-            frontmatter: RuleFrontmatter {
-                id: "my-rule".to_string(),
-                description: None,
-                tags: None,
-            },
-            body: "body".to_string(),
-        });
-
-        let normalized = normalize_specs(vec![spec]);
-        let NormalizedSpec::Rule(ref n) = normalized[0] else {
-            panic!("expected Rule variant")
-        };
-        assert_eq!(n.frontmatter.id, "my-rule");
-        assert_eq!(n.frontmatter.description, None);
-    }
-
-    #[test]
-    fn test_normalize_execution_preset() {
-        let spec = Spec::Agent(AgentSpec {
-            path: PathBuf::from("test.md"),
-            frontmatter: AgentFrontmatter {
-                id: "test".to_string(),
-                description: "desc".to_string(),
-                tags: None,
-                execution: Some(ExecutionFrontmatter {
-                    preset: Some("fast".to_string()),
-                }),
-                capabilities: None,
-            },
-            body: "body".to_string(),
-        });
-
-        let normalized = normalize_specs(vec![spec]);
-        let NormalizedSpec::Agent(ref n) = normalized[0] else {
-            panic!("expected Agent variant")
-        };
-        let exec = n
-            .frontmatter
-            .execution
-            .as_ref()
-            .expect("expected execution");
-        assert_eq!(exec.preset.as_deref(), Some("fast"));
-    }
-
-    #[test]
-    fn test_normalize_agent_tags() {
-        let spec = Spec::Agent(AgentSpec {
-            path: PathBuf::from("test.md"),
-            frontmatter: AgentFrontmatter {
-                id: "tagged".to_string(),
-                description: "desc".to_string(),
-                tags: Some(vec!["research".to_string(), "codebase".to_string()]),
-                execution: None,
-                capabilities: None,
-            },
-            body: "body".to_string(),
-        });
-
-        let normalized = normalize_specs(vec![spec]);
-        let NormalizedSpec::Agent(ref n) = normalized[0] else {
-            panic!("expected Agent variant")
-        };
-        assert_eq!(
-            n.frontmatter.tags.as_deref(),
-            Some(["research".to_string(), "codebase".to_string()].as_slice())
-        );
-    }
-
-    #[test]
-    fn test_normalize_agent_no_tags() {
-        let spec = Spec::Agent(AgentSpec {
-            path: PathBuf::from("test.md"),
-            frontmatter: AgentFrontmatter {
-                id: "untagged".to_string(),
-                description: "desc".to_string(),
-                tags: None,
-                execution: None,
-                capabilities: None,
-            },
-            body: "body".to_string(),
-        });
-
-        let normalized = normalize_specs(vec![spec]);
-        let NormalizedSpec::Agent(ref n) = normalized[0] else {
-            panic!("expected Agent variant")
-        };
-        assert_eq!(n.frontmatter.tags, None);
     }
 
     // -- Semantic validation tests --
@@ -478,7 +240,7 @@ mod tests {
     #[test]
     fn test_semantics_skill_not_invocable() {
         let mut spec = make_skill("no-invoke", "body");
-        let NormalizedSpec::Skill(ref mut s) = spec else {
+        let Spec::Skill(ref mut s) = spec else {
             panic!("expected Skill variant")
         };
         s.frontmatter.user_invocable = false;
@@ -494,7 +256,7 @@ mod tests {
     #[test]
     fn test_semantics_unknown_preset() {
         let mut spec = make_agent("unknown", "body");
-        let NormalizedSpec::Agent(ref mut s) = spec else {
+        let Spec::Agent(ref mut s) = spec else {
             panic!("expected Agent variant")
         };
         s.frontmatter.execution = Some(ExecutionFrontmatter {
@@ -513,7 +275,7 @@ mod tests {
     #[test]
     fn test_semantics_known_preset_no_error() {
         let mut spec = make_agent("known", "body");
-        let NormalizedSpec::Agent(ref mut s) = spec else {
+        let Spec::Agent(ref mut s) = spec else {
             panic!("expected Agent variant")
         };
         s.frontmatter.execution = Some(ExecutionFrontmatter {

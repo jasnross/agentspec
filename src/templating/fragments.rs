@@ -8,18 +8,18 @@ use walkdir::WalkDir;
 
 use super::context::TemplateContext;
 use crate::provider::Provider;
-use crate::spec::{NormalizedSpec, ToolFrontmatter};
+use crate::spec::{Spec, ToolFrontmatter};
 
 /// Resolve fragment references in spec bodies by rendering them through `MiniJinja`.
 ///
 /// Each spec body is treated as an inline template. Specs that contain no template
-/// syntax pass through unchanged. Operates on normalized specs so that template
+/// syntax pass through unchanged. Operates on validated specs so that template
 /// resolution is decoupled from the spec loading/validation lifecycle.
 pub fn resolve_fragments(
-    specs: Vec<NormalizedSpec>,
+    specs: Vec<Spec>,
     env: &Environment<'_>,
     context: &TemplateContext,
-) -> Result<Vec<NormalizedSpec>> {
+) -> Result<Vec<Spec>> {
     let ctx = Value::from_serialize(context);
     let mut resolved = Vec::with_capacity(specs.len());
 
@@ -33,13 +33,13 @@ pub fn resolve_fragments(
             .with_context(|| format!("failed to resolve fragments in {}", spec.path().display()))?;
 
         match &mut spec {
-            NormalizedSpec::Agent(s) => s.body = body,
-            NormalizedSpec::Skill(s) => s.body = body,
-            NormalizedSpec::Rule(s) => s.body = body,
+            Spec::Agent(s) => s.body = body,
+            Spec::Skill(s) => s.body = body,
+            Spec::Rule(s) => s.body = body,
             // Hooks have empty bodies and skip templating entirely. The render
             // pass above produces the empty string for an empty input template,
             // so no special-case is needed beyond keeping the body unchanged.
-            NormalizedSpec::Hook(_) => {}
+            Spec::Hook(_) => {}
         }
 
         resolved.push(spec);
@@ -133,8 +133,7 @@ mod tests {
 
     use super::*;
     use crate::spec::{
-        NormalizedAgentFrontmatter, NormalizedAgentSpec, NormalizedRuleFrontmatter,
-        NormalizedRuleSpec, NormalizedSkillFrontmatter, NormalizedSkillSpec,
+        AgentFrontmatter, AgentSpec, RuleFrontmatter, RuleSpec, SkillFrontmatter, SkillSpec,
     };
 
     fn empty_context() -> TemplateContext {
@@ -236,9 +235,9 @@ mod tests {
         let fragments = HashMap::new();
         let env = build_environment(&fragments, None).expect("expected value");
 
-        let specs = vec![NormalizedSpec::Agent(NormalizedAgentSpec {
+        let specs = vec![Spec::Agent(AgentSpec {
             path: "test.md".into(),
-            frontmatter: NormalizedAgentFrontmatter {
+            frontmatter: AgentFrontmatter {
                 id: "test".to_string(),
                 description: "test".to_string(),
                 tags: None,
@@ -249,7 +248,7 @@ mod tests {
         })];
 
         let resolved = resolve_fragments(specs, &env, &empty_context()).expect("expected value");
-        let NormalizedSpec::Agent(ref s) = resolved[0] else {
+        let Spec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
         assert_eq!(s.body, "Plain body with no template syntax.");
@@ -262,9 +261,9 @@ mod tests {
 
         let env = build_environment(&fragments, None).expect("expected value");
 
-        let specs = vec![NormalizedSpec::Agent(NormalizedAgentSpec {
+        let specs = vec![Spec::Agent(AgentSpec {
             path: "test.md".into(),
-            frontmatter: NormalizedAgentFrontmatter {
+            frontmatter: AgentFrontmatter {
                 id: "test".to_string(),
                 description: "test".to_string(),
                 tags: None,
@@ -275,7 +274,7 @@ mod tests {
         })];
 
         let resolved = resolve_fragments(specs, &env, &empty_context()).expect("expected value");
-        let NormalizedSpec::Agent(ref s) = resolved[0] else {
+        let Spec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
         assert_eq!(s.body, "Body.\n-- End --");
@@ -321,12 +320,12 @@ mod tests {
     // --- Template variable tests ---
 
     fn test_context() -> TemplateContext {
-        use crate::spec::NormalizedSpec;
+        use crate::spec::Spec;
 
         let specs = vec![
-            NormalizedSpec::Agent(NormalizedAgentSpec {
+            Spec::Agent(AgentSpec {
                 path: "zeta.md".into(),
-                frontmatter: NormalizedAgentFrontmatter {
+                frontmatter: AgentFrontmatter {
                     id: "zeta-agent".to_owned(),
                     description: "Zeta description".to_owned(),
                     tags: None,
@@ -335,9 +334,9 @@ mod tests {
                 },
                 body: String::new(),
             }),
-            NormalizedSpec::Agent(NormalizedAgentSpec {
+            Spec::Agent(AgentSpec {
                 path: "alpha.md".into(),
-                frontmatter: NormalizedAgentFrontmatter {
+                frontmatter: AgentFrontmatter {
                     id: "alpha-agent".to_owned(),
                     description: "Alpha description".to_owned(),
                     tags: None,
@@ -346,9 +345,9 @@ mod tests {
                 },
                 body: String::new(),
             }),
-            NormalizedSpec::Skill(NormalizedSkillSpec {
+            Spec::Skill(SkillSpec {
                 path: "my-skill.md".into(),
-                frontmatter: NormalizedSkillFrontmatter {
+                frontmatter: SkillFrontmatter {
                     id: "my-skill".to_owned(),
                     description: Some("Skill description".to_owned()),
                     tags: None,
@@ -360,9 +359,9 @@ mod tests {
                 body: String::new(),
                 supporting_files: Vec::new(),
             }),
-            NormalizedSpec::Rule(NormalizedRuleSpec {
+            Spec::Rule(RuleSpec {
                 path: "my-rule.md".into(),
-                frontmatter: NormalizedRuleFrontmatter {
+                frontmatter: RuleFrontmatter {
                     id: "my-rule".to_owned(),
                     description: Some("Rule description".to_owned()),
                     tags: None,
@@ -380,9 +379,9 @@ mod tests {
         let fragments = HashMap::new();
         let env = build_environment(&fragments, None).expect("expected value");
 
-        let specs = vec![NormalizedSpec::Agent(NormalizedAgentSpec {
+        let specs = vec![Spec::Agent(AgentSpec {
             path: "test.md".into(),
-            frontmatter: NormalizedAgentFrontmatter {
+            frontmatter: AgentFrontmatter {
                 id: "test".to_owned(),
                 description: "test".to_owned(),
                 tags: None,
@@ -393,7 +392,7 @@ mod tests {
         })];
 
         let resolved = resolve_fragments(specs, &env, &ctx).expect("expected value");
-        let NormalizedSpec::Agent(ref s) = resolved[0] else {
+        let Spec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
         assert_eq!(s.body, "2");
@@ -405,9 +404,9 @@ mod tests {
         let fragments = HashMap::new();
         let env = build_environment(&fragments, None).expect("expected value");
 
-        let specs = vec![NormalizedSpec::Agent(NormalizedAgentSpec {
+        let specs = vec![Spec::Agent(AgentSpec {
             path: "test.md".into(),
-            frontmatter: NormalizedAgentFrontmatter {
+            frontmatter: AgentFrontmatter {
                 id: "test".to_owned(),
                 description: "test".to_owned(),
                 tags: None,
@@ -418,7 +417,7 @@ mod tests {
         })];
 
         let resolved = resolve_fragments(specs, &env, &ctx).expect("expected value");
-        let NormalizedSpec::Agent(ref s) = resolved[0] else {
+        let Spec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
         assert_eq!(s.body, "alpha-agent\nzeta-agent\n");
@@ -430,9 +429,9 @@ mod tests {
         let fragments = HashMap::new();
         let env = build_environment(&fragments, None).expect("expected value");
 
-        let specs = vec![NormalizedSpec::Agent(NormalizedAgentSpec {
+        let specs = vec![Spec::Agent(AgentSpec {
             path: "test.md".into(),
-            frontmatter: NormalizedAgentFrontmatter {
+            frontmatter: AgentFrontmatter {
                 id: "test".to_owned(),
                 description: "test".to_owned(),
                 tags: None,
@@ -443,7 +442,7 @@ mod tests {
         })];
 
         let resolved = resolve_fragments(specs, &env, &ctx).expect("expected value");
-        let NormalizedSpec::Agent(ref s) = resolved[0] else {
+        let Spec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
         assert_eq!(s.body, "agent");
@@ -459,9 +458,9 @@ mod tests {
         );
         let env = build_environment(&fragments, None).expect("expected value");
 
-        let specs = vec![NormalizedSpec::Agent(NormalizedAgentSpec {
+        let specs = vec![Spec::Agent(AgentSpec {
             path: "test.md".into(),
-            frontmatter: NormalizedAgentFrontmatter {
+            frontmatter: AgentFrontmatter {
                 id: "test".to_owned(),
                 description: "test".to_owned(),
                 tags: None,
@@ -472,7 +471,7 @@ mod tests {
         })];
 
         let resolved = resolve_fragments(specs, &env, &ctx).expect("expected value");
-        let NormalizedSpec::Agent(ref s) = resolved[0] else {
+        let Spec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
         assert_eq!(s.body, "Skills: 1");
@@ -484,9 +483,9 @@ mod tests {
         let fragments = HashMap::new();
         let env = build_environment(&fragments, None).expect("expected value");
 
-        let specs = vec![NormalizedSpec::Agent(NormalizedAgentSpec {
+        let specs = vec![Spec::Agent(AgentSpec {
             path: "test.md".into(),
-            frontmatter: NormalizedAgentFrontmatter {
+            frontmatter: AgentFrontmatter {
                 id: "test".to_owned(),
                 description: "test".to_owned(),
                 tags: None,
@@ -497,7 +496,7 @@ mod tests {
         })];
 
         let resolved = resolve_fragments(specs, &env, &ctx).expect("expected value");
-        let NormalizedSpec::Agent(ref s) = resolved[0] else {
+        let Spec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
         assert_eq!(s.body, "Plain body with no template syntax.");
@@ -509,9 +508,9 @@ mod tests {
         use crate::provider::Provider;
 
         let all_specs = vec![
-            NormalizedSpec::Agent(NormalizedAgentSpec {
+            Spec::Agent(AgentSpec {
                 path: "agent.md".into(),
-                frontmatter: NormalizedAgentFrontmatter {
+                frontmatter: AgentFrontmatter {
                     id: "test-agent".to_owned(),
                     description: "An agent".to_owned(),
                     tags: None,
@@ -520,9 +519,9 @@ mod tests {
                 },
                 body: String::new(),
             }),
-            NormalizedSpec::Skill(NormalizedSkillSpec {
+            Spec::Skill(SkillSpec {
                 path: "skill.md".into(),
-                frontmatter: NormalizedSkillFrontmatter {
+                frontmatter: SkillFrontmatter {
                     id: "my-skill".to_owned(),
                     description: Some("A skill".to_owned()),
                     tags: None,
@@ -548,9 +547,9 @@ mod tests {
         let env = build_environment(&fragments, None).expect("expected value");
 
         // A spec body that references another spec by keyed access
-        let specs = vec![NormalizedSpec::Skill(NormalizedSkillSpec {
+        let specs = vec![Spec::Skill(SkillSpec {
             path: "referrer.md".into(),
-            frontmatter: NormalizedSkillFrontmatter {
+            frontmatter: SkillFrontmatter {
                 id: "referrer".to_owned(),
                 description: Some("Referrer".to_owned()),
                 tags: None,
@@ -564,7 +563,7 @@ mod tests {
         })];
 
         let resolved = resolve_fragments(specs, &env, &ctx).expect("expected value");
-        let NormalizedSpec::Skill(ref s) = resolved[0] else {
+        let Spec::Skill(ref s) = resolved[0] else {
             panic!("expected Skill variant")
         };
         assert_eq!(s.body, "Agent: tw-test-agent");

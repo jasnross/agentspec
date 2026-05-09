@@ -12,10 +12,10 @@ use walkdir::WalkDir;
 
 use crate::presets::ProviderPresetsMap;
 use crate::spec::{
-    AgentFrontmatter, AgentSpec, HookFrontmatter, HookSpec, NormalizedSpec, RuleFrontmatter,
-    RuleSpec, SkillFrontmatter, SkillSpec, Spec, SupportingFile,
+    AgentFrontmatter, AgentSpec, HookFrontmatter, HookSpec, RuleFrontmatter, RuleSpec,
+    SkillFrontmatter, SkillSpec, Spec, SupportingFile,
 };
-use crate::validate::{SemanticError, normalize_specs, validate_semantics};
+use crate::validate::{SemanticError, validate_semantics};
 
 // ---------------------------------------------------------------------------
 // Pipeline stage types
@@ -225,7 +225,7 @@ fn should_ignore_entry(
 
 /// Stage 1: specs loaded from disk.
 ///
-/// Advance to [`NormalizedSpecs`] by calling [`Specs::normalize`].
+/// Advance to [`ValidatedSpecs`] by calling [`Specs::validate`].
 pub struct Specs {
     specs: Vec<Spec>,
 }
@@ -235,7 +235,7 @@ impl Specs {
     ///
     /// Returns the loaded specs alongside a [`LoadReport`] that records which
     /// files (and subtrees) were skipped by `dirs.ignore` and which patterns
-    /// matched nothing. The report is produced here because [`Specs::normalize`]
+    /// matched nothing. The report is produced here because [`Specs::validate`]
     /// consumes `self` — the diagnostic data can't live on a later stage.
     pub fn load(dirs: &SpecDirs) -> Result<(Self, LoadReport)> {
         let mut report = LoadReport::with_matcher(&dirs.ignore);
@@ -243,21 +243,6 @@ impl Specs {
         Ok((Self { specs }, report))
     }
 
-    /// Apply defaults and convert raw frontmatter to fully-typed normalized structs.
-    pub fn normalize(self) -> NormalizedSpecs {
-        let specs = normalize_specs(self.specs);
-        NormalizedSpecs { specs }
-    }
-}
-
-/// Stage 2: frontmatter is normalized; ready for semantic validation.
-///
-/// Advance to [`ValidatedSpecs`] by calling [`NormalizedSpecs::validate`].
-pub struct NormalizedSpecs {
-    specs: Vec<NormalizedSpec>,
-}
-
-impl NormalizedSpecs {
     /// Run semantic checks (duplicate IDs, unknown presets, etc.).
     ///
     /// Returns `Err(errors)` listing every violation found so the caller can
@@ -273,31 +258,26 @@ impl NormalizedSpecs {
             Err(errors)
         }
     }
-
-    /// Access the normalized specs without advancing the stage.
-    pub fn specs(&self) -> &[NormalizedSpec] {
-        &self.specs
-    }
 }
 
-/// Stage 3: all checks passed; ready for compilation.
+/// Stage 2: all checks passed; ready for compilation.
 ///
 /// Pass to [`compile::run`](crate::compile::run), which handles template
 /// resolution internally before dispatching to provider adapters.
 pub struct ValidatedSpecs {
-    specs: Vec<NormalizedSpec>,
+    specs: Vec<Spec>,
 }
 
 impl ValidatedSpecs {
     /// Consume self and return the inner specs.
     ///
     /// Used by the templating module to take ownership of the validated data.
-    pub fn into_specs(self) -> Vec<NormalizedSpec> {
+    pub fn into_specs(self) -> Vec<Spec> {
         self.specs
     }
 
     /// Access the validated specs directly (e.g. for the `validate` command).
-    pub fn specs(&self) -> &[NormalizedSpec] {
+    pub fn specs(&self) -> &[Spec] {
         &self.specs
     }
 }

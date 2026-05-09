@@ -67,85 +67,11 @@ impl Spec {
 }
 
 #[derive(Clone, Debug)]
-pub enum NormalizedSpec {
-    Agent(NormalizedAgentSpec),
-    Skill(NormalizedSkillSpec),
-    Rule(NormalizedRuleSpec),
-    Hook(NormalizedHookSpec),
-}
-
-impl NormalizedSpec {
-    pub fn id(&self) -> &str {
-        match self {
-            NormalizedSpec::Agent(agent_spec) => &agent_spec.frontmatter.id,
-            NormalizedSpec::Skill(skill_spec) => &skill_spec.frontmatter.id,
-            NormalizedSpec::Rule(rule_spec) => &rule_spec.frontmatter.id,
-            NormalizedSpec::Hook(hook_spec) => &hook_spec.frontmatter.id,
-        }
-    }
-
-    pub fn body(&self) -> &str {
-        match self {
-            NormalizedSpec::Agent(agent_spec) => &agent_spec.body,
-            NormalizedSpec::Skill(skill_spec) => &skill_spec.body,
-            NormalizedSpec::Rule(rule_spec) => &rule_spec.body,
-            NormalizedSpec::Hook(hook_spec) => &hook_spec.body,
-        }
-    }
-
-    pub fn path(&self) -> &Path {
-        match self {
-            NormalizedSpec::Agent(agent_spec) => &agent_spec.path,
-            NormalizedSpec::Skill(skill_spec) => &skill_spec.path,
-            NormalizedSpec::Rule(rule_spec) => &rule_spec.path,
-            NormalizedSpec::Hook(hook_spec) => &hook_spec.path,
-        }
-    }
-
-    pub fn description(&self) -> &str {
-        match self {
-            NormalizedSpec::Agent(s) => &s.frontmatter.description,
-            NormalizedSpec::Skill(s) => s.frontmatter.description.as_deref().unwrap_or_default(),
-            NormalizedSpec::Rule(s) => s.frontmatter.description.as_deref().unwrap_or_default(),
-            NormalizedSpec::Hook(s) => s.frontmatter.description.as_deref().unwrap_or_default(),
-        }
-    }
-
-    pub fn tags(&self) -> &[String] {
-        match self {
-            NormalizedSpec::Agent(s) => s.frontmatter.tags.as_deref().unwrap_or_default(),
-            NormalizedSpec::Skill(s) => s.frontmatter.tags.as_deref().unwrap_or_default(),
-            NormalizedSpec::Rule(s) => s.frontmatter.tags.as_deref().unwrap_or_default(),
-            NormalizedSpec::Hook(s) => s.frontmatter.tags.as_deref().unwrap_or_default(),
-        }
-    }
-
-    pub fn spec_type(&self) -> &'static str {
-        match self {
-            NormalizedSpec::Agent(_) => "agent",
-            NormalizedSpec::Skill(_) => "skill",
-            NormalizedSpec::Rule(_) => "rule",
-            NormalizedSpec::Hook(_) => "hook",
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
 pub struct AgentSpec {
     /// Absolute path to the spec
     pub path: PathBuf,
     /// Parsed frontmatter
     pub frontmatter: AgentFrontmatter,
-    /// Spec body (Markdown content after frontmatter)
-    pub body: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct NormalizedAgentSpec {
-    /// Absolute path to the spec
-    pub path: PathBuf,
-    /// Parsed frontmatter
-    pub frontmatter: NormalizedAgentFrontmatter,
     /// Spec body (Markdown content after frontmatter)
     pub body: String,
 }
@@ -163,33 +89,11 @@ pub struct SkillSpec {
 }
 
 #[derive(Clone, Debug)]
-pub struct NormalizedSkillSpec {
-    /// Absolute path to the spec root
-    pub path: PathBuf,
-    /// Parsed frontmatter
-    pub frontmatter: NormalizedSkillFrontmatter,
-    /// Spec body (Markdown content after frontmatter)
-    pub body: String,
-    /// Additional files bundled with the skill
-    pub supporting_files: Vec<SupportingFile>,
-}
-
-#[derive(Clone, Debug)]
 pub struct RuleSpec {
     /// Absolute path to the spec root
     pub path: PathBuf,
     /// Parsed frontmatter
     pub frontmatter: RuleFrontmatter,
-    /// Spec body (Markdown content after frontmatter)
-    pub body: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct NormalizedRuleSpec {
-    /// Absolute path to the spec root
-    pub path: PathBuf,
-    /// Parsed frontmatter
-    pub frontmatter: NormalizedRuleFrontmatter,
     /// Spec body (Markdown content after frontmatter)
     pub body: String,
 }
@@ -209,26 +113,9 @@ pub struct HookSpec {
     pub supporting_files: Vec<SupportingFile>,
 }
 
-#[derive(Clone, Debug)]
-pub struct NormalizedHookSpec {
-    pub path: PathBuf,
-    pub frontmatter: NormalizedHookFrontmatter,
-    pub body: String,
-    pub supporting_files: Vec<SupportingFile>,
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentFrontmatter {
-    pub id: String,
-    pub description: String,
-    pub tags: Option<Vec<String>>,
-    pub execution: Option<ExecutionFrontmatter>,
-    pub capabilities: Option<CapabilitiesFrontmatter>,
-}
-
-#[derive(Clone, Debug)]
-pub struct NormalizedAgentFrontmatter {
     pub id: String,
     pub description: String,
     pub tags: Option<Vec<String>>,
@@ -248,27 +135,9 @@ pub struct SkillFrontmatter {
     pub capabilities: Option<CapabilitiesFrontmatter>,
 }
 
-#[derive(Clone, Debug)]
-pub struct NormalizedSkillFrontmatter {
-    pub id: String,
-    pub description: Option<String>,
-    pub tags: Option<Vec<String>>,
-    pub user_invocable: bool,
-    pub agent_invocable: bool,
-    pub execution: Option<ExecutionFrontmatter>,
-    pub capabilities: Option<CapabilitiesFrontmatter>,
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuleFrontmatter {
-    pub id: String,
-    pub description: Option<String>,
-    pub tags: Option<Vec<String>>,
-}
-
-#[derive(Clone, Debug)]
-pub struct NormalizedRuleFrontmatter {
     pub id: String,
     pub description: Option<String>,
     pub tags: Option<Vec<String>>,
@@ -296,17 +165,6 @@ pub struct HookFrontmatter {
     /// Free-form description (informational; not consumed by either provider in v1).
     pub description: Option<String>,
     /// Free-form tags.
-    pub tags: Option<Vec<String>>,
-}
-
-#[derive(Clone, Debug)]
-pub struct NormalizedHookFrontmatter {
-    pub id: String,
-    pub event: HookEvent,
-    pub script: PathBuf,
-    pub matcher: Option<String>,
-    pub timeout: Option<u32>,
-    pub description: Option<String>,
     pub tags: Option<Vec<String>>,
 }
 

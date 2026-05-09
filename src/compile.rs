@@ -5,7 +5,7 @@ use anyhow::Result;
 
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
-use crate::spec::{HookEvent, NormalizedHookSpec, NormalizedSpec};
+use crate::spec::{HookEvent, HookSpec, Spec};
 use crate::specs::ValidatedSpecs;
 use crate::templating::{TemplateContext, TemplatingResources, resolve_fragments};
 
@@ -95,10 +95,7 @@ pub struct HookSynthesis {
 /// spec parsed from a single `hooks.toml`, so reading from `specs[0]` gives
 /// the full set. Emitting once per provider here (rather than once per hook
 /// in `adapt_hook_spec`) avoids duplicate file entries downstream.
-pub fn build_hook_script_files(
-    provider: Provider,
-    specs: &[&NormalizedHookSpec],
-) -> Vec<GeneratedFile> {
+pub fn build_hook_script_files(provider: Provider, specs: &[&HookSpec]) -> Vec<GeneratedFile> {
     let Some(first) = specs.first() else {
         return Vec::new();
     };
@@ -116,7 +113,7 @@ pub fn build_hook_script_files(
         .collect()
 }
 
-/// Build canonical `EmittedHookEntry` rows from normalized hook specs.
+/// Build canonical `EmittedHookEntry` rows from hook specs.
 ///
 /// The `command` field's anchor depends on `(provider, emit_mode)`:
 /// - Bundled (Path mode): `${CLAUDE_PLUGIN_ROOT}/hooks/scripts/<f>` for both
@@ -128,7 +125,7 @@ pub fn build_hook_script_files(
 ///   not documented — must be verified empirically against a real Cursor
 ///   build before 1.0.
 pub fn build_emitted_hook_entries(
-    specs: &[&NormalizedHookSpec],
+    specs: &[&HookSpec],
     provider: Provider,
     emit_mode: HookEmitMode,
 ) -> Vec<EmittedHookEntry> {
@@ -264,7 +261,7 @@ impl GeneratedFile {
 #[derive(Debug, Default)]
 pub struct CompileResult {
     pub files: Vec<GeneratedFile>,
-    /// Per-provider hook entries, populated whenever any `NormalizedSpec::Hook`
+    /// Per-provider hook entries, populated whenever any `Spec::Hook`
     /// is in the input. Empty for providers that don't emit hooks (`OpenCode`)
     /// or when no hook specs exist. The merged-mode merge layer consumes this
     /// map directly so it doesn't have to re-parse the emitted JSON.
@@ -320,11 +317,11 @@ pub fn run(
     )
 }
 
-/// Takes `&[NormalizedSpec]` (borrowed) even though `resolve_fragments` needs
-/// ownership — the slice is cloned once per provider so that each provider gets
-/// its own template-resolved copy with the correct prefix-aware names.
+/// Takes `&[Spec]` (borrowed) even though `resolve_fragments` needs ownership —
+/// the slice is cloned once per provider so that each provider gets its own
+/// template-resolved copy with the correct prefix-aware names.
 pub(crate) fn compile_specs(
-    specs: &[NormalizedSpec],
+    specs: &[Spec],
     templating: &TemplatingResources,
     presets: &ProviderPresetsMap,
     providers: &[Provider],
@@ -346,7 +343,7 @@ pub(crate) fn compile_specs(
         let context = TemplateContext::from_specs_for_provider(specs, provider, adapter_config);
         let resolved = resolve_fragments(specs.to_vec(), &env, &context)?;
 
-        let mut hook_specs: Vec<&NormalizedHookSpec> = Vec::new();
+        let mut hook_specs: Vec<&HookSpec> = Vec::new();
         let provider_emits_hooks = provider.hook_adapter().is_some();
         for spec in &resolved {
             let mut adapter_files =
@@ -355,7 +352,7 @@ pub(crate) fn compile_specs(
                     .adapt(spec.clone(), presets, adapter_config)?;
             files.append(&mut adapter_files);
 
-            if let NormalizedSpec::Hook(h) = spec {
+            if let Spec::Hook(h) = spec {
                 hook_specs.push(h);
                 if !provider_emits_hooks {
                     diagnostics.skipped_hooks.push(SkippedHook {

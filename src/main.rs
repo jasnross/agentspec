@@ -228,15 +228,12 @@ fn load_and_validate(
     dirs: &SpecDirs,
 ) -> Result<(ValidatedSpecs, LoadReport)> {
     let (specs, report) = Specs::load(dirs)?;
-    let validated = specs
-        .normalize()
-        .validate(&config.presets)
-        .map_err(|errors| {
-            for e in &errors {
-                eprintln!("error: {e}");
-            }
-            anyhow::anyhow!("{} semantic validation error(s)", errors.len())
-        })?;
+    let validated = specs.validate(&config.presets).map_err(|errors| {
+        for e in &errors {
+            eprintln!("error: {e}");
+        }
+        anyhow::anyhow!("{} semantic validation error(s)", errors.len())
+    })?;
     Ok((validated, report))
 }
 
