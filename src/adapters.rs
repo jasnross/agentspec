@@ -349,4 +349,16 @@ pub trait Adapter: std::fmt::Debug + Send + Sync {
     /// `Provider`. Bridge-phase accessor; sub-step D folds this into a
     /// richer `removal_patches` return type.
     fn remove_dest_root(&self, ctx: &RemoveCtx<'_>) -> PathBuf;
+
+    /// Whether this provider emits hook entries.
+    ///
+    /// Today: `true` for Claude / Cursor, `false` for `OpenCode` (which has
+    /// no `hooks.json` analog and silently drops `Spec::Hook` inputs). The
+    /// `compile_specs` orchestrator consults this to push `SkippedHook`
+    /// diagnostics for hook specs that the active provider can't emit.
+    ///
+    /// Capability accessor (not provider-knowledge leakage): adapters expose
+    /// what kinds of output they support, callers iterate without branching
+    /// on `Provider`.
+    fn emits_hooks(&self) -> bool;
 }

@@ -320,12 +320,11 @@ pub(crate) fn compile_specs(
         }
         dest_roots.insert(provider, output.dest_root);
 
-        // Diagnostic post-pass: any `Spec::Hook` whose provider has no hook
-        // adapter is recorded as a skip. Today only `OpenCode` falls through
-        // here; the legacy `hook_adapter()` predicate is consulted during the
-        // bridge phase. Phase 2 cleanup will replace this check with an
-        // `Adapter`-side capability accessor before the legacy traits go away.
-        if provider.hook_adapter().is_none() {
+        // Diagnostic post-pass: any `Spec::Hook` whose provider can't emit
+        // hooks is recorded as a skip. Today only `OpenCode` falls through
+        // here. The capability accessor lives on `Adapter` itself so the
+        // orchestrator never branches on `Provider`.
+        if !provider.adapter().emits_hooks() {
             for spec in &resolved {
                 if matches!(spec, Spec::Hook(_)) {
                     diagnostics.skipped_hooks.push(SkippedHook {

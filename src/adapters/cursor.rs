@@ -143,6 +143,10 @@ impl Adapter for CursorAdapter {
             ctx.cwd,
         )
     }
+
+    fn emits_hooks(&self) -> bool {
+        true
+    }
 }
 
 impl ProviderAdapter for CursorAdapter {
@@ -292,7 +296,7 @@ impl HookAdapter for CursorAdapter {
             .and_then(|c| c.hook_emit_mode)
             .unwrap_or(HookEmitMode::Bundled);
 
-        let entries = build_emitted_hook_entries(specs, Provider::Cursor, emit_mode);
+        let entries = build_emitted_hook_entries(specs, ".cursor", emit_mode);
         let mut files = build_hook_script_files(Provider::Cursor, specs);
         if matches!(emit_mode, HookEmitMode::Bundled) {
             let json = build_cursor_hooks_json(&entries)?;

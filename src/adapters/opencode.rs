@@ -143,6 +143,10 @@ impl Adapter for OpenCodeAdapter {
             ctx.cwd,
         )
     }
+
+    fn emits_hooks(&self) -> bool {
+        false
+    }
 }
 
 impl ProviderAdapter for OpenCodeAdapter {

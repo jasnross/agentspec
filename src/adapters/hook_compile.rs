@@ -43,18 +43,22 @@ pub(super) fn build_hook_script_files(
 
 /// Build canonical `EmittedHookEntry` rows from hook specs.
 ///
-/// The `command` field's anchor depends on `(provider, emit_mode)`:
+/// The `command` field's anchor depends on `(dotdir, emit_mode)`:
 /// - Bundled (Path mode): `${CLAUDE_PLUGIN_ROOT}/hooks/scripts/<f>` for both
-///   providers (Cursor aliases `${CLAUDE_PLUGIN_ROOT}` at plugin scope).
-/// - `MergedUser`: `$HOME/.<dotdir>/hooks/scripts/<f>` (`$HOME` not `~/...`
+///   providers (Cursor aliases `${CLAUDE_PLUGIN_ROOT}` at plugin scope) — the
+///   dotdir parameter is unused.
+/// - `MergedUser`: `$HOME/<dotdir>/hooks/scripts/<f>` (`$HOME` not `~/...`
 ///   because Claude's hook-command runtime isn't documented to expand `~`).
-/// - `MergedProject`: `${CLAUDE_PROJECT_DIR}/.<dotdir>/hooks/scripts/<f>`.
+/// - `MergedProject`: `${CLAUDE_PROJECT_DIR}/<dotdir>/hooks/scripts/<f>`.
 ///   Cursor's behavior with `${CLAUDE_PROJECT_DIR}` outside plugin scope is
 ///   not documented — must be verified empirically against a real Cursor
 ///   build before 1.0.
+///
+/// `dotdir` is supplied by the calling adapter (Claude passes `".claude"`,
+/// Cursor passes `".cursor"`) so this helper carries no provider knowledge.
 pub(super) fn build_emitted_hook_entries(
     specs: &[&HookSpec],
-    provider: Provider,
+    dotdir: &str,
     emit_mode: HookEmitMode,
 ) -> Vec<EmittedHookEntry> {
     specs
@@ -79,7 +83,7 @@ pub(super) fn build_emitted_hook_entries(
             EmittedHookEntry {
                 event: s.frontmatter.event,
                 matcher: s.frontmatter.matcher.clone(),
-                command: hook_command_anchor(provider, emit_mode, &filename),
+                command: hook_command_anchor(dotdir, emit_mode, &filename),
                 timeout: s.frontmatter.timeout,
                 agentspec_id: s.frontmatter.id.clone(),
             }
@@ -87,7 +91,7 @@ pub(super) fn build_emitted_hook_entries(
         .collect()
 }
 
-/// Compute the `command` string for a hook entry given the provider and mode.
+/// Compute the `command` string for a hook entry given the dotdir and mode.
 ///
 /// In Bundled (Path) mode, the host runtime sets `$CLAUDE_PLUGIN_ROOT`
 /// (Cursor aliases it) to the plugin root, so we just reference the script
@@ -98,22 +102,10 @@ pub(super) fn build_emitted_hook_entries(
 /// POSIX) so plugin-shaped scripts keep working when synced project/user-wide.
 /// The assigned value is the config dir (e.g., `$HOME/.claude` for User mode),
 /// where agentspec also writes those sibling kinds.
-///
-/// `OpenCode` never reaches this helper — the per-provider dispatch in
-/// `compile_specs` short-circuits to an empty `HookSynthesis` for it. The
-/// `OpenCode` arm panics loudly via `unreachable!()` so a future refactor
-/// that wires `OpenCode` through this path surfaces the mistake immediately
-/// instead of silently emitting Claude-shaped paths under `.claude`.
-fn hook_command_anchor(provider: Provider, emit_mode: HookEmitMode, filename: &str) -> String {
+fn hook_command_anchor(dotdir: &str, emit_mode: HookEmitMode, filename: &str) -> String {
     if matches!(emit_mode, HookEmitMode::Bundled) {
         return format!("${{CLAUDE_PLUGIN_ROOT}}/hooks/scripts/{filename}");
     }
-    let Some(hook_adapter) = provider.hook_adapter() else {
-        unreachable!(
-            "OpenCode short-circuits in compile_specs and never reaches hook_command_anchor"
-        )
-    };
-    let dotdir = hook_adapter.hook_command_dotdir();
     let var_anchor = match emit_mode {
         HookEmitMode::Bundled => {
             unreachable!("Bundled returns early at the top of hook_command_anchor")

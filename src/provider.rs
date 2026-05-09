@@ -1,7 +1,7 @@
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
-use crate::adapters::{Adapter, ClaudeAdapter, CursorAdapter, HookAdapter, OpenCodeAdapter};
+use crate::adapters::{Adapter, ClaudeAdapter, CursorAdapter, OpenCodeAdapter};
 
 #[derive(
     Clone,
@@ -49,25 +49,6 @@ impl Provider {
             Self::OpenCode => &OpenCodeAdapter,
         }
     }
-
-    /// Returns the provider's hook adapter, if it emits hooks.
-    ///
-    /// `Some(_)` for Claude and Cursor; `None` for `OpenCode`. Call sites
-    /// thread the `None` through via `Option::map` rather than branching on
-    /// the provider — `provider.hook_adapter().is_none()` is the canonical
-    /// "does this provider emit hooks?" check.
-    ///
-    /// Bridge-phase carry-over: this method survives sub-step C so the
-    /// `compile_specs` orchestrator can emit the `SkippedHook` diagnostic
-    /// without branching on `Provider`. Sub-step D replaces the predicate
-    /// with an `Adapter`-side capability accessor and deletes this method.
-    pub fn hook_adapter(self) -> Option<&'static dyn HookAdapter> {
-        match self {
-            Self::Claude => Some(&ClaudeAdapter),
-            Self::Cursor => Some(&CursorAdapter),
-            Self::OpenCode => None,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -82,14 +63,13 @@ mod tests {
     }
 
     #[test]
-    fn test_hook_adapter_present_for_claude_and_cursor() {
-        assert!(Provider::Claude.hook_adapter().is_some());
-        assert!(Provider::Cursor.hook_adapter().is_some());
-    }
-
-    #[test]
-    fn test_hook_adapter_absent_for_opencode() {
-        assert!(Provider::OpenCode.hook_adapter().is_none());
+    fn test_emits_hooks_capability() {
+        // Claude / Cursor produce hook entries; OpenCode does not. The
+        // `compile_specs` orchestrator consults this to push `SkippedHook`
+        // diagnostics for hook specs the active provider can't emit.
+        assert!(Provider::Claude.adapter().emits_hooks());
+        assert!(Provider::Cursor.adapter().emits_hooks());
+        assert!(!Provider::OpenCode.adapter().emits_hooks());
     }
 
     #[test]
