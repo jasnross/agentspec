@@ -86,15 +86,15 @@ pub fn emit_sync(plan: &SyncPlan, dry_run: bool, verbose: bool) -> Result<()> {
         // Stderr write failures are not actionable — don't fail the sync for them.
         let _ = render_sync_report(&mut stderr, &sync_stats, dry_run, verbose);
     }
-    for hook in &plan.post_write_hooks {
-        hook.run(dry_run)?;
+    for patch in &plan.post_write_patches {
+        patch.run(dry_run)?;
     }
     Ok(())
 }
 
 /// Execute a [`RemovePlan`]: delete every manifest-tracked file at each
-/// destination, render a remove report to stderr, then run post-write hooks
-/// (settings/instructions tidy).
+/// destination, render a remove report to stderr, then run reverse-direction
+/// post-write patches (settings/instructions tidy).
 pub fn emit_remove(plan: &RemovePlan, dry_run: bool) -> Result<()> {
     let mut remove_stats: Vec<RemoveStats> = Vec::new();
     for w in &plan.writes {
@@ -106,8 +106,8 @@ pub fn emit_remove(plan: &RemovePlan, dry_run: bool) -> Result<()> {
         let mut stderr = std::io::stderr();
         let _ = render_remove_report(&mut stderr, &remove_stats, dry_run);
     }
-    for hook in &plan.post_write_hooks {
-        hook.run(dry_run)?;
+    for patch in &plan.post_write_patches {
+        patch.run_remove(dry_run)?;
     }
     Ok(())
 }
@@ -885,7 +885,7 @@ mod tests {
                 )],
                 overwrite: true,
             }],
-            post_write_hooks: vec![],
+            post_write_patches: vec![],
         };
 
         emit_sync(&plan, false, false).expect("expected value");
@@ -911,7 +911,7 @@ mod tests {
                 files: vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "v1")],
                 overwrite: true,
             }],
-            post_write_hooks: vec![],
+            post_write_patches: vec![],
         };
         emit_sync(&plan, false, false).expect("expected value");
         assert!(dest.join("basic/SKILL.md").exists());
@@ -925,7 +925,7 @@ mod tests {
                 files: vec![],
                 overwrite: true,
             }],
-            post_write_hooks: vec![],
+            post_write_patches: vec![],
         };
         emit_sync(&plan2, false, false).expect("expected value");
 
@@ -949,7 +949,7 @@ mod tests {
                 files,
                 overwrite,
             }],
-            post_write_hooks: vec![],
+            post_write_patches: vec![],
         }
     }
 
@@ -1316,7 +1316,7 @@ mod tests {
                 files: vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "body")],
                 overwrite: true,
             }],
-            post_write_hooks: vec![],
+            post_write_patches: vec![],
         };
 
         emit_sync(&plan, true, false).expect("expected value");

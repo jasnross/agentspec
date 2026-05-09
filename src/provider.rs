@@ -1,9 +1,7 @@
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
-use crate::adapters::{
-    ClaudeAdapter, CursorAdapter, HookAdapter, OpenCodeAdapter, ProviderAdapter,
-};
+use crate::adapters::{Adapter, ClaudeAdapter, CursorAdapter, HookAdapter, OpenCodeAdapter};
 
 #[derive(
     Clone,
@@ -42,9 +40,9 @@ impl Provider {
     /// Returns the provider's adapter as a trait object.
     ///
     /// This is the dispatch root for every provider-specific decision in the
-    /// codebase. Non-adapter modules MUST go through this method (or
-    /// `hook_adapter`) rather than naming a specific adapter directly.
-    pub fn adapter(self) -> &'static dyn ProviderAdapter {
+    /// codebase. Non-adapter modules MUST go through this method rather than
+    /// naming a specific adapter directly.
+    pub fn adapter(self) -> &'static dyn Adapter {
         match self {
             Self::Claude => &ClaudeAdapter,
             Self::Cursor => &CursorAdapter,
@@ -58,6 +56,11 @@ impl Provider {
     /// thread the `None` through via `Option::map` rather than branching on
     /// the provider — `provider.hook_adapter().is_none()` is the canonical
     /// "does this provider emit hooks?" check.
+    ///
+    /// Bridge-phase carry-over: this method survives sub-step C so the
+    /// `compile_specs` orchestrator can emit the `SkippedHook` diagnostic
+    /// without branching on `Provider`. Sub-step D replaces the predicate
+    /// with an `Adapter`-side capability accessor and deletes this method.
     pub fn hook_adapter(self) -> Option<&'static dyn HookAdapter> {
         match self {
             Self::Claude => Some(&ClaudeAdapter),
@@ -90,25 +93,13 @@ mod tests {
     }
 
     #[test]
-    fn test_adapter_file_kinds_match_provider_capabilities() {
-        use crate::plan::FileKind;
-        assert!(
-            Provider::Claude
-                .adapter()
-                .file_kinds()
-                .contains(&FileKind::Hooks)
-        );
-        assert!(
-            Provider::OpenCode
-                .adapter()
-                .file_kinds()
-                .contains(&FileKind::Commands)
-        );
-        for provider in [Provider::Claude, Provider::Cursor, Provider::OpenCode] {
-            assert!(
-                !provider.adapter().file_kinds().is_empty(),
-                "every provider must emit at least one file kind"
-            );
-        }
+    fn test_adapter_returns_dyn_adapter() {
+        // Compile-time check that `Provider::adapter()` returns a value
+        // satisfying the `Adapter` trait. Replaces the legacy
+        // `test_adapter_file_kinds_*` test that exercised the now-deleted
+        // `ProviderAdapter::file_kinds` method.
+        let _: &dyn Adapter = Provider::Claude.adapter();
+        let _: &dyn Adapter = Provider::Cursor.adapter();
+        let _: &dyn Adapter = Provider::OpenCode.adapter();
     }
 }

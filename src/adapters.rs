@@ -296,7 +296,13 @@ pub struct AdapterOutput {
 ///
 /// Object-safe by design — `&dyn Adapter` is the dispatch shape used by
 /// `Provider::adapter()`. No associated types.
-pub trait Adapter: std::fmt::Debug {
+///
+/// `Send + Sync` mirrors the supertrait bounds on `ProviderAdapter` — every
+/// adapter today is a zero-sized unit struct and trivially `Send + Sync`, and
+/// the bound future-proofs sub-step D when adapter-constructed
+/// `Box<dyn ConfigPatch>` instances may directly hold `&'static dyn Adapter`
+/// references (`ConfigPatch: Send + Sync` cascades the bound).
+pub trait Adapter: std::fmt::Debug + Send + Sync {
     /// Compile every spec for one provider into output files and post-write
     /// patches.
     ///
@@ -322,4 +328,25 @@ pub trait Adapter: std::fmt::Debug {
 
     /// Compute the model-facing name for a spec (with prefix transforms applied).
     fn model_facing_name(&self, spec: &Spec, cfg: Option<&AdapterConfig>) -> String;
+
+    /// File kinds this provider emits — the per-provider set used by `sync`
+    /// and `remove` to drive `ManifestTrackedWrite` / `RemoveWrite`
+    /// construction (one batch per `(provider, kind)` even when empty, so
+    /// stale manifest entries are cleaned up).
+    ///
+    /// Bridge-phase carry-over: this method survives sub-step C so
+    /// `sync_plan` / `remove_plan` can keep their per-kind inner loop without
+    /// branching on `Provider`. The plan's end-state shape derives the kind
+    /// set from `GeneratedFile.kind` instead — sub-step D will replace this
+    /// accessor once `GeneratedFile` carries an explicit `kind` field.
+    fn file_kinds(&self) -> &'static [FileKind];
+
+    /// Sync-mode destination root for the `remove` pipeline.
+    ///
+    /// Mirrors `AdapterOutput.dest_root` (which `compile` returns for the
+    /// sync pipeline) so `remove_plan` — which does not call `compile` —
+    /// can compute per-kind `RemoveWrite` destinations without branching on
+    /// `Provider`. Bridge-phase accessor; sub-step D folds this into a
+    /// richer `removal_patches` return type.
+    fn remove_dest_root(&self, ctx: &RemoveCtx<'_>) -> PathBuf;
 }

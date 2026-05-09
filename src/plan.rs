@@ -397,19 +397,20 @@ pub struct CompilePlan {
 }
 
 /// Plan for the `sync` pipeline: manifest-tracked writes followed by post-write
-/// hooks (e.g. `OpenCode` instructions patching, Claude/Cursor settings merge).
+/// patches (e.g. `OpenCode` instructions patching, Claude/Cursor settings merge).
 #[derive(Debug)]
 pub struct SyncPlan {
     pub writes: Vec<ManifestTrackedWrite>,
-    pub post_write_hooks: Vec<Box<dyn PostWriteHook>>,
+    pub post_write_patches: Vec<Box<dyn ConfigPatch>>,
 }
 
-/// Plan for the `remove` pipeline: manifest-driven removals followed by post-write
-/// hooks (e.g. Claude/Cursor settings tidy, `OpenCode` instructions filter).
+/// Plan for the `remove` pipeline: manifest-driven removals followed by
+/// post-write patches (e.g. Claude/Cursor settings tidy, `OpenCode`
+/// instructions filter).
 #[derive(Debug)]
 pub struct RemovePlan {
     pub writes: Vec<RemoveWrite>,
-    pub post_write_hooks: Vec<Box<dyn PostWriteHook>>,
+    pub post_write_patches: Vec<Box<dyn ConfigPatch>>,
 }
 
 #[cfg(test)]
@@ -467,12 +468,12 @@ mod tests {
                 files: vec![],
                 overwrite: true,
             }],
-            post_write_hooks: vec![],
+            post_write_patches: vec![],
         };
         assert_eq!(sync.writes.len(), 1);
         assert_eq!(sync.writes[0].kind, FileKind::Skills);
         assert!(sync.writes[0].overwrite);
-        assert!(sync.post_write_hooks.is_empty());
+        assert!(sync.post_write_patches.is_empty());
 
         let remove = RemovePlan {
             writes: vec![RemoveWrite {
@@ -480,10 +481,10 @@ mod tests {
                 kind: FileKind::Rules,
                 destination: PathBuf::from("/tmp/remove"),
             }],
-            post_write_hooks: vec![],
+            post_write_patches: vec![],
         };
         assert_eq!(remove.writes.len(), 1);
         assert_eq!(remove.writes[0].kind, FileKind::Rules);
-        assert!(remove.post_write_hooks.is_empty());
+        assert!(remove.post_write_patches.is_empty());
     }
 }

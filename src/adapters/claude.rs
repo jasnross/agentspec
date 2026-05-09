@@ -164,6 +164,20 @@ impl Adapter for ClaudeAdapter {
     fn model_facing_name(&self, spec: &Spec, cfg: Option<&AdapterConfig>) -> String {
         ProviderAdapter::model_facing_name(self, spec, cfg)
     }
+
+    fn file_kinds(&self) -> &'static [FileKind] {
+        ProviderAdapter::file_kinds(self)
+    }
+
+    fn remove_dest_root(&self, ctx: &RemoveCtx<'_>) -> PathBuf {
+        ProviderAdapter::config_dir(
+            self,
+            ctx.mode,
+            ctx.target_dir.and_then(Path::to_str),
+            ctx.home,
+            ctx.cwd,
+        )
+    }
 }
 
 impl ProviderAdapter for ClaudeAdapter {
@@ -1285,7 +1299,7 @@ mod tests {
 
     #[test]
     fn test_file_kinds_includes_hooks() {
-        assert!(ClaudeAdapter.file_kinds().contains(&FileKind::Hooks));
+        assert!(Adapter::file_kinds(&ClaudeAdapter).contains(&FileKind::Hooks));
     }
 
     #[test]

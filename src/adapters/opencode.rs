@@ -47,6 +47,12 @@ struct OpenCodeSkillFrontmatter {
     tools: IndexMap<String, bool>,
 }
 
+/// Filename of `OpenCode`'s host config under each provider's config dir.
+/// Single source of truth shared by the bridge `compile`/`removal_patches`
+/// constructors and by `patch_opencode_instructions` /
+/// `remove_opencode_instructions` at run time.
+const HOST_FILENAME: &str = "opencode.json";
+
 /// Zero-sized adapter for the `OpenCode` provider.
 #[derive(Debug)]
 pub struct OpenCodeAdapter;
@@ -82,7 +88,7 @@ impl Adapter for OpenCodeAdapter {
                 &owned_entries,
                 ctx.overwrite,
             ) {
-                let host_path = dest_root.join("opencode.json");
+                let host_path = dest_root.join(HOST_FILENAME);
                 patches.push(Box::new(PatchBridge::forward(hook, host_path)));
             }
         }
@@ -109,7 +115,7 @@ impl Adapter for OpenCodeAdapter {
             if let Some(hook) =
                 ProviderAdapter::remove_post_write_hook(self, kind, &dest, &dest_root, emit_mode)
             {
-                let host_path = dest_root.join("opencode.json");
+                let host_path = dest_root.join(HOST_FILENAME);
                 patches.push(Box::new(PatchBridge::reverse(hook, host_path)));
             }
         }
@@ -122,6 +128,20 @@ impl Adapter for OpenCodeAdapter {
 
     fn model_facing_name(&self, spec: &Spec, cfg: Option<&AdapterConfig>) -> String {
         ProviderAdapter::model_facing_name(self, spec, cfg)
+    }
+
+    fn file_kinds(&self) -> &'static [FileKind] {
+        ProviderAdapter::file_kinds(self)
+    }
+
+    fn remove_dest_root(&self, ctx: &RemoveCtx<'_>) -> PathBuf {
+        ProviderAdapter::config_dir(
+            self,
+            ctx.mode,
+            ctx.target_dir.and_then(Path::to_str),
+            ctx.home,
+            ctx.cwd,
+        )
     }
 }
 
@@ -473,7 +493,7 @@ fn remove_opencode_instructions(
     config_dir: &Path,
     dry_run: bool,
 ) -> Result<RemovePatchReport> {
-    let config_path = config_dir.join("opencode.json");
+    let config_path = config_dir.join(HOST_FILENAME);
 
     if !config_path.exists() {
         return Ok(RemovePatchReport::default());
@@ -661,7 +681,7 @@ fn patch_opencode_instructions(
     config_dir: &Path,
     dry_run: bool,
 ) -> Result<()> {
-    let config_path = config_dir.join("opencode.json");
+    let config_path = config_dir.join(HOST_FILENAME);
 
     let mut new_rule_paths: Vec<String> = if rules_dest_dir.is_dir() {
         WalkDir::new(rules_dest_dir)
@@ -1233,7 +1253,7 @@ mod tests {
 
     #[test]
     fn test_file_kinds_includes_commands() {
-        assert!(OpenCodeAdapter.file_kinds().contains(&FileKind::Commands));
+        assert!(Adapter::file_kinds(&OpenCodeAdapter).contains(&FileKind::Commands));
     }
 
     #[test]

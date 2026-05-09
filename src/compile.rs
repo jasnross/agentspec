@@ -3,9 +3,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
+use crate::adapters::{CompileCtx, SyncDestinationMode};
+use crate::plan::ConfigPatch;
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
-use crate::spec::{HookEvent, HookSpec, Spec};
+use crate::spec::{HookEvent, Spec};
 use crate::specs::ValidatedSpecs;
 use crate::templating::{TemplateContext, TemplatingResources, resolve_fragments};
 
@@ -147,21 +149,60 @@ impl GeneratedFile {
     }
 }
 
+/// Per-provider compile-time context the binary supplies to the orchestrator.
+///
+/// Each `Adapter::compile` call needs to know its `mode`, optional `target_dir`,
+/// and `--force`/`overwrite` flag in order to compute output paths and
+/// construct post-write patches. These values originate in the binary's
+/// `SyncTargetConfig`; this owned struct mirrors just the fields the library
+/// needs, preserving the binary/library boundary established in `CLAUDE.md`'s
+/// "Use config structs at module boundaries" guidance.
+///
+/// Providers absent from the orchestrator's target map default to
+/// `SyncDestinationMode::Path` with `target_dir: None` and `overwrite: false`
+/// — appropriate for the `compile` command path which has no sync destination.
+#[derive(Clone, Debug)]
+pub struct ProviderCompileTarget {
+    pub mode: SyncDestinationMode,
+    pub target_dir: Option<PathBuf>,
+    pub overwrite: bool,
+}
+
+impl Default for ProviderCompileTarget {
+    fn default() -> Self {
+        Self {
+            mode: SyncDestinationMode::Path,
+            target_dir: None,
+            overwrite: false,
+        }
+    }
+}
+
 /// Result of compiling all specs for all target providers.
+///
+/// `files` carries every emitted file across all providers; `patches` carries
+/// the per-provider post-write `ConfigPatch` instances that downstream
+/// `sync_plan` drains; `dest_roots` records each provider's adapter-computed
+/// sync destination root so `sync_plan` can anchor `ManifestTrackedWrite`
+/// destinations without re-calling adapter path methods.
 #[derive(Debug, Default)]
 pub struct CompileResult {
     pub files: Vec<GeneratedFile>,
-    /// Per-provider hook entries, populated whenever any `Spec::Hook`
-    /// is in the input. Empty for providers that don't emit hooks (`OpenCode`)
-    /// or when no hook specs exist. The merged-mode merge layer consumes this
-    /// map directly so it doesn't have to re-parse the emitted JSON.
-    pub hooks: HashMap<Provider, Vec<EmittedHookEntry>>,
+    pub patches: HashMap<Provider, Vec<Box<dyn ConfigPatch>>>,
+    pub dest_roots: HashMap<Provider, PathBuf>,
 }
 
 impl CompileResult {
     /// Iterate over generated files for a specific provider.
     pub fn files_for(&self, provider: Provider) -> impl Iterator<Item = &GeneratedFile> {
         self.files.iter().filter(move |f| f.provider == provider)
+    }
+
+    /// Returns the adapter-computed sync destination root for `provider`, if
+    /// the orchestrator recorded one (always populated after a successful
+    /// `compile_specs` run).
+    pub fn dest_root_for(&self, provider: Provider) -> Option<&Path> {
+        self.dest_roots.get(&provider).map(PathBuf::as_path)
     }
 }
 
@@ -189,14 +230,29 @@ pub struct SkippedHook {
 /// built from `templating`, the context is constructed from the specs, and each
 /// spec body is rendered before being handed to the provider adapters.
 ///
+/// `compile_targets` carries per-provider sync-destination context that the
+/// orchestrator turns into a `CompileCtx` for each `Adapter::compile` call.
+/// Providers absent from the map use [`ProviderCompileTarget::default`]
+/// (Path mode, no `target_dir`, no overwrite) — appropriate for the `compile`
+/// command path which has no sync destination.
+///
 /// Returns the generated files alongside a [`CompileDiagnostics`] capturing
 /// any compile-time anomalies (today: hook specs skipped for `OpenCode`).
+// Eight params is over the clippy default of 7, but each carries a distinct
+// stage-input concern (specs, templating, presets, providers, adapter configs,
+// per-provider sync targets, home, cwd). Bundling them into a context struct
+// would just rename the noise — see CLAUDE.md "config structs at module
+// boundaries"; the boundary here is the public library API surface.
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     validated: &ValidatedSpecs,
     templating: &TemplatingResources,
     presets: &ProviderPresetsMap,
     providers: &[Provider],
     adapter_configs: &HashMap<Provider, AdapterConfig>,
+    compile_targets: &HashMap<Provider, ProviderCompileTarget>,
+    home: &Path,
+    cwd: &Path,
 ) -> Result<(CompileResult, CompileDiagnostics)> {
     compile_specs(
         validated.specs(),
@@ -204,22 +260,32 @@ pub fn run(
         presets,
         providers,
         adapter_configs,
+        compile_targets,
+        home,
+        cwd,
     )
 }
 
 /// Takes `&[Spec]` (borrowed) even though `resolve_fragments` needs ownership —
 /// the slice is cloned once per provider so that each provider gets its own
 /// template-resolved copy with the correct prefix-aware names.
+#[allow(clippy::too_many_arguments)] // mirrors `run` — see allow note there
 pub(crate) fn compile_specs(
     specs: &[Spec],
     templating: &TemplatingResources,
     presets: &ProviderPresetsMap,
     providers: &[Provider],
     adapter_configs: &HashMap<Provider, AdapterConfig>,
+    compile_targets: &HashMap<Provider, ProviderCompileTarget>,
+    home: &Path,
+    cwd: &Path,
 ) -> Result<(CompileResult, CompileDiagnostics)> {
     let mut files: Vec<GeneratedFile> = Vec::new();
-    let mut hooks_map: HashMap<Provider, Vec<EmittedHookEntry>> = HashMap::new();
+    let mut patches: HashMap<Provider, Vec<Box<dyn ConfigPatch>>> = HashMap::new();
+    let mut dest_roots: HashMap<Provider, PathBuf> = HashMap::new();
     let mut diagnostics = CompileDiagnostics::default();
+
+    let default_target = ProviderCompileTarget::default();
 
     // `Provider` derives `Ord` and its variants are declared alphabetically
     // (Claude < Cursor < OpenCode), so `sort()` matches the lowercase-string
@@ -228,43 +294,46 @@ pub(crate) fn compile_specs(
     sorted_providers.sort();
 
     for &provider in &sorted_providers {
+        // Per-provider template resolution stays in the orchestrator —
+        // templating is provider-agnostic plumbing that should not be
+        // duplicated across adapters.
         let env = templating.build_environment(Some(provider))?;
         let adapter_config = adapter_configs.get(&provider);
         let context = TemplateContext::from_specs_for_provider(specs, provider, adapter_config);
         let resolved = resolve_fragments(specs.to_vec(), &env, &context)?;
 
-        let mut hook_specs: Vec<&HookSpec> = Vec::new();
-        let provider_emits_hooks = provider.hook_adapter().is_some();
-        for spec in &resolved {
-            let mut adapter_files =
-                provider
-                    .adapter()
-                    .adapt(spec.clone(), presets, adapter_config)?;
-            files.append(&mut adapter_files);
+        let target = compile_targets.get(&provider).unwrap_or(&default_target);
+        let ctx = CompileCtx {
+            mode: target.mode,
+            home,
+            cwd,
+            target_dir: target.target_dir.as_deref(),
+            presets,
+            adapter_config,
+            overwrite: target.overwrite,
+        };
 
-            if let Spec::Hook(h) = spec {
-                hook_specs.push(h);
-                if !provider_emits_hooks {
+        let output = provider.adapter().compile(&resolved, &ctx)?;
+        files.extend(output.files);
+        if !output.patches.is_empty() {
+            patches.entry(provider).or_default().extend(output.patches);
+        }
+        dest_roots.insert(provider, output.dest_root);
+
+        // Diagnostic post-pass: any `Spec::Hook` whose provider has no hook
+        // adapter is recorded as a skip. Today only `OpenCode` falls through
+        // here; the legacy `hook_adapter()` predicate is consulted during the
+        // bridge phase. Phase 2 cleanup will replace this check with an
+        // `Adapter`-side capability accessor before the legacy traits go away.
+        if provider.hook_adapter().is_none() {
+            for spec in &resolved {
+                if matches!(spec, Spec::Hook(_)) {
                     diagnostics.skipped_hooks.push(SkippedHook {
                         provider,
                         hook_id: spec.id().to_string(),
                     });
                 }
             }
-        }
-
-        // Per-provider hook synthesis — runs once per provider with the full
-        // hook list because `hooks.json` is one shared file and the `scripts/`
-        // tree is shared across all hooks in the spec set. Providers without a
-        // hook adapter (`OpenCode`) short-circuit to an empty `HookSynthesis`;
-        // their per-spec skips are recorded in `diagnostics.skipped_hooks` above.
-        let synthesis = provider.hook_adapter().map_or_else(
-            || Ok(HookSynthesis::default()),
-            |h| h.synthesize_hooks(&hook_specs, adapter_config),
-        )?;
-        files.extend(synthesis.files);
-        if !synthesis.entries.is_empty() {
-            hooks_map.insert(provider, synthesis.entries);
         }
     }
 
@@ -274,7 +343,8 @@ pub(crate) fn compile_specs(
     Ok((
         CompileResult {
             files,
-            hooks: hooks_map,
+            patches,
+            dest_roots,
         },
         diagnostics,
     ))

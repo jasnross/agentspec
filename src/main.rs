@@ -6,7 +6,9 @@ mod sync;
 
 use std::collections::HashMap;
 
-use agentspec::compile::{self, AdapterConfig, CompileDiagnostics, CompileResult};
+use agentspec::compile::{
+    self, AdapterConfig, CompileDiagnostics, CompileResult, ProviderCompileTarget,
+};
 use agentspec::plan::compile_plan;
 use agentspec::presets::ProviderPresetsMap;
 use agentspec::provider::Provider;
@@ -15,7 +17,7 @@ use agentspec::templating::{TemplateContext, TemplatingResources, resolve_fragme
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use cli::{Cli, Command};
-use config::AgentspecConfig;
+use config::{AgentspecConfig, SyncTargetConfig};
 use emit::{emit_compile, emit_remove, emit_sync};
 use strum::VariantArray;
 use sync::{resolve_sync_targets, sync_plan};
@@ -78,21 +80,25 @@ fn main() -> Result<()> {
             let sync_providers: Vec<Provider> = targets.iter().map(|(p, _)| *p).collect();
 
             let adapter_configs = AgentspecConfig::adapter_configs(&targets);
+            let compile_targets = compile_targets_from(&targets);
 
             if sync_args.dry_run {
                 eprint!("[dry-run] ");
             }
-            let (result, diagnostics) = run_compile(
+            let home = home_dir()?;
+            let (mut result, diagnostics) = run_compile(
                 &validated,
                 &templating,
                 &config.presets,
                 &sync_providers,
                 &adapter_configs,
+                &compile_targets,
+                &home,
+                &cwd,
             )?;
             surface_compile_diagnostics(&diagnostics, display);
 
-            let home = home_dir()?;
-            let plan = sync_plan(&result, &targets, &home, &cwd)?;
+            let plan = sync_plan(&mut result, &targets, &home)?;
             emit_sync(&plan, sync_args.dry_run, sync_args.common.verbose)?;
         }
         Command::Remove(remove_args) => {
@@ -101,7 +107,7 @@ fn main() -> Result<()> {
                 eprintln!("nothing to remove");
             } else {
                 let home = home_dir()?;
-                let plan = remove::remove_plan(&targets, &home, &cwd)?;
+                let plan = remove::remove_plan(&targets, &home, &cwd);
                 emit_remove(&plan, remove_args.dry_run)?;
             }
         }
@@ -115,7 +121,12 @@ fn main() -> Result<()> {
             surface_load_report(&dirs.ignore, &report, display);
             let templating = load_templating(&config)?;
 
-            let adapter_configs = AgentspecConfig::adapter_configs(&config.sync_targets());
+            let sync_targets = config.sync_targets();
+            let adapter_configs = AgentspecConfig::adapter_configs(&sync_targets);
+            // The `compile` command path has no sync destination — adapters
+            // produce canonical output anchored at `Path` mode. Pass an empty
+            // map so each adapter falls back to `ProviderCompileTarget::default`.
+            let compile_targets: HashMap<Provider, ProviderCompileTarget> = HashMap::new();
 
             let providers: Vec<Provider> = if compile_args.provider.is_empty() {
                 Provider::VARIANTS.to_vec()
@@ -123,12 +134,16 @@ fn main() -> Result<()> {
                 compile_args.provider.clone()
             };
 
+            let home = home_dir()?;
             let (result, diagnostics) = run_compile(
                 &validated,
                 &templating,
                 &config.presets,
                 &providers,
                 &adapter_configs,
+                &compile_targets,
+                &home,
+                &cwd,
             )?;
             surface_compile_diagnostics(&diagnostics, display);
             let output_dir = config.resolve(&config.compile.output_dir);
@@ -245,15 +260,28 @@ fn load_templating(config: &AgentspecConfig) -> Result<TemplatingResources> {
 /// Runs the compile step and reports the compiled file count. The compile
 /// stage owns its own diagnostics ([`CompileDiagnostics`]) and returns them
 /// directly — this thin wrapper exists only to print the file-count line.
+#[allow(clippy::too_many_arguments)] // params mirror compile::run; threading them as a struct
+// would just rename, not reduce, the call-site noise.
 fn run_compile(
     validated: &ValidatedSpecs,
     templating: &TemplatingResources,
     presets: &ProviderPresetsMap,
     providers: &[Provider],
     adapter_configs: &HashMap<Provider, AdapterConfig>,
+    compile_targets: &HashMap<Provider, ProviderCompileTarget>,
+    home: &std::path::Path,
+    cwd: &std::path::Path,
 ) -> Result<(CompileResult, CompileDiagnostics)> {
-    let (result, diagnostics) =
-        compile::run(validated, templating, presets, providers, adapter_configs)?;
+    let (result, diagnostics) = compile::run(
+        validated,
+        templating,
+        presets,
+        providers,
+        adapter_configs,
+        compile_targets,
+        home,
+        cwd,
+    )?;
     let n = providers.len();
     eprintln!(
         "compiled {} files for {n} {}",
@@ -261,6 +289,28 @@ fn run_compile(
         if n == 1 { "provider" } else { "providers" }
     );
     Ok((result, diagnostics))
+}
+
+/// Build per-provider [`ProviderCompileTarget`] entries from the binary's
+/// `SyncTargetConfig` list. Mirrors `AgentspecConfig::adapter_configs`'s
+/// shape: providers absent from `targets` are absent from the map (the
+/// orchestrator falls back to [`ProviderCompileTarget::default`]).
+fn compile_targets_from(
+    targets: &[(Provider, SyncTargetConfig)],
+) -> HashMap<Provider, ProviderCompileTarget> {
+    targets
+        .iter()
+        .map(|(p, t)| {
+            (
+                *p,
+                ProviderCompileTarget {
+                    mode: t.mode.to_destination_mode(),
+                    target_dir: t.dir.as_deref().map(std::path::PathBuf::from),
+                    overwrite: t.overwrite,
+                },
+            )
+        })
+        .collect()
 }
 
 /// Print compile diagnostics to stderr.

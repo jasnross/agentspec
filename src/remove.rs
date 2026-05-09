@@ -1,12 +1,12 @@
 use std::path::Path;
 
-use agentspec::plan::{RemovePlan, RemoveWrite};
+use agentspec::adapters::RemoveCtx;
+use agentspec::plan::{ConfigPatch, RemovePlan, RemoveWrite};
 use agentspec::provider::Provider;
 use anyhow::{Result, bail};
 
 use crate::cli::RemoveArgs;
 use crate::config::{AgentspecConfig, SyncFlags, SyncTargetConfig};
-use crate::sync;
 
 /// Validates and resolves remove targets from config and CLI args.
 ///
@@ -53,56 +53,61 @@ pub fn resolve_remove_targets(
 
 /// Builds a `RemovePlan` that reverses a prior sync.
 ///
-/// One `RemoveWrite` is produced per `(provider, kind)` dest dir. The manifest at
-/// `destination/.agentspec-manifest.json` is the source of truth at execution time;
-/// no file content is carried because every tracked file is deleted.
-/// `post_write_hooks` is populated by Claude/Cursor settings tidy and
-/// `OpenCode` instructions tidy.
+/// One `RemoveWrite` is produced per `(provider, kind)` dest dir; one
+/// `ConfigPatch` per provider for any post-write tidy (Claude/Cursor settings
+/// strip, `OpenCode` instructions filter). The manifest at
+/// `destination/.agentspec-manifest.json` is the source of truth at execution
+/// time; no file content is carried because every tracked file is deleted.
+///
+/// Unlike `sync_plan`, `remove_plan` does NOT call `compile()` — it consults
+/// the manifest at execution time and constructs `RemoveWrite` entries from
+/// the recorded paths. For the post-write patches it calls
+/// `Adapter::removal_patches(&ctx)`, which identifies owned entries via
+/// on-disk `_agentspec_id` sentinels (no spec input needed).
 pub fn remove_plan(
     targets: &[(Provider, SyncTargetConfig)],
     home: &Path,
     cwd: &Path,
-) -> Result<RemovePlan> {
+) -> RemovePlan {
     debug_assert!(
         !targets.is_empty(),
         "remove_plan must not be called with empty targets; main.rs should print 'nothing to remove' instead"
     );
     let mut writes = Vec::new();
-    let mut post_write_hooks = Vec::new();
+    let mut post_write_patches: Vec<Box<dyn ConfigPatch>> = Vec::new();
 
     for (provider, target) in targets {
         let adapter = provider.adapter();
-        let emit_mode = target.mode.to_hook_emit_mode();
-        // Hoist `config_dir` out of the inner loop — mirrors `sync_plan`'s shape.
-        let config_dir = adapter.config_dir(
-            target.mode.to_destination_mode(),
-            target.dir.as_deref(),
+        let target_dir_buf = target
+            .dir
+            .as_deref()
+            .map(|d| agentspec::plan::expand_tilde(d, home));
+
+        let ctx = RemoveCtx {
+            mode: target.mode.to_destination_mode(),
             home,
             cwd,
-        );
+            target_dir: target_dir_buf.as_deref(),
+        };
 
-        // Each (provider, kind) gets a Remove batch; the adapter's
-        // `remove_post_write_hook` is offered the chance to claim this kind.
-        // Each factory returns `None` for kinds it doesn't care about
-        // (Claude/Cursor key off `Hooks`; `OpenCode` keys off `Rules`).
+        let dest_root = adapter.remove_dest_root(&ctx);
+        post_write_patches.extend(adapter.removal_patches(&ctx));
+
+        // Each (provider, kind) still gets a `RemoveWrite` so `emit_remove`
+        // can delete every manifest-tracked file at the per-kind dest dir.
+        // The destination is the adapter's `dest_root` joined with the kind
+        // dir name.
         for &kind in adapter.file_kinds() {
-            let destination = sync::resolve_dest_dir(*provider, kind, target, home, cwd)?;
-
-            let hook = adapter.remove_post_write_hook(kind, &destination, &config_dir, emit_mode);
-            if let Some(h) = hook {
-                post_write_hooks.push(h);
-            }
-
             writes.push(RemoveWrite {
                 provider: *provider,
                 kind,
-                destination,
+                destination: dest_root.join(kind.dir_name()),
             });
         }
     }
 
-    Ok(RemovePlan {
+    RemovePlan {
         writes,
-        post_write_hooks,
-    })
+        post_write_patches,
+    }
 }
