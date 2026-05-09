@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Spec {
     Agent(AgentSpec),
     Skill(SkillSpec),
@@ -11,6 +11,15 @@ pub enum Spec {
 }
 
 impl Spec {
+    pub fn id(&self) -> &str {
+        match self {
+            Spec::Agent(s) => &s.frontmatter.id,
+            Spec::Skill(s) => &s.frontmatter.id,
+            Spec::Rule(s) => &s.frontmatter.id,
+            Spec::Hook(s) => &s.frontmatter.id,
+        }
+    }
+
     pub fn body(&self) -> &str {
         match self {
             Spec::Agent(agent_spec) => &agent_spec.body,
@@ -26,6 +35,33 @@ impl Spec {
             Spec::Skill(skill_spec) => &skill_spec.path,
             Spec::Rule(rule_spec) => &rule_spec.path,
             Spec::Hook(hook_spec) => &hook_spec.path,
+        }
+    }
+
+    pub fn description(&self) -> &str {
+        match self {
+            Spec::Agent(s) => &s.frontmatter.description,
+            Spec::Skill(s) => s.frontmatter.description.as_deref().unwrap_or_default(),
+            Spec::Rule(s) => s.frontmatter.description.as_deref().unwrap_or_default(),
+            Spec::Hook(s) => s.frontmatter.description.as_deref().unwrap_or_default(),
+        }
+    }
+
+    pub fn tags(&self) -> &[String] {
+        match self {
+            Spec::Agent(s) => s.frontmatter.tags.as_deref().unwrap_or_default(),
+            Spec::Skill(s) => s.frontmatter.tags.as_deref().unwrap_or_default(),
+            Spec::Rule(s) => s.frontmatter.tags.as_deref().unwrap_or_default(),
+            Spec::Hook(s) => s.frontmatter.tags.as_deref().unwrap_or_default(),
+        }
+    }
+
+    pub fn spec_type(&self) -> &'static str {
+        match self {
+            Spec::Agent(_) => "agent",
+            Spec::Skill(_) => "skill",
+            Spec::Rule(_) => "rule",
+            Spec::Hook(_) => "hook",
         }
     }
 }
@@ -94,7 +130,7 @@ impl NormalizedSpec {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct AgentSpec {
     /// Absolute path to the spec
     pub path: PathBuf,
@@ -114,7 +150,7 @@ pub struct NormalizedAgentSpec {
     pub body: String,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct SkillSpec {
     /// Absolute path to the spec root
     pub path: PathBuf,
@@ -138,7 +174,7 @@ pub struct NormalizedSkillSpec {
     pub supporting_files: Vec<SupportingFile>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct RuleSpec {
     /// Absolute path to the spec root
     pub path: PathBuf,
@@ -158,7 +194,7 @@ pub struct NormalizedRuleSpec {
     pub body: String,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct HookSpec {
     /// Absolute path to the `hooks.toml` file the spec was loaded from.
     pub path: PathBuf,
@@ -181,7 +217,7 @@ pub struct NormalizedHookSpec {
     pub supporting_files: Vec<SupportingFile>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentFrontmatter {
     pub id: String,
@@ -200,7 +236,7 @@ pub struct NormalizedAgentFrontmatter {
     pub capabilities: Option<CapabilitiesFrontmatter>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SkillFrontmatter {
     pub id: String,
@@ -223,7 +259,7 @@ pub struct NormalizedSkillFrontmatter {
     pub capabilities: Option<CapabilitiesFrontmatter>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuleFrontmatter {
     pub id: String,
@@ -243,7 +279,7 @@ pub struct NormalizedRuleFrontmatter {
 /// `id` is captured from the TOML table key (not the inner table) when loaded;
 /// it is included as a struct field after construction so downstream code can
 /// treat it like every other spec frontmatter.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct HookFrontmatter {
     /// Stable identifier; populated from the `[hooks.<id>]` TOML table key.
@@ -348,4 +384,145 @@ pub struct SupportingFile {
     /// user-set ergonomic modes (0o600, 0o400, etc.) survive the
     /// compile/sync pipeline.
     pub mode: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn agent_spec(id: &str, description: &str, tags: Option<Vec<String>>) -> Spec {
+        Spec::Agent(AgentSpec {
+            path: PathBuf::from("/tmp/agent.md"),
+            frontmatter: AgentFrontmatter {
+                id: id.to_string(),
+                description: description.to_string(),
+                tags,
+                execution: None,
+                capabilities: None,
+            },
+            body: String::new(),
+        })
+    }
+
+    fn skill_spec(id: &str, description: Option<&str>, tags: Option<Vec<String>>) -> Spec {
+        Spec::Skill(SkillSpec {
+            path: PathBuf::from("/tmp/skill"),
+            frontmatter: SkillFrontmatter {
+                id: id.to_string(),
+                description: description.map(str::to_string),
+                tags,
+                user_invocable: false,
+                agent_invocable: true,
+                execution: None,
+                capabilities: None,
+            },
+            body: String::new(),
+            supporting_files: Vec::new(),
+        })
+    }
+
+    fn rule_spec(id: &str, description: Option<&str>) -> Spec {
+        Spec::Rule(RuleSpec {
+            path: PathBuf::from("/tmp/rule.md"),
+            frontmatter: RuleFrontmatter {
+                id: id.to_string(),
+                description: description.map(str::to_string),
+                tags: None,
+            },
+            body: String::new(),
+        })
+    }
+
+    fn hook_spec(id: &str, description: Option<&str>) -> Spec {
+        Spec::Hook(HookSpec {
+            path: PathBuf::from("/tmp/hooks.toml"),
+            frontmatter: HookFrontmatter {
+                id: id.to_string(),
+                event: HookEvent::SessionStart,
+                script: PathBuf::from("scripts/init.sh"),
+                matcher: None,
+                timeout: None,
+                description: description.map(str::to_string),
+                tags: None,
+            },
+            body: String::new(),
+            supporting_files: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn test_spec_id_agent() {
+        assert_eq!(agent_spec("agent-1", "desc", None).id(), "agent-1");
+    }
+
+    #[test]
+    fn test_spec_id_skill() {
+        assert_eq!(skill_spec("skill-1", None, None).id(), "skill-1");
+    }
+
+    #[test]
+    fn test_spec_id_rule() {
+        assert_eq!(rule_spec("rule-1", None).id(), "rule-1");
+    }
+
+    #[test]
+    fn test_spec_id_hook() {
+        assert_eq!(hook_spec("hook-1", None).id(), "hook-1");
+    }
+
+    #[test]
+    fn test_spec_description_agent_required() {
+        assert_eq!(
+            agent_spec("a", "the description", None).description(),
+            "the description"
+        );
+    }
+
+    #[test]
+    fn test_spec_description_optional_returns_empty_when_none() {
+        assert_eq!(skill_spec("s", None, None).description(), "");
+        assert_eq!(rule_spec("r", None).description(), "");
+        assert_eq!(hook_spec("h", None).description(), "");
+    }
+
+    #[test]
+    fn test_spec_tags_returns_empty_slice_when_none() {
+        assert!(agent_spec("a", "d", None).tags().is_empty());
+        assert!(skill_spec("s", None, None).tags().is_empty());
+        assert!(rule_spec("r", None).tags().is_empty());
+        assert!(hook_spec("h", None).tags().is_empty());
+    }
+
+    #[test]
+    fn test_spec_tags_returns_populated_when_some() {
+        let spec = agent_spec("a", "d", Some(vec!["x".into(), "y".into()]));
+        assert_eq!(spec.tags(), &["x".to_string(), "y".to_string()]);
+    }
+
+    #[test]
+    fn test_spec_spec_type() {
+        assert_eq!(agent_spec("a", "d", None).spec_type(), "agent");
+        assert_eq!(skill_spec("s", None, None).spec_type(), "skill");
+        assert_eq!(rule_spec("r", None).spec_type(), "rule");
+        assert_eq!(hook_spec("h", None).spec_type(), "hook");
+    }
+
+    #[test]
+    fn test_spec_clone_round_trip() {
+        let cases = [
+            agent_spec("a", "d", Some(vec!["t".into()])),
+            skill_spec("s", Some("d"), Some(vec!["t".into()])),
+            rule_spec("r", Some("d")),
+            hook_spec("h", Some("d")),
+        ];
+        for original in &cases {
+            let cloned = original.clone();
+            assert_eq!(original.id(), cloned.id());
+            assert_eq!(original.description(), cloned.description());
+            assert_eq!(original.tags(), cloned.tags());
+            assert_eq!(original.spec_type(), cloned.spec_type());
+            assert_eq!(original.body(), cloned.body());
+            assert_eq!(original.path(), cloned.path());
+        }
+    }
 }
