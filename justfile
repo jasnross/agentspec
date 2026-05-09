@@ -33,8 +33,9 @@ lint:
 licenses:
     cargo deny check licenses
 
-# Format + lint + test + licenses
-check: fmt lint build test licenses
+# Format + lint + cargo check + test + licenses
+check: fmt lint && test licenses
+  cargo check
 
 # Install binary locally
 install:
