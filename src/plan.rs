@@ -149,6 +149,41 @@ pub trait PostWriteHook: std::fmt::Debug {
     fn run(&self, dry_run: bool) -> anyhow::Result<()>;
 }
 
+/// Bidirectional post-write patch for the unified `Adapter` trait surface.
+///
+/// `ConfigPatch` is the long-term replacement for `PostWriteHook` (above).
+/// One `ConfigPatch` instance owns both directions for a given host config
+/// file: `run` applies the forward (sync) direction and `run_remove` applies
+/// the reverse (remove) direction. The accessors `host_path` and
+/// `manifest_targets` let the orchestrator track ownership uniformly across
+/// providers.
+///
+/// `Send + Sync` future-proofs the trait for parallel emit.
+///
+/// During the bridge phase both `PostWriteHook` and `ConfigPatch` coexist —
+/// the bridged-adapter shim wraps existing `Box<dyn PostWriteHook>` instances
+/// in `ConfigPatch`-implementing wrappers. Once the cleanup commit lands,
+/// `PostWriteHook` is deleted and adapters return `Box<dyn ConfigPatch>`
+/// directly.
+pub trait ConfigPatch: std::fmt::Debug + Send + Sync {
+    /// Apply the forward (sync) direction of the patch.
+    fn run(&self, dry_run: bool) -> anyhow::Result<()>;
+
+    /// Apply the reverse (remove) direction of the patch — strip
+    /// agentspec-owned entries identified by on-disk `_agentspec_id`
+    /// sentinels.
+    fn run_remove(&self, dry_run: bool) -> anyhow::Result<()>;
+
+    /// The host config file this patch reads/writes (e.g.
+    /// `~/.claude/settings.json`). Used for manifest tracking and reporting.
+    fn host_path(&self) -> &Path;
+
+    /// Paths the patch touches that should be considered "owned" by agentspec
+    /// for manifest accounting (today: the host file itself; could grow to
+    /// include sidecar files for richer providers).
+    fn manifest_targets(&self) -> &[PathBuf];
+}
+
 /// Outcome of a per-provider remove patch.
 ///
 /// Produced by Claude's settings tidy, Cursor's hooks tidy, and `OpenCode`'s

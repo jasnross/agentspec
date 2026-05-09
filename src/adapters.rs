@@ -20,7 +20,7 @@ use jsonc_parser::cst::CstObject;
 pub use opencode::OpenCodeAdapter;
 
 use crate::compile::{AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode, HookSynthesis};
-use crate::plan::{FileKind, PostWriteHook};
+use crate::plan::{ConfigPatch, FileKind, PostWriteHook};
 use crate::presets::ProviderPresetsMap;
 use crate::spec::{HookEvent, HookSpec, Spec, ToolFrontmatter};
 
@@ -184,4 +184,112 @@ pub trait HookAdapter: ProviderAdapter + std::fmt::Debug {
     /// uses `TidyOutcome::file_should_be_deleted` to decide whether to
     /// delete the host file vs. write the tidied CST back.
     fn tidy_after_remove(&self, top: &CstObject) -> TidyOutcome;
+}
+
+// ── New unified trait surface (Phase 2 of adapter API consolidation) ─────────
+//
+// The new `Adapter` trait below is the long-term replacement for
+// `ProviderAdapter` + `HookAdapter`. During the bridge phase both surfaces
+// coexist; adapter modules `impl` both. The orchestrator and downstream
+// pipeline progressively migrate to call `Adapter::compile` /
+// `Adapter::removal_patches`. The old surfaces are deleted once every
+// production call site is migrated.
+
+/// Per-provider context passed to `Adapter::compile`.
+///
+/// Carries everything `compile` needs that isn't the spec list itself. The
+/// orchestrator constructs one `CompileCtx` per `(provider, target)` and hands
+/// it to the adapter. Adapters use it to compute output paths, apply prefix
+/// transforms, and resolve presets — without each piece of state needing a
+/// dedicated trait method.
+#[derive(Debug)]
+pub struct CompileCtx<'a> {
+    /// Library-side mirror of the binary's `SyncMode`. For the `compile`
+    /// command path (no sync target), the binary supplies a default of
+    /// `SyncDestinationMode::Path` with `target_dir: None`.
+    pub mode: SyncDestinationMode,
+    /// Effective home directory (for User-mode dest resolution).
+    pub home: &'a Path,
+    /// Effective current working directory (for Project-mode dest resolution).
+    pub cwd: &'a Path,
+    /// Explicit destination directory when `mode == Path`; `None` for User /
+    /// Project modes (and for `compile`-command runs that don't target a sync
+    /// destination).
+    pub target_dir: Option<&'a Path>,
+    /// Preset library — adapters consume per-provider presets when applying
+    /// frontmatter transforms.
+    pub presets: &'a ProviderPresetsMap,
+    /// Per-provider `AdapterConfig` for prefix/strip transforms. `None` means
+    /// "use canonical (unprefixed) defaults" — the same convention as today's
+    /// `AdapterConfig` parameter.
+    pub adapter_config: Option<&'a AdapterConfig>,
+}
+
+/// Per-provider context for `Adapter::removal_patches`.
+///
+/// Narrower than `CompileCtx` because the remove path identifies owned
+/// entries via on-disk `_agentspec_id` sentinels (no spec input → no preset
+/// or prefix transforms apply).
+#[derive(Debug)]
+pub struct RemoveCtx<'a> {
+    pub mode: SyncDestinationMode,
+    pub home: &'a Path,
+    pub cwd: &'a Path,
+    pub target_dir: Option<&'a Path>,
+}
+
+/// What an adapter's `compile` step returns.
+///
+/// `files` carries every file the adapter produces (markdown specs plus any
+/// hook scripts and bundled `hooks.json` in Bundled mode). `patches` carries
+/// the post-write patches to apply after files land — Claude/Cursor settings
+/// merges, `OpenCode` instructions registration, etc. `dest_root` is the
+/// adapter-computed sync-mode destination root that downstream `sync_plan`
+/// uses to anchor each `(provider, kind)` `ManifestTrackedWrite`.
+#[derive(Debug)]
+pub struct AdapterOutput {
+    pub files: Vec<GeneratedFile>,
+    pub patches: Vec<Box<dyn ConfigPatch>>,
+    pub dest_root: PathBuf,
+}
+
+/// Provider-neutral adapter contract — the consolidated successor to
+/// `ProviderAdapter` + `HookAdapter`.
+///
+/// One primary entry point (`compile`) absorbs today's two-phase per-spec /
+/// per-provider ordering. A second method (`removal_patches`) constructs the
+/// reverse-direction patches for the `remove` pipeline (reverse direction has
+/// no spec input — patches identify owned entries by on-disk sentinels, so no
+/// `compile`-style spec list is threaded through). Two accessor methods
+/// (`body_tool_name`, `model_facing_name`) survive because templating needs
+/// them at spec-resolution time, before `compile` runs.
+///
+/// Object-safe by design — `&dyn Adapter` is the dispatch shape used by
+/// `Provider::adapter()`. No associated types.
+pub trait Adapter: std::fmt::Debug {
+    /// Compile every spec for one provider into output files and post-write
+    /// patches.
+    ///
+    /// The adapter sequences per-spec adaptation and cross-spec aggregation
+    /// (e.g., per-provider `hooks.json` synthesis or `OpenCode` `instructions[]`
+    /// list construction) in whatever order makes sense internally. Today's
+    /// implicit two-phase ordering in `compile_specs` collapses into the
+    /// adapter's own implementation.
+    fn compile(&self, specs: &[Spec], ctx: &CompileCtx<'_>) -> Result<AdapterOutput>;
+
+    /// Construct the reverse-direction patches that the `remove` pipeline runs
+    /// after manifest-tracked file deletions.
+    ///
+    /// No spec input — owned entries are identified via on-disk
+    /// `_agentspec_id` sentinels. Adapters that have no removal-side cleanup
+    /// (e.g., the file-only branches of any adapter) return an empty `Vec`.
+    fn removal_patches(&self, ctx: &RemoveCtx<'_>) -> Vec<Box<dyn ConfigPatch>>;
+
+    /// Resolve a canonical tool to the body-level name this provider expects
+    /// in spec content (e.g. Claude's `"Read"`, Cursor's `"Read files"`,
+    /// `OpenCode`'s `"read"`).
+    fn body_tool_name(&self, tool: &ToolFrontmatter) -> &'static str;
+
+    /// Compute the model-facing name for a spec (with prefix transforms applied).
+    fn model_facing_name(&self, spec: &Spec, cfg: Option<&AdapterConfig>) -> String;
 }
