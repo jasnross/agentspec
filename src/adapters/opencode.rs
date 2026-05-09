@@ -8,9 +8,11 @@ use serde::Serialize;
 use strum::VariantArray as _;
 use walkdir::WalkDir;
 
-use super::{ProviderAdapter, SyncDestinationMode};
+use super::{Adapter, AdapterOutput, CompileCtx, ProviderAdapter, RemoveCtx, SyncDestinationMode};
 use crate::compile::{AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode};
-use crate::plan::{FileKind, PostWriteHook, RemovePatchReport, expand_tilde};
+use crate::plan::{
+    ConfigPatch, FileKind, PatchBridge, PostWriteHook, RemovePatchReport, expand_tilde,
+};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
 use crate::spec::{AgentSpec, RuleSpec, SkillSpec, Spec, ToolFrontmatter};
@@ -46,7 +48,82 @@ struct OpenCodeSkillFrontmatter {
 }
 
 /// Zero-sized adapter for the `OpenCode` provider.
+#[derive(Debug)]
 pub struct OpenCodeAdapter;
+
+impl Adapter for OpenCodeAdapter {
+    fn compile(&self, specs: &[Spec], ctx: &CompileCtx<'_>) -> Result<AdapterOutput> {
+        let mut files = Vec::new();
+        for spec in specs {
+            let mut adapted =
+                ProviderAdapter::adapt(self, spec.clone(), ctx.presets, ctx.adapter_config)?;
+            files.append(&mut adapted);
+        }
+
+        let owned_entries: Vec<EmittedHookEntry> = Vec::new();
+        let dest_root = ProviderAdapter::config_dir(
+            self,
+            ctx.mode,
+            ctx.target_dir.and_then(Path::to_str),
+            ctx.home,
+            ctx.cwd,
+        );
+        let emit_mode = ctx.mode.to_hook_emit_mode();
+
+        let mut patches: Vec<Box<dyn ConfigPatch>> = Vec::new();
+        for &kind in ProviderAdapter::file_kinds(self) {
+            let dest = dest_root.join(kind.dir_name());
+            if let Some(hook) = ProviderAdapter::post_write_hook(
+                self,
+                kind,
+                &dest,
+                &dest_root,
+                emit_mode,
+                &owned_entries,
+                ctx.overwrite,
+            ) {
+                let host_path = dest_root.join("opencode.json");
+                patches.push(Box::new(PatchBridge::forward(hook, host_path)));
+            }
+        }
+
+        Ok(AdapterOutput {
+            files,
+            patches,
+            dest_root,
+        })
+    }
+
+    fn removal_patches(&self, ctx: &RemoveCtx<'_>) -> Vec<Box<dyn ConfigPatch>> {
+        let dest_root = ProviderAdapter::config_dir(
+            self,
+            ctx.mode,
+            ctx.target_dir.and_then(Path::to_str),
+            ctx.home,
+            ctx.cwd,
+        );
+        let emit_mode = ctx.mode.to_hook_emit_mode();
+        let mut patches: Vec<Box<dyn ConfigPatch>> = Vec::new();
+        for &kind in ProviderAdapter::file_kinds(self) {
+            let dest = dest_root.join(kind.dir_name());
+            if let Some(hook) =
+                ProviderAdapter::remove_post_write_hook(self, kind, &dest, &dest_root, emit_mode)
+            {
+                let host_path = dest_root.join("opencode.json");
+                patches.push(Box::new(PatchBridge::reverse(hook, host_path)));
+            }
+        }
+        patches
+    }
+
+    fn body_tool_name(&self, tool: &ToolFrontmatter) -> &'static str {
+        ProviderAdapter::body_tool_name(self, tool)
+    }
+
+    fn model_facing_name(&self, spec: &Spec, cfg: Option<&AdapterConfig>) -> String {
+        ProviderAdapter::model_facing_name(self, spec, cfg)
+    }
+}
 
 impl ProviderAdapter for OpenCodeAdapter {
     fn adapt(
@@ -535,11 +612,19 @@ fn tidy_instructions(top: &CstObject, rules_dest_dir: &Path) -> TidyResult {
 fn build_tool_map(tools: &[ToolFrontmatter]) -> IndexMap<String, bool> {
     let mut map: IndexMap<String, bool> = ToolFrontmatter::VARIANTS
         .iter()
-        .map(|t| (OpenCodeAdapter.body_tool_name(t).to_string(), false))
+        .map(|t| {
+            (
+                ProviderAdapter::body_tool_name(&OpenCodeAdapter, t).to_string(),
+                false,
+            )
+        })
         .collect();
 
     for tool in tools {
-        map.insert(OpenCodeAdapter.body_tool_name(tool).to_string(), true);
+        map.insert(
+            ProviderAdapter::body_tool_name(&OpenCodeAdapter, tool).to_string(),
+            true,
+        );
     }
 
     map.sort_keys();
@@ -676,7 +761,7 @@ mod tests {
     #[test]
     fn test_body_tool_name_tasks_maps_to_todowrite() {
         assert_eq!(
-            OpenCodeAdapter.body_tool_name(&ToolFrontmatter::Tasks),
+            ProviderAdapter::body_tool_name(&OpenCodeAdapter, &ToolFrontmatter::Tasks),
             "todowrite"
         );
     }
@@ -684,7 +769,7 @@ mod tests {
     #[test]
     fn test_body_tool_name_subagent_maps_to_task() {
         assert_eq!(
-            OpenCodeAdapter.body_tool_name(&ToolFrontmatter::Subagent),
+            ProviderAdapter::body_tool_name(&OpenCodeAdapter, &ToolFrontmatter::Subagent),
             "task"
         );
     }
@@ -692,7 +777,7 @@ mod tests {
     #[test]
     fn test_body_tool_name_skill_identity() {
         assert_eq!(
-            OpenCodeAdapter.body_tool_name(&ToolFrontmatter::Skill),
+            ProviderAdapter::body_tool_name(&OpenCodeAdapter, &ToolFrontmatter::Skill),
             "skill"
         );
     }

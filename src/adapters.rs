@@ -37,13 +37,37 @@ pub enum SyncDestinationMode {
     Path,
 }
 
+impl SyncDestinationMode {
+    /// Map to the `HookEmitMode` that controls per-provider hook emission
+    /// shape. User/Project map to merged-mode patches; Path maps to a
+    /// self-contained `hooks/hooks.json` bundle.
+    ///
+    /// This collapses the previous binary-side `SyncMode → HookEmitMode`
+    /// translation into a library-side method so adapters can derive their
+    /// emit mode directly from `CompileCtx.mode` without threading
+    /// `AdapterConfig.hook_emit_mode` through.
+    pub fn to_hook_emit_mode(self) -> HookEmitMode {
+        match self {
+            Self::User => HookEmitMode::MergedUser,
+            Self::Project => HookEmitMode::MergedProject,
+            Self::Path => HookEmitMode::Bundled,
+        }
+    }
+}
+
 /// Provider-neutral adapter contract.
 ///
 /// Every provider-specific decision lives behind this trait. Non-adapter
 /// modules MUST dispatch through `Provider::adapter()` rather than naming a
 /// specific adapter; the only exceptions are tests (which are exempt per the
 /// project rule) and `Provider::adapter()` itself.
-pub trait ProviderAdapter {
+///
+/// `Send + Sync` are supertrait bounds so `&'static dyn ProviderAdapter` /
+/// `&'static dyn HookAdapter` references stored inside `Box<dyn ConfigPatch>`
+/// satisfy the `ConfigPatch: Send + Sync` requirement during the bridge
+/// phase. All current adapters (`ClaudeAdapter`, `CursorAdapter`,
+/// `OpenCodeAdapter`) are zero-sized unit structs and trivially `Send + Sync`.
+pub trait ProviderAdapter: Send + Sync {
     /// Adapt one spec into provider-specific generated files.
     fn adapt(
         &self,
@@ -128,7 +152,7 @@ pub struct TidyOutcome {
 /// `Debug` is a supertrait so the generic `HooksPatch` / `RemoveHooksPatch`
 /// post-write structs in `hooks_merge` (which store `&'static dyn
 /// HookAdapter`) can derive `Debug` and satisfy the `PostWriteHook` bound.
-pub trait HookAdapter: ProviderAdapter + std::fmt::Debug {
+pub trait HookAdapter: ProviderAdapter + std::fmt::Debug + Send + Sync {
     /// Synthesize the per-provider hooks bundle (entries plus, in Bundled
     /// mode, the `hooks/hooks.json` file).
     fn synthesize_hooks(
@@ -223,6 +247,12 @@ pub struct CompileCtx<'a> {
     /// "use canonical (unprefixed) defaults" — the same convention as today's
     /// `AdapterConfig` parameter.
     pub adapter_config: Option<&'a AdapterConfig>,
+    /// `--force` flag from the sync target; controls whether forward patches
+    /// may replace user-authored non-object/non-array values rather than
+    /// erroring. `false` for the `compile` command path. Plan-deviation
+    /// addition: the original Plan-2 design omitted this field, but it's
+    /// required for forward-direction patch construction.
+    pub overwrite: bool,
 }
 
 /// Per-provider context for `Adapter::removal_patches`.

@@ -11,10 +11,13 @@ use super::hooks_helpers::{
     is_owned_entry, node_as_object, open_or_create_array, open_or_create_object,
     prune_empty_event_arrays, value_to_cst_input,
 };
-use super::{HookAdapter, ProviderAdapter, SyncDestinationMode, TidyOutcome};
+use super::{
+    Adapter, AdapterOutput, CompileCtx, HookAdapter, ProviderAdapter, RemoveCtx,
+    SyncDestinationMode, TidyOutcome,
+};
 use crate::compile::{AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode, HookSynthesis};
 use crate::hooks_merge::{HooksPatch, RemoveHooksPatch};
-use crate::plan::{FileKind, PostWriteHook, expand_tilde};
+use crate::plan::{ConfigPatch, FileKind, PatchBridge, PostWriteHook, expand_tilde};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
 use crate::spec::{AgentSpec, HookEvent, HookSpec, RuleSpec, SkillSpec, Spec, ToolFrontmatter};
@@ -81,6 +84,87 @@ enum ClaudeTool {
 /// Zero-sized adapter for the Claude provider.
 #[derive(Debug)]
 pub struct ClaudeAdapter;
+
+impl Adapter for ClaudeAdapter {
+    fn compile(&self, specs: &[Spec], ctx: &CompileCtx<'_>) -> Result<AdapterOutput> {
+        let mut files = Vec::new();
+        for spec in specs {
+            let mut adapted =
+                ProviderAdapter::adapt(self, spec.clone(), ctx.presets, ctx.adapter_config)?;
+            files.append(&mut adapted);
+        }
+
+        let hook_specs: Vec<&HookSpec> = specs
+            .iter()
+            .filter_map(|s| if let Spec::Hook(h) = s { Some(h) } else { None })
+            .collect();
+        let synthesis = HookAdapter::synthesize_hooks(self, &hook_specs, ctx.adapter_config)?;
+        files.extend(synthesis.files);
+        let owned_entries = synthesis.entries;
+
+        let dest_root = ProviderAdapter::config_dir(
+            self,
+            ctx.mode,
+            ctx.target_dir.and_then(Path::to_str),
+            ctx.home,
+            ctx.cwd,
+        );
+        let emit_mode = ctx.mode.to_hook_emit_mode();
+
+        let mut patches: Vec<Box<dyn ConfigPatch>> = Vec::new();
+        for &kind in ProviderAdapter::file_kinds(self) {
+            let dest = dest_root.join(kind.dir_name());
+            if let Some(hook) = ProviderAdapter::post_write_hook(
+                self,
+                kind,
+                &dest,
+                &dest_root,
+                emit_mode,
+                &owned_entries,
+                ctx.overwrite,
+            ) {
+                let host_path = dest_root.join(HookAdapter::host_filename(self));
+                patches.push(Box::new(PatchBridge::forward(hook, host_path)));
+            }
+        }
+
+        Ok(AdapterOutput {
+            files,
+            patches,
+            dest_root,
+        })
+    }
+
+    fn removal_patches(&self, ctx: &RemoveCtx<'_>) -> Vec<Box<dyn ConfigPatch>> {
+        let dest_root = ProviderAdapter::config_dir(
+            self,
+            ctx.mode,
+            ctx.target_dir.and_then(Path::to_str),
+            ctx.home,
+            ctx.cwd,
+        );
+        let emit_mode = ctx.mode.to_hook_emit_mode();
+        let mut patches: Vec<Box<dyn ConfigPatch>> = Vec::new();
+        for &kind in ProviderAdapter::file_kinds(self) {
+            let dest = dest_root.join(kind.dir_name());
+            if let Some(hook) =
+                ProviderAdapter::remove_post_write_hook(self, kind, &dest, &dest_root, emit_mode)
+            {
+                let host_path = dest_root.join(HookAdapter::host_filename(self));
+                patches.push(Box::new(PatchBridge::reverse(hook, host_path)));
+            }
+        }
+        patches
+    }
+
+    fn body_tool_name(&self, tool: &ToolFrontmatter) -> &'static str {
+        ProviderAdapter::body_tool_name(self, tool)
+    }
+
+    fn model_facing_name(&self, spec: &Spec, cfg: Option<&AdapterConfig>) -> String {
+        ProviderAdapter::model_facing_name(self, spec, cfg)
+    }
+}
 
 impl ProviderAdapter for ClaudeAdapter {
     fn adapt(
@@ -876,7 +960,7 @@ mod tests {
         });
 
         assert_eq!(
-            ClaudeAdapter.model_facing_name(&spec, Some(&cfg)),
+            ProviderAdapter::model_facing_name(&ClaudeAdapter, &spec, Some(&cfg)),
             "tw:test-agent"
         );
     }
@@ -884,7 +968,7 @@ mod tests {
     #[test]
     fn test_body_tool_name_question_maps_to_ask_user_question() {
         assert_eq!(
-            ClaudeAdapter.body_tool_name(&ToolFrontmatter::Question),
+            ProviderAdapter::body_tool_name(&ClaudeAdapter, &ToolFrontmatter::Question),
             "AskUserQuestion"
         );
     }
@@ -892,7 +976,7 @@ mod tests {
     #[test]
     fn test_body_tool_name_tasks_maps_to_todo_write() {
         assert_eq!(
-            ClaudeAdapter.body_tool_name(&ToolFrontmatter::Tasks),
+            ProviderAdapter::body_tool_name(&ClaudeAdapter, &ToolFrontmatter::Tasks),
             "TodoWrite"
         );
     }
@@ -900,7 +984,7 @@ mod tests {
     #[test]
     fn test_body_tool_name_subagent_maps_to_agent() {
         assert_eq!(
-            ClaudeAdapter.body_tool_name(&ToolFrontmatter::Subagent),
+            ProviderAdapter::body_tool_name(&ClaudeAdapter, &ToolFrontmatter::Subagent),
             "Agent"
         );
     }
@@ -908,7 +992,7 @@ mod tests {
     #[test]
     fn test_body_tool_name_skill_maps_to_skill() {
         assert_eq!(
-            ClaudeAdapter.body_tool_name(&ToolFrontmatter::Skill),
+            ProviderAdapter::body_tool_name(&ClaudeAdapter, &ToolFrontmatter::Skill),
             "Skill"
         );
     }
@@ -1194,7 +1278,7 @@ mod tests {
         });
 
         assert_eq!(
-            ClaudeAdapter.model_facing_name(&spec, Some(&cfg)),
+            ProviderAdapter::model_facing_name(&ClaudeAdapter, &spec, Some(&cfg)),
             "tw-test-agent"
         );
     }

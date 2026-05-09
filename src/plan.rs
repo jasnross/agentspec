@@ -145,8 +145,100 @@ pub fn delete_host_file_and_rmdir_parent(host_path: &Path, dry_run: bool) -> any
 ///
 /// Hooks capture their own context (paths, config) when constructed.
 /// Emit calls `run(dry_run)` without knowing what the hook does.
-pub trait PostWriteHook: std::fmt::Debug {
+///
+/// `Send + Sync` is required so a `Box<dyn PostWriteHook>` can be wrapped in
+/// a `ConfigPatch`-implementing bridge during the trait-API consolidation
+/// bridge phase. All existing patch impls hold only `Send + Sync` data, so
+/// the bound is satisfied by today's implementations.
+pub trait PostWriteHook: std::fmt::Debug + Send + Sync {
     fn run(&self, dry_run: bool) -> anyhow::Result<()>;
+}
+
+/// Direction of a [`PatchBridge`] — disambiguates which underlying
+/// `PostWriteHook` impl is being invoked.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BridgeDirection {
+    /// Wraps a forward (sync-direction) `PostWriteHook` such as
+    /// `HooksPatch` or `OpenCodeInstructionsPatch`. `ConfigPatch::run`
+    /// invokes the wrapped hook; `ConfigPatch::run_remove` is unreachable
+    /// (callers must construct a `Reverse` bridge for the remove pipeline).
+    Forward,
+    /// Wraps a reverse (remove-direction) `PostWriteHook` such as
+    /// `RemoveHooksPatch` or `OpenCodeRemoveInstructionsPatch`.
+    /// `ConfigPatch::run_remove` invokes the wrapped hook; `ConfigPatch::run`
+    /// is unreachable (callers must construct a `Forward` bridge for the
+    /// sync pipeline).
+    Reverse,
+}
+
+/// Bridge wrapper that adapts an existing `Box<dyn PostWriteHook>` to the
+/// new `ConfigPatch` trait during the bridge phase of the trait-API
+/// consolidation.
+///
+/// Each `PatchBridge` represents one direction of one host-config patch. A
+/// sync-pipeline patch is a `Forward` bridge wrapping `HooksPatch` (etc.); a
+/// remove-pipeline patch is a `Reverse` bridge wrapping `RemoveHooksPatch`
+/// (etc.). The unreachable arm fires only if the orchestrator misroutes a
+/// patch (sync calling `run_remove`, or remove calling `run`).
+///
+/// Removed in the Phase 2 cleanup commit when adapters return real
+/// bidirectional `ConfigPatch` impls and the `PostWriteHook` trait disappears.
+#[derive(Debug)]
+pub struct PatchBridge {
+    inner: Box<dyn PostWriteHook>,
+    direction: BridgeDirection,
+    host_path: PathBuf,
+    manifest_targets: Vec<PathBuf>,
+}
+
+impl PatchBridge {
+    /// Wrap a forward (sync-direction) patch.
+    pub fn forward(inner: Box<dyn PostWriteHook>, host_path: PathBuf) -> Self {
+        Self {
+            inner,
+            direction: BridgeDirection::Forward,
+            manifest_targets: vec![host_path.clone()],
+            host_path,
+        }
+    }
+
+    /// Wrap a reverse (remove-direction) patch.
+    pub fn reverse(inner: Box<dyn PostWriteHook>, host_path: PathBuf) -> Self {
+        Self {
+            inner,
+            direction: BridgeDirection::Reverse,
+            manifest_targets: vec![host_path.clone()],
+            host_path,
+        }
+    }
+}
+
+impl ConfigPatch for PatchBridge {
+    fn run(&self, dry_run: bool) -> anyhow::Result<()> {
+        match self.direction {
+            BridgeDirection::Forward => self.inner.run(dry_run),
+            BridgeDirection::Reverse => unreachable!(
+                "PatchBridge::run called on a Reverse bridge — sync pipeline misrouted a remove patch"
+            ),
+        }
+    }
+
+    fn run_remove(&self, dry_run: bool) -> anyhow::Result<()> {
+        match self.direction {
+            BridgeDirection::Reverse => self.inner.run(dry_run),
+            BridgeDirection::Forward => unreachable!(
+                "PatchBridge::run_remove called on a Forward bridge — remove pipeline misrouted a sync patch"
+            ),
+        }
+    }
+
+    fn host_path(&self) -> &Path {
+        &self.host_path
+    }
+
+    fn manifest_targets(&self) -> &[PathBuf] {
+        &self.manifest_targets
+    }
 }
 
 /// Bidirectional post-write patch for the unified `Adapter` trait surface.
