@@ -11,12 +11,11 @@ use super::hooks_helpers::{
     value_to_cst_input,
 };
 use super::{
-    Adapter, AdapterOutput, CompileCtx, HookAdapter, ProviderAdapter, RemoveCtx,
-    SyncDestinationMode, TidyOutcome,
+    Adapter, AdapterOutput, CompileCtx, RemovalOutput, RemoveCtx, SyncDestinationMode, TidyOutcome,
 };
-use crate::compile::{AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode, HookSynthesis};
-use crate::hooks_merge::{HooksPatch, RemoveHooksPatch};
-use crate::plan::{ConfigPatch, FileKind, PatchBridge, PostWriteHook, expand_tilde};
+use crate::compile::{AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode};
+use crate::hooks_merge::{merge_owned, remove_owned};
+use crate::plan::{ConfigPatch, FileKind, expand_tilde};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
 use crate::spec::{AgentSpec, HookEvent, HookSpec, RuleSpec, SkillSpec, Spec, ToolFrontmatter};
@@ -46,6 +45,9 @@ struct CursorRuleFrontmatter {
     always_apply: bool,
 }
 
+const HOST_FILENAME: &str = "hooks.json";
+const HOOK_DOTDIR: &str = ".cursor";
+
 /// Zero-sized adapter for the Cursor provider.
 #[derive(Debug)]
 pub struct CursorAdapter;
@@ -54,43 +56,40 @@ impl Adapter for CursorAdapter {
     fn compile(&self, specs: &[Spec], ctx: &CompileCtx<'_>) -> Result<AdapterOutput> {
         let mut files = Vec::new();
         for spec in specs {
-            let mut adapted =
-                ProviderAdapter::adapt(self, spec.clone(), ctx.presets, ctx.adapter_config)?;
-            files.append(&mut adapted);
+            match spec {
+                Spec::Agent(s) => files.extend(adapt_agent_spec(
+                    s.clone(),
+                    ctx.presets,
+                    ctx.adapter_config,
+                )?),
+                Spec::Skill(s) => files.extend(adapt_skill_spec(s.clone(), ctx.adapter_config)?),
+                Spec::Rule(s) => files.extend(adapt_rule_spec(s.clone(), ctx.adapter_config)?),
+                // Hook scripts are emitted by `synthesize_hooks` once per provider —
+                // see the matching note in `claude::ClaudeAdapter::compile`.
+                Spec::Hook(_) => {}
+            }
         }
 
         let hook_specs: Vec<&HookSpec> = specs
             .iter()
             .filter_map(|s| if let Spec::Hook(h) = s { Some(h) } else { None })
             .collect();
-        let synthesis = HookAdapter::synthesize_hooks(self, &hook_specs, ctx.adapter_config)?;
-        files.extend(synthesis.files);
-        let owned_entries = synthesis.entries;
-
-        let dest_root = ProviderAdapter::config_dir(
-            self,
-            ctx.mode,
-            ctx.target_dir.and_then(Path::to_str),
-            ctx.home,
-            ctx.cwd,
-        );
         let emit_mode = ctx.mode.to_hook_emit_mode();
+        let HookSynthesis {
+            entries: owned_entries,
+            files: hook_files,
+        } = synthesize_hooks(&hook_specs, emit_mode)?;
+        files.extend(hook_files);
+
+        let dest_root = config_dir(ctx.mode, ctx.target_dir, ctx.home, ctx.cwd);
 
         let mut patches: Vec<Box<dyn ConfigPatch>> = Vec::new();
-        for &kind in ProviderAdapter::file_kinds(self) {
-            let dest = dest_root.join(kind.dir_name());
-            if let Some(hook) = ProviderAdapter::post_write_hook(
-                self,
-                kind,
-                &dest,
-                &dest_root,
-                emit_mode,
-                &owned_entries,
-                ctx.overwrite,
-            ) {
-                let host_path = dest_root.join(HookAdapter::host_filename(self));
-                patches.push(Box::new(PatchBridge::forward(hook, host_path)));
-            }
+        if emit_mode.is_merged() {
+            patches.push(Box::new(CursorHooksPatch {
+                host_path: dest_root.join(HOST_FILENAME),
+                owned_entries,
+                force: ctx.overwrite,
+            }));
         }
 
         Ok(AdapterOutput {
@@ -100,71 +99,16 @@ impl Adapter for CursorAdapter {
         })
     }
 
-    fn removal_patches(&self, ctx: &RemoveCtx<'_>) -> Vec<Box<dyn ConfigPatch>> {
-        let dest_root = ProviderAdapter::config_dir(
-            self,
-            ctx.mode,
-            ctx.target_dir.and_then(Path::to_str),
-            ctx.home,
-            ctx.cwd,
-        );
+    fn removal_patches(&self, ctx: &RemoveCtx<'_>) -> RemovalOutput {
+        let dest_root = config_dir(ctx.mode, ctx.target_dir, ctx.home, ctx.cwd);
         let emit_mode = ctx.mode.to_hook_emit_mode();
         let mut patches: Vec<Box<dyn ConfigPatch>> = Vec::new();
-        for &kind in ProviderAdapter::file_kinds(self) {
-            let dest = dest_root.join(kind.dir_name());
-            if let Some(hook) =
-                ProviderAdapter::remove_post_write_hook(self, kind, &dest, &dest_root, emit_mode)
-            {
-                let host_path = dest_root.join(HookAdapter::host_filename(self));
-                patches.push(Box::new(PatchBridge::reverse(hook, host_path)));
-            }
+        if emit_mode.is_merged() {
+            patches.push(Box::new(CursorRemoveHooksPatch {
+                host_path: dest_root.join(HOST_FILENAME),
+            }));
         }
-        patches
-    }
-
-    fn body_tool_name(&self, tool: &ToolFrontmatter) -> &'static str {
-        ProviderAdapter::body_tool_name(self, tool)
-    }
-
-    fn model_facing_name(&self, spec: &Spec, cfg: Option<&AdapterConfig>) -> String {
-        ProviderAdapter::model_facing_name(self, spec, cfg)
-    }
-
-    fn file_kinds(&self) -> &'static [FileKind] {
-        ProviderAdapter::file_kinds(self)
-    }
-
-    fn remove_dest_root(&self, ctx: &RemoveCtx<'_>) -> PathBuf {
-        ProviderAdapter::config_dir(
-            self,
-            ctx.mode,
-            ctx.target_dir.and_then(Path::to_str),
-            ctx.home,
-            ctx.cwd,
-        )
-    }
-
-    fn emits_hooks(&self) -> bool {
-        true
-    }
-}
-
-impl ProviderAdapter for CursorAdapter {
-    fn adapt(
-        &self,
-        spec: Spec,
-        presets: &ProviderPresetsMap,
-        cfg: Option<&AdapterConfig>,
-    ) -> Result<Vec<GeneratedFile>> {
-        match spec {
-            Spec::Agent(s) => adapt_agent_spec(s, presets, cfg),
-            Spec::Skill(s) => adapt_skill_spec(s, cfg),
-            Spec::Rule(s) => adapt_rule_spec(s, cfg),
-            // Hook scripts are emitted by `synthesize_hooks` once per provider —
-            // see the matching note in `claude::ClaudeAdapter::adapt` for the
-            // rationale.
-            Spec::Hook(_) => Ok(Vec::new()),
-        }
+        RemovalOutput { patches, dest_root }
     }
 
     /// Resolve a canonical tool to the name a Cursor spec body should reference.
@@ -200,124 +144,17 @@ impl ProviderAdapter for CursorAdapter {
         }
     }
 
-    fn post_write_hook(
-        &self,
-        kind: FileKind,
-        _dest: &Path,
-        config_dir: &Path,
-        emit_mode: HookEmitMode,
-        owned_entries: &[EmittedHookEntry],
-        overwrite: bool,
-    ) -> Option<Box<dyn PostWriteHook>> {
-        if kind != FileKind::Hooks {
-            return None;
-        }
-        if !emit_mode.is_merged() {
-            return None;
-        }
-        Some(Box::new(HooksPatch {
-            adapter: &CursorAdapter,
-            host_path: config_dir.join(self.host_filename()),
-            owned_entries: owned_entries.to_vec(),
-            force: overwrite,
-        }))
-    }
-
-    /// Factory for Cursor's remove post-write hook.
-    ///
-    /// `_dest` is accepted for signature symmetry — Cursor identifies its
-    /// targets by on-disk `_agentspec_id` sentinels.
-    fn remove_post_write_hook(
-        &self,
-        kind: FileKind,
-        _dest: &Path,
-        config_dir: &Path,
-        emit_mode: HookEmitMode,
-    ) -> Option<Box<dyn PostWriteHook>> {
-        if kind != FileKind::Hooks {
-            return None;
-        }
-        if !emit_mode.is_merged() {
-            return None;
-        }
-        Some(Box::new(RemoveHooksPatch {
-            adapter: &CursorAdapter,
-            host_path: config_dir.join(self.host_filename()),
-        }))
-    }
-
-    fn file_kinds(&self) -> &'static [FileKind] {
-        &[
-            FileKind::Agents,
-            FileKind::Rules,
-            FileKind::Skills,
-            FileKind::Hooks,
-        ]
-    }
-
-    fn user_dest_dir(&self, home: &Path, kind: FileKind) -> PathBuf {
-        home.join(".cursor").join(kind.dir_name())
-    }
-
-    fn project_dest_dir(&self, cwd: &Path, kind: FileKind) -> PathBuf {
-        cwd.join(".cursor").join(kind.dir_name())
-    }
-
-    fn config_dir(
-        &self,
-        mode: SyncDestinationMode,
-        dir: Option<&str>,
-        home: &Path,
-        cwd: &Path,
-    ) -> PathBuf {
-        match mode {
-            SyncDestinationMode::User => home.join(".cursor"),
-            SyncDestinationMode::Project => cwd.join(".cursor"),
-            SyncDestinationMode::Path => {
-                dir.map_or_else(|| home.join(".cursor"), |d| expand_tilde(d, home))
-            }
-        }
+    fn emits_hooks(&self) -> bool {
+        true
     }
 }
 
-impl HookAdapter for CursorAdapter {
-    /// Synthesize the per-provider `hooks/hooks.json` plus the canonical entry
-    /// list for the downstream merged-mode merge.
-    fn synthesize_hooks(
-        &self,
-        specs: &[&HookSpec],
-        cfg: Option<&AdapterConfig>,
-    ) -> Result<HookSynthesis> {
-        if specs.is_empty() {
-            return Ok(HookSynthesis::default());
-        }
-
-        let emit_mode = cfg
-            .and_then(|c| c.hook_emit_mode)
-            .unwrap_or(HookEmitMode::Bundled);
-
-        let entries = build_emitted_hook_entries(specs, ".cursor", emit_mode);
-        let mut files = build_hook_script_files(Provider::Cursor, specs);
-        if matches!(emit_mode, HookEmitMode::Bundled) {
-            let json = build_cursor_hooks_json(&entries)?;
-            files.push(GeneratedFile::text(
-                Provider::Cursor,
-                Path::new("hooks").join("hooks.json"),
-                json,
-            ));
-        }
-        Ok(HookSynthesis { entries, files })
-    }
-
+impl CursorAdapter {
     /// Translate a canonical `HookEvent` to Cursor's camelCase event name.
     ///
     /// Note that `user_prompt_submit` maps to `beforeSubmitPrompt` — not a simple
-    /// casing transform. See `thoughts/research/2026-05-03-provider-agnostic-hooks-comparison.md`
-    /// §2.3 for the documented event list. Several mappings (postToolUseFailure,
-    /// sessionStart, sessionEnd, subagentStart, subagentStop) are based on the
-    /// research doc's listing and may need adjustment if Cursor's docs diverge —
-    /// empirical verification against a real Cursor build is still pending.
-    fn event_name(&self, event: HookEvent) -> &'static str {
+    /// casing transform.
+    pub(crate) fn event_name(event: HookEvent) -> &'static str {
         match event {
             HookEvent::PreToolUse => "preToolUse",
             HookEvent::PostToolUse => "postToolUse",
@@ -336,7 +173,7 @@ impl HookAdapter for CursorAdapter {
     /// Cursor differs from Claude by placing `matcher` on each entry directly
     /// (Claude wraps entries in matcher groups). The `_agentspec_id` sentinel is
     /// emitted in both shapes for symmetric ownership tracking.
-    fn entry_to_json(&self, e: &EmittedHookEntry) -> serde_json::Value {
+    pub(crate) fn entry_to_json(e: &EmittedHookEntry) -> serde_json::Value {
         use serde_json::{Map, json};
         let mut obj = Map::new();
         obj.insert("type".to_string(), json!("command"));
@@ -351,16 +188,12 @@ impl HookAdapter for CursorAdapter {
         serde_json::Value::Object(obj)
     }
 
-    fn hook_command_dotdir(&self) -> &'static str {
-        ".cursor"
-    }
-
-    fn host_filename(&self) -> &'static str {
-        "hooks.json"
-    }
-
-    fn merge_into(
-        &self,
+    /// Merge agentspec-owned entries into a parsed top-level `hooks.json`
+    /// CST object. Sets `version: 1` if missing (without overwriting a
+    /// user-authored value), opens the `hooks` object, and appends entries
+    /// directly under their event arrays — Cursor's shape is one nesting
+    /// level shallower than Claude's (no matcher-group wrapper).
+    pub(crate) fn merge_into_hooks(
         top: &CstObject,
         owned_entries: &[EmittedHookEntry],
         force: bool,
@@ -368,10 +201,10 @@ impl HookAdapter for CursorAdapter {
         // Set `version: 1` if missing. Don't overwrite a user-authored value,
         // even if it's a different version — the user's intent wins.
         // Order matters: the version injection runs before the hooks-object
-        // open. The shell's no-op-skip guard in `hooks_merge::merge_owned`
-        // returns early only when both `owned_entries` is empty AND
-        // `top.get("hooks")` is `None`, so a user with `hooks: { ... }` but no
-        // agentspec entries this run still gets `version: 1` injected if absent.
+        // open. The shell's no-op-skip guard returns early only when both
+        // `entries` is empty AND `top.get("hooks")` is `None`, so a user with
+        // `hooks: { ... }` but no agentspec entries this run still gets
+        // `version: 1` injected if absent.
         if top.get("version").is_none() {
             top.append("version", CstInputValue::Number("1".to_string()));
         }
@@ -388,7 +221,7 @@ impl HookAdapter for CursorAdapter {
         let mut by_event: BTreeMap<&'static str, Vec<&EmittedHookEntry>> = BTreeMap::new();
         for e in owned_entries {
             by_event
-                .entry(self.event_name(e.event))
+                .entry(Self::event_name(e.event))
                 .or_default()
                 .push(e);
         }
@@ -400,13 +233,22 @@ impl HookAdapter for CursorAdapter {
                 &format!("hooks.{event_name}"),
             )?;
             for &e in entries {
-                event_arr.append(value_to_cst_input(self.entry_to_json(e)));
+                event_arr.append(value_to_cst_input(Self::entry_to_json(e)));
             }
         }
         Ok(())
     }
 
-    fn tidy_after_remove(&self, top: &CstObject) -> TidyOutcome {
+    /// Strip agentspec-owned entries from a parsed `hooks.json` CST top
+    /// object, prune emptied containers, and report whether the host file
+    /// should be deleted.
+    ///
+    /// Cursor predicate: delete iff at least one `_agentspec_id`-tagged entry
+    /// was removed AND the residual is either empty OR exactly one `version`
+    /// key (any value). Cursor-exclusive — sync injects `version: 1` if
+    /// absent and never overwrites a user value, so a residual
+    /// `{version: <n>}` carries no information beyond file existence.
+    pub(crate) fn tidy_hooks(top: &CstObject) -> TidyOutcome {
         let Some(hooks_obj) = top.object_value("hooks") else {
             return TidyOutcome {
                 user_entries_remaining: 0,
@@ -423,11 +265,6 @@ impl HookAdapter for CursorAdapter {
             hooks_prop.remove();
         }
 
-        // Cursor predicate: delete iff we actually removed at least one
-        // agentspec-owned entry AND the residual is either empty OR exactly
-        // one `version` key (any value). Cursor-exclusive — sync injects
-        // `version: 1` if absent and never overwrites a user value, so a
-        // residual `{version: <n>}` carries no information beyond file existence.
         let surviving = top.properties();
         let only_version_remains = surviving.len() == 1 && top.get("version").is_some();
         let file_should_be_deleted =
@@ -437,6 +274,116 @@ impl HookAdapter for CursorAdapter {
             user_entries_remaining: count_user_entries(top),
             file_should_be_deleted,
         }
+    }
+}
+
+/// Synthesizes the per-provider `hooks/hooks.json` plus the canonical entry
+/// list for the downstream merged-mode merge.
+fn synthesize_hooks(specs: &[&HookSpec], emit_mode: HookEmitMode) -> Result<HookSynthesis> {
+    if specs.is_empty() {
+        return Ok(HookSynthesis::default());
+    }
+
+    let entries = build_emitted_hook_entries(specs, HOOK_DOTDIR, emit_mode);
+    let mut files = build_hook_script_files(Provider::Cursor, specs);
+    if matches!(emit_mode, HookEmitMode::Bundled) {
+        let json = build_cursor_hooks_json(&entries)?;
+        files.push(GeneratedFile::text(
+            Provider::Cursor,
+            FileKind::Hooks,
+            Path::new("hooks").join("hooks.json"),
+            json,
+        ));
+    }
+    Ok(HookSynthesis { entries, files })
+}
+
+#[derive(Debug, Default)]
+struct HookSynthesis {
+    entries: Vec<EmittedHookEntry>,
+    files: Vec<GeneratedFile>,
+}
+
+fn config_dir(
+    mode: SyncDestinationMode,
+    target_dir: Option<&Path>,
+    home: &Path,
+    cwd: &Path,
+) -> PathBuf {
+    match mode {
+        SyncDestinationMode::User => home.join(HOOK_DOTDIR),
+        SyncDestinationMode::Project => cwd.join(HOOK_DOTDIR),
+        SyncDestinationMode::Path => target_dir.map_or_else(
+            || home.join(HOOK_DOTDIR),
+            |d| {
+                d.to_str()
+                    .map_or_else(|| d.to_path_buf(), |s| expand_tilde(s, home))
+            },
+        ),
+    }
+}
+
+/// Forward-direction hooks.json patch.
+#[derive(Debug)]
+pub(crate) struct CursorHooksPatch {
+    host_path: PathBuf,
+    owned_entries: Vec<EmittedHookEntry>,
+    force: bool,
+}
+
+impl ConfigPatch for CursorHooksPatch {
+    fn run(&self, dry_run: bool) -> Result<()> {
+        let entries = &self.owned_entries;
+        let force = self.force;
+        merge_owned(
+            &self.host_path,
+            entries.is_empty(),
+            |top| entries.is_empty() && top.get("hooks").is_none(),
+            |top| CursorAdapter::merge_into_hooks(top, entries, force),
+            dry_run,
+        )
+    }
+
+    fn run_remove(&self, _dry_run: bool) -> Result<()> {
+        unreachable!(
+            "CursorHooksPatch is forward-only; the remove pipeline constructs CursorRemoveHooksPatch"
+        )
+    }
+
+    fn host_path(&self) -> &Path {
+        &self.host_path
+    }
+
+    fn manifest_targets(&self) -> &[PathBuf] {
+        std::slice::from_ref(&self.host_path)
+    }
+}
+
+/// Reverse-direction hooks.json patch.
+#[derive(Debug)]
+pub(crate) struct CursorRemoveHooksPatch {
+    host_path: PathBuf,
+}
+
+impl ConfigPatch for CursorRemoveHooksPatch {
+    fn run(&self, _dry_run: bool) -> Result<()> {
+        unreachable!(
+            "CursorRemoveHooksPatch is reverse-only; the sync pipeline constructs CursorHooksPatch"
+        )
+    }
+
+    fn run_remove(&self, dry_run: bool) -> Result<()> {
+        let report = remove_owned(&self.host_path, CursorAdapter::tidy_hooks, dry_run)?;
+        report.print_summary(dry_run);
+        Ok(())
+    }
+
+    fn host_path(&self) -> &Path {
+        &self.host_path
+    }
+
+    fn manifest_targets(&self) -> &[PathBuf] {
+        std::slice::from_ref(&self.host_path)
     }
 }
 
@@ -517,7 +464,12 @@ fn adapt_agent_spec(
     let body = spec.body.trim();
     let content = format!("---\n{frontmatter_str}---\n\n{body}");
 
-    Ok(vec![GeneratedFile::text(Provider::Cursor, path, content)])
+    Ok(vec![GeneratedFile::text(
+        Provider::Cursor,
+        FileKind::Agents,
+        path,
+        content,
+    )])
 }
 
 fn adapt_skill_spec(spec: SkillSpec, cfg: Option<&AdapterConfig>) -> Result<Vec<GeneratedFile>> {
@@ -544,6 +496,7 @@ fn adapt_skill_spec(spec: SkillSpec, cfg: Option<&AdapterConfig>) -> Result<Vec<
 
     let mut files = vec![GeneratedFile::text(
         Provider::Cursor,
+        FileKind::Skills,
         skill_dir.join("SKILL.md"),
         content,
     )];
@@ -551,6 +504,7 @@ fn adapt_skill_spec(spec: SkillSpec, cfg: Option<&AdapterConfig>) -> Result<Vec<
     for sf in spec.supporting_files {
         files.push(GeneratedFile::binary(
             Provider::Cursor,
+            FileKind::Skills,
             skill_dir.join(&sf.relative_path),
             sf.content,
             Some(sf.mode),
@@ -575,7 +529,12 @@ fn adapt_rule_spec(spec: RuleSpec, cfg: Option<&AdapterConfig>) -> Result<Vec<Ge
     let file_prefix = cfg.and_then(AdapterConfig::file_prefix).unwrap_or_default();
     let path = Path::new("rules").join(format!("{file_prefix}{}.mdc", spec.frontmatter.id));
 
-    Ok(vec![GeneratedFile::text(Provider::Cursor, path, content)])
+    Ok(vec![GeneratedFile::text(
+        Provider::Cursor,
+        FileKind::Rules,
+        path,
+        content,
+    )])
 }
 
 // ── hooks.json synthesis ────────────────────────────────────────────────────
@@ -583,24 +542,21 @@ fn adapt_rule_spec(spec: RuleSpec, cfg: Option<&AdapterConfig>) -> Result<Vec<Ge
 // Cursor's documented `hooks.json` shape (see <https://cursor.com/docs/hooks>):
 //   { "version": 1, "hooks": { "<eventName>": [<entry>, <entry>, ...] } }
 //
-// Per-entry shape lives on `HookAdapter::entry_to_json` (matcher per-entry,
-// sentinel field). The CST-aware merge layer calls it via the trait so the
-// two emission paths stay in lockstep.
+// Per-entry shape lives on `CursorAdapter::entry_to_json` (matcher per-entry,
+// sentinel field). The CST-aware merge layer calls it via
+// `CursorAdapter::merge_into_hooks` so the two emission paths stay in lockstep.
 
 /// Cursor places the `matcher` on each entry directly; entries within an
-/// event preserve insertion order from the spec list. Per-entry serialization
-/// delegates to `CursorAdapter::entry_to_json` so the bundled emission path
-/// and the merged-mode merge layer share one source of truth for the entry
-/// shape.
+/// event preserve insertion order from the spec list.
 fn build_cursor_hooks_json(entries: &[EmittedHookEntry]) -> Result<String> {
     use serde_json::{Map, Value, json};
 
     let mut by_event: BTreeMap<&'static str, Vec<Value>> = BTreeMap::new();
     for entry in entries {
         by_event
-            .entry(CursorAdapter.event_name(entry.event))
+            .entry(CursorAdapter::event_name(entry.event))
             .or_default()
-            .push(CursorAdapter.entry_to_json(entry));
+            .push(CursorAdapter::entry_to_json(entry));
     }
 
     let mut hooks_map = Map::new();
@@ -623,6 +579,39 @@ mod tests {
         AgentFrontmatter, AgentSpec, RuleFrontmatter, RuleSpec, SkillFrontmatter, SkillSpec,
     };
 
+    fn compile_one(spec: Spec, cfg: Option<&AdapterConfig>) -> Vec<GeneratedFile> {
+        let presets = HashMap::new();
+        let home = Path::new("/tmp/home");
+        let cwd = Path::new("/tmp/cwd");
+        let ctx = CompileCtx {
+            mode: SyncDestinationMode::Path,
+            home,
+            cwd,
+            target_dir: None,
+            presets: &presets,
+            adapter_config: cfg,
+            overwrite: false,
+        };
+        CursorAdapter.compile(&[spec], &ctx).expect("compile").files
+    }
+
+    fn make_hook_spec(id: &str, event: HookEvent, matcher: Option<&str>) -> HookSpec {
+        HookSpec {
+            path: std::path::PathBuf::from("/tmp/hooks.toml"),
+            frontmatter: crate::spec::HookFrontmatter {
+                id: id.to_string(),
+                event,
+                script: format!("scripts/{id}.sh").into(),
+                matcher: matcher.map(str::to_string),
+                timeout: None,
+                description: None,
+                tags: None,
+            },
+            body: String::new(),
+            supporting_files: Vec::new(),
+        }
+    }
+
     #[test]
     fn test_adapt_agent_output_format() {
         let spec = Spec::Agent(AgentSpec {
@@ -637,9 +626,7 @@ mod tests {
             body: "Body.".to_string(),
         });
 
-        let files = CursorAdapter
-            .adapt(spec, &HashMap::new(), None)
-            .expect("expected value");
+        let files = compile_one(spec, None);
         let content = String::from_utf8(files[0].content.clone()).expect("expected value");
 
         let expected = concat!(
@@ -673,9 +660,7 @@ mod tests {
             body: "Body.".to_string(),
         });
 
-        let files = CursorAdapter
-            .adapt(spec, &HashMap::new(), Some(&cfg))
-            .expect("expected value");
+        let files = compile_one(spec, Some(&cfg));
         assert_eq!(files[0].path.to_string_lossy(), "agents/tw-test-agent.md");
         let content = String::from_utf8(files[0].content.clone()).expect("expected value");
         assert!(
@@ -706,9 +691,7 @@ mod tests {
             supporting_files: vec![],
         });
 
-        let files = CursorAdapter
-            .adapt(spec, &HashMap::new(), Some(&cfg))
-            .expect("expected value");
+        let files = compile_one(spec, Some(&cfg));
         assert_eq!(
             files[0].path.to_string_lossy(),
             "skills/tw-test-skill/SKILL.md"
@@ -723,79 +706,60 @@ mod tests {
     #[test]
     fn test_body_tool_name_full_mapping() {
         assert_eq!(
-            ProviderAdapter::body_tool_name(&CursorAdapter, &ToolFrontmatter::Read),
+            CursorAdapter.body_tool_name(&ToolFrontmatter::Read),
             "Read files"
         );
         assert_eq!(
-            ProviderAdapter::body_tool_name(&CursorAdapter, &ToolFrontmatter::Write),
+            CursorAdapter.body_tool_name(&ToolFrontmatter::Write),
             "Edit files"
         );
         assert_eq!(
-            ProviderAdapter::body_tool_name(&CursorAdapter, &ToolFrontmatter::Edit),
+            CursorAdapter.body_tool_name(&ToolFrontmatter::Edit),
             "Edit files"
         );
         assert_eq!(
-            ProviderAdapter::body_tool_name(&CursorAdapter, &ToolFrontmatter::Grep),
+            CursorAdapter.body_tool_name(&ToolFrontmatter::Grep),
             "Search files and folders"
         );
         assert_eq!(
-            ProviderAdapter::body_tool_name(&CursorAdapter, &ToolFrontmatter::Glob),
+            CursorAdapter.body_tool_name(&ToolFrontmatter::Glob),
             "Search files and folders"
         );
         assert_eq!(
-            ProviderAdapter::body_tool_name(&CursorAdapter, &ToolFrontmatter::Bash),
+            CursorAdapter.body_tool_name(&ToolFrontmatter::Bash),
             "Run shell commands"
         );
         assert_eq!(
-            ProviderAdapter::body_tool_name(&CursorAdapter, &ToolFrontmatter::WebSearch),
+            CursorAdapter.body_tool_name(&ToolFrontmatter::WebSearch),
             "Web"
         );
         assert_eq!(
-            ProviderAdapter::body_tool_name(&CursorAdapter, &ToolFrontmatter::WebFetch),
+            CursorAdapter.body_tool_name(&ToolFrontmatter::WebFetch),
             "URL fetcher"
         );
         assert_eq!(
-            ProviderAdapter::body_tool_name(&CursorAdapter, &ToolFrontmatter::Question),
+            CursorAdapter.body_tool_name(&ToolFrontmatter::Question),
             "Ask questions"
         );
         assert_eq!(
-            ProviderAdapter::body_tool_name(&CursorAdapter, &ToolFrontmatter::Tasks),
+            CursorAdapter.body_tool_name(&ToolFrontmatter::Tasks),
             "TODO tracker"
         );
         assert_eq!(
-            ProviderAdapter::body_tool_name(&CursorAdapter, &ToolFrontmatter::Subagent),
+            CursorAdapter.body_tool_name(&ToolFrontmatter::Subagent),
             "Task"
         );
         assert_eq!(
-            ProviderAdapter::body_tool_name(&CursorAdapter, &ToolFrontmatter::Skill),
+            CursorAdapter.body_tool_name(&ToolFrontmatter::Skill),
             "Skill runner"
         );
-    }
-
-    // -- Hook synthesis tests --
-
-    fn make_hook_spec(id: &str, event: HookEvent, matcher: Option<&str>) -> HookSpec {
-        HookSpec {
-            path: std::path::PathBuf::from("/tmp/hooks.toml"),
-            frontmatter: crate::spec::HookFrontmatter {
-                id: id.to_string(),
-                event,
-                script: format!("scripts/{id}.sh").into(),
-                matcher: matcher.map(str::to_string),
-                timeout: None,
-                description: None,
-                tags: None,
-            },
-            body: String::new(),
-            supporting_files: Vec::new(),
-        }
     }
 
     #[test]
     fn test_cursor_event_name_user_prompt_submit_special_case() {
         // The one mapping that isn't a simple casing transform.
         assert_eq!(
-            CursorAdapter.event_name(HookEvent::UserPromptSubmit),
+            CursorAdapter::event_name(HookEvent::UserPromptSubmit),
             "beforeSubmitPrompt"
         );
     }
@@ -803,50 +767,45 @@ mod tests {
     #[test]
     fn test_cursor_event_name_full_mapping() {
         assert_eq!(
-            CursorAdapter.event_name(HookEvent::PreToolUse),
+            CursorAdapter::event_name(HookEvent::PreToolUse),
             "preToolUse"
         );
         assert_eq!(
-            CursorAdapter.event_name(HookEvent::PostToolUse),
+            CursorAdapter::event_name(HookEvent::PostToolUse),
             "postToolUse"
         );
         assert_eq!(
-            CursorAdapter.event_name(HookEvent::PostToolUseFailure),
+            CursorAdapter::event_name(HookEvent::PostToolUseFailure),
             "postToolUseFailure"
         );
         assert_eq!(
-            CursorAdapter.event_name(HookEvent::SessionStart),
+            CursorAdapter::event_name(HookEvent::SessionStart),
             "sessionStart"
         );
         assert_eq!(
-            CursorAdapter.event_name(HookEvent::SessionEnd),
+            CursorAdapter::event_name(HookEvent::SessionEnd),
             "sessionEnd"
         );
-        assert_eq!(CursorAdapter.event_name(HookEvent::Stop), "stop");
+        assert_eq!(CursorAdapter::event_name(HookEvent::Stop), "stop");
         assert_eq!(
-            CursorAdapter.event_name(HookEvent::PreCompact),
+            CursorAdapter::event_name(HookEvent::PreCompact),
             "preCompact"
         );
         assert_eq!(
-            CursorAdapter.event_name(HookEvent::SubagentStart),
+            CursorAdapter::event_name(HookEvent::SubagentStart),
             "subagentStart"
         );
         assert_eq!(
-            CursorAdapter.event_name(HookEvent::SubagentStop),
+            CursorAdapter::event_name(HookEvent::SubagentStop),
             "subagentStop"
         );
     }
 
     #[test]
     fn test_synthesize_hooks_does_not_serialize_description() {
-        // `HookFrontmatter::description` is documented as informational;
-        // neither provider's host runtime consumes it. Lock that contract:
-        // a description on the spec must not appear in the emitted JSON.
         let mut spec = make_hook_spec("init", HookEvent::SessionStart, None);
         spec.frontmatter.description = Some("informational note".to_string());
-        let result = CursorAdapter
-            .synthesize_hooks(&[&spec], None)
-            .expect("expected value");
+        let result = synthesize_hooks(&[&spec], HookEmitMode::Bundled).expect("expected value");
         let content = String::from_utf8(
             result
                 .files
@@ -866,9 +825,7 @@ mod tests {
     #[test]
     fn test_synthesize_hooks_emits_version_field() {
         let spec = make_hook_spec("init", HookEvent::SessionStart, None);
-        let result = CursorAdapter
-            .synthesize_hooks(&[&spec], None)
-            .expect("expected value");
+        let result = synthesize_hooks(&[&spec], HookEmitMode::Bundled).expect("expected value");
         let content = String::from_utf8(
             result
                 .files
@@ -890,9 +847,7 @@ mod tests {
         // Cursor places `matcher` on each entry; verify it appears alongside
         // `command` in a single object literal (not as a group key).
         let spec = make_hook_spec("audit", HookEvent::PreToolUse, Some("Bash"));
-        let result = CursorAdapter
-            .synthesize_hooks(&[&spec], None)
-            .expect("expected value");
+        let result = synthesize_hooks(&[&spec], HookEmitMode::Bundled).expect("expected value");
         let content = String::from_utf8(
             result
                 .files
@@ -903,8 +858,6 @@ mod tests {
                 .clone(),
         )
         .expect("expected utf-8");
-        // Must contain matcher field on the entry (with same indentation as
-        // sibling fields like `command`).
         assert!(
             content.contains("\"matcher\": \"Bash\""),
             "expected per-entry matcher, got: {content}"
@@ -913,17 +866,8 @@ mod tests {
 
     #[test]
     fn test_synthesize_hooks_merged_user_emits_scripts_no_hooks_json() {
-        // Merged modes hand JSON emission to the generic `HooksPatch`, which
-        // dispatches through `HookAdapter::merge_into` to edit the host
-        // `<config>/hooks.json` instead. Scripts still flow through to disk.
-        let cfg = AdapterConfig {
-            hook_emit_mode: Some(HookEmitMode::MergedUser),
-            ..AdapterConfig::default()
-        };
         let spec = make_hook_spec("init", HookEvent::SessionStart, None);
-        let result = CursorAdapter
-            .synthesize_hooks(&[&spec], Some(&cfg))
-            .expect("expected ok");
+        let result = synthesize_hooks(&[&spec], HookEmitMode::MergedUser).expect("expected ok");
         assert_eq!(result.entries.len(), 1);
         assert!(
             !result
@@ -932,9 +876,6 @@ mod tests {
                 .any(|f| f.path.to_str() == Some("hooks/hooks.json")),
             "Merged mode must NOT emit hooks/hooks.json"
         );
-        // Anchor uses $HOME for User mode AND sets CLAUDE_PLUGIN_ROOT inline
-        // (Cursor aliases the var at plugin scope; outside that scope agentspec
-        // sets it explicitly so plugin-shaped scripts keep working).
         assert_eq!(
             result.entries[0].command,
             "CLAUDE_PLUGIN_ROOT=$HOME/.cursor $HOME/.cursor/hooks/scripts/init.sh"
@@ -958,14 +899,21 @@ mod tests {
             body: "Rule body.".to_string(),
         });
 
-        let files = CursorAdapter
-            .adapt(spec, &HashMap::new(), Some(&cfg))
-            .expect("expected value");
+        let files = compile_one(spec, Some(&cfg));
         assert_eq!(files[0].path.to_str(), Some("rules/tw-test-rule.mdc"));
     }
 
     #[test]
-    fn test_file_kinds_includes_hooks() {
-        assert!(Adapter::file_kinds(&CursorAdapter).contains(&FileKind::Hooks));
+    fn test_entry_to_cursor_json_places_matcher_on_entry() {
+        let e = EmittedHookEntry {
+            event: HookEvent::PreToolUse,
+            matcher: Some("Bash".to_string()),
+            command: "/path/to/script.sh".to_string(),
+            timeout: None,
+            agentspec_id: "audit".to_string(),
+        };
+        let v = CursorAdapter::entry_to_json(&e);
+        assert_eq!(v["matcher"], "Bash");
+        assert_eq!(v["_agentspec_id"], "audit");
     }
 }

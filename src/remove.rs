@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use agentspec::adapters::RemoveCtx;
-use agentspec::plan::{ConfigPatch, RemovePlan, RemoveWrite};
+use agentspec::plan::{ConfigPatch, FileKind, RemovePlan, RemoveWrite};
 use agentspec::provider::Provider;
 use anyhow::{Result, bail};
 
@@ -90,14 +90,17 @@ pub fn remove_plan(
             target_dir: target_dir_buf.as_deref(),
         };
 
-        let dest_root = adapter.remove_dest_root(&ctx);
-        post_write_patches.extend(adapter.removal_patches(&ctx));
+        let removal = adapter.removal_patches(&ctx);
+        let dest_root = removal.dest_root;
+        post_write_patches.extend(removal.patches);
 
         // Each (provider, kind) still gets a `RemoveWrite` so `emit_remove`
         // can delete every manifest-tracked file at the per-kind dest dir.
         // The destination is the adapter's `dest_root` joined with the kind
-        // dir name.
-        for &kind in adapter.file_kinds() {
+        // dir name. Iterate every `FileKind` so providers that previously
+        // emitted a kind they no longer support still get their stale
+        // manifest cleaned up.
+        for &kind in FileKind::all() {
             writes.push(RemoveWrite {
                 provider: *provider,
                 kind,

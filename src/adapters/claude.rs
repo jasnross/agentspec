@@ -12,12 +12,11 @@ use super::hooks_helpers::{
     prune_empty_event_arrays, value_to_cst_input,
 };
 use super::{
-    Adapter, AdapterOutput, CompileCtx, HookAdapter, ProviderAdapter, RemoveCtx,
-    SyncDestinationMode, TidyOutcome,
+    Adapter, AdapterOutput, CompileCtx, RemovalOutput, RemoveCtx, SyncDestinationMode, TidyOutcome,
 };
-use crate::compile::{AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode, HookSynthesis};
-use crate::hooks_merge::{HooksPatch, RemoveHooksPatch};
-use crate::plan::{ConfigPatch, FileKind, PatchBridge, PostWriteHook, expand_tilde};
+use crate::compile::{AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode};
+use crate::hooks_merge::{merge_owned, remove_owned};
+use crate::plan::{ConfigPatch, FileKind, expand_tilde};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
 use crate::spec::{AgentSpec, HookEvent, HookSpec, RuleSpec, SkillSpec, Spec, ToolFrontmatter};
@@ -81,6 +80,9 @@ enum ClaudeTool {
     Write,
 }
 
+const HOST_FILENAME: &str = "settings.json";
+const HOOK_DOTDIR: &str = ".claude";
+
 /// Zero-sized adapter for the Claude provider.
 #[derive(Debug)]
 pub struct ClaudeAdapter;
@@ -89,43 +91,51 @@ impl Adapter for ClaudeAdapter {
     fn compile(&self, specs: &[Spec], ctx: &CompileCtx<'_>) -> Result<AdapterOutput> {
         let mut files = Vec::new();
         for spec in specs {
-            let mut adapted =
-                ProviderAdapter::adapt(self, spec.clone(), ctx.presets, ctx.adapter_config)?;
-            files.append(&mut adapted);
+            match spec {
+                Spec::Agent(s) => files.extend(adapt_agent_spec(
+                    s.clone(),
+                    ctx.presets,
+                    ctx.adapter_config,
+                )?),
+                Spec::Skill(s) => files.extend(adapt_skill_spec(
+                    s.clone(),
+                    ctx.presets,
+                    ctx.adapter_config,
+                )?),
+                Spec::Rule(s) => files.extend(adapt_rule_spec(s, ctx.adapter_config)),
+                // Hook scripts (entry scripts AND helpers under `scripts/`) are
+                // emitted by `synthesize_hooks` exactly once per provider, drawn
+                // from `supporting_files` collected by `load_hook_specs`. Per-spec
+                // dispatch contributes nothing — emitting per spec would duplicate
+                // every helper for every hook entry.
+                Spec::Hook(_) => {}
+            }
         }
 
         let hook_specs: Vec<&HookSpec> = specs
             .iter()
             .filter_map(|s| if let Spec::Hook(h) = s { Some(h) } else { None })
             .collect();
-        let synthesis = HookAdapter::synthesize_hooks(self, &hook_specs, ctx.adapter_config)?;
-        files.extend(synthesis.files);
-        let owned_entries = synthesis.entries;
-
-        let dest_root = ProviderAdapter::config_dir(
-            self,
-            ctx.mode,
-            ctx.target_dir.and_then(Path::to_str),
-            ctx.home,
-            ctx.cwd,
-        );
         let emit_mode = ctx.mode.to_hook_emit_mode();
+        let HookSynthesis {
+            entries: owned_entries,
+            files: hook_files,
+        } = synthesize_hooks(&hook_specs, emit_mode)?;
+        files.extend(hook_files);
+
+        let dest_root = config_dir(ctx.mode, ctx.target_dir, ctx.home, ctx.cwd);
 
         let mut patches: Vec<Box<dyn ConfigPatch>> = Vec::new();
-        for &kind in ProviderAdapter::file_kinds(self) {
-            let dest = dest_root.join(kind.dir_name());
-            if let Some(hook) = ProviderAdapter::post_write_hook(
-                self,
-                kind,
-                &dest,
-                &dest_root,
-                emit_mode,
-                &owned_entries,
-                ctx.overwrite,
-            ) {
-                let host_path = dest_root.join(HookAdapter::host_filename(self));
-                patches.push(Box::new(PatchBridge::forward(hook, host_path)));
-            }
+        if emit_mode.is_merged() {
+            // Merged modes (User/Project): hand emission of the host file off
+            // to the post-write patcher, which surgically merges entries into
+            // `<config>/settings.json` while preserving user content. Bundled
+            // (Path) mode owns `hooks/hooks.json` outright — no patcher.
+            patches.push(Box::new(ClaudeHooksPatch {
+                host_path: dest_root.join(HOST_FILENAME),
+                owned_entries,
+                force: ctx.overwrite,
+            }));
         }
 
         Ok(AdapterOutput {
@@ -135,73 +145,16 @@ impl Adapter for ClaudeAdapter {
         })
     }
 
-    fn removal_patches(&self, ctx: &RemoveCtx<'_>) -> Vec<Box<dyn ConfigPatch>> {
-        let dest_root = ProviderAdapter::config_dir(
-            self,
-            ctx.mode,
-            ctx.target_dir.and_then(Path::to_str),
-            ctx.home,
-            ctx.cwd,
-        );
+    fn removal_patches(&self, ctx: &RemoveCtx<'_>) -> RemovalOutput {
+        let dest_root = config_dir(ctx.mode, ctx.target_dir, ctx.home, ctx.cwd);
         let emit_mode = ctx.mode.to_hook_emit_mode();
         let mut patches: Vec<Box<dyn ConfigPatch>> = Vec::new();
-        for &kind in ProviderAdapter::file_kinds(self) {
-            let dest = dest_root.join(kind.dir_name());
-            if let Some(hook) =
-                ProviderAdapter::remove_post_write_hook(self, kind, &dest, &dest_root, emit_mode)
-            {
-                let host_path = dest_root.join(HookAdapter::host_filename(self));
-                patches.push(Box::new(PatchBridge::reverse(hook, host_path)));
-            }
+        if emit_mode.is_merged() {
+            patches.push(Box::new(ClaudeRemoveHooksPatch {
+                host_path: dest_root.join(HOST_FILENAME),
+            }));
         }
-        patches
-    }
-
-    fn body_tool_name(&self, tool: &ToolFrontmatter) -> &'static str {
-        ProviderAdapter::body_tool_name(self, tool)
-    }
-
-    fn model_facing_name(&self, spec: &Spec, cfg: Option<&AdapterConfig>) -> String {
-        ProviderAdapter::model_facing_name(self, spec, cfg)
-    }
-
-    fn file_kinds(&self) -> &'static [FileKind] {
-        ProviderAdapter::file_kinds(self)
-    }
-
-    fn remove_dest_root(&self, ctx: &RemoveCtx<'_>) -> PathBuf {
-        ProviderAdapter::config_dir(
-            self,
-            ctx.mode,
-            ctx.target_dir.and_then(Path::to_str),
-            ctx.home,
-            ctx.cwd,
-        )
-    }
-
-    fn emits_hooks(&self) -> bool {
-        true
-    }
-}
-
-impl ProviderAdapter for ClaudeAdapter {
-    fn adapt(
-        &self,
-        spec: Spec,
-        presets: &ProviderPresetsMap,
-        cfg: Option<&AdapterConfig>,
-    ) -> Result<Vec<GeneratedFile>> {
-        match spec {
-            Spec::Agent(s) => adapt_agent_spec(s, presets, cfg),
-            Spec::Skill(s) => adapt_skill_spec(s, presets, cfg),
-            Spec::Rule(s) => Ok(adapt_rule_spec(&s, cfg)),
-            // Hook scripts (entry scripts AND helpers under `scripts/`) are
-            // emitted by `synthesize_hooks` exactly once per provider, drawn
-            // from `supporting_files` collected by `load_hook_specs`. Per-spec
-            // dispatch contributes nothing — emitting per spec would duplicate
-            // every helper for every hook entry.
-            Spec::Hook(_) => Ok(Vec::new()),
-        }
+        RemovalOutput { patches, dest_root }
     }
 
     /// Resolve a canonical tool to the name a Claude spec body should reference.
@@ -238,142 +191,14 @@ impl ProviderAdapter for ClaudeAdapter {
         }
     }
 
-    /// Factory for Claude's post-write hooks.
-    ///
-    /// `config_dir` is the parent of `dest` for hooks (e.g., `~/.claude` when
-    /// `dest` is `~/.claude/hooks`); the binary computes it at the call site
-    /// rather than the library inferring it from `dest`. `overwrite` reflects
-    /// the `--force` flag and lets the merge replace user-authored non-object
-    /// `hooks` values rather than erroring.
-    fn post_write_hook(
-        &self,
-        kind: FileKind,
-        _dest: &Path,
-        config_dir: &Path,
-        emit_mode: HookEmitMode,
-        owned_entries: &[EmittedHookEntry],
-        overwrite: bool,
-    ) -> Option<Box<dyn PostWriteHook>> {
-        if kind != FileKind::Hooks {
-            return None;
-        }
-        if !emit_mode.is_merged() {
-            // Bundled (Path) mode: agentspec owns the whole `hooks/hooks.json`
-            // produced by `synthesize_hooks`. No merge needed.
-            return None;
-        }
-        Some(Box::new(HooksPatch {
-            adapter: &ClaudeAdapter,
-            host_path: config_dir.join(self.host_filename()),
-            owned_entries: owned_entries.to_vec(),
-            force: overwrite,
-        }))
-    }
-
-    /// Factory for Claude's remove post-write hook.
-    ///
-    /// `_dest` is accepted for signature symmetry with the `OpenCode` factory
-    /// — Claude's remove patch identifies its targets by reading on-disk
-    /// `_agentspec_id` sentinels, so the per-kind dest dir doesn't affect what
-    /// gets removed.
-    ///
-    /// Returns `None` for non-`Hooks` kinds and for non-Merged emit modes (Path
-    /// mode owns `hooks/hooks.json` outright — its cleanup is handled by
-    /// `remove_manifest_tracked`'s dest-dir teardown, not via a settings.json
-    /// patch).
-    fn remove_post_write_hook(
-        &self,
-        kind: FileKind,
-        _dest: &Path,
-        config_dir: &Path,
-        emit_mode: HookEmitMode,
-    ) -> Option<Box<dyn PostWriteHook>> {
-        if kind != FileKind::Hooks {
-            return None;
-        }
-        if !emit_mode.is_merged() {
-            return None;
-        }
-        Some(Box::new(RemoveHooksPatch {
-            adapter: &ClaudeAdapter,
-            host_path: config_dir.join(self.host_filename()),
-        }))
-    }
-
-    fn file_kinds(&self) -> &'static [FileKind] {
-        &[
-            FileKind::Agents,
-            FileKind::Rules,
-            FileKind::Skills,
-            FileKind::Hooks,
-        ]
-    }
-
-    fn user_dest_dir(&self, home: &Path, kind: FileKind) -> PathBuf {
-        home.join(".claude").join(kind.dir_name())
-    }
-
-    fn project_dest_dir(&self, cwd: &Path, kind: FileKind) -> PathBuf {
-        cwd.join(".claude").join(kind.dir_name())
-    }
-
-    fn config_dir(
-        &self,
-        mode: SyncDestinationMode,
-        dir: Option<&str>,
-        home: &Path,
-        cwd: &Path,
-    ) -> PathBuf {
-        match mode {
-            SyncDestinationMode::User => home.join(".claude"),
-            SyncDestinationMode::Project => cwd.join(".claude"),
-            SyncDestinationMode::Path => {
-                dir.map_or_else(|| home.join(".claude"), |d| expand_tilde(d, home))
-            }
-        }
+    fn emits_hooks(&self) -> bool {
+        true
     }
 }
 
-impl HookAdapter for ClaudeAdapter {
-    /// Synthesize the per-provider `hooks/hooks.json` plus the canonical entry
-    /// list for the downstream merged-mode merge.
-    ///
-    /// Returns an empty `HookSynthesis` when there are no hook specs. In merged
-    /// modes, `entries` is populated for the post-write patcher to consume but
-    /// `files` omits `hooks/hooks.json` (the patcher edits the host
-    /// `settings.json` instead).
-    fn synthesize_hooks(
-        &self,
-        specs: &[&HookSpec],
-        cfg: Option<&AdapterConfig>,
-    ) -> Result<HookSynthesis> {
-        if specs.is_empty() {
-            return Ok(HookSynthesis::default());
-        }
-
-        let emit_mode = cfg
-            .and_then(|c| c.hook_emit_mode)
-            .unwrap_or(HookEmitMode::Bundled);
-
-        let entries = build_emitted_hook_entries(specs, ".claude", emit_mode);
-        let mut files = build_hook_script_files(Provider::Claude, specs);
-        if matches!(emit_mode, HookEmitMode::Bundled) {
-            // Bundled (Path) mode: agentspec owns the whole `hooks/hooks.json`.
-            // Merged modes hand emission to the generic `HooksPatch` (constructed
-            // by this adapter's `post_write_hook` factory), which dispatches
-            // through `HookAdapter::merge_into` to edit `settings.json` in place.
-            let json = build_claude_hooks_json(&entries)?;
-            files.push(GeneratedFile::text(
-                Provider::Claude,
-                Path::new("hooks").join("hooks.json"),
-                json,
-            ));
-        }
-        Ok(HookSynthesis { entries, files })
-    }
-
+impl ClaudeAdapter {
     /// Translate a canonical `HookEvent` to Claude's `PascalCase` event name.
-    fn event_name(&self, event: HookEvent) -> &'static str {
+    pub(crate) fn event_name(event: HookEvent) -> &'static str {
         match event {
             HookEvent::PreToolUse => "PreToolUse",
             HookEvent::PostToolUse => "PostToolUse",
@@ -390,8 +215,8 @@ impl HookAdapter for ClaudeAdapter {
 
     /// Build the JSON object for one entry in Claude's `hooks.json` matcher group.
     /// Used by both the bundled-mode whole-file synthesis (`build_claude_hooks_json`)
-    /// and the merged-mode CST merge (this adapter's `merge_into` impl).
-    fn entry_to_json(&self, e: &EmittedHookEntry) -> serde_json::Value {
+    /// and the merged-mode CST merge (`merge_into_settings`).
+    pub(crate) fn entry_to_json(e: &EmittedHookEntry) -> serde_json::Value {
         use serde_json::{Map, json};
         let mut obj = Map::new();
         obj.insert("type".to_string(), json!("command"));
@@ -403,16 +228,12 @@ impl HookAdapter for ClaudeAdapter {
         serde_json::Value::Object(obj)
     }
 
-    fn hook_command_dotdir(&self) -> &'static str {
-        ".claude"
-    }
-
-    fn host_filename(&self) -> &'static str {
-        "settings.json"
-    }
-
-    fn merge_into(
-        &self,
+    /// Merge agentspec-owned entries into a parsed top-level `settings.json`
+    /// CST object. Handles top-level extras (none for Claude), opening the
+    /// `hooks` object, the per-event nesting depth, and the per-entry shape.
+    /// Implementations MUST NOT prune empty event arrays — locked by
+    /// `test_merge_claude_leaves_empty_event_array_after_removing_all_owned_entries`.
+    pub(crate) fn merge_into_settings(
         top: &CstObject,
         owned_entries: &[EmittedHookEntry],
         force: bool,
@@ -433,7 +254,10 @@ impl HookAdapter for ClaudeAdapter {
         // in alphabetical order — matching `build_claude_hooks_json`.
         let mut grouped: BTreeMap<&'static str, Vec<&EmittedHookEntry>> = BTreeMap::new();
         for e in owned_entries {
-            grouped.entry(self.event_name(e.event)).or_default().push(e);
+            grouped
+                .entry(Self::event_name(e.event))
+                .or_default()
+                .push(e);
         }
         for (event_name, entries) in &grouped {
             let event_arr = open_or_create_array(
@@ -456,7 +280,7 @@ impl HookAdapter for ClaudeAdapter {
                 }
                 let inner: Vec<Value> = group_entries
                     .iter()
-                    .map(|e| self.entry_to_json(e))
+                    .map(|e| Self::entry_to_json(e))
                     .collect();
                 wrapper.insert("hooks".to_string(), Value::Array(inner));
                 event_arr.append(value_to_cst_input(Value::Object(wrapper)));
@@ -465,7 +289,15 @@ impl HookAdapter for ClaudeAdapter {
         Ok(())
     }
 
-    fn tidy_after_remove(&self, top: &CstObject) -> TidyOutcome {
+    /// Strip agentspec-owned entries from a parsed `settings.json` CST top
+    /// object, prune emptied containers, and report whether the host file
+    /// should be deleted.
+    ///
+    /// Claude predicate: delete iff at least one `_agentspec_id`-tagged entry
+    /// was removed AND no top-level keys survive. `settings.json` doesn't
+    /// carry a `version` key, so any surviving top-level key (e.g.
+    /// `permissions`, `env`) keeps the file.
+    pub(crate) fn tidy_settings(top: &CstObject) -> TidyOutcome {
         let Some(hooks_obj) = top.object_value("hooks") else {
             return TidyOutcome {
                 user_entries_remaining: 0,
@@ -486,10 +318,6 @@ impl HookAdapter for ClaudeAdapter {
             hooks_prop.remove();
         }
 
-        // Claude predicate: delete iff we actually removed at least one
-        // agentspec-owned entry AND no top-level keys survive. settings.json
-        // doesn't carry a `version` key, so there's no carve-out — any
-        // surviving top-level key (e.g. `permissions`, `env`) keeps the file.
         let file_should_be_deleted = removed_owned > 0 && top.properties().is_empty();
 
         TidyOutcome {
@@ -499,13 +327,142 @@ impl HookAdapter for ClaudeAdapter {
     }
 }
 
+/// Synthesizes the per-provider `hooks/hooks.json` plus the canonical entry
+/// list for the downstream merged-mode merge.
+///
+/// Returns an empty `HookSynthesis` when there are no hook specs. In merged
+/// modes, `entries` is populated for the post-write patcher to consume but
+/// `files` omits `hooks/hooks.json` (the patcher edits the host
+/// `settings.json` instead). Bundled mode owns the whole `hooks/hooks.json`.
+fn synthesize_hooks(specs: &[&HookSpec], emit_mode: HookEmitMode) -> Result<HookSynthesis> {
+    if specs.is_empty() {
+        return Ok(HookSynthesis::default());
+    }
+
+    let entries = build_emitted_hook_entries(specs, HOOK_DOTDIR, emit_mode);
+    let mut files = build_hook_script_files(Provider::Claude, specs);
+    if matches!(emit_mode, HookEmitMode::Bundled) {
+        let json = build_claude_hooks_json(&entries)?;
+        files.push(GeneratedFile::text(
+            Provider::Claude,
+            FileKind::Hooks,
+            Path::new("hooks").join("hooks.json"),
+            json,
+        ));
+    }
+    Ok(HookSynthesis { entries, files })
+}
+
+/// Adapter-private hook synthesis result — carries entries (always populated
+/// when there are hook specs) plus the supporting-script and bundled-JSON
+/// files this provider emits.
+#[derive(Debug, Default)]
+struct HookSynthesis {
+    entries: Vec<EmittedHookEntry>,
+    files: Vec<GeneratedFile>,
+}
+
+fn config_dir(
+    mode: SyncDestinationMode,
+    target_dir: Option<&Path>,
+    home: &Path,
+    cwd: &Path,
+) -> PathBuf {
+    match mode {
+        SyncDestinationMode::User => home.join(HOOK_DOTDIR),
+        SyncDestinationMode::Project => cwd.join(HOOK_DOTDIR),
+        SyncDestinationMode::Path => target_dir.map_or_else(
+            || home.join(HOOK_DOTDIR),
+            |d| {
+                d.to_str()
+                    .map_or_else(|| d.to_path_buf(), |s| expand_tilde(s, home))
+            },
+        ),
+    }
+}
+
+/// Forward-direction settings.json patch.
+///
+/// Constructed by `ClaudeAdapter::compile` in Merged (User/Project) modes.
+/// `run` invokes the merge; `run_remove` is unreachable because the orchestrator
+/// routes forward patches only through the sync pipeline.
+#[derive(Debug)]
+pub(crate) struct ClaudeHooksPatch {
+    host_path: PathBuf,
+    owned_entries: Vec<EmittedHookEntry>,
+    /// `--force`/`overwrite=true`: replace a non-object `hooks` (or non-array
+    /// per-event) value with `{}`/`[]` before merging, instead of erroring.
+    force: bool,
+}
+
+impl ConfigPatch for ClaudeHooksPatch {
+    fn run(&self, dry_run: bool) -> Result<()> {
+        let entries = &self.owned_entries;
+        let force = self.force;
+        merge_owned(
+            &self.host_path,
+            entries.is_empty(),
+            |top| entries.is_empty() && top.get("hooks").is_none(),
+            |top| ClaudeAdapter::merge_into_settings(top, entries, force),
+            dry_run,
+        )
+    }
+
+    fn run_remove(&self, _dry_run: bool) -> Result<()> {
+        unreachable!(
+            "ClaudeHooksPatch is forward-only; the remove pipeline constructs ClaudeRemoveHooksPatch"
+        )
+    }
+
+    fn host_path(&self) -> &Path {
+        &self.host_path
+    }
+
+    fn manifest_targets(&self) -> &[PathBuf] {
+        std::slice::from_ref(&self.host_path)
+    }
+}
+
+/// Reverse-direction settings.json patch.
+///
+/// Constructed by `ClaudeAdapter::removal_patches` in Merged modes. `run_remove`
+/// strips agentspec-owned entries and tidies emptied containers; `run` is
+/// unreachable because the orchestrator routes reverse patches only through
+/// the remove pipeline.
+#[derive(Debug)]
+pub(crate) struct ClaudeRemoveHooksPatch {
+    host_path: PathBuf,
+}
+
+impl ConfigPatch for ClaudeRemoveHooksPatch {
+    fn run(&self, _dry_run: bool) -> Result<()> {
+        unreachable!(
+            "ClaudeRemoveHooksPatch is reverse-only; the sync pipeline constructs ClaudeHooksPatch"
+        )
+    }
+
+    fn run_remove(&self, dry_run: bool) -> Result<()> {
+        let report = remove_owned(&self.host_path, ClaudeAdapter::tidy_settings, dry_run)?;
+        report.print_summary(dry_run);
+        Ok(())
+    }
+
+    fn host_path(&self) -> &Path {
+        &self.host_path
+    }
+
+    fn manifest_targets(&self) -> &[PathBuf] {
+        std::slice::from_ref(&self.host_path)
+    }
+}
+
 /// Walks `hooks.<event>[<matcher_group>].hooks[]` removing any entry tagged
 /// with `_agentspec_id`. If a matcher group ends up with an empty `hooks`
 /// array, the group itself is removed. Empty event arrays are left alone —
 /// the user might still have entries to add later.
 ///
 /// Returns the count of `_agentspec_id`-tagged entries that were removed.
-/// `tidy_after_remove` uses the count to gate `file_should_be_deleted`; the
+/// `tidy_settings` uses the count to gate `file_should_be_deleted`; the
 /// merge path discards it.
 fn remove_owned_entries(hooks_obj: &CstObject) -> usize {
     let mut removed = 0usize;
@@ -619,7 +576,12 @@ fn adapt_agent_spec(
     let body = spec.body.trim();
     let content = format!("---\n{frontmatter_str}---\n\n{body}");
 
-    Ok(vec![GeneratedFile::text(Provider::Claude, path, content)])
+    Ok(vec![GeneratedFile::text(
+        Provider::Claude,
+        FileKind::Agents,
+        path,
+        content,
+    )])
 }
 
 fn adapt_skill_spec(
@@ -673,6 +635,7 @@ fn adapt_skill_spec(
 
     let mut files = vec![GeneratedFile::text(
         Provider::Claude,
+        FileKind::Skills,
         skill_dir.join("SKILL.md"),
         content,
     )];
@@ -680,6 +643,7 @@ fn adapt_skill_spec(
     for sf in spec.supporting_files {
         files.push(GeneratedFile::binary(
             Provider::Claude,
+            FileKind::Skills,
             skill_dir.join(&sf.relative_path),
             sf.content,
             Some(sf.mode),
@@ -696,6 +660,7 @@ fn adapt_rule_spec(spec: &RuleSpec, cfg: Option<&AdapterConfig>) -> Vec<Generate
 
     vec![GeneratedFile {
         provider: Provider::Claude,
+        kind: FileKind::Rules,
         path,
         content,
         mode: None,
@@ -731,19 +696,17 @@ fn adapt_tool(tool: &ToolFrontmatter) -> Vec<ClaudeTool> {
 // Claude's documented `hooks.json` shape (see <https://code.claude.com/docs/en/hooks>):
 //   { "hooks": { "<EventName>": [ { "matcher": "...", "hooks": [<entry>, ...] }, ... ] } }
 //
-// Per-entry JSON shaping lives on `HookAdapter::entry_to_json`; the CST-aware
-// merge layer (`hooks_merge`) calls it via the trait so both emission paths
-// share one source of truth for the `_agentspec_id` sentinel and entry shape.
+// Per-entry JSON shaping lives on `ClaudeAdapter::entry_to_json`; the
+// CST-aware merge layer (`hooks_merge`) calls it via the inherent helper
+// `ClaudeAdapter::merge_into_settings` so both emission paths share one
+// source of truth for the `_agentspec_id` sentinel and entry shape.
 
 /// Group entries by `(event, matcher)` and serialize Claude's documented shape.
 ///
 /// Top-level event keys are sorted alphabetically (`BTreeMap`) for stable output.
 /// Within an event, matcher groups preserve first-seen order — propagated from
 /// the spec list, which itself preserves `IndexMap` authoring order from the
-/// `hooks.toml` file. The per-entry serialization delegates to
-/// `ClaudeAdapter::entry_to_json` so the bundled emission path and the
-/// merged-mode merge layer share one source of truth for the entry shape
-/// (including the `_agentspec_id` sentinel).
+/// `hooks.toml` file.
 fn build_claude_hooks_json(entries: &[EmittedHookEntry]) -> Result<String> {
     use serde_json::{Map, Value, json};
 
@@ -751,11 +714,11 @@ fn build_claude_hooks_json(entries: &[EmittedHookEntry]) -> Result<String> {
         BTreeMap::new();
     for entry in entries {
         by_event
-            .entry(ClaudeAdapter.event_name(entry.event))
+            .entry(ClaudeAdapter::event_name(entry.event))
             .or_default()
             .entry(entry.matcher.clone())
             .or_default()
-            .push(ClaudeAdapter.entry_to_json(entry));
+            .push(ClaudeAdapter::entry_to_json(entry));
     }
 
     let mut hooks_map = Map::new();
@@ -791,6 +754,36 @@ mod tests {
         AgentFrontmatter, AgentSpec, CapabilitiesFrontmatter, RuleFrontmatter, RuleSpec,
     };
 
+    fn agent(id: &str, capabilities: Option<CapabilitiesFrontmatter>) -> Spec {
+        Spec::Agent(AgentSpec {
+            path: "test.md".into(),
+            frontmatter: AgentFrontmatter {
+                id: id.to_string(),
+                description: "Test agent".to_string(),
+                tags: None,
+                execution: None,
+                capabilities,
+            },
+            body: "Body.".to_string(),
+        })
+    }
+
+    fn compile_one(spec: Spec, cfg: Option<&AdapterConfig>) -> Vec<GeneratedFile> {
+        let presets = HashMap::new();
+        let home = Path::new("/tmp/home");
+        let cwd = Path::new("/tmp/cwd");
+        let ctx = CompileCtx {
+            mode: SyncDestinationMode::Path,
+            home,
+            cwd,
+            target_dir: None,
+            presets: &presets,
+            adapter_config: cfg,
+            overwrite: false,
+        };
+        ClaudeAdapter.compile(&[spec], &ctx).expect("compile").files
+    }
+
     #[test]
     fn test_adapt_agent_tools_are_sorted() {
         #[derive(Deserialize)]
@@ -799,27 +792,18 @@ mod tests {
         }
 
         // Tools provided in reverse alphabetical order to confirm sorting.
-        let spec = Spec::Agent(AgentSpec {
-            path: "test.md".into(),
-            frontmatter: AgentFrontmatter {
-                id: "test-agent".to_string(),
-                description: "Test agent".to_string(),
-                tags: None,
-                execution: None,
-                capabilities: Some(CapabilitiesFrontmatter {
-                    tools: Some(vec![
-                        ToolFrontmatter::Write,
-                        ToolFrontmatter::Read,
-                        ToolFrontmatter::Bash,
-                    ]),
-                }),
-            },
-            body: "Body.".to_string(),
-        });
+        let spec = agent(
+            "test-agent",
+            Some(CapabilitiesFrontmatter {
+                tools: Some(vec![
+                    ToolFrontmatter::Write,
+                    ToolFrontmatter::Read,
+                    ToolFrontmatter::Bash,
+                ]),
+            }),
+        );
 
-        let files = ClaudeAdapter
-            .adapt(spec, &HashMap::new(), None)
-            .expect("expected value");
+        let files = compile_one(spec, None);
         let content = String::from_utf8(files[0].content.clone()).expect("expected value");
 
         // Parse the tools list back out of the generated YAML frontmatter.
@@ -842,21 +826,8 @@ mod tests {
 
     #[test]
     fn test_adapt_agent_output_format() {
-        let spec = Spec::Agent(AgentSpec {
-            path: "test.md".into(),
-            frontmatter: AgentFrontmatter {
-                id: "test-agent".to_string(),
-                description: "Test agent".to_string(),
-                tags: None,
-                execution: None,
-                capabilities: None,
-            },
-            body: "Body.".to_string(),
-        });
-
-        let files = ClaudeAdapter
-            .adapt(spec, &HashMap::new(), None)
-            .expect("expected value");
+        let spec = agent("test-agent", None);
+        let files = compile_one(spec, None);
         let content = String::from_utf8(files[0].content.clone()).expect("expected value");
 
         let expected = concat!(
@@ -879,21 +850,8 @@ mod tests {
             content_prefix: None,
             ..AdapterConfig::default()
         };
-        let spec = Spec::Agent(AgentSpec {
-            path: "test.md".into(),
-            frontmatter: AgentFrontmatter {
-                id: "test-agent".to_string(),
-                description: "Test agent".to_string(),
-                tags: None,
-                execution: None,
-                capabilities: None,
-            },
-            body: "Body.".to_string(),
-        });
-
-        let files = ClaudeAdapter
-            .adapt(spec, &HashMap::new(), Some(&cfg))
-            .expect("expected value");
+        let spec = agent("test-agent", None);
+        let files = compile_one(spec, Some(&cfg));
         assert_eq!(files[0].path.to_str(), Some("agents/tw-test-agent.md"));
 
         let content = String::from_utf8(files[0].content.clone()).expect("expected value");
@@ -920,9 +878,7 @@ mod tests {
             body: "Rule body.".to_string(),
         });
 
-        let files = ClaudeAdapter
-            .adapt(spec, &HashMap::new(), Some(&cfg))
-            .expect("expected value");
+        let files = compile_one(spec, Some(&cfg));
         assert_eq!(files[0].path.to_str(), Some("rules/tw-test-rule.md"));
     }
 
@@ -933,21 +889,8 @@ mod tests {
             content_prefix: Some("tw:".to_string()),
             ..AdapterConfig::default()
         };
-        let spec = Spec::Agent(AgentSpec {
-            path: "test.md".into(),
-            frontmatter: AgentFrontmatter {
-                id: "test-agent".to_string(),
-                description: "Test agent".to_string(),
-                tags: None,
-                execution: None,
-                capabilities: None,
-            },
-            body: "Body.".to_string(),
-        });
-
-        let files = ClaudeAdapter
-            .adapt(spec, &HashMap::new(), Some(&cfg))
-            .expect("expected value");
+        let spec = agent("test-agent", None);
+        let files = compile_one(spec, Some(&cfg));
         // File path should be unprefixed (no file prefix set)
         assert_eq!(files[0].path.to_str(), Some("agents/test-agent.md"));
         // Frontmatter name should be unprefixed (controlled by `prefix`, not `content_prefix`)
@@ -978,7 +921,7 @@ mod tests {
         });
 
         assert_eq!(
-            ProviderAdapter::model_facing_name(&ClaudeAdapter, &spec, Some(&cfg)),
+            ClaudeAdapter.model_facing_name(&spec, Some(&cfg)),
             "tw:test-agent"
         );
     }
@@ -986,7 +929,7 @@ mod tests {
     #[test]
     fn test_body_tool_name_question_maps_to_ask_user_question() {
         assert_eq!(
-            ProviderAdapter::body_tool_name(&ClaudeAdapter, &ToolFrontmatter::Question),
+            ClaudeAdapter.body_tool_name(&ToolFrontmatter::Question),
             "AskUserQuestion"
         );
     }
@@ -994,7 +937,7 @@ mod tests {
     #[test]
     fn test_body_tool_name_tasks_maps_to_todo_write() {
         assert_eq!(
-            ProviderAdapter::body_tool_name(&ClaudeAdapter, &ToolFrontmatter::Tasks),
+            ClaudeAdapter.body_tool_name(&ToolFrontmatter::Tasks),
             "TodoWrite"
         );
     }
@@ -1002,7 +945,7 @@ mod tests {
     #[test]
     fn test_body_tool_name_subagent_maps_to_agent() {
         assert_eq!(
-            ProviderAdapter::body_tool_name(&ClaudeAdapter, &ToolFrontmatter::Subagent),
+            ClaudeAdapter.body_tool_name(&ToolFrontmatter::Subagent),
             "Agent"
         );
     }
@@ -1010,7 +953,7 @@ mod tests {
     #[test]
     fn test_body_tool_name_skill_maps_to_skill() {
         assert_eq!(
-            ProviderAdapter::body_tool_name(&ClaudeAdapter, &ToolFrontmatter::Skill),
+            ClaudeAdapter.body_tool_name(&ToolFrontmatter::Skill),
             "Skill"
         );
     }
@@ -1051,49 +994,47 @@ mod tests {
     #[test]
     fn test_claude_event_name_full_mapping() {
         assert_eq!(
-            ClaudeAdapter.event_name(HookEvent::PreToolUse),
+            ClaudeAdapter::event_name(HookEvent::PreToolUse),
             "PreToolUse"
         );
         assert_eq!(
-            ClaudeAdapter.event_name(HookEvent::PostToolUse),
+            ClaudeAdapter::event_name(HookEvent::PostToolUse),
             "PostToolUse"
         );
         assert_eq!(
-            ClaudeAdapter.event_name(HookEvent::PostToolUseFailure),
+            ClaudeAdapter::event_name(HookEvent::PostToolUseFailure),
             "PostToolUseFailure"
         );
         assert_eq!(
-            ClaudeAdapter.event_name(HookEvent::SessionStart),
+            ClaudeAdapter::event_name(HookEvent::SessionStart),
             "SessionStart"
         );
         assert_eq!(
-            ClaudeAdapter.event_name(HookEvent::SessionEnd),
+            ClaudeAdapter::event_name(HookEvent::SessionEnd),
             "SessionEnd"
         );
-        assert_eq!(ClaudeAdapter.event_name(HookEvent::Stop), "Stop");
+        assert_eq!(ClaudeAdapter::event_name(HookEvent::Stop), "Stop");
         assert_eq!(
-            ClaudeAdapter.event_name(HookEvent::PreCompact),
+            ClaudeAdapter::event_name(HookEvent::PreCompact),
             "PreCompact"
         );
         assert_eq!(
-            ClaudeAdapter.event_name(HookEvent::SubagentStart),
+            ClaudeAdapter::event_name(HookEvent::SubagentStart),
             "SubagentStart"
         );
         assert_eq!(
-            ClaudeAdapter.event_name(HookEvent::SubagentStop),
+            ClaudeAdapter::event_name(HookEvent::SubagentStop),
             "SubagentStop"
         );
         assert_eq!(
-            ClaudeAdapter.event_name(HookEvent::UserPromptSubmit),
+            ClaudeAdapter::event_name(HookEvent::UserPromptSubmit),
             "UserPromptSubmit"
         );
     }
 
     #[test]
     fn test_synthesize_hooks_empty_returns_default() {
-        let result = ClaudeAdapter
-            .synthesize_hooks(&[], None)
-            .expect("expected value");
+        let result = synthesize_hooks(&[], HookEmitMode::Bundled).expect("expected value");
         assert!(result.entries.is_empty());
         assert!(result.files.is_empty());
     }
@@ -1108,9 +1049,7 @@ mod tests {
         // to `hooks/scripts/git/pre-commit.sh`).
         let mut spec = make_hook_spec("audit", HookEvent::PreToolUse, Some("Bash"));
         spec.frontmatter.script = std::path::PathBuf::from("scripts/git/pre-commit.sh");
-        let result = ClaudeAdapter
-            .synthesize_hooks(&[&spec], None)
-            .expect("expected value");
+        let result = synthesize_hooks(&[&spec], HookEmitMode::Bundled).expect("expected value");
         assert_eq!(
             result.entries[0].command,
             "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/git/pre-commit.sh"
@@ -1126,9 +1065,7 @@ mod tests {
         // The component-based normalization handles both forms.
         let mut spec = make_hook_spec("init", HookEvent::SessionStart, None);
         spec.frontmatter.script = std::path::PathBuf::from("./scripts/init.sh");
-        let result = ClaudeAdapter
-            .synthesize_hooks(&[&spec], None)
-            .expect("expected value");
+        let result = synthesize_hooks(&[&spec], HookEmitMode::Bundled).expect("expected value");
         assert_eq!(
             result.entries[0].command,
             "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/init.sh"
@@ -1142,9 +1079,7 @@ mod tests {
         // a description on the spec must not appear in the emitted JSON.
         let mut spec = make_hook_spec("init", HookEvent::UserPromptSubmit, None);
         spec.frontmatter.description = Some("informational note".to_string());
-        let result = ClaudeAdapter
-            .synthesize_hooks(&[&spec], None)
-            .expect("expected value");
+        let result = synthesize_hooks(&[&spec], HookEmitMode::Bundled).expect("expected value");
         let file = result
             .files
             .iter()
@@ -1160,10 +1095,7 @@ mod tests {
     #[test]
     fn test_synthesize_hooks_path_mode_emits_bundled_file() {
         let spec = make_hook_spec("init", HookEvent::UserPromptSubmit, None);
-        let specs = vec![&spec];
-        let result = ClaudeAdapter
-            .synthesize_hooks(&specs, None)
-            .expect("expected value");
+        let result = synthesize_hooks(&[&spec], HookEmitMode::Bundled).expect("expected value");
         assert_eq!(result.entries.len(), 1);
         let file = result
             .files
@@ -1191,10 +1123,7 @@ mod tests {
         // with both entries; insertion order preserved.
         let a = make_hook_spec("a", HookEvent::UserPromptSubmit, None);
         let b = make_hook_spec("b", HookEvent::UserPromptSubmit, None);
-        let specs = vec![&a, &b];
-        let result = ClaudeAdapter
-            .synthesize_hooks(&specs, None)
-            .expect("expected value");
+        let result = synthesize_hooks(&[&a, &b], HookEmitMode::Bundled).expect("expected value");
         let json_file = result
             .files
             .iter()
@@ -1217,18 +1146,11 @@ mod tests {
     #[test]
     fn test_synthesize_hooks_merged_user_mode_emits_scripts_only() {
         // In Phase 2's Merged modes, agentspec emits hook scripts but not the
-        // host config file (hooks.json) — that's owned by the generic
-        // `HooksPatch`, which dispatches through `HookAdapter::merge_into` to
-        // surgically merge entries into `<config>/settings.json`. `entries`
-        // is still populated so the patcher can consume them.
-        let cfg = AdapterConfig {
-            hook_emit_mode: Some(HookEmitMode::MergedUser),
-            ..AdapterConfig::default()
-        };
+        // host config file (hooks.json) — that's owned by `ClaudeHooksPatch`,
+        // which surgically merges entries into `<config>/settings.json`.
+        // `entries` is still populated so the patcher can consume them.
         let spec = make_hook_spec("init", HookEvent::SessionStart, None);
-        let result = ClaudeAdapter
-            .synthesize_hooks(&[&spec], Some(&cfg))
-            .expect("expected ok");
+        let result = synthesize_hooks(&[&spec], HookEmitMode::MergedUser).expect("expected ok");
         assert_eq!(result.entries.len(), 1);
         assert!(
             !result
@@ -1245,14 +1167,8 @@ mod tests {
         // sets `CLAUDE_PLUGIN_ROOT` inline so plugin-shaped scripts that
         // reference `$CLAUDE_PLUGIN_ROOT/rules` etc. resolve correctly when
         // the host runtime doesn't set that variable for non-plugin scope.
-        let cfg = AdapterConfig {
-            hook_emit_mode: Some(HookEmitMode::MergedUser),
-            ..AdapterConfig::default()
-        };
         let spec = make_hook_spec("init", HookEvent::SessionStart, None);
-        let result = ClaudeAdapter
-            .synthesize_hooks(&[&spec], Some(&cfg))
-            .expect("expected ok");
+        let result = synthesize_hooks(&[&spec], HookEmitMode::MergedUser).expect("expected ok");
         assert_eq!(
             result.entries[0].command,
             "CLAUDE_PLUGIN_ROOT=$HOME/.claude $HOME/.claude/hooks/scripts/init.sh"
@@ -1262,14 +1178,8 @@ mod tests {
     #[test]
     fn test_synthesize_hooks_merged_project_anchor_includes_plugin_root_assignment() {
         // MergedProject: ${CLAUDE_PROJECT_DIR} anchor + inline CLAUDE_PLUGIN_ROOT.
-        let cfg = AdapterConfig {
-            hook_emit_mode: Some(HookEmitMode::MergedProject),
-            ..AdapterConfig::default()
-        };
         let spec = make_hook_spec("init", HookEvent::SessionStart, None);
-        let result = ClaudeAdapter
-            .synthesize_hooks(&[&spec], Some(&cfg))
-            .expect("expected ok");
+        let result = synthesize_hooks(&[&spec], HookEmitMode::MergedProject).expect("expected ok");
         assert_eq!(
             result.entries[0].command,
             "CLAUDE_PLUGIN_ROOT=${CLAUDE_PROJECT_DIR}/.claude ${CLAUDE_PROJECT_DIR}/.claude/hooks/scripts/init.sh"
@@ -1296,19 +1206,47 @@ mod tests {
         });
 
         assert_eq!(
-            ProviderAdapter::model_facing_name(&ClaudeAdapter, &spec, Some(&cfg)),
+            ClaudeAdapter.model_facing_name(&spec, Some(&cfg)),
             "tw-test-agent"
         );
     }
 
     #[test]
-    fn test_file_kinds_includes_hooks() {
-        assert!(Adapter::file_kinds(&ClaudeAdapter).contains(&FileKind::Hooks));
+    fn test_user_dest_dir_agents() {
+        // `ClaudeAdapter::compile`'s `dest_root` helper is the only path
+        // consumer; verify User-mode resolution via the public Adapter API.
+        let presets = HashMap::new();
+        let home = Path::new("/home/user");
+        let cwd = Path::new("/work");
+        let ctx = CompileCtx {
+            mode: SyncDestinationMode::User,
+            home,
+            cwd,
+            target_dir: None,
+            presets: &presets,
+            adapter_config: None,
+            overwrite: false,
+        };
+        let output = ClaudeAdapter.compile(&[], &ctx).expect("compile");
+        assert_eq!(output.dest_root, PathBuf::from("/home/user/.claude"));
     }
 
     #[test]
-    fn test_user_dest_dir_agents() {
-        let result = ClaudeAdapter.user_dest_dir(Path::new("/home/user"), FileKind::Agents);
-        assert_eq!(result, PathBuf::from("/home/user/.claude/agents"));
+    fn test_entry_to_claude_json_includes_sentinel() {
+        let e = EmittedHookEntry {
+            event: HookEvent::SessionStart,
+            matcher: None,
+            command: "/path/to/script.sh".to_string(),
+            timeout: None,
+            agentspec_id: "init".to_string(),
+        };
+        let v = ClaudeAdapter::entry_to_json(&e);
+        assert_eq!(v["type"], "command");
+        assert_eq!(v["command"], "/path/to/script.sh");
+        assert_eq!(v["_agentspec_id"], "init");
+        assert!(
+            v.get("matcher").is_none(),
+            "claude entry: matcher is on the wrapper, not the entry"
+        );
     }
 }

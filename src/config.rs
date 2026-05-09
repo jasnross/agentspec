@@ -323,7 +323,8 @@ impl SyncMode {
     }
 
     /// Translate the binary-side `SyncMode` to the library-side
-    /// `SyncDestinationMode` consumed by `ProviderAdapter::config_dir`.
+    /// `SyncDestinationMode` consumed by `Adapter::compile` and
+    /// `Adapter::removal_patches` (via `CompileCtx.mode` / `RemoveCtx.mode`).
     ///
     /// Lives here for the same reason as `to_hook_emit_mode`: the library
     /// must not import `SyncMode`, so the binary translates at the boundary.

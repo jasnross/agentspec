@@ -10,6 +10,7 @@
 use std::path::{Component, Path, PathBuf};
 
 use crate::compile::{EmittedHookEntry, GeneratedFile, HookEmitMode};
+use crate::plan::FileKind;
 use crate::provider::Provider;
 use crate::spec::HookSpec;
 
@@ -33,6 +34,7 @@ pub(super) fn build_hook_script_files(
         .map(|sf| {
             GeneratedFile::binary(
                 provider,
+                FileKind::Hooks,
                 Path::new("hooks").join(&sf.relative_path),
                 sf.content.clone(),
                 Some(sf.mode),

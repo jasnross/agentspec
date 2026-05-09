@@ -49,7 +49,7 @@ pub fn user_dest_dir(provider: Provider, kind: FileKind, home: &Path) -> PathBuf
 }
 ```
 
-Once an adapter trait exists, the dispatch arms collapse to `provider.adapter().user_dest_dir(home, kind)` and `plan.rs` no longer mentions specific providers at all. Until the trait lands, this dispatch-only `match` is acceptable: it knows _that_ there are several providers but nothing about _what_ they do.
+The `Adapter` trait collapses these dispatch arms entirely: each provider exposes `compile(specs, ctx) -> AdapterOutput` and the orchestrator calls `provider.adapter().compile(...)` once per provider. `plan.rs` no longer names specific providers at all.
 
 ## Hardcoded behavior via match
 
@@ -75,54 +75,49 @@ The signatures are identical; only the function name varies by provider. This is
 
 ### Good
 
+Adapter-built patches flow back through `Adapter::compile`'s return value as
+`Vec<Box<dyn ConfigPatch>>` — the orchestrator never asks for them by name:
+
 ```rust
-let hook = provider.adapter().post_write_hook(
-    kind, &dest, &config_dir, emit_mode, owned_entries,
-);
+let output = provider.adapter().compile(&specs, &ctx)?;
+files.extend(output.files);
+patches.entry(provider).or_default().extend(output.patches);
 ```
 
-The dispatch is a one-liner and `sync.rs` stops naming individual providers entirely.
+`compile.rs`, `sync.rs`, and `remove.rs` stop naming individual providers entirely.
 
 ## Hardcoded provider capabilities
 
 ### Bad
 
-Which file kinds each provider supports is encoded in `plan.rs`:
+Which file kinds each provider supports, encoded as a behavior switch:
 
 ```rust
-pub fn file_kinds(provider: Provider) -> Vec<FileKind> {
-    match provider {
-        Provider::Claude | Provider::Cursor => vec![
-            FileKind::Agents, FileKind::Rules, FileKind::Skills, FileKind::Hooks,
-        ],
-        Provider::OpenCode => vec![
-            FileKind::Agents, FileKind::Commands, FileKind::Rules, FileKind::Skills,
-        ],
-    }
+fn supports_hooks(provider: Provider) -> bool {
+    matches!(provider, Provider::Claude | Provider::Cursor)
 }
 ```
 
-OpenCode supports `Commands`. Claude and Cursor support `Hooks`. That's adapter knowledge.
+That's adapter knowledge masquerading as a `plan.rs`/`compile.rs` concern.
 
 ### Good
 
+Capability accessors on the trait — adapters declare what they support; callers iterate without branching on `Provider`:
+
 ```rust
 // src/adapters/claude.rs
-pub fn file_kinds() -> &'static [FileKind] {
-    &[FileKind::Agents, FileKind::Rules, FileKind::Skills, FileKind::Hooks]
+impl Adapter for ClaudeAdapter {
+    fn emits_hooks(&self) -> bool { true }
+    // ...
 }
 
-// src/plan.rs
-pub fn file_kinds(provider: Provider) -> &'static [FileKind] {
-    match provider {
-        Provider::Claude => adapters::claude::file_kinds(),
-        Provider::Cursor => adapters::cursor::file_kinds(),
-        Provider::OpenCode => adapters::opencode::file_kinds(),
-    }
+// src/compile.rs
+if !provider.adapter().emits_hooks() {
+    diagnostics.skipped_hooks.push(...);
 }
 ```
 
-Same pattern — `plan.rs` keeps a thin dispatch arm but no longer encodes which file kinds belong to which provider.
+Same pattern — capability lookup via the trait, not a `match provider`.
 
 ## When dispatch is unavoidable
 

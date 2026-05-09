@@ -42,7 +42,6 @@ pub fn sync_plan(
     let mut post_write_patches = Vec::new();
 
     for (provider, target) in targets {
-        let adapter = provider.adapter();
         // `dest_root` was computed by the adapter during `compile_specs` and
         // is the parent directory of every per-kind dest dir. Use it as the
         // anchor when `mode == Path` so the explicit `--dest`/`dir` value
@@ -53,7 +52,13 @@ pub fn sync_plan(
             .with_context(|| format!("compile_specs did not record a dest_root for {provider}"))?
             .to_path_buf();
 
-        for &kind in adapter.file_kinds() {
+        // Iterate every `FileKind` (not just the ones this provider emits)
+        // so stale-cleanup runs even for kinds a provider used to emit but
+        // doesn't anymore. Empty batches with no prior manifest are a no-op
+        // inside `write_manifest_tracked`, so the extra iterations are free
+        // for providers that never used a given kind (e.g., OpenCode +
+        // Hooks).
+        for &kind in FileKind::all() {
             let dest = resolve_dest_dir(kind, target, &dest_root, home);
             let files = files_for_kind(result, *provider, kind);
 
@@ -148,30 +153,16 @@ fn resolve_dest_dir(
 
 /// Extracts files from `result` that belong to the given provider and kind.
 ///
-/// Relies on the invariant that every adapter produces paths whose first component
-/// matches a `FileKind::dir_name()` (e.g. `"agents/foo.md"`, `"rules/bar.md"`).
+/// Partitions on the explicit `kind` field each adapter sets when constructing
+/// `GeneratedFile` instances — no path-component derivation needed.
 fn files_for_kind(
     result: &CompileResult,
     provider: Provider,
     kind: FileKind,
 ) -> Vec<GeneratedFile> {
-    #[cfg(debug_assertions)]
-    for f in result.files_for(provider) {
-        let first = f
-            .path
-            .components()
-            .next()
-            .and_then(|c| c.as_os_str().to_str());
-        debug_assert!(
-            FileKind::all().iter().any(|k| first == Some(k.dir_name())),
-            "GeneratedFile path {} does not start with a known FileKind dir",
-            f.path.display()
-        );
-    }
-
     result
         .files_for(provider)
-        .filter(|f| f.path.starts_with(kind.dir_name()))
+        .filter(|f| f.kind == kind)
         .cloned()
         .collect()
 }
@@ -197,11 +188,27 @@ mod tests {
     #[test]
     fn test_files_for_kind_partitions_by_kind_and_provider() {
         let result = make_result(vec![
-            GeneratedFile::text(Provider::Claude, "agents/foo.md", "agent".to_string()),
-            GeneratedFile::text(Provider::Claude, "skills/bar/SKILL.md", "skill".to_string()),
-            GeneratedFile::text(Provider::Claude, "rules/baz.md", "rule".to_string()),
+            GeneratedFile::text(
+                Provider::Claude,
+                FileKind::Agents,
+                "agents/foo.md",
+                "agent".to_string(),
+            ),
+            GeneratedFile::text(
+                Provider::Claude,
+                FileKind::Skills,
+                "skills/bar/SKILL.md",
+                "skill".to_string(),
+            ),
+            GeneratedFile::text(
+                Provider::Claude,
+                FileKind::Rules,
+                "rules/baz.md",
+                "rule".to_string(),
+            ),
             GeneratedFile::text(
                 Provider::Cursor,
+                FileKind::Agents,
                 "agents/foo.md",
                 "cursor-agent".to_string(),
             ),
@@ -243,13 +250,48 @@ mod tests {
     #[test]
     fn test_sync_plan_produces_correct_writes_and_patches() {
         let mut result = make_result(vec![
-            GeneratedFile::text(Provider::Claude, "agents/agent.md", "a".to_string()),
-            GeneratedFile::text(Provider::Claude, "skills/s/SKILL.md", "s".to_string()),
-            GeneratedFile::text(Provider::Claude, "rules/rule.md", "r".to_string()),
-            GeneratedFile::text(Provider::OpenCode, "agents/agent.md", "a".to_string()),
-            GeneratedFile::text(Provider::OpenCode, "commands/cmd.md", "c".to_string()),
-            GeneratedFile::text(Provider::OpenCode, "rules/rule/AGENTS.md", "r".to_string()),
-            GeneratedFile::text(Provider::OpenCode, "skills/s/SKILL.md", "s".to_string()),
+            GeneratedFile::text(
+                Provider::Claude,
+                FileKind::Agents,
+                "agents/agent.md",
+                "a".to_string(),
+            ),
+            GeneratedFile::text(
+                Provider::Claude,
+                FileKind::Skills,
+                "skills/s/SKILL.md",
+                "s".to_string(),
+            ),
+            GeneratedFile::text(
+                Provider::Claude,
+                FileKind::Rules,
+                "rules/rule.md",
+                "r".to_string(),
+            ),
+            GeneratedFile::text(
+                Provider::OpenCode,
+                FileKind::Agents,
+                "agents/agent.md",
+                "a".to_string(),
+            ),
+            GeneratedFile::text(
+                Provider::OpenCode,
+                FileKind::Commands,
+                "commands/cmd.md",
+                "c".to_string(),
+            ),
+            GeneratedFile::text(
+                Provider::OpenCode,
+                FileKind::Rules,
+                "rules/rule/AGENTS.md",
+                "r".to_string(),
+            ),
+            GeneratedFile::text(
+                Provider::OpenCode,
+                FileKind::Skills,
+                "skills/s/SKILL.md",
+                "s".to_string(),
+            ),
         ]);
         seed_dest_roots(
             &mut result,
@@ -279,8 +321,12 @@ mod tests {
         let home = Path::new("/tmp");
         let plan = sync_plan(&mut result, &targets, home).expect("sync_plan should succeed");
 
-        // Claude: 4 kinds (agents, rules, skills, hooks); OpenCode: 4 kinds (agents, commands, rules, skills).
-        assert_eq!(plan.writes.len(), 8);
+        // Every provider in the targets list gets one `ManifestTrackedWrite`
+        // per `FileKind` variant — even for kinds that provider doesn't emit
+        // — so stale-cleanup runs uniformly. With 5 kinds × 2 providers, the
+        // plan carries 10 writes; non-emitting kinds will have empty `files`
+        // and become no-ops at emit time.
+        assert_eq!(plan.writes.len(), FileKind::all().len() * 2);
 
         // No post-write patches in this test: the unit-test `CompileResult` is
         // constructed by hand without calling `compile_specs`, so no

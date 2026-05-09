@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use crate::adapters::{CompileCtx, SyncDestinationMode};
-use crate::plan::ConfigPatch;
+use crate::plan::{ConfigPatch, FileKind};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
 use crate::spec::{HookEvent, Spec};
@@ -110,10 +110,19 @@ impl AdapterConfig {
 }
 
 /// A single file produced by a provider adapter.
+///
+/// `kind` is set explicitly by each adapter's per-spec helpers — Agents for
+/// `adapt_agent_spec`, Skills for `adapt_skill_spec`, Rules for
+/// `adapt_rule_spec`, Hooks for the bundled `hooks/hooks.json` and every
+/// supporting script, and Commands for `OpenCode`'s user-invocable skill
+/// outputs. `sync_plan` partitions writes by `file.kind` directly rather
+/// than re-deriving the kind from the leading path component.
 #[derive(Clone, Debug)]
 pub struct GeneratedFile {
     /// Provider that produced this file
     pub provider: Provider,
+    /// Output kind (drives manifest-tracked write partitioning).
+    pub kind: FileKind,
     /// Relative path from the provider root (e.g., "agents/foo.md", "skills/commit/SKILL.md")
     pub path: PathBuf,
     /// File content
@@ -124,9 +133,15 @@ pub struct GeneratedFile {
 
 impl GeneratedFile {
     /// Create a text file with no special permissions.
-    pub fn text(provider: Provider, path: impl AsRef<Path>, content: String) -> Self {
+    pub fn text(
+        provider: Provider,
+        kind: FileKind,
+        path: impl AsRef<Path>,
+        content: String,
+    ) -> Self {
         Self {
             provider,
+            kind,
             path: path.as_ref().to_path_buf(),
             content: content.into_bytes(),
             mode: None,
@@ -136,12 +151,14 @@ impl GeneratedFile {
     /// Create a binary file, optionally with a mode.
     pub fn binary(
         provider: Provider,
+        kind: FileKind,
         path: impl AsRef<Path>,
         content: Vec<u8>,
         mode: Option<u32>,
     ) -> Self {
         Self {
             provider,
+            kind,
             path: path.as_ref().to_path_buf(),
             content,
             mode,

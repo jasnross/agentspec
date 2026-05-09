@@ -171,8 +171,8 @@ pub struct HookFrontmatter {
 /// The provider-neutral event surface for hooks.
 ///
 /// Variants map to provider-specific event names inside each adapter
-/// via `HookAdapter::event_name`; the enum itself only expresses semantic
-/// identity, not naming.
+/// (`ClaudeAdapter::event_name` / `CursorAdapter::event_name`); the enum
+/// itself only expresses semantic identity, not naming.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HookEvent {

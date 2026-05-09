@@ -75,9 +75,8 @@ mod tests {
     #[test]
     fn test_adapter_returns_dyn_adapter() {
         // Compile-time check that `Provider::adapter()` returns a value
-        // satisfying the `Adapter` trait. Replaces the legacy
-        // `test_adapter_file_kinds_*` test that exercised the now-deleted
-        // `ProviderAdapter::file_kinds` method.
+        // satisfying the `Adapter` trait — the single dispatch point for all
+        // provider-specific decisions.
         let _: &dyn Adapter = Provider::Claude.adapter();
         let _: &dyn Adapter = Provider::Cursor.adapter();
         let _: &dyn Adapter = Provider::OpenCode.adapter();

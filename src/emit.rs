@@ -736,14 +736,19 @@ mod tests {
     use std::path::Path;
 
     use agentspec::compile::GeneratedFile;
-    use agentspec::plan::{CleanSlateWrite, CompilePlan, ManifestTrackedWrite, SyncPlan};
+    use agentspec::plan::{CleanSlateWrite, CompilePlan, FileKind, ManifestTrackedWrite, SyncPlan};
     use agentspec::provider::Provider;
     use tempfile::TempDir;
 
     use super::*;
 
-    fn make_file(provider: Provider, rel_path: &str, content: &str) -> GeneratedFile {
-        GeneratedFile::text(provider, rel_path, content.to_string())
+    fn make_file(
+        provider: Provider,
+        kind: FileKind,
+        rel_path: &str,
+        content: &str,
+    ) -> GeneratedFile {
+        GeneratedFile::text(provider, kind, rel_path, content.to_string())
     }
 
     fn clean_slate_plan(
@@ -767,6 +772,7 @@ mod tests {
 
         let files = vec![make_file(
             Provider::Claude,
+            FileKind::Skills,
             "skills/test/SKILL.md",
             "---\nname: test\n---\n\nBody.\n",
         )];
@@ -788,7 +794,12 @@ mod tests {
         fs::write(stale_dir.join("old.md"), "stale").expect("expected value");
 
         // Write new files (different path)
-        let files = vec![make_file(Provider::Claude, "skills/new/SKILL.md", "fresh")];
+        let files = vec![make_file(
+            Provider::Claude,
+            FileKind::Skills,
+            "skills/new/SKILL.md",
+            "fresh",
+        )];
         let plan = clean_slate_plan(Provider::Claude, &output_dir, files);
         emit_compile(&plan, false).expect("expected value");
 
@@ -809,6 +820,7 @@ mod tests {
                 destination: output_dir.join("claude"),
                 files: vec![GeneratedFile::binary(
                     Provider::Claude,
+                    FileKind::Skills,
                     "skills/gh-safe/gh-safe.sh",
                     b"#!/bin/bash\necho hi".to_vec(),
                     Some(0o755),
@@ -846,6 +858,7 @@ mod tests {
                 destination: output_dir.join("claude"),
                 files: vec![GeneratedFile::binary(
                     Provider::Claude,
+                    FileKind::Skills,
                     "skills/gh-safe/config.toml",
                     b"token = \"redacted\"\n".to_vec(),
                     Some(0o600),
@@ -880,6 +893,7 @@ mod tests {
                 destination: dest.clone(),
                 files: vec![make_file(
                     Provider::Claude,
+                    FileKind::Skills,
                     "skills/basic/SKILL.md",
                     "---\nname: basic\n---\n\nbody\n",
                 )],
@@ -908,7 +922,12 @@ mod tests {
                 provider: Provider::Claude,
                 kind: agentspec::plan::FileKind::Skills,
                 destination: dest.clone(),
-                files: vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "v1")],
+                files: vec![make_file(
+                    Provider::Claude,
+                    FileKind::Skills,
+                    "skills/basic/SKILL.md",
+                    "v1",
+                )],
                 overwrite: true,
             }],
             post_write_patches: vec![],
@@ -961,7 +980,12 @@ mod tests {
         // First sync: write the file.
         let plan = manifest_tracked_plan(
             &dest,
-            vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "body")],
+            vec![make_file(
+                Provider::Claude,
+                FileKind::Skills,
+                "skills/basic/SKILL.md",
+                "body",
+            )],
             false,
         );
         emit_sync(&plan, false, false).expect("expected value");
@@ -969,7 +993,12 @@ mod tests {
         // Second sync: same content — should be Unchanged (no manifest rewrite needed).
         let plan2 = manifest_tracked_plan(
             &dest,
-            vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "body")],
+            vec![make_file(
+                Provider::Claude,
+                FileKind::Skills,
+                "skills/basic/SKILL.md",
+                "body",
+            )],
             false,
         );
         emit_sync(&plan2, false, false).expect("expected value");
@@ -986,14 +1015,24 @@ mod tests {
 
         let plan = manifest_tracked_plan(
             &dest,
-            vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "v1")],
+            vec![make_file(
+                Provider::Claude,
+                FileKind::Skills,
+                "skills/basic/SKILL.md",
+                "v1",
+            )],
             false,
         );
         emit_sync(&plan, false, false).expect("expected value");
 
         let plan2 = manifest_tracked_plan(
             &dest,
-            vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "v2")],
+            vec![make_file(
+                Provider::Claude,
+                FileKind::Skills,
+                "skills/basic/SKILL.md",
+                "v2",
+            )],
             false,
         );
         emit_sync(&plan2, false, false).expect("expected value");
@@ -1012,7 +1051,12 @@ mod tests {
 
         let plan = manifest_tracked_plan(
             &dest,
-            vec![make_file(Provider::Claude, "agents/foo.md", "agentspec")],
+            vec![make_file(
+                Provider::Claude,
+                FileKind::Agents,
+                "agents/foo.md",
+                "agentspec",
+            )],
             false, // overwrite = false
         );
         let err = emit_sync(&plan, false, false).expect_err("expected collision error");
@@ -1034,7 +1078,12 @@ mod tests {
 
         let plan = manifest_tracked_plan(
             &dest,
-            vec![make_file(Provider::Claude, "agents/foo.md", "agentspec")],
+            vec![make_file(
+                Provider::Claude,
+                FileKind::Agents,
+                "agents/foo.md",
+                "agentspec",
+            )],
             true, // overwrite = true
         );
         emit_sync(&plan, false, false).expect("expected value");
@@ -1291,7 +1340,12 @@ mod tests {
             provider: Provider::Claude,
             kind: FileKind::Skills,
             destination: dest,
-            files: vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "body")],
+            files: vec![make_file(
+                Provider::Claude,
+                FileKind::Skills,
+                "skills/basic/SKILL.md",
+                "body",
+            )],
             overwrite: true,
         };
         let stats = write_manifest_tracked(&w, false)
@@ -1313,7 +1367,12 @@ mod tests {
                 provider: Provider::Claude,
                 kind: agentspec::plan::FileKind::Skills,
                 destination: dest.clone(),
-                files: vec![make_file(Provider::Claude, "skills/basic/SKILL.md", "body")],
+                files: vec![make_file(
+                    Provider::Claude,
+                    FileKind::Skills,
+                    "skills/basic/SKILL.md",
+                    "body",
+                )],
                 overwrite: true,
             }],
             post_write_patches: vec![],

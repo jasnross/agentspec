@@ -7,9 +7,9 @@
 //! file I/O, CST parse, top-level open, atomic write, and the delete-on-empty
 //! tail. All provider-specific JSON-shape decisions (top-level extras,
 //! per-event nesting depth, owned-entry pruning, the delete predicate, host
-//! filename) live behind the [`HookAdapter::merge_into`] /
-//! [`HookAdapter::tidy_after_remove`] / [`HookAdapter::host_filename`] trait
-//! methods in `src/adapters/*.rs`.
+//! filename) live behind the per-adapter `ConfigPatch` impls in
+//! `src/adapters/*.rs`, which call into [`merge_owned`] / [`remove_owned`]
+//! supplying their own merge / tidy / no-op-skip closures.
 //!
 //! Ownership is identified by the `_agentspec_id` sentinel field on each
 //! entry: agentspec-owned entries are replaced wholesale on each sync; entries
@@ -17,31 +17,34 @@
 //! trailing commas, key ordering, and untouched whitespace round-trip
 //! byte-identical via `jsonc-parser`'s CST API.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result};
 use jsonc_parser::ParseOptions;
-use jsonc_parser::cst::CstRootNode;
+use jsonc_parser::cst::{CstObject, CstRootNode};
 
-use crate::adapters::HookAdapter;
-use crate::compile::EmittedHookEntry;
+use crate::adapters::TidyOutcome;
 use crate::cst_io::{finish, read_or_empty_object};
-use crate::plan::{PostWriteHook, RemovePatchReport, delete_host_file_and_rmdir_parent};
+use crate::plan::{RemovePatchReport, delete_host_file_and_rmdir_parent};
 
 /// Merge agentspec-owned hook entries into the host config file at
-/// `host_path`. The provider-specific shape decisions are delegated to
-/// `adapter.merge_into`; this function only handles file I/O, CST parse, the
-/// no-op-skip guard, and the atomic write.
-pub fn merge_owned(
-    adapter: &dyn HookAdapter,
+/// `host_path`. The provider-specific shape decisions are delegated to the
+/// supplied closures: `no_op_skip` decides whether the merge should bail
+/// without touching the file (e.g., a fresh `settings.json` with no `hooks`
+/// key when the entry list is empty), and `merge_into` mutates the parsed
+/// top-level object in place. This function only handles file I/O, CST
+/// parse, the entry-list-empty short-circuit on a missing file, and the
+/// atomic write.
+pub(crate) fn merge_owned(
     host_path: &Path,
-    owned_entries: &[EmittedHookEntry],
-    force: bool,
+    entries_empty: bool,
+    no_op_skip: impl FnOnce(&CstObject) -> bool,
+    merge_into: impl FnOnce(&CstObject) -> Result<()>,
     dry_run: bool,
 ) -> Result<()> {
     // Skip when the file is absent and we have no entries to add — avoids
     // creating a spurious config file on a fresh project.
-    if !host_path.is_file() && owned_entries.is_empty() {
+    if !host_path.is_file() && entries_empty {
         return Ok(());
     }
     let content = read_or_empty_object(host_path)?;
@@ -55,18 +58,16 @@ pub fn merge_owned(
         )
     })?;
 
-    // No-op skip: when there are no entries to add and no existing `hooks`
-    // key to clean orphans from, don't touch the file. Adapters that inject
-    // top-level extras (e.g. Cursor's `version: 1`) intentionally don't run
-    // when this guard fires — the file would otherwise be modified for no
-    // observable benefit.
-    if owned_entries.is_empty() && top.get("hooks").is_none() {
+    // No-op skip predicate is provider-supplied. Today every adapter passes
+    // `entries_empty && top.get("hooks").is_none()` — the previous hardcoded
+    // guard — but adapters that inject top-level extras (e.g. Cursor's
+    // `version: 1`) might evolve different predicates without touching this
+    // shell.
+    if no_op_skip(&top) {
         return Ok(());
     }
 
-    adapter
-        .merge_into(&top, owned_entries, force)
-        .with_context(|| format!("merge into {} failed", host_path.display()))?;
+    merge_into(&top).with_context(|| format!("merge into {} failed", host_path.display()))?;
 
     if dry_run {
         eprintln!("[dry-run] would merge hooks into {}", host_path.display());
@@ -78,10 +79,13 @@ pub fn merge_owned(
 
 /// Strip agentspec-owned hook entries from the host config file at
 /// `host_path` and either delete the file (when the adapter's predicate says
-/// it's effectively empty) or write the tidied CST back.
-pub fn remove_owned(
-    adapter: &dyn HookAdapter,
+/// it's effectively empty) or write the tidied CST back. The
+/// provider-specific `tidy_after_remove` closure mutates the parsed top
+/// in place and reports whether the residual file should be deleted plus
+/// how many user-authored entries survived.
+pub(crate) fn remove_owned(
     host_path: &Path,
+    tidy_after_remove: impl FnOnce(&CstObject) -> TidyOutcome,
     dry_run: bool,
 ) -> Result<RemovePatchReport> {
     if !host_path.is_file() {
@@ -105,7 +109,7 @@ pub fn remove_owned(
         });
     };
 
-    let outcome = adapter.tidy_after_remove(&top);
+    let outcome = tidy_after_remove(&top);
 
     if outcome.file_should_be_deleted {
         let parent_rmdir = delete_host_file_and_rmdir_parent(host_path, dry_run)?;
@@ -137,58 +141,56 @@ pub fn remove_owned(
     })
 }
 
-/// Post-write hook that merges agentspec-owned hook entries into a provider's
-/// hand-edited host config (Claude's `settings.json`, Cursor's `hooks.json`)
-/// via the CST patcher. Constructed once per `(provider, FileKind::Hooks)`
-/// sync call when the emit mode is `MergedUser` or `MergedProject`. Path mode
-/// owns the entire `hooks/hooks.json` file directly so no patcher is created.
-#[derive(Debug)]
-pub struct HooksPatch {
-    pub adapter: &'static dyn HookAdapter,
-    pub host_path: PathBuf,
-    pub owned_entries: Vec<EmittedHookEntry>,
-    /// `--force`/`overwrite=true`: replace a non-object `hooks` (or non-array
-    /// per-event) value with `{}`/`[]` before merging, instead of erroring.
-    pub force: bool,
-}
-
-impl PostWriteHook for HooksPatch {
-    fn run(&self, dry_run: bool) -> Result<()> {
-        merge_owned(
-            self.adapter,
-            &self.host_path,
-            &self.owned_entries,
-            self.force,
-            dry_run,
-        )
-    }
-}
-
-/// Post-write hook that strips agentspec-owned hook entries from a provider's
-/// host config and tidies emptied containers, paralleling [`HooksPatch`] but
-/// in reverse. Ownership is identified by the on-disk `_agentspec_id`
-/// sentinel — no in-memory owned-entries list is needed.
-#[derive(Debug)]
-pub struct RemoveHooksPatch {
-    pub adapter: &'static dyn HookAdapter,
-    pub host_path: PathBuf,
-}
-
-impl PostWriteHook for RemoveHooksPatch {
-    fn run(&self, dry_run: bool) -> Result<()> {
-        let report = remove_owned(self.adapter, &self.host_path, dry_run)?;
-        report.print_summary(dry_run);
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use tempfile::TempDir;
 
     use super::*;
     use crate::adapters::{ClaudeAdapter, CursorAdapter};
+    use crate::compile::EmittedHookEntry;
     use crate::spec::HookEvent;
+
+    /// Test-only adapter shim that mirrors what each adapter's `ConfigPatch`
+    /// impl supplies to `merge_owned`. Calls into the adapter's inherent
+    /// `merge_into_settings` / `tidy_settings` helpers so tests exercise the
+    /// real per-provider closures end-to-end (no parallel shape).
+    fn merge_with_claude(
+        host_path: &Path,
+        entries: &[EmittedHookEntry],
+        force: bool,
+        dry_run: bool,
+    ) -> Result<()> {
+        merge_owned(
+            host_path,
+            entries.is_empty(),
+            |top| entries.is_empty() && top.get("hooks").is_none(),
+            |top| ClaudeAdapter::merge_into_settings(top, entries, force),
+            dry_run,
+        )
+    }
+
+    fn remove_with_claude(host_path: &Path, dry_run: bool) -> Result<RemovePatchReport> {
+        remove_owned(host_path, ClaudeAdapter::tidy_settings, dry_run)
+    }
+
+    fn merge_with_cursor(
+        host_path: &Path,
+        entries: &[EmittedHookEntry],
+        force: bool,
+        dry_run: bool,
+    ) -> Result<()> {
+        merge_owned(
+            host_path,
+            entries.is_empty(),
+            |top| entries.is_empty() && top.get("hooks").is_none(),
+            |top| CursorAdapter::merge_into_hooks(top, entries, force),
+            dry_run,
+        )
+    }
+
+    fn remove_with_cursor(host_path: &Path, dry_run: bool) -> Result<RemovePatchReport> {
+        remove_owned(host_path, CursorAdapter::tidy_hooks, dry_run)
+    }
 
     fn entry(id: &str, event: HookEvent, command: &str) -> EmittedHookEntry {
         EmittedHookEntry {
@@ -225,7 +227,7 @@ mod tests {
             "$HOME/.claude/hooks/scripts/init.sh",
         )];
 
-        merge_owned(&ClaudeAdapter, &path, &entries, false, false).expect("merge");
+        merge_with_claude(&path, &entries, false, false).expect("merge");
 
         assert!(path.exists());
         let content = std::fs::read_to_string(&path).expect("read");
@@ -254,7 +256,7 @@ mod tests {
             HookEvent::SessionStart,
             "$HOME/.claude/hooks/scripts/init.sh",
         )];
-        merge_owned(&ClaudeAdapter, &path, &entries, false, false).expect("merge");
+        merge_with_claude(&path, &entries, false, false).expect("merge");
 
         let after = std::fs::read_to_string(&path).expect("read");
         assert!(
@@ -288,7 +290,7 @@ mod tests {
         std::fs::write(&path, initial).expect("write initial");
 
         let entries = vec![entry("init", HookEvent::SessionStart, "NEW")];
-        merge_owned(&ClaudeAdapter, &path, &entries, false, false).expect("merge");
+        merge_with_claude(&path, &entries, false, false).expect("merge");
 
         let after = std::fs::read_to_string(&path).expect("read");
         assert!(
@@ -324,9 +326,9 @@ mod tests {
             "Bash",
             "AUDIT",
         )];
-        merge_owned(&ClaudeAdapter, &path, &entries_v1, false, false).expect("merge v1");
+        merge_with_claude(&path, &entries_v1, false, false).expect("merge v1");
         let entries_v2 = vec![entry("init", HookEvent::SessionStart, "INIT")];
-        merge_owned(&ClaudeAdapter, &path, &entries_v2, false, false).expect("merge v2");
+        merge_with_claude(&path, &entries_v2, false, false).expect("merge v2");
 
         let after = std::fs::read_to_string(&path).expect("read");
         assert!(
@@ -350,13 +352,13 @@ mod tests {
             entry("init", HookEvent::SessionStart, "INIT"),
             entry("audit", HookEvent::SessionStart, "AUDIT"),
         ];
-        merge_owned(&ClaudeAdapter, &path, &entries_v1, false, false).expect("merge v1");
+        merge_with_claude(&path, &entries_v1, false, false).expect("merge v1");
         let after_v1 = std::fs::read_to_string(&path).expect("read v1");
         assert!(after_v1.contains("\"INIT\"") && after_v1.contains("\"AUDIT\""));
 
         // Re-sync with `audit` removed — it must disappear.
         let entries_v2 = vec![entry("init", HookEvent::SessionStart, "INIT")];
-        merge_owned(&ClaudeAdapter, &path, &entries_v2, false, false).expect("merge v2");
+        merge_with_claude(&path, &entries_v2, false, false).expect("merge v2");
         let after_v2 = std::fs::read_to_string(&path).expect("read v2");
         assert!(after_v2.contains("\"INIT\""));
         assert!(
@@ -374,7 +376,7 @@ mod tests {
             HookEvent::SessionStart,
             "$HOME/.cursor/hooks/scripts/init.sh",
         )];
-        merge_owned(&CursorAdapter, &path, &entries, false, false).expect("merge");
+        merge_with_cursor(&path, &entries, false, false).expect("merge");
 
         let content = std::fs::read_to_string(&path).expect("read");
         assert!(
@@ -393,7 +395,7 @@ mod tests {
             "Bash",
             "$HOME/.cursor/hooks/scripts/audit.sh",
         )];
-        merge_owned(&CursorAdapter, &path, &entries, false, false).expect("merge");
+        merge_with_cursor(&path, &entries, false, false).expect("merge");
 
         let content = std::fs::read_to_string(&path).expect("read");
         // Cursor's shape: `{"type": "command", "matcher": "...", "command": "..."}`.
@@ -422,7 +424,7 @@ mod tests {
             HookEvent::SessionStart,
             "$HOME/.claude/hooks/scripts/init.sh",
         )];
-        merge_owned(&ClaudeAdapter, &path, &entries, false, false)
+        merge_with_claude(&path, &entries, false, false)
             .expect("merge should succeed on empty file");
 
         let content = std::fs::read_to_string(&path).expect("read");
@@ -435,7 +437,7 @@ mod tests {
         // spurious `{"hooks": {}}` settings.json.
         let tmp = TempDir::new().expect("tmp");
         let path = tmp.path().join("settings.json");
-        merge_owned(&ClaudeAdapter, &path, &[], false, false).expect("merge");
+        merge_with_claude(&path, &[], false, false).expect("merge");
         assert!(
             !path.exists(),
             "no file + no entries must not create settings.json"
@@ -452,7 +454,7 @@ mod tests {
         let initial = "{\n  \"version\": 1\n}\n";
         std::fs::write(&path, initial).expect("write initial");
 
-        merge_owned(&CursorAdapter, &path, &[], false, false).expect("merge");
+        merge_with_cursor(&path, &[], false, false).expect("merge");
 
         let after = std::fs::read_to_string(&path).expect("read");
         assert_eq!(after, initial, "file must round-trip byte-identical");
@@ -469,7 +471,7 @@ mod tests {
         let initial = "{\n  \"permissions\": { \"allow\": [\"Read\"] }\n}\n";
         std::fs::write(&path, initial).expect("write initial");
 
-        merge_owned(&ClaudeAdapter, &path, &[], false, false).expect("merge");
+        merge_with_claude(&path, &[], false, false).expect("merge");
 
         let after = std::fs::read_to_string(&path).expect("read");
         assert_eq!(after, initial, "file must round-trip byte-identical");
@@ -489,7 +491,7 @@ mod tests {
             HookEvent::SessionStart,
             "$HOME/.claude/hooks/scripts/init.sh",
         )];
-        let err = merge_owned(&ClaudeAdapter, &path, &entries, false, false)
+        let err = merge_with_claude(&path, &entries, false, false)
             .expect_err("expected refusal-to-overwrite error");
         let msg = format!("{err:#}");
         assert!(
@@ -518,7 +520,7 @@ mod tests {
             HookEvent::SessionStart,
             "$HOME/.claude/hooks/scripts/init.sh",
         )];
-        merge_owned(&ClaudeAdapter, &path, &entries, true, false).expect("force merge");
+        merge_with_claude(&path, &entries, true, false).expect("force merge");
 
         let after = std::fs::read_to_string(&path).expect("read");
         assert!(
@@ -550,7 +552,7 @@ mod tests {
             "Bash",
             "$HOME/.claude/hooks/scripts/audit.sh",
         )];
-        merge_owned(&ClaudeAdapter, &path, &entries, true, false).expect("force merge");
+        merge_with_claude(&path, &entries, true, false).expect("force merge");
 
         let after = std::fs::read_to_string(&path).expect("read");
         assert!(
@@ -581,7 +583,7 @@ mod tests {
             "Bash",
             "$HOME/.claude/hooks/scripts/audit.sh",
         )];
-        let err = merge_owned(&ClaudeAdapter, &path, &entries, false, false)
+        let err = merge_with_claude(&path, &entries, false, false)
             .expect_err("expected refusal-to-overwrite error at inner level");
         let msg = format!("{err:#}");
         assert!(
@@ -606,7 +608,7 @@ mod tests {
             HookEvent::PreToolUse,
             "$HOME/.cursor/hooks/scripts/audit.sh",
         )];
-        merge_owned(&CursorAdapter, &path, &entries, true, false).expect("force merge");
+        merge_with_cursor(&path, &entries, true, false).expect("force merge");
 
         let after = std::fs::read_to_string(&path).expect("read");
         assert!(
@@ -628,7 +630,7 @@ mod tests {
             HookEvent::SessionStart,
             "$HOME/.claude/hooks/scripts/init.sh",
         )];
-        merge_owned(&ClaudeAdapter, &path, &entries, false, true).expect("dry-run merge");
+        merge_with_claude(&path, &entries, false, true).expect("dry-run merge");
         assert!(!path.exists(), "dry-run must not create the file");
     }
 
@@ -642,10 +644,10 @@ mod tests {
             HookEvent::SessionStart,
             "$HOME/.claude/hooks/scripts/init.sh",
         )];
-        merge_owned(&ClaudeAdapter, &path, &entries, false, false).expect("merge 1");
+        merge_with_claude(&path, &entries, false, false).expect("merge 1");
         let after_1 = std::fs::read_to_string(&path).expect("read 1");
 
-        merge_owned(&ClaudeAdapter, &path, &entries, false, false).expect("merge 2");
+        merge_with_claude(&path, &entries, false, false).expect("merge 2");
         let after_2 = std::fs::read_to_string(&path).expect("read 2");
 
         assert_eq!(after_1, after_2, "merge must be idempotent");
@@ -673,7 +675,7 @@ mod tests {
             HookEvent::SessionStart,
             "$HOME/.claude/hooks/scripts/init.sh",
         )];
-        merge_owned(&ClaudeAdapter, &path, &entries, false, false).expect("merge");
+        merge_with_claude(&path, &entries, false, false).expect("merge");
 
         let mode = std::fs::metadata(&path).expect("stat").permissions().mode() & 0o777;
         assert_eq!(
@@ -694,26 +696,9 @@ mod tests {
         Restore(original)
     }
 
-    #[test]
-    fn test_entry_to_claude_json_includes_sentinel() {
-        let e = entry("init", HookEvent::SessionStart, "/path/to/script.sh");
-        let v = ClaudeAdapter.entry_to_json(&e);
-        assert_eq!(v["type"], "command");
-        assert_eq!(v["command"], "/path/to/script.sh");
-        assert_eq!(v["_agentspec_id"], "init");
-        assert!(
-            v.get("matcher").is_none(),
-            "claude entry: matcher is on the wrapper, not the entry"
-        );
-    }
-
-    #[test]
-    fn test_entry_to_cursor_json_places_matcher_on_entry() {
-        let e = entry_with_matcher("audit", HookEvent::PreToolUse, "Bash", "/path/to/script.sh");
-        let v = CursorAdapter.entry_to_json(&e);
-        assert_eq!(v["matcher"], "Bash");
-        assert_eq!(v["_agentspec_id"], "audit");
-    }
+    // Per-adapter `entry_to_json` shape tests live in the respective adapter
+    // modules (`adapters/claude.rs::tests` / `adapters/cursor.rs::tests`)
+    // alongside the function being tested.
 
     // ── delete-on-empty tidy tests ─────────────────────────────────────────
 
@@ -727,9 +712,9 @@ mod tests {
         std::fs::create_dir_all(&parent).expect("mkdir");
         let path = parent.join("settings.json");
         let entries = vec![entry("init", HookEvent::SessionStart, "INIT")];
-        merge_owned(&ClaudeAdapter, &path, &entries, false, false).expect("seed");
+        merge_with_claude(&path, &entries, false, false).expect("seed");
 
-        let report = remove_owned(&ClaudeAdapter, &path, false).expect("tidy");
+        let report = remove_with_claude(&path, false).expect("tidy");
 
         assert!(
             !path.exists(),
@@ -762,7 +747,7 @@ mod tests {
 "#;
         std::fs::write(&path, initial).expect("write");
 
-        let report = remove_owned(&ClaudeAdapter, &path, false).expect("tidy");
+        let report = remove_with_claude(&path, false).expect("tidy");
 
         assert!(
             path.exists(),
@@ -790,7 +775,7 @@ mod tests {
         let initial = "{\n  \"permissions\": { \"allow\": [\"Read\"] }\n}\n";
         std::fs::write(&path, initial).expect("write");
 
-        let report = remove_owned(&ClaudeAdapter, &path, false).expect("tidy");
+        let report = remove_with_claude(&path, false).expect("tidy");
 
         assert!(
             path.exists(),
@@ -811,9 +796,9 @@ mod tests {
         std::fs::create_dir_all(&parent).expect("mkdir");
         let path = parent.join("hooks.json");
         let entries = vec![entry("init", HookEvent::SessionStart, "INIT")];
-        merge_owned(&CursorAdapter, &path, &entries, false, false).expect("seed");
+        merge_with_cursor(&path, &entries, false, false).expect("seed");
 
-        let report = remove_owned(&CursorAdapter, &path, false).expect("tidy");
+        let report = remove_with_cursor(&path, false).expect("tidy");
 
         assert!(
             !path.exists(),
@@ -848,7 +833,7 @@ mod tests {
         )
         .expect("write");
 
-        let report = remove_owned(&CursorAdapter, &path, false).expect("tidy");
+        let report = remove_with_cursor(&path, false).expect("tidy");
 
         assert!(
             !path.exists(),
@@ -868,7 +853,7 @@ mod tests {
         let initial = "{\n  \"version\": 2\n}\n";
         std::fs::write(&path, initial).expect("write");
 
-        let report = remove_owned(&CursorAdapter, &path, false).expect("tidy");
+        let report = remove_with_cursor(&path, false).expect("tidy");
 
         assert!(
             path.exists(),
@@ -901,7 +886,7 @@ mod tests {
         )
         .expect("write");
 
-        let report = remove_owned(&CursorAdapter, &path, false).expect("tidy");
+        let report = remove_with_cursor(&path, false).expect("tidy");
 
         assert!(
             path.exists(),
@@ -933,10 +918,10 @@ mod tests {
         std::fs::create_dir_all(&parent).expect("mkdir");
         let path = parent.join("settings.json");
         let entries = vec![entry("init", HookEvent::SessionStart, "INIT")];
-        merge_owned(&ClaudeAdapter, &path, &entries, false, false).expect("seed");
+        merge_with_claude(&path, &entries, false, false).expect("seed");
         let pre = std::fs::read_to_string(&path).expect("read pre");
 
-        let report = remove_owned(&ClaudeAdapter, &path, true).expect("dry-run tidy");
+        let report = remove_with_claude(&path, true).expect("dry-run tidy");
 
         assert!(path.exists(), "dry-run must not delete the host file");
         assert!(parent.exists(), "dry-run must not rmdir the parent");
