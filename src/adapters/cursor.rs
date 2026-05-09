@@ -2,13 +2,19 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use jsonc_parser::cst::{CstInputValue, CstObject};
 use serde::Serialize;
 
-use super::{HookAdapter, ProviderAdapter, SyncDestinationMode};
+use super::hooks_helpers::{
+    is_owned_entry, open_or_create_array, open_or_create_object, prune_empty_event_arrays,
+    value_to_cst_input,
+};
+use super::{HookAdapter, ProviderAdapter, SyncDestinationMode, TidyOutcome};
 use crate::compile::{
     AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode, HookSynthesis,
     build_emitted_hook_entries, build_hook_script_files,
 };
+use crate::hooks_merge::{HooksPatch, RemoveHooksPatch};
 use crate::plan::{FileKind, PostWriteHook, expand_tilde};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
@@ -43,6 +49,7 @@ struct CursorRuleFrontmatter {
 }
 
 /// Zero-sized adapter for the Cursor provider.
+#[derive(Debug)]
 pub struct CursorAdapter;
 
 impl ProviderAdapter for CursorAdapter {
@@ -111,8 +118,9 @@ impl ProviderAdapter for CursorAdapter {
         if !emit_mode.is_merged() {
             return None;
         }
-        Some(Box::new(CursorHooksPatch {
-            hooks_path: config_dir.join("hooks.json"),
+        Some(Box::new(HooksPatch {
+            adapter: &CursorAdapter,
+            host_path: config_dir.join(self.host_filename()),
             owned_entries: owned_entries.to_vec(),
             force: overwrite,
         }))
@@ -135,8 +143,9 @@ impl ProviderAdapter for CursorAdapter {
         if !emit_mode.is_merged() {
             return None;
         }
-        Some(Box::new(CursorRemoveHooksPatch {
-            hooks_path: config_dir.join("hooks.json"),
+        Some(Box::new(RemoveHooksPatch {
+            adapter: &CursorAdapter,
+            host_path: config_dir.join(self.host_filename()),
         }))
     }
 
@@ -248,6 +257,132 @@ impl HookAdapter for CursorAdapter {
     fn hook_command_dotdir(&self) -> &'static str {
         ".cursor"
     }
+
+    fn host_filename(&self) -> &'static str {
+        "hooks.json"
+    }
+
+    fn merge_into(
+        &self,
+        top: &CstObject,
+        owned_entries: &[EmittedHookEntry],
+        force: bool,
+    ) -> Result<()> {
+        // Set `version: 1` if missing. Don't overwrite a user-authored value,
+        // even if it's a different version — the user's intent wins.
+        // Order matters: the version injection runs before the hooks-object
+        // open. The shell's no-op-skip guard in `hooks_merge::merge_owned`
+        // returns early only when both `owned_entries` is empty AND
+        // `top.get("hooks")` is `None`, so a user with `hooks: { ... }` but no
+        // agentspec entries this run still gets `version: 1` injected if absent.
+        if top.get("version").is_none() {
+            top.append("version", CstInputValue::Number("1".to_string()));
+        }
+
+        let hooks_obj = open_or_create_object(top, "hooks", force, "hooks")?;
+
+        // Step 1 — remove every agentspec-owned entry under every event. Sync
+        // doesn't care about the removed-count, so discard.
+        let _ = remove_owned_entries(&hooks_obj);
+
+        // Step 2 — append new entries directly under their event arrays.
+        // `BTreeMap` sort order matches `build_cursor_hooks_json`'s emission
+        // order, so newly-created event keys land alphabetically.
+        let mut by_event: BTreeMap<&'static str, Vec<&EmittedHookEntry>> = BTreeMap::new();
+        for e in owned_entries {
+            by_event
+                .entry(self.event_name(e.event))
+                .or_default()
+                .push(e);
+        }
+        for (event_name, entries) in &by_event {
+            let event_arr = open_or_create_array(
+                &hooks_obj,
+                event_name,
+                force,
+                &format!("hooks.{event_name}"),
+            )?;
+            for &e in entries {
+                event_arr.append(value_to_cst_input(self.entry_to_json(e)));
+            }
+        }
+        Ok(())
+    }
+
+    fn tidy_after_remove(&self, top: &CstObject) -> TidyOutcome {
+        let Some(hooks_obj) = top.object_value("hooks") else {
+            return TidyOutcome {
+                user_entries_remaining: 0,
+                file_should_be_deleted: false,
+            };
+        };
+
+        let removed_owned = remove_owned_entries(&hooks_obj);
+        prune_empty_event_arrays(&hooks_obj);
+
+        if hooks_obj.properties().is_empty()
+            && let Some(hooks_prop) = top.get("hooks")
+        {
+            hooks_prop.remove();
+        }
+
+        // Cursor predicate: delete iff we actually removed at least one
+        // agentspec-owned entry AND the residual is either empty OR exactly
+        // one `version` key (any value). Cursor-exclusive — sync injects
+        // `version: 1` if absent and never overwrites a user value, so a
+        // residual `{version: <n>}` carries no information beyond file existence.
+        let surviving = top.properties();
+        let only_version_remains = surviving.len() == 1 && top.get("version").is_some();
+        let file_should_be_deleted =
+            removed_owned > 0 && (surviving.is_empty() || only_version_remains);
+
+        TidyOutcome {
+            user_entries_remaining: count_user_entries(top),
+            file_should_be_deleted,
+        }
+    }
+}
+
+/// Cursor analog of `claude::remove_owned_entries`. Cursor's shape is one
+/// nesting level shallower (no matcher-group wrapper), so this walks
+/// `hooks.<event>[]` directly. Returns the count of `_agentspec_id`-tagged
+/// entries removed; merge callers can ignore the count.
+fn remove_owned_entries(hooks_obj: &CstObject) -> usize {
+    let mut removed = 0usize;
+    let event_props: Vec<_> = hooks_obj.properties();
+    for event_prop in event_props {
+        let Some(event_arr) = event_prop.array_value() else {
+            continue;
+        };
+        let entries: Vec<_> = event_arr.elements();
+        for entry in entries {
+            if is_owned_entry(&entry) {
+                entry.remove();
+                removed += 1;
+            }
+        }
+    }
+    removed
+}
+
+/// Counts user-authored Cursor hook entries: walks every surviving event
+/// array and counts elements lacking `_agentspec_id`.
+fn count_user_entries(top: &CstObject) -> usize {
+    let Some(hooks_obj) = top.object_value("hooks") else {
+        return 0;
+    };
+    let mut count = 0;
+    for event_prop in hooks_obj.properties() {
+        let Some(event_arr) = event_prop.array_value() else {
+            continue;
+        };
+        for entry in event_arr.elements() {
+            if !is_owned_entry(&entry) {
+                count += 1;
+            }
+        }
+    }
+    count
 }
 
 fn adapt_agent_spec(
@@ -386,50 +521,6 @@ fn build_cursor_hooks_json(entries: &[EmittedHookEntry]) -> Result<String> {
     let json =
         serde_json::to_string_pretty(&top).context("failed to serialize Cursor hooks.json")?;
     Ok(format!("{json}\n"))
-}
-
-/// Post-write hook that merges agentspec-owned hook entries into Cursor's
-/// hand-edited `hooks.json` via the CST patcher in `hooks_merge`.
-///
-/// Cursor's host config file is the same name as the Path-mode bundle
-/// (`hooks.json`) but lives at the config-dir root rather than under
-/// `hooks/`. The patcher is constructed only for `MergedUser`/`MergedProject`
-/// modes; Path mode emits the file directly.
-#[derive(Debug)]
-pub struct CursorHooksPatch {
-    hooks_path: PathBuf,
-    owned_entries: Vec<EmittedHookEntry>,
-    /// `--force`/`overwrite=true`: replace a non-object `hooks` value with
-    /// `{}` before merging, instead of erroring.
-    force: bool,
-}
-
-impl PostWriteHook for CursorHooksPatch {
-    fn run(&self, dry_run: bool) -> Result<()> {
-        crate::hooks_merge::merge_cursor_hooks(
-            &self.hooks_path,
-            &self.owned_entries,
-            self.force,
-            dry_run,
-        )
-    }
-}
-
-/// Post-write hook that strips agentspec-owned hook entries from Cursor's
-/// `hooks.json` and tidies emptied containers, paralleling
-/// [`CursorHooksPatch`] but in reverse. Ownership is identified by the
-/// on-disk `_agentspec_id` sentinel.
-#[derive(Debug)]
-pub struct CursorRemoveHooksPatch {
-    hooks_path: PathBuf,
-}
-
-impl PostWriteHook for CursorRemoveHooksPatch {
-    fn run(&self, dry_run: bool) -> Result<()> {
-        let report = crate::hooks_merge::remove_cursor_hooks(&self.hooks_path, dry_run)?;
-        report.print_summary(dry_run);
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -732,9 +823,9 @@ mod tests {
 
     #[test]
     fn test_synthesize_hooks_merged_user_emits_scripts_no_hooks_json() {
-        // Merged modes hand JSON emission to `CursorHooksPatch`. Scripts still
-        // flow through to disk; hooks.json itself does not (the patcher edits
-        // the host `<config>/hooks.json` instead).
+        // Merged modes hand JSON emission to the generic `HooksPatch`, which
+        // dispatches through `HookAdapter::merge_into` to edit the host
+        // `<config>/hooks.json` instead. Scripts still flow through to disk.
         let cfg = AdapterConfig {
             hook_emit_mode: Some(HookEmitMode::MergedUser),
             ..AdapterConfig::default()

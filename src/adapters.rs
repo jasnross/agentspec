@@ -7,6 +7,7 @@
 
 mod claude;
 mod cursor;
+mod hooks_helpers;
 mod opencode;
 
 use std::path::{Path, PathBuf};
@@ -14,6 +15,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 pub use claude::ClaudeAdapter;
 pub use cursor::CursorAdapter;
+use jsonc_parser::cst::CstObject;
 pub use opencode::OpenCodeAdapter;
 
 use crate::compile::{AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode, HookSynthesis};
@@ -104,11 +106,28 @@ pub trait ProviderAdapter {
     ) -> PathBuf;
 }
 
+/// Outcome of a per-provider tidy. The implementation mutates the supplied
+/// top-level `CstObject` in place via `jsonc-parser`'s interior-mutability
+/// API (the shell holds the `CstRootNode` for the duration of the tidy and
+/// serializes it after) and reports (a) how many user-authored entries
+/// survived (for the existing summary line) and (b) whether the file is
+/// effectively empty per the provider's predicate, which drives the
+/// delete-on-empty branch in the generic shell.
+#[derive(Debug)]
+pub struct TidyOutcome {
+    pub user_entries_remaining: usize,
+    pub file_should_be_deleted: bool,
+}
+
 /// Hook-emitting providers' contract.
 ///
 /// `Provider::hook_adapter()` returns `Some(_)` only for providers that emit
 /// hooks (Claude, Cursor today). `OpenCode` does not implement this trait.
-pub trait HookAdapter: ProviderAdapter {
+///
+/// `Debug` is a supertrait so the generic `HooksPatch` / `RemoveHooksPatch`
+/// post-write structs in `hooks_merge` (which store `&'static dyn
+/// HookAdapter`) can derive `Debug` and satisfy the `PostWriteHook` bound.
+pub trait HookAdapter: ProviderAdapter + std::fmt::Debug {
     /// Synthesize the per-provider hooks bundle (entries plus, in Bundled
     /// mode, the `hooks/hooks.json` file).
     fn synthesize_hooks(
@@ -129,4 +148,39 @@ pub trait HookAdapter: ProviderAdapter {
     /// every other path consumer uses the `PathBuf`-returning methods on
     /// `ProviderAdapter`.
     fn hook_command_dotdir(&self) -> &'static str;
+
+    /// Filename within `<config_dir>/` that this provider's hook merge writes
+    /// (e.g. `"settings.json"` for Claude, `"hooks.json"` for Cursor).
+    fn host_filename(&self) -> &'static str;
+
+    /// Merge agentspec-owned entries into a parsed top-level CST object.
+    ///
+    /// `top` is already parsed — the generic shell handles file I/O. The
+    /// implementation owns every provider-specific shape decision: top-level
+    /// extras (e.g. Cursor's `version: 1`), opening the `hooks` object, the
+    /// per-event nesting depth, and the per-entry shape.
+    ///
+    /// `force` propagates through the `force`-aware helpers in
+    /// `hooks_helpers` so non-object/non-array existing values can be
+    /// replaced when `--force` is set.
+    ///
+    /// Implementations MUST NOT prune empty event arrays — locked by
+    /// `test_merge_claude_leaves_empty_event_array_after_removing_all_owned_entries`.
+    fn merge_into(
+        &self,
+        top: &CstObject,
+        owned_entries: &[EmittedHookEntry],
+        force: bool,
+    ) -> Result<()>;
+
+    /// Strip agentspec-owned entries from a parsed top-level CST object,
+    /// prune emptied containers, and report whether the host file should be
+    /// deleted.
+    ///
+    /// Implementations are responsible for the provider-specific
+    /// delete-on-empty predicate — Claude requires zero surviving top-level
+    /// keys; Cursor tolerates a residual `version` key. The generic shell
+    /// uses `TidyOutcome::file_should_be_deleted` to decide whether to
+    /// delete the host file vs. write the tidied CST back.
+    fn tidy_after_remove(&self, top: &CstObject) -> TidyOutcome;
 }

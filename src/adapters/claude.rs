@@ -3,13 +3,19 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use indexmap::IndexMap;
+use jsonc_parser::cst::CstObject;
 use serde::Serialize;
 
-use super::{HookAdapter, ProviderAdapter, SyncDestinationMode};
+use super::hooks_helpers::{
+    is_owned_entry, node_as_object, open_or_create_array, open_or_create_object,
+    prune_empty_event_arrays, value_to_cst_input,
+};
+use super::{HookAdapter, ProviderAdapter, SyncDestinationMode, TidyOutcome};
 use crate::compile::{
     AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode, HookSynthesis,
     build_emitted_hook_entries, build_hook_script_files,
 };
+use crate::hooks_merge::{HooksPatch, RemoveHooksPatch};
 use crate::plan::{FileKind, PostWriteHook, expand_tilde};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
@@ -78,6 +84,7 @@ enum ClaudeTool {
 }
 
 /// Zero-sized adapter for the Claude provider.
+#[derive(Debug)]
 pub struct ClaudeAdapter;
 
 impl ProviderAdapter for ClaudeAdapter {
@@ -158,8 +165,9 @@ impl ProviderAdapter for ClaudeAdapter {
             // produced by `synthesize_hooks`. No merge needed.
             return None;
         }
-        Some(Box::new(ClaudeHooksPatch {
-            settings_path: config_dir.join("settings.json"),
+        Some(Box::new(HooksPatch {
+            adapter: &ClaudeAdapter,
+            host_path: config_dir.join(self.host_filename()),
             owned_entries: owned_entries.to_vec(),
             force: overwrite,
         }))
@@ -189,8 +197,9 @@ impl ProviderAdapter for ClaudeAdapter {
         if !emit_mode.is_merged() {
             return None;
         }
-        Some(Box::new(ClaudeRemoveHooksPatch {
-            settings_path: config_dir.join("settings.json"),
+        Some(Box::new(RemoveHooksPatch {
+            adapter: &ClaudeAdapter,
+            host_path: config_dir.join(self.host_filename()),
         }))
     }
 
@@ -253,8 +262,9 @@ impl HookAdapter for ClaudeAdapter {
         let mut files = build_hook_script_files(Provider::Claude, specs);
         if matches!(emit_mode, HookEmitMode::Bundled) {
             // Bundled (Path) mode: agentspec owns the whole `hooks/hooks.json`.
-            // Merged modes hand emission to `ClaudeHooksPatch`, which surgically
-            // edits the host `settings.json` instead.
+            // Merged modes hand emission to the generic `HooksPatch` (constructed
+            // by this adapter's `post_write_hook` factory), which dispatches
+            // through `HookAdapter::merge_into` to edit `settings.json` in place.
             let json = build_claude_hooks_json(&entries)?;
             files.push(GeneratedFile::text(
                 Provider::Claude,
@@ -283,7 +293,7 @@ impl HookAdapter for ClaudeAdapter {
 
     /// Build the JSON object for one entry in Claude's `hooks.json` matcher group.
     /// Used by both the bundled-mode whole-file synthesis (`build_claude_hooks_json`)
-    /// and the merged-mode CST merge (`hooks_merge::merge_claude_settings`).
+    /// and the merged-mode CST merge (this adapter's `merge_into` impl).
     fn entry_to_json(&self, e: &EmittedHookEntry) -> serde_json::Value {
         use serde_json::{Map, json};
         let mut obj = Map::new();
@@ -299,6 +309,166 @@ impl HookAdapter for ClaudeAdapter {
     fn hook_command_dotdir(&self) -> &'static str {
         ".claude"
     }
+
+    fn host_filename(&self) -> &'static str {
+        "settings.json"
+    }
+
+    fn merge_into(
+        &self,
+        top: &CstObject,
+        owned_entries: &[EmittedHookEntry],
+        force: bool,
+    ) -> Result<()> {
+        use serde_json::{Map, Value, json};
+
+        let hooks_obj = open_or_create_object(top, "hooks", force, "hooks")?;
+
+        // Step 1 — Remove every agentspec-owned entry under every event. We
+        // can't restrict to events present in `owned_entries` because re-syncing
+        // with one fewer hook must remove the orphan from its old event too.
+        // Sync doesn't care about the removed-count, so discard.
+        let _ = remove_owned_entries(&hooks_obj);
+
+        // Step 2 — Append new entries grouped by `(event, matcher)`.
+        // `BTreeMap` sort order matters: when no event key exists yet,
+        // `array_value_or_create` creates it at end-of-object, so new keys land
+        // in alphabetical order — matching `build_claude_hooks_json`.
+        let mut grouped: BTreeMap<&'static str, Vec<&EmittedHookEntry>> = BTreeMap::new();
+        for e in owned_entries {
+            grouped.entry(self.event_name(e.event)).or_default().push(e);
+        }
+        for (event_name, entries) in &grouped {
+            let event_arr = open_or_create_array(
+                &hooks_obj,
+                event_name,
+                force,
+                &format!("hooks.{event_name}"),
+            )?;
+            // Within an event, group entries by matcher into one matcher-wrapper
+            // object (Claude's documented shape). Insertion order preserved
+            // from the spec list (which preserves IndexMap order from hooks.toml).
+            let mut by_matcher: IndexMap<Option<String>, Vec<&EmittedHookEntry>> = IndexMap::new();
+            for &e in entries {
+                by_matcher.entry(e.matcher.clone()).or_default().push(e);
+            }
+            for (matcher, group_entries) in by_matcher {
+                let mut wrapper = Map::new();
+                if let Some(m) = matcher {
+                    wrapper.insert("matcher".to_string(), json!(m));
+                }
+                let inner: Vec<Value> = group_entries
+                    .iter()
+                    .map(|e| self.entry_to_json(e))
+                    .collect();
+                wrapper.insert("hooks".to_string(), Value::Array(inner));
+                event_arr.append(value_to_cst_input(Value::Object(wrapper)));
+            }
+        }
+        Ok(())
+    }
+
+    fn tidy_after_remove(&self, top: &CstObject) -> TidyOutcome {
+        let Some(hooks_obj) = top.object_value("hooks") else {
+            return TidyOutcome {
+                user_entries_remaining: 0,
+                file_should_be_deleted: false,
+            };
+        };
+
+        // Reuse the merge-side `remove_owned_entries` for the inner-most layer
+        // (entry removal + matcher-group pruning when the inner `hooks` array
+        // empties); the tidy path adds the empty-event-array prune that the
+        // merge path deliberately skips.
+        let removed_owned = remove_owned_entries(&hooks_obj);
+        prune_empty_event_arrays(&hooks_obj);
+
+        if hooks_obj.properties().is_empty()
+            && let Some(hooks_prop) = top.get("hooks")
+        {
+            hooks_prop.remove();
+        }
+
+        // Claude predicate: delete iff we actually removed at least one
+        // agentspec-owned entry AND no top-level keys survive. settings.json
+        // doesn't carry a `version` key, so there's no carve-out — any
+        // surviving top-level key (e.g. `permissions`, `env`) keeps the file.
+        let file_should_be_deleted = removed_owned > 0 && top.properties().is_empty();
+
+        TidyOutcome {
+            user_entries_remaining: count_user_entries(top),
+            file_should_be_deleted,
+        }
+    }
+}
+
+/// Walks `hooks.<event>[<matcher_group>].hooks[]` removing any entry tagged
+/// with `_agentspec_id`. If a matcher group ends up with an empty `hooks`
+/// array, the group itself is removed. Empty event arrays are left alone —
+/// the user might still have entries to add later.
+///
+/// Returns the count of `_agentspec_id`-tagged entries that were removed.
+/// `tidy_after_remove` uses the count to gate `file_should_be_deleted`; the
+/// merge path discards it.
+fn remove_owned_entries(hooks_obj: &CstObject) -> usize {
+    let mut removed = 0usize;
+    let event_props: Vec<_> = hooks_obj.properties();
+    for event_prop in event_props {
+        let Some(event_arr) = event_prop.array_value() else {
+            continue;
+        };
+        let groups: Vec<_> = event_arr.elements();
+        for group_node in groups {
+            let Some(group_obj) = node_as_object(&group_node) else {
+                continue;
+            };
+            let Some(inner) = group_obj.array_value("hooks") else {
+                continue;
+            };
+            let inner_entries: Vec<_> = inner.elements();
+            for entry in inner_entries {
+                if is_owned_entry(&entry) {
+                    entry.remove();
+                    removed += 1;
+                }
+            }
+            if group_obj
+                .array_value("hooks")
+                .is_some_and(|a| a.elements().is_empty())
+            {
+                group_obj.remove();
+            }
+        }
+    }
+    removed
+}
+
+/// Counts user-authored Claude hook entries: walks every surviving matcher
+/// group's inner `hooks` array and counts entries lacking `_agentspec_id`.
+fn count_user_entries(top: &CstObject) -> usize {
+    let Some(hooks_obj) = top.object_value("hooks") else {
+        return 0;
+    };
+    let mut count = 0;
+    for event_prop in hooks_obj.properties() {
+        let Some(event_arr) = event_prop.array_value() else {
+            continue;
+        };
+        for group_node in event_arr.elements() {
+            let Some(group_obj) = node_as_object(&group_node) else {
+                continue;
+            };
+            let Some(inner) = group_obj.array_value("hooks") else {
+                continue;
+            };
+            for entry in inner.elements() {
+                if !is_owned_entry(&entry) {
+                    count += 1;
+                }
+            }
+        }
+    }
+    count
 }
 
 fn adapt_agent_spec(
@@ -511,52 +681,6 @@ fn build_claude_hooks_json(entries: &[EmittedHookEntry]) -> Result<String> {
     let json =
         serde_json::to_string_pretty(&top).context("failed to serialize Claude hooks.json")?;
     Ok(format!("{json}\n"))
-}
-
-/// Post-write hook that merges agentspec-owned hook entries into Claude's
-/// hand-edited `settings.json` via the CST patcher in `hooks_merge`.
-///
-/// Constructed once per `(provider, FileKind::Hooks)` sync call when the
-/// emit mode is `MergedUser` or `MergedProject`. Path mode owns the entire
-/// `hooks/hooks.json` file directly so no patcher is created for it.
-#[derive(Debug)]
-pub struct ClaudeHooksPatch {
-    settings_path: PathBuf,
-    owned_entries: Vec<EmittedHookEntry>,
-    /// `--force`/`overwrite=true`: replace a non-object `hooks` value with
-    /// `{}` before merging, instead of erroring.
-    force: bool,
-}
-
-impl PostWriteHook for ClaudeHooksPatch {
-    fn run(&self, dry_run: bool) -> Result<()> {
-        crate::hooks_merge::merge_claude_settings(
-            &self.settings_path,
-            &self.owned_entries,
-            self.force,
-            dry_run,
-        )
-    }
-}
-
-/// Post-write hook that strips agentspec-owned hook entries from Claude's
-/// `settings.json` and tidies emptied containers, paralleling
-/// [`ClaudeHooksPatch`] but in reverse.
-///
-/// The patch identifies its own entries via the on-disk `_agentspec_id`
-/// sentinel — no in-memory owned-entries list is needed (compare
-/// [`ClaudeHooksPatch`], which receives the sync's emitted-entries vector).
-#[derive(Debug)]
-pub struct ClaudeRemoveHooksPatch {
-    settings_path: PathBuf,
-}
-
-impl PostWriteHook for ClaudeRemoveHooksPatch {
-    fn run(&self, dry_run: bool) -> Result<()> {
-        let report = crate::hooks_merge::remove_claude_settings(&self.settings_path, dry_run)?;
-        report.print_summary(dry_run);
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -997,9 +1121,10 @@ mod tests {
     #[test]
     fn test_synthesize_hooks_merged_user_mode_emits_scripts_only() {
         // In Phase 2's Merged modes, agentspec emits hook scripts but not the
-        // host config file (hooks.json) — that's owned by `ClaudeHooksPatch`,
-        // which surgically merges entries into `<config>/settings.json`.
-        // `entries` is still populated so the patcher can consume them.
+        // host config file (hooks.json) — that's owned by the generic
+        // `HooksPatch`, which dispatches through `HookAdapter::merge_into` to
+        // surgically merge entries into `<config>/settings.json`. `entries`
+        // is still populated so the patcher can consume them.
         let cfg = AdapterConfig {
             hook_emit_mode: Some(HookEmitMode::MergedUser),
             ..AdapterConfig::default()
