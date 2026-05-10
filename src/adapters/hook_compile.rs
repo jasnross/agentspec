@@ -9,10 +9,57 @@
 
 use std::path::{Component, Path, PathBuf};
 
+use anyhow::Result;
+
 use crate::compile::{EmittedHookEntry, GeneratedFile, HookEmitMode};
 use crate::plan::FileKind;
 use crate::provider::Provider;
 use crate::spec::HookSpec;
+
+/// Per-provider hook synthesis result — entries (always populated when there
+/// are hook specs) plus the supporting-script and bundled-JSON files this
+/// provider emits.
+#[derive(Debug, Default)]
+pub(super) struct HookSynthesis {
+    pub entries: Vec<EmittedHookEntry>,
+    pub files: Vec<GeneratedFile>,
+}
+
+/// Build the `EmittedHookEntry` list and supporting `GeneratedFile`s for a
+/// hook-emitting provider.
+///
+/// Returns an empty `HookSynthesis` when there are no hook specs. In merged
+/// modes, `entries` is populated for the post-write patcher to consume but
+/// `files` omits `hooks/hooks.json` (the patcher edits the host config file
+/// instead). Bundled mode owns the whole `hooks/hooks.json` and uses
+/// `build_bundled_json` to serialize it in the provider's expected shape.
+pub(super) fn synthesize_hooks<F>(
+    provider: Provider,
+    dotdir: &str,
+    specs: &[&HookSpec],
+    emit_mode: HookEmitMode,
+    build_bundled_json: F,
+) -> Result<HookSynthesis>
+where
+    F: FnOnce(&[EmittedHookEntry]) -> Result<String>,
+{
+    if specs.is_empty() {
+        return Ok(HookSynthesis::default());
+    }
+
+    let entries = build_emitted_hook_entries(specs, dotdir, emit_mode);
+    let mut files = build_hook_script_files(provider, specs);
+    if matches!(emit_mode, HookEmitMode::Bundled) {
+        let json = build_bundled_json(&entries)?;
+        files.push(GeneratedFile::text(
+            provider,
+            FileKind::Hooks,
+            Path::new("hooks").join("hooks.json"),
+            json,
+        ));
+    }
+    Ok(HookSynthesis { entries, files })
+}
 
 /// Build the per-provider `Vec<GeneratedFile>` for every file under
 /// `spec/hooks/scripts/`, taken from the first hook spec.
@@ -21,10 +68,7 @@ use crate::spec::HookSpec;
 /// spec parsed from a single `hooks.toml`, so reading from `specs[0]` gives
 /// the full set. Emitting once per provider here (rather than once per hook
 /// in `adapt_hook_spec`) avoids duplicate file entries downstream.
-pub(super) fn build_hook_script_files(
-    provider: Provider,
-    specs: &[&HookSpec],
-) -> Vec<GeneratedFile> {
+fn build_hook_script_files(provider: Provider, specs: &[&HookSpec]) -> Vec<GeneratedFile> {
     let Some(first) = specs.first() else {
         return Vec::new();
     };
@@ -58,7 +102,7 @@ pub(super) fn build_hook_script_files(
 ///
 /// `dotdir` is supplied by the calling adapter (Claude passes `".claude"`,
 /// Cursor passes `".cursor"`) so this helper carries no provider knowledge.
-pub(super) fn build_emitted_hook_entries(
+fn build_emitted_hook_entries(
     specs: &[&HookSpec],
     dotdir: &str,
     emit_mode: HookEmitMode,
@@ -105,16 +149,17 @@ pub(super) fn build_emitted_hook_entries(
 /// The assigned value is the config dir (e.g., `$HOME/.claude` for User mode),
 /// where agentspec also writes those sibling kinds.
 fn hook_command_anchor(dotdir: &str, emit_mode: HookEmitMode, filename: &str) -> String {
-    if matches!(emit_mode, HookEmitMode::Bundled) {
-        return format!("${{CLAUDE_PLUGIN_ROOT}}/hooks/scripts/{filename}");
-    }
-    let var_anchor = match emit_mode {
+    match emit_mode {
         HookEmitMode::Bundled => {
-            unreachable!("Bundled returns early at the top of hook_command_anchor")
+            format!("${{CLAUDE_PLUGIN_ROOT}}/hooks/scripts/{filename}")
         }
-        HookEmitMode::MergedUser => "$HOME",
-        HookEmitMode::MergedProject => "${CLAUDE_PROJECT_DIR}",
-    };
-    let config_dir = format!("{var_anchor}/{dotdir}");
-    format!("CLAUDE_PLUGIN_ROOT={config_dir} {config_dir}/hooks/scripts/{filename}")
+        HookEmitMode::MergedUser => {
+            let cd = format!("$HOME/{dotdir}");
+            format!("CLAUDE_PLUGIN_ROOT={cd} {cd}/hooks/scripts/{filename}")
+        }
+        HookEmitMode::MergedProject => {
+            let cd = format!("${{CLAUDE_PROJECT_DIR}}/{dotdir}");
+            format!("CLAUDE_PLUGIN_ROOT={cd} {cd}/hooks/scripts/{filename}")
+        }
+    }
 }

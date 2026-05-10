@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use jsonc_parser::cst::{CstInputValue, CstObject};
 use serde::Serialize;
 
-use super::hook_compile::{build_emitted_hook_entries, build_hook_script_files};
+use super::hook_compile::{self, HookSynthesis};
 use super::hooks_helpers::{
     is_owned_entry, open_or_create_array, open_or_create_object, prune_empty_event_arrays,
     value_to_cst_input,
@@ -277,31 +277,17 @@ impl CursorAdapter {
     }
 }
 
-/// Synthesizes the per-provider `hooks/hooks.json` plus the canonical entry
-/// list for the downstream merged-mode merge.
+/// Forwards to the shared `hook_compile::synthesize_hooks` with Cursor's
+/// provider/dotdir/JSON-builder bound. Keeps the adapter-local call site
+/// stable while the shared synthesis lives in one place.
 fn synthesize_hooks(specs: &[&HookSpec], emit_mode: HookEmitMode) -> Result<HookSynthesis> {
-    if specs.is_empty() {
-        return Ok(HookSynthesis::default());
-    }
-
-    let entries = build_emitted_hook_entries(specs, HOOK_DOTDIR, emit_mode);
-    let mut files = build_hook_script_files(Provider::Cursor, specs);
-    if matches!(emit_mode, HookEmitMode::Bundled) {
-        let json = build_cursor_hooks_json(&entries)?;
-        files.push(GeneratedFile::text(
-            Provider::Cursor,
-            FileKind::Hooks,
-            Path::new("hooks").join("hooks.json"),
-            json,
-        ));
-    }
-    Ok(HookSynthesis { entries, files })
-}
-
-#[derive(Debug, Default)]
-struct HookSynthesis {
-    entries: Vec<EmittedHookEntry>,
-    files: Vec<GeneratedFile>,
+    hook_compile::synthesize_hooks(
+        Provider::Cursor,
+        HOOK_DOTDIR,
+        specs,
+        emit_mode,
+        build_cursor_hooks_json,
+    )
 }
 
 fn config_dir(

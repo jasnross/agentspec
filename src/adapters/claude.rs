@@ -6,7 +6,7 @@ use indexmap::IndexMap;
 use jsonc_parser::cst::CstObject;
 use serde::Serialize;
 
-use super::hook_compile::{build_emitted_hook_entries, build_hook_script_files};
+use super::hook_compile::{self, HookSynthesis};
 use super::hooks_helpers::{
     is_owned_entry, node_as_object, open_or_create_array, open_or_create_object,
     prune_empty_event_arrays, value_to_cst_input,
@@ -327,39 +327,17 @@ impl ClaudeAdapter {
     }
 }
 
-/// Synthesizes the per-provider `hooks/hooks.json` plus the canonical entry
-/// list for the downstream merged-mode merge.
-///
-/// Returns an empty `HookSynthesis` when there are no hook specs. In merged
-/// modes, `entries` is populated for the post-write patcher to consume but
-/// `files` omits `hooks/hooks.json` (the patcher edits the host
-/// `settings.json` instead). Bundled mode owns the whole `hooks/hooks.json`.
+/// Forwards to the shared `hook_compile::synthesize_hooks` with Claude's
+/// provider/dotdir/JSON-builder bound. Keeps the adapter-local call site
+/// stable while the shared synthesis lives in one place.
 fn synthesize_hooks(specs: &[&HookSpec], emit_mode: HookEmitMode) -> Result<HookSynthesis> {
-    if specs.is_empty() {
-        return Ok(HookSynthesis::default());
-    }
-
-    let entries = build_emitted_hook_entries(specs, HOOK_DOTDIR, emit_mode);
-    let mut files = build_hook_script_files(Provider::Claude, specs);
-    if matches!(emit_mode, HookEmitMode::Bundled) {
-        let json = build_claude_hooks_json(&entries)?;
-        files.push(GeneratedFile::text(
-            Provider::Claude,
-            FileKind::Hooks,
-            Path::new("hooks").join("hooks.json"),
-            json,
-        ));
-    }
-    Ok(HookSynthesis { entries, files })
-}
-
-/// Adapter-private hook synthesis result — carries entries (always populated
-/// when there are hook specs) plus the supporting-script and bundled-JSON
-/// files this provider emits.
-#[derive(Debug, Default)]
-struct HookSynthesis {
-    entries: Vec<EmittedHookEntry>,
-    files: Vec<GeneratedFile>,
+    hook_compile::synthesize_hooks(
+        Provider::Claude,
+        HOOK_DOTDIR,
+        specs,
+        emit_mode,
+        build_claude_hooks_json,
+    )
 }
 
 fn config_dir(
