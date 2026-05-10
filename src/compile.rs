@@ -23,13 +23,6 @@ pub struct AdapterConfig {
     /// Literal prefix for content/model-facing names (e.g., `"tw:"` → `"tw:{id}"`).
     /// When `None`, `content_prefix()` falls back to `"{prefix}-"`.
     pub content_prefix: Option<String>,
-    /// How hook entries should be emitted for this provider.
-    ///
-    /// `None` means "use canonical (Bundled) defaults" — appropriate for the
-    /// `compile` command path when no `[sync.<provider>]` is configured. The
-    /// binary crate translates `SyncMode → HookEmitMode` at the boundary so
-    /// the library has no dependency on the binary's `SyncMode` type.
-    pub hook_emit_mode: Option<HookEmitMode>,
 }
 
 /// How a provider's hook entries should reach disk.
@@ -375,7 +368,6 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_owned()),
             content_prefix: Some("tw:".to_owned()),
-            ..AdapterConfig::default()
         };
         assert_eq!(cfg.content_prefix(), Some("tw:".to_owned()));
     }
@@ -400,7 +392,6 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_owned()),
             content_prefix: Some("tw:".to_owned()),
-            ..AdapterConfig::default()
         };
         assert_eq!(cfg.file_prefix(), Some("tw-".to_owned()));
     }

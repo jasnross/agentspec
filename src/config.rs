@@ -138,11 +138,6 @@ impl AgentspecConfig {
     ///
     /// Providers absent from `targets` are absent from the map, causing adapters
     /// to produce canonical (unprefixed) output.
-    ///
-    /// Maps each target's `SyncMode` to a library-side `HookEmitMode` here so
-    /// the library never imports `SyncMode` (preserving the binary/library
-    /// boundary established in `CLAUDE.md`'s "Use config structs at module
-    /// boundaries" guidance).
     pub fn adapter_configs(
         targets: &[(Provider, SyncTargetConfig)],
     ) -> HashMap<Provider, AdapterConfig> {
@@ -154,7 +149,6 @@ impl AgentspecConfig {
                     AdapterConfig {
                         prefix: t.prefix.clone(),
                         content_prefix: t.content_prefix.clone(),
-                        hook_emit_mode: Some(t.mode.to_hook_emit_mode()),
                     },
                 )
             })
@@ -309,25 +303,13 @@ pub enum SyncMode {
 }
 
 impl SyncMode {
-    /// Translate the binary-side `SyncMode` to the library-side `HookEmitMode`.
-    ///
-    /// Single source of truth so `adapter_configs` (compile-time) and
-    /// `sync_plan` (sync-time) can't disagree on the mapping.
-    pub fn to_hook_emit_mode(self) -> agentspec::compile::HookEmitMode {
-        use agentspec::compile::HookEmitMode;
-        match self {
-            Self::Path => HookEmitMode::Bundled,
-            Self::User => HookEmitMode::MergedUser,
-            Self::Project => HookEmitMode::MergedProject,
-        }
-    }
-
     /// Translate the binary-side `SyncMode` to the library-side
     /// `SyncDestinationMode` consumed by `Adapter::compile` and
     /// `Adapter::removal_patches` (via `CompileCtx.mode` / `RemoveCtx.mode`).
     ///
-    /// Lives here for the same reason as `to_hook_emit_mode`: the library
-    /// must not import `SyncMode`, so the binary translates at the boundary.
+    /// The library must not import `SyncMode`, so the binary translates at the
+    /// boundary. Adapters then derive their `HookEmitMode` from
+    /// `CompileCtx.mode` via `SyncDestinationMode::to_hook_emit_mode`.
     pub fn to_destination_mode(self) -> agentspec::adapters::SyncDestinationMode {
         use agentspec::adapters::SyncDestinationMode;
         match self {

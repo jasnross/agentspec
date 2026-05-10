@@ -538,7 +538,6 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_owned()),
             content_prefix: None,
-            ..AdapterConfig::default()
         };
         let ctx =
             TemplateContext::from_specs_for_provider(&all_specs, Provider::Claude, Some(&cfg));

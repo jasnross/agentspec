@@ -413,14 +413,6 @@ impl ConfigPatch for ClaudeHooksPatch {
             "ClaudeHooksPatch is forward-only; the remove pipeline constructs ClaudeRemoveHooksPatch"
         )
     }
-
-    fn host_path(&self) -> &Path {
-        &self.host_path
-    }
-
-    fn manifest_targets(&self) -> &[PathBuf] {
-        std::slice::from_ref(&self.host_path)
-    }
 }
 
 /// Reverse-direction settings.json patch.
@@ -445,14 +437,6 @@ impl ConfigPatch for ClaudeRemoveHooksPatch {
         let report = remove_owned(&self.host_path, ClaudeAdapter::tidy_settings, dry_run)?;
         report.print_summary(dry_run);
         Ok(())
-    }
-
-    fn host_path(&self) -> &Path {
-        &self.host_path
-    }
-
-    fn manifest_targets(&self) -> &[PathBuf] {
-        std::slice::from_ref(&self.host_path)
     }
 }
 
@@ -848,7 +832,6 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
             content_prefix: None,
-            ..AdapterConfig::default()
         };
         let spec = agent("test-agent", None);
         let files = compile_one(spec, Some(&cfg));
@@ -866,7 +849,6 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
             content_prefix: None,
-            ..AdapterConfig::default()
         };
         let spec = Spec::Rule(RuleSpec {
             path: "test.md".into(),
@@ -887,7 +869,6 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: None,
             content_prefix: Some("tw:".to_string()),
-            ..AdapterConfig::default()
         };
         let spec = agent("test-agent", None);
         let files = compile_one(spec, Some(&cfg));
@@ -906,7 +887,6 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: None,
             content_prefix: Some("tw:".to_string()),
-            ..AdapterConfig::default()
         };
         let spec = Spec::Agent(AgentSpec {
             path: "test.md".into(),
@@ -1191,7 +1171,6 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
             content_prefix: None,
-            ..AdapterConfig::default()
         };
         let spec = Spec::Agent(AgentSpec {
             path: "test.md".into(),

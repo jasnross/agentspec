@@ -380,14 +380,6 @@ impl ConfigPatch for OpenCodeInstructionsPatch {
             "OpenCodeInstructionsPatch is forward-only; the remove pipeline constructs OpenCodeRemoveInstructionsPatch"
         )
     }
-
-    fn host_path(&self) -> &Path {
-        &self.host_path
-    }
-
-    fn manifest_targets(&self) -> &[PathBuf] {
-        std::slice::from_ref(&self.host_path)
-    }
 }
 
 /// Reverse-direction `instructions[]` filter: strips entries whose path
@@ -412,14 +404,6 @@ impl ConfigPatch for OpenCodeRemoveInstructionsPatch {
         let report = remove_opencode_instructions(&self.rules_dest_dir, &self.host_path, dry_run)?;
         report.print_summary(dry_run);
         Ok(())
-    }
-
-    fn host_path(&self) -> &Path {
-        &self.host_path
-    }
-
-    fn manifest_targets(&self) -> &[PathBuf] {
-        std::slice::from_ref(&self.host_path)
     }
 }
 
@@ -792,7 +776,6 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
             content_prefix: None,
-            ..AdapterConfig::default()
         };
         let spec = Spec::Skill(SkillSpec {
             path: "test.md".into(),
@@ -1458,12 +1441,9 @@ mod tests {
         assert_eq!(output.patches.len(), 1);
 
         // Run the patch against the tempdir and inspect the resulting
-        // `opencode.json`. The patch's `host_path` must point at the file
-        // (not the directory) — that's also the property the reviewer
-        // flagged as missing on the trait surface.
+        // `opencode.json`.
         let patch = &output.patches[0];
         let host_path = dest_root.join(HOST_FILENAME);
-        assert_eq!(patch.host_path(), host_path);
         patch.run(false).expect("run patch");
 
         let written = std::fs::read_to_string(&host_path).expect("read opencode.json");

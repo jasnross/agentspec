@@ -349,14 +349,6 @@ impl ConfigPatch for CursorHooksPatch {
             "CursorHooksPatch is forward-only; the remove pipeline constructs CursorRemoveHooksPatch"
         )
     }
-
-    fn host_path(&self) -> &Path {
-        &self.host_path
-    }
-
-    fn manifest_targets(&self) -> &[PathBuf] {
-        std::slice::from_ref(&self.host_path)
-    }
 }
 
 /// Reverse-direction hooks.json patch.
@@ -376,14 +368,6 @@ impl ConfigPatch for CursorRemoveHooksPatch {
         let report = remove_owned(&self.host_path, CursorAdapter::tidy_hooks, dry_run)?;
         report.print_summary(dry_run);
         Ok(())
-    }
-
-    fn host_path(&self) -> &Path {
-        &self.host_path
-    }
-
-    fn manifest_targets(&self) -> &[PathBuf] {
-        std::slice::from_ref(&self.host_path)
     }
 }
 
@@ -646,7 +630,6 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
             content_prefix: None,
-            ..AdapterConfig::default()
         };
         let spec = Spec::Agent(AgentSpec {
             path: "test.md".into(),
@@ -674,7 +657,6 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
             content_prefix: None,
-            ..AdapterConfig::default()
         };
         let spec = Spec::Skill(SkillSpec {
             path: "test.md".into(),
@@ -887,7 +869,6 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
             content_prefix: None,
-            ..AdapterConfig::default()
         };
         let spec = Spec::Rule(RuleSpec {
             path: "test.md".into(),

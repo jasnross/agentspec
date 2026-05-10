@@ -153,9 +153,6 @@ pub fn delete_host_file_and_rmdir_parent(host_path: &Path, dry_run: bool) -> any
 /// `remove_plan`. Either shape — a single bidirectional struct or a pair of
 /// directional structs — satisfies the trait.
 ///
-/// The accessors `host_path` and `manifest_targets` let the orchestrator
-/// track ownership uniformly across providers.
-///
 /// `Send + Sync` future-proofs the trait for parallel emit.
 pub trait ConfigPatch: std::fmt::Debug + Send + Sync {
     /// Apply the forward (sync) direction of the patch.
@@ -165,15 +162,6 @@ pub trait ConfigPatch: std::fmt::Debug + Send + Sync {
     /// agentspec-owned entries identified by on-disk `_agentspec_id`
     /// sentinels.
     fn run_remove(&self, dry_run: bool) -> anyhow::Result<()>;
-
-    /// The host config file this patch reads/writes (e.g.
-    /// `~/.claude/settings.json`). Used for manifest tracking and reporting.
-    fn host_path(&self) -> &Path;
-
-    /// Paths the patch touches that should be considered "owned" by agentspec
-    /// for manifest accounting (today: the host file itself; could grow to
-    /// include sidecar files for richer providers).
-    fn manifest_targets(&self) -> &[PathBuf];
 }
 
 /// Outcome of a per-provider remove patch.
