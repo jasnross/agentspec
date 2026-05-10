@@ -59,7 +59,7 @@ pub fn sync_plan(
         // for providers that never used a given kind (e.g., OpenCode +
         // Hooks).
         for &kind in FileKind::all() {
-            let dest = resolve_dest_dir(kind, target, &dest_root, home);
+            let dest = resolve_dest_dir(*provider, kind, target, &dest_root, home)?;
             let files = files_for_kind(result, *provider, kind);
 
             writes.push(ManifestTrackedWrite {
@@ -135,20 +135,30 @@ pub fn resolve_sync_targets(
 /// Project mode, `<dir>` for Path mode). For Path mode we honour the explicit
 /// `dir` from `SyncTargetConfig` (tilde-expanded) so the `--dest` override
 /// wins; for User/Project modes the adapter's `dest_root` is canonical.
+///
+/// Errors if `mode = "path"` and `dir` is unset — surfacing the
+/// misconfiguration loudly rather than silently falling back to a User-mode
+/// default. Validation of this combination should ideally happen at config
+/// load time (see TODO.md); doing it here is a defense-in-depth check.
 fn resolve_dest_dir(
+    provider: Provider,
     kind: FileKind,
     config: &SyncTargetConfig,
     dest_root: &Path,
     home: &Path,
-) -> PathBuf {
+) -> Result<PathBuf> {
     let base = match config.mode {
-        SyncMode::Path => config
-            .dir
-            .as_deref()
-            .map_or_else(|| dest_root.to_path_buf(), |d| expand_tilde(d, home)),
+        SyncMode::Path => match config.dir.as_deref() {
+            Some(d) => expand_tilde(d, home),
+            None => {
+                anyhow::bail!(
+                    "sync mode is 'path' but no `dir` configured for provider '{provider}'"
+                );
+            }
+        },
         SyncMode::User | SyncMode::Project => dest_root.to_path_buf(),
     };
-    base.join(kind.dir_name())
+    Ok(base.join(kind.dir_name()))
 }
 
 /// Extracts files from `result` that belong to the given provider and kind.
@@ -356,11 +366,13 @@ mod tests {
         // during `compile_specs`; `resolve_dest_dir` just appends the kind.
         let config = SyncTargetConfig::default(); // mode = User
         let result = resolve_dest_dir(
+            Provider::Claude,
             FileKind::Agents,
             &config,
             Path::new("/home/user/.claude"),
             &home(),
-        );
+        )
+        .expect("user-mode resolution");
         assert_eq!(result, PathBuf::from("/home/user/.claude/agents"));
     }
 
@@ -371,11 +383,13 @@ mod tests {
             ..Default::default()
         };
         let result = resolve_dest_dir(
+            Provider::Cursor,
             FileKind::Skills,
             &config,
             Path::new("/work/project/.cursor"),
             &home(),
-        );
+        )
+        .expect("project-mode resolution");
         assert_eq!(result, PathBuf::from("/work/project/.cursor/skills"));
     }
 
@@ -387,31 +401,37 @@ mod tests {
             ..Default::default()
         };
         let result = resolve_dest_dir(
+            Provider::Cursor,
             FileKind::Skills,
             &config,
             Path::new("/should-be-ignored"),
             &home(),
-        );
+        )
+        .expect("path-mode resolution with explicit dir");
         assert_eq!(result, PathBuf::from("/home/user/foo/skills"));
     }
 
     #[test]
-    fn test_resolve_dest_path_no_explicit_dir_uses_dest_root() {
-        // Path mode without an explicit `dir`: fall back to `dest_root` (which
-        // the adapter already populated). The previous behavior errored here
-        // because path resolution lived in the binary; under the new shape
-        // adapters always supply a `dest_root`, so this path is no longer an
-        // error.
+    fn test_resolve_dest_path_missing_dir_errors() {
+        // Path mode without `dir`: must error rather than silently falling
+        // back to the adapter's User-mode default — that fallback would mask
+        // a real misconfiguration.
         let config = SyncTargetConfig {
             mode: SyncMode::Path,
             ..Default::default()
         };
-        let result = resolve_dest_dir(
+        let err = resolve_dest_dir(
+            Provider::OpenCode,
             FileKind::Agents,
             &config,
-            Path::new("/explicit/dest/root"),
+            Path::new("/should-not-be-consulted"),
             &home(),
+        )
+        .expect_err("path-mode without dir must error");
+        assert!(
+            err.to_string()
+                .contains("sync mode is 'path' but no `dir` configured for provider 'opencode'"),
+            "error message should name the misconfigured provider, got: {err}"
         );
-        assert_eq!(result, PathBuf::from("/explicit/dest/root/agents"));
     }
 }
