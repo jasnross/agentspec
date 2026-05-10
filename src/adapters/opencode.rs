@@ -800,9 +800,11 @@ mod tests {
 
     // ── patch_opencode_instructions tests ───────────────────────────────────
 
-    /// Test helper: discover rule paths the same way `OpenCodeAdapter::compile`
-    /// does (file-name == AGENTS.md anchored under `dest_root`).
-    fn discover_rules(dest_root: &Path, rules_dest_dir: &Path) -> Vec<String> {
+    /// Test helper: discover existing AGENTS.md paths under `rules_dest_dir`.
+    /// Used to drive `patch_opencode_instructions` directly, mirroring the
+    /// path set the production `OpenCodeAdapter::compile` would have built
+    /// from its `GeneratedFile`s.
+    fn discover_rules(rules_dest_dir: &Path) -> Vec<String> {
         let mut paths: Vec<String> = if rules_dest_dir.is_dir() {
             walkdir::WalkDir::new(rules_dest_dir)
                 .min_depth(1)
@@ -816,10 +818,6 @@ mod tests {
             Vec::new()
         };
         paths.sort();
-        // Anchor isn't used here — `WalkDir` already returns absolute paths
-        // since `rules_dest_dir` is absolute. The `dest_root` parameter is
-        // accepted for parity with the production code's anchoring.
-        let _ = dest_root;
         paths
     }
 
@@ -830,7 +828,7 @@ mod tests {
         fs::create_dir_all(rules_dir.join("my-rule")).expect("expected value");
         fs::write(rules_dir.join("my-rule/AGENTS.md"), "rule").expect("expected value");
 
-        let paths = discover_rules(tmp.path(), &rules_dir);
+        let paths = discover_rules(&rules_dir);
         patch_opencode_instructions(&rules_dir, &tmp.path().join(HOST_FILENAME), &paths, false)
             .expect("expected value");
 
@@ -862,7 +860,7 @@ mod tests {
         )
         .expect("expected value");
 
-        let paths = discover_rules(tmp.path(), &rules_dir);
+        let paths = discover_rules(&rules_dir);
         patch_opencode_instructions(&rules_dir, &tmp.path().join(HOST_FILENAME), &paths, false)
             .expect("expected value");
 
@@ -904,7 +902,7 @@ mod tests {
         )
         .expect("expected value");
 
-        let paths = discover_rules(tmp.path(), &rules_dir);
+        let paths = discover_rules(&rules_dir);
         patch_opencode_instructions(&rules_dir, &tmp.path().join(HOST_FILENAME), &paths, false)
             .expect("expected value");
 
@@ -943,7 +941,7 @@ mod tests {
         )
         .expect("expected value");
 
-        let paths = discover_rules(tmp.path(), &rules_dir);
+        let paths = discover_rules(&rules_dir);
         patch_opencode_instructions(&rules_dir, &tmp.path().join(HOST_FILENAME), &paths, false)
             .expect("expected value");
 
@@ -962,7 +960,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("expected value");
         let rules_dir = tmp.path().join("rules");
 
-        let paths = discover_rules(tmp.path(), &rules_dir);
+        let paths = discover_rules(&rules_dir);
         patch_opencode_instructions(&rules_dir, &tmp.path().join(HOST_FILENAME), &paths, true)
             .expect("expected value");
 
@@ -1215,7 +1213,7 @@ mod tests {
 "#;
         fs::write(&config_path, initial).expect("write initial");
 
-        let paths = discover_rules(tmp.path(), &rules_dir);
+        let paths = discover_rules(&rules_dir);
         patch_opencode_instructions(&rules_dir, &tmp.path().join(HOST_FILENAME), &paths, false)
             .expect("patch");
 
@@ -1252,7 +1250,7 @@ mod tests {
 "#;
         fs::write(&config_path, initial).expect("write initial");
 
-        let paths = discover_rules(tmp.path(), &rules_dir);
+        let paths = discover_rules(&rules_dir);
         patch_opencode_instructions(&rules_dir, &tmp.path().join(HOST_FILENAME), &paths, false)
             .expect("patch");
 
@@ -1298,7 +1296,7 @@ mod tests {
         fs::create_dir_all(rules_dir.join("r")).expect("mkdir rule");
         fs::write(rules_dir.join("r/AGENTS.md"), "rule").expect("write rule");
 
-        let paths = discover_rules(tmp.path(), &rules_dir);
+        let paths = discover_rules(&rules_dir);
         patch_opencode_instructions(&rules_dir, &tmp.path().join(HOST_FILENAME), &paths, false)
             .expect("patch 1");
         let after_1 = fs::read_to_string(tmp.path().join("opencode.json")).expect("read 1");
@@ -1320,7 +1318,7 @@ mod tests {
         let config_path = tmp.path().join("opencode.json");
         fs::write(&config_path, "").expect("touch empty file");
 
-        let paths = discover_rules(tmp.path(), &rules_dir);
+        let paths = discover_rules(&rules_dir);
         patch_opencode_instructions(&rules_dir, &tmp.path().join(HOST_FILENAME), &paths, false)
             .expect("patch should succeed on empty file");
 
@@ -1350,7 +1348,7 @@ mod tests {
         let initial = "[]";
         fs::write(&config_path, initial).expect("write initial");
 
-        let paths = discover_rules(tmp.path(), &rules_dir);
+        let paths = discover_rules(&rules_dir);
         patch_opencode_instructions(&rules_dir, &tmp.path().join(HOST_FILENAME), &paths, false)
             .expect("patch returns Ok on non-object root");
 

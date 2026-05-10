@@ -883,4 +883,40 @@ mod tests {
         assert_eq!(v["matcher"], "Bash");
         assert_eq!(v["_agentspec_id"], "audit");
     }
+
+    #[test]
+    fn test_user_dest_dir_is_dot_cursor_under_home() {
+        let presets = HashMap::new();
+        let home = Path::new("/home/user");
+        let cwd = Path::new("/work");
+        let ctx = CompileCtx {
+            mode: SyncDestinationMode::User,
+            home,
+            cwd,
+            target_dir: None,
+            presets: &presets,
+            adapter_config: None,
+            overwrite: false,
+        };
+        let output = CursorAdapter.compile(&[], &ctx).expect("compile");
+        assert_eq!(output.dest_root, PathBuf::from("/home/user/.cursor"));
+    }
+
+    #[test]
+    fn test_project_dest_dir_is_dot_cursor_under_cwd() {
+        let presets = HashMap::new();
+        let home = Path::new("/home/user");
+        let cwd = Path::new("/work/project");
+        let ctx = CompileCtx {
+            mode: SyncDestinationMode::Project,
+            home,
+            cwd,
+            target_dir: None,
+            presets: &presets,
+            adapter_config: None,
+            overwrite: false,
+        };
+        let output = CursorAdapter.compile(&[], &ctx).expect("compile");
+        assert_eq!(output.dest_root, PathBuf::from("/work/project/.cursor"));
+    }
 }
