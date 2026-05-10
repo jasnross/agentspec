@@ -55,7 +55,6 @@ pub struct OpenCodeAdapter;
 impl Adapter for OpenCodeAdapter {
     fn compile(&self, specs: &[Spec], ctx: &CompileCtx<'_>) -> Result<AdapterOutput> {
         let mut files = Vec::new();
-        let mut had_rule = false;
         for spec in specs {
             match spec {
                 Spec::Agent(s) => files.extend(adapt_agent_spec(
@@ -70,7 +69,6 @@ impl Adapter for OpenCodeAdapter {
                 )?),
                 Spec::Rule(s) => {
                     files.extend(adapt_rule_spec(s, ctx.adapter_config));
-                    had_rule = true;
                 }
                 // hooks are not emitted for OpenCode in v1; the per-provider
                 // warning is surfaced from `compile_specs` via
@@ -100,18 +98,17 @@ impl Adapter for OpenCodeAdapter {
             .collect();
         instruction_paths.sort();
 
-        let mut patches: Vec<Box<dyn ConfigPatch>> = Vec::new();
-        // Always run the patch when at least one rule was emitted, even if
-        // `instruction_paths` ends up empty after filtering — the patch's
-        // `run` short-circuits when both the host file is absent AND the new
-        // path list is empty, so this preserves the prior behavior.
-        if had_rule || !instruction_paths.is_empty() {
-            patches.push(Box::new(OpenCodeInstructionsPatch {
-                rules_dest_dir,
-                host_path: dest_root.join(HOST_FILENAME),
-                instruction_paths,
-            }));
-        }
+        // Always construct the patch — even with zero rule instructions, its
+        // `run` strips orphaned `_agentspec_id`-tagged entries left over from
+        // a prior sync. Pre-branch behavior (`post_write_hook` called per
+        // `(provider, FileKind::Rules)` regardless of file count) ran this
+        // cleanup on every sync; the patch's `run` short-circuits at line 598
+        // when both the host file is absent AND `new_paths` is empty.
+        let patches: Vec<Box<dyn ConfigPatch>> = vec![Box::new(OpenCodeInstructionsPatch {
+            rules_dest_dir,
+            host_path: dest_root.join(HOST_FILENAME),
+            instruction_paths,
+        })];
 
         Ok(AdapterOutput {
             files,
@@ -1467,6 +1464,73 @@ mod tests {
         assert!(
             entries[0] < entries[1],
             "instructions must be alphabetically sorted"
+        );
+    }
+
+    #[test]
+    fn test_compile_with_no_rules_still_emits_cleanup_patch() {
+        // Regression: pre-branch `post_write_hook` was called for every
+        // (provider, FileKind::Rules) pair regardless of file count, so
+        // `OpenCodeInstructionsPatch` always ran and tidied orphaned
+        // agentspec entries from `opencode.json`. The branch's refactor
+        // accidentally gated patch construction on `!instruction_paths.is_empty()`,
+        // breaking cleanup when a user removed all their rules. This test
+        // pins the recovered behavior: compile must always produce the patch
+        // for OpenCode.
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dest_root = tmp.path();
+        let cfg = AdapterConfig::default();
+        let presets = HashMap::new();
+        let ctx = CompileCtx {
+            mode: SyncDestinationMode::Path,
+            home: Path::new("/should-not-be-consulted"),
+            cwd: Path::new("/should-not-be-consulted"),
+            target_dir: Some(dest_root),
+            presets: &presets,
+            adapter_config: Some(&cfg),
+            overwrite: false,
+        };
+
+        // Compile with zero rule specs.
+        let output = OpenCodeAdapter.compile(&[], &ctx).expect("compile");
+        assert_eq!(
+            output.patches.len(),
+            1,
+            "patch must be constructed even when there are no rules, so a sync \
+             tidies orphans left by a prior sync"
+        );
+
+        // Pre-seed opencode.json with an orphaned agentspec entry, then run
+        // the patch and confirm the orphan is stripped.
+        let host_path = dest_root.join(HOST_FILENAME);
+        let rules_dir = dest_root.join(FileKind::Rules.dir_name());
+        let stale_path = rules_dir.join("removed-rule/AGENTS.md");
+        let existing = serde_json::json!({
+            "instructions": [stale_path.to_string_lossy(), "/user/AGENTS.md"]
+        });
+        fs::write(
+            &host_path,
+            serde_json::to_string(&existing).expect("serialize"),
+        )
+        .expect("write");
+
+        output.patches[0].run(false).expect("run patch");
+
+        let written = fs::read_to_string(&host_path).expect("read opencode.json");
+        let parsed: serde_json::Value = serde_json::from_str(&written).expect("valid json");
+        let instructions = parsed
+            .get("instructions")
+            .and_then(|v| v.as_array())
+            .expect("instructions array");
+        assert_eq!(
+            instructions.len(),
+            1,
+            "orphaned agentspec entry must be stripped"
+        );
+        assert_eq!(
+            instructions[0].as_str().expect("string"),
+            "/user/AGENTS.md",
+            "user-authored entry must be preserved"
         );
     }
 }
