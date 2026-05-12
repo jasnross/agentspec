@@ -1,0 +1,6 @@
+{
+  "name": "agentspec-probe",
+  "agentspec_bogus_field": "if Cursor validates strictly, this plugin should fail to load",
+  "x_unknown_array": ["one", "two"],
+  "x_unknown_object": { "nested": true }
+}

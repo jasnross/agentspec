@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "command": "/Users/jasonr/Workspace/jasnross/agentspec/experiments/session-id-resume/log-id.sh"
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "type": "command",
+        "command": "/Users/jasonr/Workspace/jasnross/agentspec/experiments/session-id-resume/log-id.sh"
+      }
+    ]
+  }
+}

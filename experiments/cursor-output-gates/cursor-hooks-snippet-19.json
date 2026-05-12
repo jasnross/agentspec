@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "type": "command",
+        "matcher": "Shell",
+        "command": "/Users/jasonr/Workspace/jasnross/agentspec/experiments/cursor-output-gates/gate-19-exit2-deny.sh"
+      }
+    ]
+  }
+}

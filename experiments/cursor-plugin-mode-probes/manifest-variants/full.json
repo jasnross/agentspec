@@ -1,0 +1,8 @@
+{
+  "name": "agentspec-probe",
+  "version": "0.1.0",
+  "description": "Empirical probe for Cursor plugin manifest field acceptance",
+  "author": "agentspec experiment",
+  "publisher": "jasnross",
+  "repository": "https://github.com/jasnross/agentspec"
+}

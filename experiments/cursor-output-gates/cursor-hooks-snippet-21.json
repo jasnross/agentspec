@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "command": "/Users/jasonr/Workspace/jasnross/agentspec/experiments/cursor-output-gates/gate-21-plain-stdout-context.sh"
+      }
+    ]
+  }
+}
