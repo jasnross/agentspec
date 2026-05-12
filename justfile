@@ -20,7 +20,7 @@ test:
 
 # Format source files
 fmt:
-    prettier -w ./**/*.md
+    prettier -w .
     cargo fix --allow-dirty
     cargo +nightly fmt
     cargo sort-derives

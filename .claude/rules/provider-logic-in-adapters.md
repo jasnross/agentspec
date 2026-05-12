@@ -75,8 +75,7 @@ The signatures are identical; only the function name varies by provider. This is
 
 ### Good
 
-Adapter-built patches flow back through `Adapter::compile`'s return value as
-`Vec<Box<dyn ConfigPatch>>` — the orchestrator never asks for them by name:
+Adapter-built patches flow back through `Adapter::compile`'s return value as `Vec<Box<dyn ConfigPatch>>` — the orchestrator never asks for them by name:
 
 ```rust
 let output = provider.adapter().compile(&specs, &ctx)?;

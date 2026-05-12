@@ -193,15 +193,15 @@ If your spec set contains hooks and `[sync.opencode]` is configured, agents/skil
 
 ### Frontmatter reference
 
-| Field                | Agent    | Skill    | Rule     | Description                                                                                                 |
-| -------------------- | -------- | -------- | -------- | ----------------------------------------------------------------------------------------------------------- |
-| `id`                 | required | required | required | Unique identifier. Must be unique across all spec types.                                                    |
-| `description`        | required | optional | optional | Short description of what this spec does.                                                                   |
-| `user_invocable`     | —        | required | —        | Whether users can invoke this skill directly (e.g., via `/commit`).                                         |
-| `agent_invocable`    | —        | required | —        | Whether agents can invoke this skill. At least one of `user_invocable` or `agent_invocable` must be `true`. |
-| `execution.preset`   | optional | optional | —        | Name of a model preset defined in `agentspec.toml`. See [Model presets](#model-presets).                    |
-| `tags`               | optional | optional | optional | List of string tags for categorization. Exposed in the `specs` template variable.                           |
-| `capabilities.tools` | optional | optional | —        | List of tools the agent/skill can use. See [Tools reference](#tools-reference) below.                       |
+| Field | Agent | Skill | Rule | Description |
+| --- | --- | --- | --- | --- |
+| `id` | required | required | required | Unique identifier. Must be unique across all spec types. |
+| `description` | required | optional | optional | Short description of what this spec does. |
+| `user_invocable` | — | required | — | Whether users can invoke this skill directly (e.g., via `/commit`). |
+| `agent_invocable` | — | required | — | Whether agents can invoke this skill. At least one of `user_invocable` or `agent_invocable` must be `true`. |
+| `execution.preset` | optional | optional | — | Name of a model preset defined in `agentspec.toml`. See [Model presets](#model-presets). |
+| `tags` | optional | optional | optional | List of string tags for categorization. Exposed in the `specs` template variable. |
+| `capabilities.tools` | optional | optional | — | List of tools the agent/skill can use. See [Tools reference](#tools-reference) below. |
 
 ### Tools reference
 
@@ -302,22 +302,22 @@ The `specs` variable contains all specs in the library, accessible as sorted lis
 
 **Keyed maps** (for direct lookup):
 
-| Field         | Type               | Description                              |
-| ------------- | ------------------ | ---------------------------------------- |
+| Field | Type | Description |
+| --- | --- | --- |
 | `specs.agent` | map of key → entry | Agents keyed by underscore-normalized ID |
 | `specs.skill` | map of key → entry | Skills keyed by underscore-normalized ID |
-| `specs.rule`  | map of key → entry | Rules keyed by underscore-normalized ID  |
+| `specs.rule` | map of key → entry | Rules keyed by underscore-normalized ID |
 
 **Key normalization**: hyphens in spec IDs are replaced with underscores for keyed access. A spec with `id: gh-safe` is accessed as `specs.skill.gh_safe`.
 
 Each entry has:
 
-| Field         | Description                                                                        |
-| ------------- | ---------------------------------------------------------------------------------- |
-| `name`        | The spec's name as the model sees it (uses `content-prefix` if set, else `prefix`) |
-| `description` | The spec's description (empty string if not set)                                   |
-| `type`        | One of `agent`, `skill`, or `rule`                                                 |
-| `tags`        | List of tags from frontmatter (empty list if not set)                              |
+| Field | Description |
+| --- | --- |
+| `name` | The spec's name as the model sees it (uses `content-prefix` if set, else `prefix`) |
+| `description` | The spec's description (empty string if not set) |
+| `type` | One of `agent`, `skill`, or `rule` |
+| `tags` | List of tags from frontmatter (empty list if not set) |
 
 When compiled with a sync prefix, the `name` field resolves to the prefix-aware model-facing name. By default this is `{prefix}-{id}` (e.g., `tw-gh-safe`), but when `content-prefix` is set explicitly (e.g., `"tw:"`), the `name` uses that format instead (e.g., `tw:gh-safe`). Without any prefix, `name` is the canonical ID.
 
@@ -440,23 +440,23 @@ mode = "user"
 # dir = "/path/to/output"
 ```
 
-| Field            | Default  | Description                                                                                                                                                                                                             |
-| ---------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mode`           | `"user"` | `"user"` syncs to the tool's user-level config dir (e.g. `~/.claude/`).<br>`"project"` syncs to the project-local config dir (e.g. `.claude/`).<br>`"plugin"` syncs a self-contained plugin tree (including provider plugin manifest) to an explicit directory set by `dir`; requires `plugin-name`.               |
-| `prefix`         | `null`   | Namespace prefix applied to synced file names. Can be useful for avoiding collisions with user-owned files or specs from plugins. See [Prefix behavior](#prefix-behavior) below.                                        |
-| `content-prefix` | `null`   | Literal prefix for content references (model-facing names). Includes its separator (e.g., `"tw:"` → `tw:skill-name`). When unset, defaults to `"{prefix}-"`. See [Content-reference prefix](#content-reference-prefix). |
-| `overwrite`      | `false`  | When `true`, allows overwriting user-owned files at sync destinations (with backup). Can also be set per-invocation with `--force`.                                                                                     |
-| `dir`            | `null`   | Base directory for synced output when `mode = "plugin"`. Subdirectories (`agents/`, `skills/`, `rules/`, `commands/`, `hooks/`, `.claude-plugin/`, `.cursor-plugin/`) are created automatically.                                                                          |
+| Field | Default | Description |
+| --- | --- | --- |
+| `mode` | `"user"` | `"user"` syncs to the tool's user-level config dir (e.g. `~/.claude/`).<br>`"project"` syncs to the project-local config dir (e.g. `.claude/`).<br>`"plugin"` syncs a self-contained plugin tree (including provider plugin manifest) to an explicit directory set by `dir`; requires `plugin-name`. |
+| `prefix` | `null` | Namespace prefix applied to synced file names. Can be useful for avoiding collisions with user-owned files or specs from plugins. See [Prefix behavior](#prefix-behavior) below. |
+| `content-prefix` | `null` | Literal prefix for content references (model-facing names). Includes its separator (e.g., `"tw:"` → `tw:skill-name`). When unset, defaults to `"{prefix}-"`. See [Content-reference prefix](#content-reference-prefix). |
+| `overwrite` | `false` | When `true`, allows overwriting user-owned files at sync destinations (with backup). Can also be set per-invocation with `--force`. |
+| `dir` | `null` | Base directory for synced output when `mode = "plugin"`. Subdirectories (`agents/`, `skills/`, `rules/`, `commands/`, `hooks/`, `.claude-plugin/`, `.cursor-plugin/`) are created automatically. |
 
 ### Prefix behavior
 
 When `prefix` is set, the naming convention varies by provider:
 
-| Provider | Prefix behavior                                                                                            | Invocation example |
-| -------- | ---------------------------------------------------------------------------------------------------------- | ------------------ |
-| Claude   | Dash prefix on paths (`tw-commit.md` for agents, `tw-commit/` for skills)                                  | `tw-commit`        |
-| OpenCode | Commands sync under a prefix subdirectory (`commands/tw/commit.md`); agents/skills use dash-prefixed names | `/tw/commit`       |
-| Cursor   | Path uses dash prefix (`tw-commit/...`)                                                                    | `tw-commit`        |
+| Provider | Prefix behavior | Invocation example |
+| --- | --- | --- |
+| Claude | Dash prefix on paths (`tw-commit.md` for agents, `tw-commit/` for skills) | `tw-commit` |
+| OpenCode | Commands sync under a prefix subdirectory (`commands/tw/commit.md`); agents/skills use dash-prefixed names | `/tw/commit` |
+| Cursor | Path uses dash prefix (`tw-commit/...`) | `tw-commit` |
 
 #### Content-reference prefix
 
