@@ -1,6 +1,7 @@
 pub mod adapters;
 pub mod compile;
 pub mod cst_io;
+pub mod hooks_canonical;
 pub mod hooks_merge;
 pub mod plan;
 pub mod presets;
