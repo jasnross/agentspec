@@ -11,6 +11,34 @@ A useful test when writing a function: **could a new provider be added by writin
 - **Iterating providers is fine.** `Provider::VARIANTS`, `for provider in providers`, and `providers.map(...)` are all correct shapes — the violation is what happens _inside_ the loop body.
 - **Tests are exempt.** Integration tests and unit tests routinely name a specific provider to set up a scenario; that's not a leak.
 
+## Shared helpers under `src/adapters/` vs. adapter implementations
+
+`src/adapters/` contains two kinds of files, and the "provider-specific logic belongs in adapters" rule applies differently to each:
+
+- **Adapter implementations** (`claude.rs`, `cursor.rs`, `opencode.rs`): one file per provider, each containing the `impl Adapter for X { ... }` block plus the closures and helpers that encode that provider's specifics — frontmatter shapes, JSON wrapping, manifest emission, post-write patches. These files own provider knowledge.
+- **Shared helpers** (`hook_compile.rs`, `hooks_merge.rs`, the `Adapter` trait in `src/adapters.rs`): agentspec-pipeline code that adapters call. These take `Provider` as a parameter (or accept adapter-supplied closures) and produce per-provider output, but they don't *own* provider knowledge — they dispatch on inputs supplied by the calling adapter or the orchestrator.
+
+A useful litmus test: **does this code change require modifying `src/adapters/<provider>.rs`?**
+
+- **Yes** → the work is provider-implementation-specific. Put the logic in the adapter file.
+- **No, but the work is provider-parameterized** → it belongs in a shared helper. The shared helper can take `Provider` as a parameter and produce per-provider output; that's not provider knowledge leaking, it's normal dispatch on a parameter.
+- **No, and the work is provider-agnostic** → it belongs further up the pipeline (`compile.rs`, `sync.rs`, `plan.rs`, etc.) and should treat providers as opaque.
+
+The distinction matters because "code inside `src/adapters/`" is not synonymous with "adapter code." The shared helpers under `src/adapters/` are agentspec-pipeline machinery that lives there for organizational proximity to the adapter implementations they support, not because they're owned by any specific adapter.
+
+### Concrete examples from current code
+
+- `build_hook_script_files(provider, specs) -> Vec<GeneratedFile>` in `hook_compile.rs`: shared helper. Takes `Provider` as a parameter, emits per-provider files, contains no `match provider { ... }` block with different code per arm. Adding a sibling helper of the same shape (e.g., a future `build_shim_files(provider, specs)`) is also shared-helper work, not adapter-implementation work.
+- `hook_command_anchor(plugin_root_env_var, ...)` in `hook_compile.rs`: shared helper. Takes the per-provider plugin-root env var name as a `&'static str` supplied by the calling adapter; produces a command string. The string varies by provider only because the parameter varies — the helper itself contains no provider knowledge.
+- `merge_owned(...)` in `hooks_merge.rs`: shared helper. Takes closures supplied by the per-adapter `ConfigPatch` impl; the closures encapsulate the provider-specific JSON-shape decisions. The helper itself does file I/O and CST plumbing.
+- `Adapter::adapt_hook_spec` impl in `src/adapters/claude.rs`: adapter implementation. Contains Claude-specific JSON shape and field names. Provider knowledge lives here, not in shared helpers.
+
+### Common failure modes
+
+- **Reading "adapter's `synthesize_hooks`" and concluding `synthesize_hooks` is an adapter method.** `synthesize_hooks` is a shared helper in `hook_compile.rs` that adapters *call*. Each provider's adapter passes its own parameters (`dotdir`, `plugin_root_env_var`, closures), but the helper itself has no provider knowledge to own.
+- **Concluding that taking `Provider` as a parameter is automatically a rule violation.** It isn't — dispatch on a parameter is fine. The violation would be `match provider` arms with different logic, different field names, or different output shapes.
+- **Putting agentspec-pipeline logic in adapter implementations because "it touches provider-specific output."** Provider-specific *content* belongs in the adapter; cross-cutting *orchestration* belongs in the shared helpers that all adapters call. If two adapter implementations would have nearly-identical code for the same orchestration, that's the shared-helper case.
+
 ## Hardcoded paths via match
 
 ### Bad

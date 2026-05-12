@@ -152,6 +152,8 @@ Adapters own all provider-specific content decisions: which frontmatter fields t
 
 If adding support for a new provider, implement one adapter — no changes to emit, plan, or sync should be needed.
 
+Note that `src/adapters/` contains both adapter implementations (`claude.rs`, `cursor.rs`, `opencode.rs`) and shared helpers (`hook_compile.rs`, `hooks_merge.rs`, the `Adapter` trait in `adapters.rs`). The "provider-specific logic belongs in adapters" property applies to the implementations; the shared helpers are agentspec-pipeline code that takes `Provider` as a parameter without owning provider knowledge. See `.claude/rules/provider-logic-in-adapters.md` for the full distinction with concrete examples.
+
 ### Operate on structs, not serialized strings
 
 Never parse or transform YAML/frontmatter by manipulating serialized strings (line-by-line scanning, regex, etc.). Instead, modify typed structs before serialization. If a field needs to be conditionally included, make it `Option<T>` on the struct and let serde handle it via `#[serde_with::skip_serializing_none]`.
