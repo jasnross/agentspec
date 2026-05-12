@@ -312,7 +312,7 @@ mod tests {
 
         let cfg = AdapterConfig {
             prefix: Some("tw".to_owned()),
-            content_prefix: None,
+            ..AdapterConfig::default()
         };
         let ctx = TemplateContext::from_specs_for_provider(&specs, Provider::Claude, Some(&cfg));
 
@@ -340,7 +340,7 @@ mod tests {
 
         let cfg = AdapterConfig {
             prefix: Some("tw".to_owned()),
-            content_prefix: None,
+            ..AdapterConfig::default()
         };
         let ctx = TemplateContext::from_specs_for_provider(&specs, Provider::OpenCode, Some(&cfg));
 
@@ -384,8 +384,8 @@ mod tests {
         ];
 
         let cfg = AdapterConfig {
-            prefix: None,
             content_prefix: Some("tw:".to_owned()),
+            ..AdapterConfig::default()
         };
         let ctx = TemplateContext::from_specs_for_provider(&specs, Provider::Claude, Some(&cfg));
 
@@ -408,8 +408,8 @@ mod tests {
         ];
 
         let cfg = AdapterConfig {
-            prefix: None,
             content_prefix: Some("tw:".to_owned()),
+            ..AdapterConfig::default()
         };
         let ctx = TemplateContext::from_specs_for_provider(&specs, Provider::OpenCode, Some(&cfg));
 

@@ -219,7 +219,7 @@ fn render_table(
 
     let kind_w = rows
         .iter()
-        .map(|s| s.kind.dir_name().len())
+        .map(|s| s.kind.display_name().len())
         .max()
         .unwrap_or(0)
         .max("Kind".len());
@@ -260,7 +260,7 @@ fn render_table(
             out,
             "{:<provider_w$}  {:<kind_w$}",
             s.provider.display_name(),
-            s.kind.dir_name()
+            s.kind.display_name()
         )?;
         for (col, &w) in columns.iter().zip(&col_widths) {
             write!(out, "  {:>w$}", (col.extract)(s))?;
@@ -305,7 +305,7 @@ fn render_remove_report(
             out,
             "{prefix}{} {} ({}): {action} {} file(s){}{}",
             s.provider.display_name(),
-            s.kind.dir_name(),
+            s.kind.display_name(),
             s.destination.display(),
             s.files_removed,
             manifest_clause,

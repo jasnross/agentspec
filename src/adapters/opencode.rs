@@ -79,7 +79,11 @@ impl Adapter for OpenCodeAdapter {
         }
 
         let dest_root = config_dir(ctx.mode, ctx.target_dir, ctx.home, ctx.cwd);
-        let rules_dest_dir = dest_root.join(FileKind::Rules.dir_name());
+        // `FileKind::Rules` is statically known here; `dir_for_kind` only
+        // ever returns `None` for `PluginManifest` on providers without a
+        // plugin concept. The `unwrap_or` is a lint-safe fallback that
+        // matches the central registry — see `Adapter::dir_for_kind`.
+        let rules_dest_dir = dest_root.join(self.dir_for_kind(FileKind::Rules).unwrap_or("rules"));
 
         // Eagerly compute the instructions[] entries from the freshly-emitted
         // rule files rather than deferring to a hook-run-time WalkDir. Path
@@ -119,7 +123,11 @@ impl Adapter for OpenCodeAdapter {
 
     fn removal_patches(&self, ctx: &RemoveCtx<'_>) -> RemovalOutput {
         let dest_root = config_dir(ctx.mode, ctx.target_dir, ctx.home, ctx.cwd);
-        let rules_dest_dir = dest_root.join(FileKind::Rules.dir_name());
+        // `FileKind::Rules` is statically known here; `dir_for_kind` only
+        // ever returns `None` for `PluginManifest` on providers without a
+        // plugin concept. The `unwrap_or` is a lint-safe fallback that
+        // matches the central registry — see `Adapter::dir_for_kind`.
+        let rules_dest_dir = dest_root.join(self.dir_for_kind(FileKind::Rules).unwrap_or("rules"));
         let patches: Vec<Box<dyn ConfigPatch>> = vec![Box::new(OpenCodeRemoveInstructionsPatch {
             rules_dest_dir,
             host_path: dest_root.join(HOST_FILENAME),
@@ -171,6 +179,10 @@ impl Adapter for OpenCodeAdapter {
     fn emits_hooks(&self) -> bool {
         false
     }
+
+    fn plugin_manifest_dir(&self) -> Option<&'static str> {
+        None
+    }
 }
 
 fn config_dir(
@@ -182,7 +194,7 @@ fn config_dir(
     match mode {
         SyncDestinationMode::User => home.join(".config").join("opencode"),
         SyncDestinationMode::Project => cwd.join(".opencode"),
-        SyncDestinationMode::Path => target_dir.map_or_else(
+        SyncDestinationMode::Plugin | SyncDestinationMode::Compile => target_dir.map_or_else(
             || home.join(".config").join("opencode"),
             |d| {
                 d.to_str()
@@ -676,7 +688,7 @@ mod tests {
         let home = Path::new("/tmp/home");
         let cwd = Path::new("/tmp/cwd");
         let ctx = CompileCtx {
-            mode: SyncDestinationMode::Path,
+            mode: SyncDestinationMode::Compile,
             home,
             cwd,
             target_dir: None,
@@ -772,7 +784,7 @@ mod tests {
     fn test_adapt_skill_command_with_prefix_uses_subdirectory() {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
-            content_prefix: None,
+            ..AdapterConfig::default()
         };
         let spec = Spec::Skill(SkillSpec {
             path: "test.md".into(),
@@ -1390,7 +1402,7 @@ mod tests {
         let cfg = AdapterConfig::default();
         let presets = HashMap::new();
         let ctx = CompileCtx {
-            mode: SyncDestinationMode::Path,
+            mode: SyncDestinationMode::Compile,
             home: Path::new("/should-not-be-consulted"),
             cwd: Path::new("/should-not-be-consulted"),
             target_dir: Some(dest_root),
@@ -1480,7 +1492,7 @@ mod tests {
         let cfg = AdapterConfig::default();
         let presets = HashMap::new();
         let ctx = CompileCtx {
-            mode: SyncDestinationMode::Path,
+            mode: SyncDestinationMode::Compile,
             home: Path::new("/should-not-be-consulted"),
             cwd: Path::new("/should-not-be-consulted"),
             target_dir: Some(dest_root),
@@ -1501,7 +1513,11 @@ mod tests {
         // Pre-seed opencode.json with an orphaned agentspec entry, then run
         // the patch and confirm the orphan is stripped.
         let host_path = dest_root.join(HOST_FILENAME);
-        let rules_dir = dest_root.join(FileKind::Rules.dir_name());
+        let rules_dir = dest_root.join(
+            OpenCodeAdapter
+                .dir_for_kind(FileKind::Rules)
+                .unwrap_or("rules"),
+        );
         let stale_path = rules_dir.join("removed-rule/AGENTS.md");
         let existing = serde_json::json!({
             "instructions": [stale_path.to_string_lossy(), "/user/AGENTS.md"]

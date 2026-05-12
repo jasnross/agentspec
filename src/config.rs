@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use agentspec::compile::AdapterConfig;
+use agentspec::compile::{AdapterConfig, PluginAuthor, PluginManifest};
 use agentspec::presets::ProviderPresets;
 use agentspec::provider::Provider;
 use anyhow::{Context, Result, anyhow, bail};
@@ -86,7 +86,7 @@ impl AgentspecConfig {
             resolved.mode = mode;
         }
         if let Some(ref dest) = cli.dest {
-            resolved.mode = SyncMode::Path;
+            resolved.mode = SyncMode::Plugin;
             resolved.dir = Some(dest.clone());
         }
         if cli.force {
@@ -137,18 +137,28 @@ impl AgentspecConfig {
     /// Builds per-provider `AdapterConfig` from resolved sync targets.
     ///
     /// Providers absent from `targets` are absent from the map, causing adapters
-    /// to produce canonical (unprefixed) output.
+    /// to produce canonical (unprefixed) output. The `plugin_manifest` field
+    /// is populated from any `plugin-*` TOML fields on the target — the
+    /// adapter still gates emission on `mode == Plugin` (see
+    /// `ClaudeAdapter::compile` / `CursorAdapter::compile`).
     pub fn adapter_configs(
         targets: &[(Provider, SyncTargetConfig)],
     ) -> HashMap<Provider, AdapterConfig> {
         targets
             .iter()
             .map(|(p, t)| {
+                let plugin_manifest = t.plugin_name.clone().map(|name| PluginManifest {
+                    name,
+                    version: t.plugin_version.clone(),
+                    description: t.plugin_description.clone(),
+                    author: t.plugin_author.clone().map(|name| PluginAuthor { name }),
+                });
                 (
                     *p,
                     AdapterConfig {
                         prefix: t.prefix.clone(),
                         content_prefix: t.content_prefix.clone(),
+                        plugin_manifest,
                     },
                 )
             })
@@ -198,7 +208,9 @@ impl AgentspecConfig {
             );
         }
 
-        Ok(self.resolve_sync_target(provider, cli))
+        let target = self.resolve_sync_target(provider, cli);
+        target.validate_for_provider(provider)?;
+        Ok(target)
     }
 }
 
@@ -264,12 +276,13 @@ impl Default for CompileConfig {
 /// Per-provider sync target configuration.
 ///
 /// Controls where and how generated files are distributed for a single provider.
-/// When `mode` is `Path`, the per-kind fields (`agents`, `skills`, `rules`, `commands`)
-/// supply explicit destination directories (tilde-expanded at use site).
+/// When `mode = Plugin`, the `dir` field supplies the explicit base directory
+/// (tilde-expanded at use site) and the `plugin-*` fields supply the plugin
+/// manifest metadata.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct SyncTargetConfig {
-    /// Where to place synced files (user-level, project-local, or explicit path).
+    /// Where to place synced files (user-level, project-local, or plugin tree).
     pub mode: SyncMode,
     /// Optional namespace prefix applied to synced file names.
     /// For Claude: filesystem dir uses `{prefix}-{name}`.
@@ -283,10 +296,44 @@ pub struct SyncTargetConfig {
     /// Permit overwriting user-owned files at the destination.
     /// When false (default), sync errors on collision. Overridden by `--force`.
     pub overwrite: bool,
-    /// Base directory for synced output when `mode = Path`.
-    /// Subdirectories (`agents/`, `skills/`, `rules/`, `commands/`) are derived
-    /// automatically from `FileKind::dir_name()`.
+    /// Base directory for synced output when `mode = Plugin`. Subdirectories
+    /// (`agents/`, `skills/`, `rules/`, `hooks/`, `.claude-plugin/`,
+    /// `.cursor-plugin/`) are derived automatically.
     pub dir: Option<String>,
+    /// Plugin name (`plugin.json` `name` field). Required when `mode = Plugin`.
+    /// Conventionally kebab-case; controls the Claude skill namespace
+    /// (`<plugin-name>:<skill>`) and the Cursor marketplace slug.
+    pub plugin_name: Option<String>,
+    /// Plugin version (`plugin.json` `version` field). Any string; neither
+    /// provider enforces `SemVer` at parse time.
+    pub plugin_version: Option<String>,
+    /// Plugin description (`plugin.json` `description` field).
+    pub plugin_description: Option<String>,
+    /// Plugin author name (`plugin.json` `author.name`). Email is not yet
+    /// surfaced — see `TODO.md` #17.
+    pub plugin_author: Option<String>,
+}
+
+impl SyncTargetConfig {
+    /// Validate plugin-mode invariants.
+    ///
+    /// In `Plugin` mode, `plugin-name` is required: the Claude plugin manifest
+    /// always emits it (used for skill namespacing), and Cursor's marketplace
+    /// classification relies on it when a manifest is emitted. Other plugin-*
+    /// fields are optional pass-throughs.
+    ///
+    /// This check runs alongside the existing `dir`-required check in
+    /// [`crate::sync::sync_plan`] / [`crate::remove::remove_plan`] at
+    /// resolve-call time; `TODO.md` #13 tracks hoisting both to config-load
+    /// time as a follow-up.
+    pub fn validate_for_provider(&self, provider: Provider) -> Result<()> {
+        if self.mode == SyncMode::Plugin && self.plugin_name.is_none() {
+            bail!(
+                "[sync.{provider}] has `mode = \"plugin\"` but no `plugin-name` configured; set `plugin-name` to the plugin's identifier (e.g., `plugin-name = \"my-plugin\"`)"
+            );
+        }
+        Ok(())
+    }
 }
 
 /// Where synced files should be placed.
@@ -298,8 +345,10 @@ pub enum SyncMode {
     User,
     /// Sync to project-local config dirs (`.claude/`, `.cursor/`, etc.)
     Project,
-    /// Sync to an explicit base directory specified by `SyncTargetConfig::dir`
-    Path,
+    /// Sync to an explicit base directory specified by `SyncTargetConfig::dir`,
+    /// emitting a self-contained plugin tree (provider plugin manifest +
+    /// provider-anchored hook command paths).
+    Plugin,
 }
 
 impl SyncMode {
@@ -310,12 +359,16 @@ impl SyncMode {
     /// The library must not import `SyncMode`, so the binary translates at the
     /// boundary. Adapters then derive their `HookEmitMode` from
     /// `CompileCtx.mode` via `SyncDestinationMode::to_hook_emit_mode`.
+    ///
+    /// No arm produces `SyncDestinationMode::Compile` — that variant is
+    /// internal-only (the `agentspec compile` command's canonical mode) and
+    /// never reachable from TOML.
     pub fn to_destination_mode(self) -> agentspec::adapters::SyncDestinationMode {
         use agentspec::adapters::SyncDestinationMode;
         match self {
             Self::User => SyncDestinationMode::User,
             Self::Project => SyncDestinationMode::Project,
-            Self::Path => SyncDestinationMode::Path,
+            Self::Plugin => SyncDestinationMode::Plugin,
         }
     }
 }
@@ -535,7 +588,7 @@ mode = "user"
     }
 
     #[test]
-    fn test_resolve_sync_target_cli_dest_implies_path_mode() {
+    fn test_resolve_sync_target_cli_dest_implies_plugin_mode() {
         let config = AgentspecConfig::default();
         let cli = SyncFlags {
             mode: None,
@@ -545,7 +598,7 @@ mode = "user"
         };
 
         let result = config.resolve_sync_target(Provider::Claude, &cli);
-        assert_eq!(result.mode, SyncMode::Path);
+        assert_eq!(result.mode, SyncMode::Plugin);
         assert_eq!(result.dir.as_deref(), Some("/tmp/sync-test"));
     }
 
@@ -677,9 +730,9 @@ mode = "user"
     }
 
     #[test]
-    fn test_cli_sync_intent_mode_path_without_dest_is_insufficient() {
+    fn test_cli_sync_intent_mode_plugin_without_dest_is_insufficient() {
         let cli = SyncFlags {
-            mode: Some(SyncMode::Path),
+            mode: Some(SyncMode::Plugin),
             ..SyncFlags::default()
         };
 
@@ -848,5 +901,148 @@ ignore = [42]
             .compile_ignore_matcher()
             .expect("empty patterns should compile");
         assert!(matcher.is_empty());
+    }
+
+    #[test]
+    fn test_parse_plugin_mode_with_all_plugin_fields() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[sync.claude]
+mode = "plugin"
+dir = "plugin-claude"
+plugin-name = "tw"
+plugin-version = "0.1.0"
+plugin-description = "Thoughts workflow"
+plugin-author = "Jason"
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+        let target = config.resolve_sync_target(Provider::Claude, &SyncFlags::default());
+        assert_eq!(target.mode, SyncMode::Plugin);
+        assert_eq!(target.dir.as_deref(), Some("plugin-claude"));
+        assert_eq!(target.plugin_name.as_deref(), Some("tw"));
+        assert_eq!(target.plugin_version.as_deref(), Some("0.1.0"));
+        assert_eq!(
+            target.plugin_description.as_deref(),
+            Some("Thoughts workflow")
+        );
+        assert_eq!(target.plugin_author.as_deref(), Some("Jason"));
+    }
+
+    #[test]
+    fn test_parse_plugin_mode_path_value_rejected() {
+        // `mode = "path"` was renamed to `mode = "plugin"` in this plan;
+        // parsing the old value must produce an unknown-variant error with
+        // location info, not silently accept it.
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[sync.claude]
+mode = "path"
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let err = AgentspecConfig::discover(tmp.path()).expect_err("expected parse error");
+        let full = format!("{err:#}");
+        assert!(full.contains("failed to parse"), "error: {full}");
+        assert!(full.contains("sync.claude.mode"), "error: {full}");
+        assert!(full.contains("unknown variant"), "error: {full}");
+    }
+
+    #[test]
+    fn test_validate_for_provider_accepts_plugin_mode_with_plugin_name() {
+        let target = SyncTargetConfig {
+            mode: SyncMode::Plugin,
+            dir: Some("plugin-claude".to_string()),
+            plugin_name: Some("tw".to_string()),
+            ..SyncTargetConfig::default()
+        };
+        target
+            .validate_for_provider(Provider::Claude)
+            .expect("plugin mode with plugin-name validates");
+    }
+
+    #[test]
+    fn test_validate_for_provider_rejects_plugin_mode_without_plugin_name() {
+        let target = SyncTargetConfig {
+            mode: SyncMode::Plugin,
+            dir: Some("plugin-claude".to_string()),
+            plugin_name: None,
+            ..SyncTargetConfig::default()
+        };
+        let err = target
+            .validate_for_provider(Provider::Claude)
+            .expect_err("plugin mode without plugin-name must error");
+        let msg = err.to_string();
+        assert!(msg.contains("[sync.claude]"), "error: {msg}");
+        assert!(msg.contains("plugin-name"), "error: {msg}");
+        assert!(msg.contains("plugin"), "error: {msg}");
+    }
+
+    #[test]
+    fn test_validate_for_provider_accepts_user_mode_without_plugin_name() {
+        // User/Project modes don't require plugin-name; only Plugin mode does.
+        let target = SyncTargetConfig {
+            mode: SyncMode::User,
+            plugin_name: None,
+            ..SyncTargetConfig::default()
+        };
+        target
+            .validate_for_provider(Provider::Cursor)
+            .expect("user mode does not require plugin-name");
+    }
+
+    #[test]
+    fn test_adapter_configs_builds_plugin_manifest_from_target() {
+        let target = SyncTargetConfig {
+            mode: SyncMode::Plugin,
+            dir: Some("plugin-claude".to_string()),
+            plugin_name: Some("tw".to_string()),
+            plugin_version: Some("0.1.0".to_string()),
+            plugin_description: Some("desc".to_string()),
+            plugin_author: Some("Jason".to_string()),
+            ..SyncTargetConfig::default()
+        };
+        let configs = AgentspecConfig::adapter_configs(&[(Provider::Claude, target)]);
+        let cfg = configs.get(&Provider::Claude).expect("claude config");
+        let manifest = cfg
+            .plugin_manifest
+            .as_ref()
+            .expect("plugin_manifest populated from plugin-name");
+        assert_eq!(manifest.name, "tw");
+        assert_eq!(manifest.version.as_deref(), Some("0.1.0"));
+        assert_eq!(manifest.description.as_deref(), Some("desc"));
+        assert_eq!(
+            manifest.author.as_ref().map(|a| a.name.as_str()),
+            Some("Jason")
+        );
+    }
+
+    #[test]
+    fn test_adapter_configs_no_plugin_manifest_when_plugin_name_unset() {
+        let target = SyncTargetConfig {
+            mode: SyncMode::User,
+            ..SyncTargetConfig::default()
+        };
+        let configs = AgentspecConfig::adapter_configs(&[(Provider::Claude, target)]);
+        let cfg = configs.get(&Provider::Claude).expect("claude config");
+        assert!(
+            cfg.plugin_manifest.is_none(),
+            "no plugin manifest when plugin-name is unset"
+        );
+    }
+
+    #[test]
+    fn test_validated_sync_target_rejects_plugin_mode_without_plugin_name() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[sync.claude]
+mode = "plugin"
+dir = "plugin-claude"
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+        let err = config
+            .validated_sync_target(Provider::Claude, &SyncFlags::default(), false)
+            .expect_err("plugin mode without plugin-name must error");
+        assert!(err.to_string().contains("plugin-name"), "error: {err}");
     }
 }

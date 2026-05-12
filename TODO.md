@@ -31,7 +31,7 @@
    - Several Cursor behaviors are inferred from research docs and not verified against a real Cursor build:
      - Event-name mappings (`postToolUseFailure`, `sessionStart`, `sessionEnd`, `subagentStart`, `subagentStop`, `beforeSubmitPrompt`) — see `cursor.rs:215-220`
      - `${CLAUDE_PROJECT_DIR}` resolution outside plugin scope in `MergedProject` mode — see `compile.rs:128-130`
-     - `${CLAUDE_PLUGIN_ROOT}` aliasing in Bundled (Path) mode — Cursor's documented hook env only mentions `CLAUDE_PROJECT_DIR`, so the bundled-mode command literal `${CLAUDE_PLUGIN_ROOT}/hooks/scripts/<f>` may not resolve at runtime
+     - ~~`${CLAUDE_PLUGIN_ROOT}` aliasing in Bundled (Path) mode~~ — RESOLVED by plugin-sync-mode plan (2026-05-11): the bundled-mode emission now uses `${CURSOR_PLUGIN_ROOT}` for Cursor and `${CLAUDE_PLUGIN_ROOT}` for Claude (per-adapter constant threaded through `hook_command_anchor`), eliminating the aliasing assumption.
      - Whether Cursor accepts unknown sub-fields like `_agentspec_id` in hook entries (the merged-mode contingent design depends on this)
    - All four are blockers for confident Cursor support — verify before 1.0 against a real Cursor build and document the actual behavior
    - If Cursor doesn't alias `CLAUDE_PLUGIN_ROOT` in Bundled mode, the fix is likely to mirror the Merged-mode pattern: emit `CLAUDE_PLUGIN_ROOT=<derived> <command>` for Cursor specifically

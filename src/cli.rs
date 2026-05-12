@@ -64,7 +64,7 @@ pub struct SyncArgs {
     #[arg(long)]
     pub force: bool,
 
-    /// Output destination (implies --mode=path)
+    /// Output destination (implies --mode=plugin)
     #[arg(long)]
     pub dest: Option<String>,
 
@@ -91,7 +91,7 @@ pub struct RemoveArgs {
     #[arg(long)]
     pub dry_run: bool,
 
-    /// Destination to remove from (implies --mode=path)
+    /// Destination to remove from (implies --mode=plugin)
     #[arg(long)]
     pub dest: Option<String>,
 

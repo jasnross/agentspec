@@ -181,7 +181,7 @@ script = "scripts/audit-bash.sh"
 
 #### Sync modes
 
-- **Path mode** (`mode = "path"`): agentspec writes a complete `hooks/hooks.json` plus `hooks/scripts/` under the configured destination. The plugin owns the file.
+- **Plugin mode** (`mode = "plugin"`): agentspec writes a self-contained plugin tree under the configured `dir`: `agents/`, `skills/`, `rules/`, `hooks/scripts/<file>`, `hooks/hooks.json`, plus `.claude-plugin/plugin.json` for Claude (always emitted in plugin mode; populated from the `plugin-name` / `plugin-version` / `plugin-description` / `plugin-author` fields under `[sync.<provider>]`) and `.cursor-plugin/plugin.json` for Cursor (same shape, but Cursor accepts plugins without a manifest entirely). Hook command anchors use the provider's plugin-root env var: `${CLAUDE_PLUGIN_ROOT}/hooks/scripts/<f>` for Claude, `${CURSOR_PLUGIN_ROOT}/hooks/scripts/<f>` for Cursor. Requires `plugin-name` under `[sync.<provider>]`; absence is a parse-time error.
 - **User mode** (`mode = "user"`): scripts land at `~/.<provider>/hooks/scripts/`; entries are merged into `~/.<provider>/settings.json` (Claude) or `~/.cursor/hooks.json` (Cursor) via a CST-aware patcher. Comments, trailing commas, and user-authored entries round-trip unchanged. Each agentspec entry carries an `_agentspec_id` sentinel so re-syncing replaces only entries it owns.
 - **Project mode** (`mode = "project"`): same as User mode but rooted at the project directory.
 
@@ -388,7 +388,11 @@ mode = "user"
 # prefix = "tw"             # namespace prefix for synced file names
 # content-prefix = "tw:"    # content-reference prefix (defaults to "{prefix}-")
 # overwrite = false         # allow overwriting user-owned files
-# dir = "/path/to/output"   # base directory (only used with mode = "path")
+# dir = "/path/to/output"   # base directory (only used with mode = "plugin")
+# plugin-name = "my-plugin"  # required when mode = "plugin"; controls skill namespace + marketplace slug
+# plugin-version = "0.1.0"   # optional; any string (neither provider enforces SemVer)
+# plugin-description = "..."  # optional human-readable description
+# plugin-author = "Name"     # optional author name (Email support deferred — see TODO #17)
 ```
 
 ## Model presets
@@ -438,11 +442,11 @@ mode = "user"
 
 | Field            | Default  | Description                                                                                                                                                                                                             |
 | ---------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mode`           | `"user"` | `"user"` syncs to the tool's user-level config dir (e.g. `~/.claude/`).<br>`"project"` syncs to the project-local config dir (e.g. `.claude/`).<br> `"path"` syncs to an explicit directory set by `dir`.               |
+| `mode`           | `"user"` | `"user"` syncs to the tool's user-level config dir (e.g. `~/.claude/`).<br>`"project"` syncs to the project-local config dir (e.g. `.claude/`).<br>`"plugin"` syncs a self-contained plugin tree (including provider plugin manifest) to an explicit directory set by `dir`; requires `plugin-name`.               |
 | `prefix`         | `null`   | Namespace prefix applied to synced file names. Can be useful for avoiding collisions with user-owned files or specs from plugins. See [Prefix behavior](#prefix-behavior) below.                                        |
 | `content-prefix` | `null`   | Literal prefix for content references (model-facing names). Includes its separator (e.g., `"tw:"` → `tw:skill-name`). When unset, defaults to `"{prefix}-"`. See [Content-reference prefix](#content-reference-prefix). |
 | `overwrite`      | `false`  | When `true`, allows overwriting user-owned files at sync destinations (with backup). Can also be set per-invocation with `--force`.                                                                                     |
-| `dir`            | `null`   | Base directory for synced output when `mode = "path"`. Subdirectories (`agents/`, `skills/`, `rules/`, `commands/`) are created automatically.                                                                          |
+| `dir`            | `null`   | Base directory for synced output when `mode = "plugin"`. Subdirectories (`agents/`, `skills/`, `rules/`, `commands/`, `hooks/`, `.claude-plugin/`, `.cursor-plugin/`) are created automatically.                                                                          |
 
 ### Prefix behavior
 

@@ -14,7 +14,10 @@ use super::hooks_helpers::{
 use super::{
     Adapter, AdapterOutput, CompileCtx, RemovalOutput, RemoveCtx, SyncDestinationMode, TidyOutcome,
 };
-use crate::compile::{AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode};
+use crate::compile::{
+    AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode,
+    PluginManifest as SpecPluginManifest,
+};
 use crate::hooks_merge::{merge_owned, remove_owned};
 use crate::plan::{ConfigPatch, FileKind, expand_tilde};
 use crate::presets::ProviderPresetsMap;
@@ -82,6 +85,13 @@ enum ClaudeTool {
 
 const HOST_FILENAME: &str = "settings.json";
 const HOOK_DOTDIR: &str = ".claude";
+/// Claude's plugin-root env var. The host runtime sets `${CLAUDE_PLUGIN_ROOT}`
+/// in plugin scope; agentspec also assigns it inline in merged-mode hook
+/// commands so plugin-shaped scripts can reference sibling assets like
+/// `${CLAUDE_PLUGIN_ROOT}/rules` when synced project/user-wide. See:
+/// <https://code.claude.com/docs/en/plugins>.
+const PLUGIN_ROOT_ENV_VAR: &str = "CLAUDE_PLUGIN_ROOT";
+const PLUGIN_MANIFEST_DIR: &str = ".claude-plugin";
 
 /// Zero-sized adapter for the Claude provider.
 #[derive(Debug)]
@@ -122,6 +132,15 @@ impl Adapter for ClaudeAdapter {
             files: hook_files,
         } = synthesize_hooks(&hook_specs, emit_mode)?;
         files.extend(hook_files);
+
+        // Emit `.claude-plugin/plugin.json` in plugin mode whenever the
+        // binary supplied manifest fields. Validation upstream guarantees
+        // `plugin-name` is set when this is `Some`.
+        if ctx.mode == SyncDestinationMode::Plugin
+            && let Some(manifest) = ctx.adapter_config.and_then(|c| c.plugin_manifest.as_ref())
+        {
+            files.push(build_plugin_manifest_file(manifest)?);
+        }
 
         let dest_root = config_dir(ctx.mode, ctx.target_dir, ctx.home, ctx.cwd);
 
@@ -193,6 +212,10 @@ impl Adapter for ClaudeAdapter {
 
     fn emits_hooks(&self) -> bool {
         true
+    }
+
+    fn plugin_manifest_dir(&self) -> Option<&'static str> {
+        Some(PLUGIN_MANIFEST_DIR)
     }
 }
 
@@ -327,13 +350,61 @@ impl ClaudeAdapter {
     }
 }
 
+/// Claude's `.claude-plugin/plugin.json` shape.
+///
+/// Only the v1 manifest fields are emitted — `name`, `version`, `description`,
+/// `author { name }`. Additional fields documented in Claude's plugin schema
+/// (`dependencies`, `contributes`, `userConfig`, etc.) are out of scope per
+/// the plan's "What We're NOT Doing" list.
+#[serde_with::skip_serializing_none]
+#[derive(Serialize)]
+struct ClaudePluginManifestJson<'a> {
+    name: &'a str,
+    version: Option<&'a str>,
+    description: Option<&'a str>,
+    author: Option<PluginAuthorJson<'a>>,
+}
+
+/// Author sub-record. Both providers' author schemas accept
+/// `{ name, email? }`; v1 emits the name-only shape (email deferred per
+/// `TODO.md` #17).
+#[derive(Serialize)]
+struct PluginAuthorJson<'a> {
+    name: &'a str,
+}
+
+/// Build the `.claude-plugin/plugin.json` `GeneratedFile`.
+fn build_plugin_manifest_file(manifest: &SpecPluginManifest) -> Result<GeneratedFile> {
+    let json = ClaudePluginManifestJson {
+        name: &manifest.name,
+        version: manifest.version.as_deref(),
+        description: manifest.description.as_deref(),
+        author: manifest
+            .author
+            .as_ref()
+            .map(|a| PluginAuthorJson { name: &a.name }),
+    };
+    let mut content = serde_json::to_vec_pretty(&json)
+        .context("failed to serialize Claude .claude-plugin/plugin.json")?;
+    content.push(b'\n');
+    Ok(GeneratedFile::binary(
+        Provider::Claude,
+        FileKind::PluginManifest,
+        Path::new(PLUGIN_MANIFEST_DIR).join("plugin.json"),
+        content,
+        None,
+    ))
+}
+
 /// Forwards to the shared `hook_compile::synthesize_hooks` with Claude's
-/// provider/dotdir/JSON-builder bound. Keeps the adapter-local call site
-/// stable while the shared synthesis lives in one place.
+/// provider, dotdir, plugin-root env-var name, and JSON-builder bound.
+/// Keeps the adapter-local call site stable while the shared synthesis
+/// lives in one place.
 fn synthesize_hooks(specs: &[&HookSpec], emit_mode: HookEmitMode) -> Result<HookSynthesis> {
     hook_compile::synthesize_hooks(
         Provider::Claude,
         HOOK_DOTDIR,
+        PLUGIN_ROOT_ENV_VAR,
         specs,
         emit_mode,
         build_claude_hooks_json,
@@ -349,7 +420,7 @@ fn config_dir(
     match mode {
         SyncDestinationMode::User => home.join(HOOK_DOTDIR),
         SyncDestinationMode::Project => cwd.join(HOOK_DOTDIR),
-        SyncDestinationMode::Path => target_dir.map_or_else(
+        SyncDestinationMode::Plugin | SyncDestinationMode::Compile => target_dir.map_or_else(
             || home.join(HOOK_DOTDIR),
             |d| {
                 d.to_str()
@@ -735,7 +806,7 @@ mod tests {
         let home = Path::new("/tmp/home");
         let cwd = Path::new("/tmp/cwd");
         let ctx = CompileCtx {
-            mode: SyncDestinationMode::Path,
+            mode: SyncDestinationMode::Compile,
             home,
             cwd,
             target_dir: None,
@@ -809,7 +880,7 @@ mod tests {
     fn test_adapt_agent_with_prefix() {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
-            content_prefix: None,
+            ..AdapterConfig::default()
         };
         let spec = agent("test-agent", None);
         let files = compile_one(spec, Some(&cfg));
@@ -826,7 +897,7 @@ mod tests {
     fn test_adapt_rule_with_prefix() {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
-            content_prefix: None,
+            ..AdapterConfig::default()
         };
         let spec = Spec::Rule(RuleSpec {
             path: "test.md".into(),
@@ -845,8 +916,8 @@ mod tests {
     #[test]
     fn test_adapt_agent_content_prefix_does_not_affect_frontmatter() {
         let cfg = AdapterConfig {
-            prefix: None,
             content_prefix: Some("tw:".to_string()),
+            ..AdapterConfig::default()
         };
         let spec = agent("test-agent", None);
         let files = compile_one(spec, Some(&cfg));
@@ -863,8 +934,8 @@ mod tests {
     #[test]
     fn test_model_facing_name_uses_content_prefix() {
         let cfg = AdapterConfig {
-            prefix: None,
             content_prefix: Some("tw:".to_string()),
+            ..AdapterConfig::default()
         };
         let spec = Spec::Agent(AgentSpec {
             path: "test.md".into(),
@@ -1148,7 +1219,7 @@ mod tests {
     fn test_model_facing_name_falls_back_to_prefix() {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
-            content_prefix: None,
+            ..AdapterConfig::default()
         };
         let spec = Spec::Agent(AgentSpec {
             path: "test.md".into(),
@@ -1186,6 +1257,129 @@ mod tests {
         };
         let output = ClaudeAdapter.compile(&[], &ctx).expect("compile");
         assert_eq!(output.dest_root, PathBuf::from("/home/user/.claude"));
+    }
+
+    #[test]
+    fn test_build_plugin_manifest_file_emits_all_fields() {
+        use crate::compile::{PluginAuthor, PluginManifest};
+
+        let manifest = PluginManifest {
+            name: "tw".to_string(),
+            version: Some("0.1.0".to_string()),
+            description: Some("Thoughts workflow plugin".to_string()),
+            author: Some(PluginAuthor {
+                name: "Jason".to_string(),
+            }),
+        };
+        let file = build_plugin_manifest_file(&manifest).expect("manifest builds");
+        assert_eq!(file.provider, Provider::Claude);
+        assert_eq!(file.kind, FileKind::PluginManifest);
+        assert_eq!(file.path.to_str(), Some(".claude-plugin/plugin.json"));
+
+        let content = String::from_utf8(file.content.clone()).expect("utf-8");
+        let parsed: serde_json::Value = serde_json::from_str(&content).expect("valid json");
+        assert_eq!(parsed["name"], "tw");
+        assert_eq!(parsed["version"], "0.1.0");
+        assert_eq!(parsed["description"], "Thoughts workflow plugin");
+        assert_eq!(parsed["author"]["name"], "Jason");
+    }
+
+    #[test]
+    fn test_build_plugin_manifest_file_name_only_omits_optional_fields() {
+        use crate::compile::PluginManifest;
+
+        let manifest = PluginManifest {
+            name: "tw".to_string(),
+            version: None,
+            description: None,
+            author: None,
+        };
+        let file = build_plugin_manifest_file(&manifest).expect("manifest builds");
+        let content = String::from_utf8(file.content.clone()).expect("utf-8");
+        let parsed: serde_json::Value = serde_json::from_str(&content).expect("valid json");
+
+        // Only `name` should appear; serde_with skips the None fields.
+        let obj = parsed.as_object().expect("object");
+        assert_eq!(obj.len(), 1, "expected single key (name), got: {content}");
+        assert_eq!(obj["name"], "tw");
+    }
+
+    #[test]
+    fn test_compile_emits_plugin_manifest_in_plugin_mode_with_config() {
+        use crate::compile::{PluginAuthor, PluginManifest};
+
+        let presets = HashMap::new();
+        let home = Path::new("/tmp/home");
+        let cwd = Path::new("/tmp/cwd");
+        let cfg = AdapterConfig {
+            plugin_manifest: Some(PluginManifest {
+                name: "tw".to_string(),
+                version: Some("1.0.0".to_string()),
+                description: None,
+                author: Some(PluginAuthor {
+                    name: "Author".to_string(),
+                }),
+            }),
+            ..AdapterConfig::default()
+        };
+        let ctx = CompileCtx {
+            mode: SyncDestinationMode::Plugin,
+            home,
+            cwd,
+            target_dir: Some(Path::new("/out")),
+            presets: &presets,
+            adapter_config: Some(&cfg),
+            overwrite: false,
+        };
+        let output = ClaudeAdapter.compile(&[], &ctx).expect("compile");
+        let manifest_file = output
+            .files
+            .iter()
+            .find(|f| f.kind == FileKind::PluginManifest)
+            .expect("plugin manifest emitted in plugin mode");
+        assert_eq!(
+            manifest_file.path.to_str(),
+            Some(".claude-plugin/plugin.json")
+        );
+    }
+
+    #[test]
+    fn test_compile_does_not_emit_plugin_manifest_in_compile_mode() {
+        // Compile mode (the internal `agentspec compile` default) must NOT
+        // emit a plugin manifest even if AdapterConfig.plugin_manifest is set,
+        // because `compile` produces canonical, provider-config-dir-agnostic
+        // output.
+        use crate::compile::PluginManifest;
+
+        let presets = HashMap::new();
+        let home = Path::new("/tmp/home");
+        let cwd = Path::new("/tmp/cwd");
+        let cfg = AdapterConfig {
+            plugin_manifest: Some(PluginManifest {
+                name: "tw".to_string(),
+                version: None,
+                description: None,
+                author: None,
+            }),
+            ..AdapterConfig::default()
+        };
+        let ctx = CompileCtx {
+            mode: SyncDestinationMode::Compile,
+            home,
+            cwd,
+            target_dir: None,
+            presets: &presets,
+            adapter_config: Some(&cfg),
+            overwrite: false,
+        };
+        let output = ClaudeAdapter.compile(&[], &ctx).expect("compile");
+        assert!(
+            output
+                .files
+                .iter()
+                .all(|f| f.kind != FileKind::PluginManifest),
+            "Compile mode must not emit plugin manifest"
+        );
     }
 
     #[test]

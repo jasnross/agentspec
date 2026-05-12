@@ -16,17 +16,29 @@ pub enum FileKind {
     Rules,
     Skills,
     Hooks,
+    /// Provider plugin manifest (e.g., `.claude-plugin/plugin.json`,
+    /// `.cursor-plugin/plugin.json`). The directory name is provider-specific
+    /// and resolved at dispatch time via `Adapter::plugin_manifest_dir()`,
+    /// not via [`FileKind::dir_name`].
+    PluginManifest,
 }
 
 impl FileKind {
-    /// Directory name used under provider config dirs (e.g. `"agents"`, `"skills"`).
-    pub fn dir_name(self) -> &'static str {
+    /// Human-readable static label for diagnostics and report columns.
+    ///
+    /// Returns a `&'static str` for every variant (using `"plugin-manifest"`
+    /// for [`FileKind::PluginManifest`]), so callers that just want a label
+    /// don't need to handle `None`. **Not for filesystem dispatch** — use
+    /// [`crate::adapters::Adapter::dir_for_kind`] for that, since the
+    /// `PluginManifest` directory is provider-specific.
+    pub fn display_name(self) -> &'static str {
         match self {
             Self::Agents => "agents",
             Self::Commands => "commands",
             Self::Rules => "rules",
             Self::Skills => "skills",
             Self::Hooks => "hooks",
+            Self::PluginManifest => "plugin-manifest",
         }
     }
 
@@ -38,13 +50,14 @@ impl FileKind {
             Self::Rules,
             Self::Skills,
             Self::Hooks,
+            Self::PluginManifest,
         ]
     }
 }
 
 impl std::fmt::Display for FileKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.dir_name())
+        f.write_str(self.display_name())
     }
 }
 
@@ -306,13 +319,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_file_kind_hooks_dir_name() {
-        assert_eq!(FileKind::Hooks.dir_name(), "hooks");
+    fn test_file_kind_hooks_display_name() {
+        assert_eq!(FileKind::Hooks.display_name(), "hooks");
+    }
+
+    #[test]
+    fn test_file_kind_plugin_manifest_display_name() {
+        assert_eq!(FileKind::PluginManifest.display_name(), "plugin-manifest");
+        assert_eq!(FileKind::PluginManifest.to_string(), "plugin-manifest");
     }
 
     #[test]
     fn test_file_kind_all_includes_hooks() {
         assert!(FileKind::all().contains(&FileKind::Hooks));
+    }
+
+    #[test]
+    fn test_file_kind_all_includes_plugin_manifest() {
+        assert!(FileKind::all().contains(&FileKind::PluginManifest));
     }
 
     #[test]

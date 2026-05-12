@@ -33,9 +33,16 @@ pub(super) struct HookSynthesis {
 /// `files` omits `hooks/hooks.json` (the patcher edits the host config file
 /// instead). Bundled mode owns the whole `hooks/hooks.json` and uses
 /// `build_bundled_json` to serialize it in the provider's expected shape.
+///
+/// `plugin_root_env_var` is the host runtime variable each adapter passes
+/// in for plugin-scope path anchoring — `"CLAUDE_PLUGIN_ROOT"` for Claude,
+/// `"CURSOR_PLUGIN_ROOT"` for Cursor. This shared helper carries no
+/// provider knowledge; the adapter is the source of truth for which env var
+/// name its host runtime exposes.
 pub(super) fn synthesize_hooks<F>(
     provider: Provider,
     dotdir: &str,
+    plugin_root_env_var: &'static str,
     specs: &[&HookSpec],
     emit_mode: HookEmitMode,
     build_bundled_json: F,
@@ -47,7 +54,7 @@ where
         return Ok(HookSynthesis::default());
     }
 
-    let entries = build_emitted_hook_entries(specs, dotdir, emit_mode);
+    let entries = build_emitted_hook_entries(specs, dotdir, plugin_root_env_var, emit_mode);
     let mut files = build_hook_script_files(provider, specs);
     if matches!(emit_mode, HookEmitMode::Bundled) {
         let json = build_bundled_json(&entries)?;
@@ -89,22 +96,27 @@ fn build_hook_script_files(provider: Provider, specs: &[&HookSpec]) -> Vec<Gener
 
 /// Build canonical `EmittedHookEntry` rows from hook specs.
 ///
-/// The `command` field's anchor depends on `(dotdir, emit_mode)`:
-/// - Bundled (Path mode): `${CLAUDE_PLUGIN_ROOT}/hooks/scripts/<f>` for both
-///   providers (Cursor aliases `${CLAUDE_PLUGIN_ROOT}` at plugin scope) — the
-///   dotdir parameter is unused.
-/// - `MergedUser`: `$HOME/<dotdir>/hooks/scripts/<f>` (`$HOME` not `~/...`
-///   because Claude's hook-command runtime isn't documented to expand `~`).
-/// - `MergedProject`: `${CLAUDE_PROJECT_DIR}/<dotdir>/hooks/scripts/<f>`.
-///   Cursor's behavior with `${CLAUDE_PROJECT_DIR}` outside plugin scope is
-///   not documented — must be verified empirically against a real Cursor
-///   build before 1.0.
+/// The `command` field's anchor depends on `(dotdir, plugin_root_env_var,
+/// emit_mode)`:
+/// - Bundled (Plugin / compile-output mode): `${<plugin_root_env_var>}/hooks/scripts/<f>`
+///   — the host runtime sets this variable to the plugin root, so the
+///   command can reference the script directly. The `dotdir` parameter is
+///   unused in this mode.
+/// - `MergedUser`: `<plugin_root_env_var>=$HOME/<dotdir> $HOME/<dotdir>/hooks/scripts/<f>`.
+///   `$HOME` not `~/...` because Claude's hook-command runtime isn't
+///   documented to expand `~`.
+/// - `MergedProject`: `<plugin_root_env_var>=${CLAUDE_PROJECT_DIR}/<dotdir>
+///   ${CLAUDE_PROJECT_DIR}/<dotdir>/hooks/scripts/<f>`. Cursor's behavior
+///   with `${CLAUDE_PROJECT_DIR}` outside plugin scope is not documented —
+///   must be verified empirically against a real Cursor build before 1.0.
 ///
-/// `dotdir` is supplied by the calling adapter (Claude passes `".claude"`,
-/// Cursor passes `".cursor"`) so this helper carries no provider knowledge.
+/// `dotdir` and `plugin_root_env_var` are supplied by the calling adapter
+/// (Claude: `".claude"` + `"CLAUDE_PLUGIN_ROOT"`; Cursor: `".cursor"` +
+/// `"CURSOR_PLUGIN_ROOT"`) so this helper carries no provider knowledge.
 fn build_emitted_hook_entries(
     specs: &[&HookSpec],
     dotdir: &str,
+    plugin_root_env_var: &'static str,
     emit_mode: HookEmitMode,
 ) -> Vec<EmittedHookEntry> {
     specs
@@ -129,7 +141,7 @@ fn build_emitted_hook_entries(
             EmittedHookEntry {
                 event: s.frontmatter.event,
                 matcher: s.frontmatter.matcher.clone(),
-                command: hook_command_anchor(dotdir, emit_mode, &filename),
+                command: hook_command_anchor(dotdir, plugin_root_env_var, emit_mode, &filename),
                 timeout: s.frontmatter.timeout,
                 agentspec_id: s.frontmatter.id.clone(),
             }
@@ -137,29 +149,36 @@ fn build_emitted_hook_entries(
         .collect()
 }
 
-/// Compute the `command` string for a hook entry given the dotdir and mode.
+/// Compute the `command` string for a hook entry given the dotdir, the
+/// per-provider plugin-root env var name, and the emit mode.
 ///
-/// In Bundled (Path) mode, the host runtime sets `$CLAUDE_PLUGIN_ROOT`
-/// (Cursor aliases it) to the plugin root, so we just reference the script
-/// directly. In Merged (User/Project) modes, the host doesn't set that
-/// variable — but hook scripts authored for the plugin distribution model
-/// commonly reference `$CLAUDE_PLUGIN_ROOT/rules`, `$CLAUDE_PLUGIN_ROOT/skills`,
-/// etc. to find sibling assets. We assign it inline (`FOO=bar cmd`, standard
-/// POSIX) so plugin-shaped scripts keep working when synced project/user-wide.
-/// The assigned value is the config dir (e.g., `$HOME/.claude` for User mode),
-/// where agentspec also writes those sibling kinds.
-fn hook_command_anchor(dotdir: &str, emit_mode: HookEmitMode, filename: &str) -> String {
+/// In Bundled (plugin or compile-output) mode the host runtime sets
+/// `${<plugin_root_env_var>}` to the plugin root, so we just reference the
+/// script directly. In Merged (User/Project) modes the host doesn't set
+/// that variable — but hook scripts authored for the plugin distribution
+/// model commonly reference `${<plugin_root_env_var>}/rules`,
+/// `${<plugin_root_env_var>}/skills`, etc. to find sibling assets. We assign
+/// it inline (`FOO=bar cmd`, standard POSIX) so plugin-shaped scripts keep
+/// working when synced project/user-wide. The assigned value is the config
+/// dir (e.g., `$HOME/.claude` for User mode), where agentspec also writes
+/// those sibling kinds.
+fn hook_command_anchor(
+    dotdir: &str,
+    plugin_root_env_var: &'static str,
+    emit_mode: HookEmitMode,
+    filename: &str,
+) -> String {
     match emit_mode {
         HookEmitMode::Bundled => {
-            format!("${{CLAUDE_PLUGIN_ROOT}}/hooks/scripts/{filename}")
+            format!("${{{plugin_root_env_var}}}/hooks/scripts/{filename}")
         }
         HookEmitMode::MergedUser => {
             let cd = format!("$HOME/{dotdir}");
-            format!("CLAUDE_PLUGIN_ROOT={cd} {cd}/hooks/scripts/{filename}")
+            format!("{plugin_root_env_var}={cd} {cd}/hooks/scripts/{filename}")
         }
         HookEmitMode::MergedProject => {
             let cd = format!("${{CLAUDE_PROJECT_DIR}}/{dotdir}");
-            format!("CLAUDE_PLUGIN_ROOT={cd} {cd}/hooks/scripts/{filename}")
+            format!("{plugin_root_env_var}={cd} {cd}/hooks/scripts/{filename}")
         }
     }
 }

@@ -19,7 +19,7 @@ pub use cursor::CursorAdapter;
 pub use opencode::OpenCodeAdapter;
 
 use crate::compile::{AdapterConfig, GeneratedFile, HookEmitMode};
-use crate::plan::ConfigPatch;
+use crate::plan::{ConfigPatch, FileKind};
 use crate::presets::ProviderPresetsMap;
 use crate::spec::{Spec, ToolFrontmatter};
 
@@ -29,17 +29,29 @@ use crate::spec::{Spec, ToolFrontmatter};
 /// the library while the binary owns the CLI/config-loading parts of
 /// `SyncMode`. The binary translates at the boundary, paralleling the existing
 /// `SyncMode → HookEmitMode` translation in `src/config.rs`.
+///
+/// Carries one more variant than the binary's `SyncMode` by design: `Compile`
+/// is internal-only (the canonical mode for the `agentspec compile` command)
+/// and is never reachable from TOML. `Plugin` is the public sync-target mode
+/// that drives plugin-tier emission (provider plugin manifest +
+/// provider-anchored hook commands).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SyncDestinationMode {
     User,
     Project,
-    Path,
+    /// Plugin distribution mode — emits a self-contained tree with a
+    /// provider-appropriate manifest under `<dest>/<provider-plugin-dir>/plugin.json`.
+    Plugin,
+    /// Compile-command default — internal-only, used by `agentspec compile`
+    /// to produce canonical provider-config-dir-agnostic output under
+    /// `generated/<provider>/`. Not reachable from TOML.
+    Compile,
 }
 
 impl SyncDestinationMode {
     /// Map to the `HookEmitMode` that controls per-provider hook emission
-    /// shape. User/Project map to merged-mode patches; Path maps to a
-    /// self-contained `hooks/hooks.json` bundle.
+    /// shape. User/Project map to merged-mode patches; Plugin and Compile
+    /// both map to a self-contained `hooks/hooks.json` bundle.
     ///
     /// This collapses the previous binary-side `SyncMode → HookEmitMode`
     /// translation into a library-side method so adapters can derive their
@@ -49,7 +61,7 @@ impl SyncDestinationMode {
         match self {
             Self::User => HookEmitMode::MergedUser,
             Self::Project => HookEmitMode::MergedProject,
-            Self::Path => HookEmitMode::Bundled,
+            Self::Plugin | Self::Compile => HookEmitMode::Bundled,
         }
     }
 }
@@ -77,15 +89,15 @@ pub struct TidyOutcome {
 pub struct CompileCtx<'a> {
     /// Library-side mirror of the binary's `SyncMode`. For the `compile`
     /// command path (no sync target), the binary supplies a default of
-    /// `SyncDestinationMode::Path` with `target_dir: None`.
+    /// `SyncDestinationMode::Compile` with `target_dir: None`.
     pub mode: SyncDestinationMode,
     /// Effective home directory (for User-mode dest resolution).
     pub home: &'a Path,
     /// Effective current working directory (for Project-mode dest resolution).
     pub cwd: &'a Path,
-    /// Explicit destination directory when `mode == Path`; `None` for User /
-    /// Project modes (and for `compile`-command runs that don't target a sync
-    /// destination).
+    /// Explicit destination directory when `mode` is `Plugin` or `Compile`;
+    /// `None` for User / Project modes (and for `compile`-command runs that
+    /// don't target a sync destination).
     pub target_dir: Option<&'a Path>,
     /// Preset library — adapters consume per-provider presets when applying
     /// frontmatter transforms.
@@ -200,4 +212,35 @@ pub trait Adapter: std::fmt::Debug + Send + Sync {
     /// what kinds of output they support, callers iterate without branching
     /// on `Provider`.
     fn emits_hooks(&self) -> bool;
+
+    /// Directory name under the sync destination root where this provider's
+    /// plugin manifest file lives (e.g. `".claude-plugin"` for Claude,
+    /// `".cursor-plugin"` for Cursor). Returns `None` for providers without
+    /// a plugin concept (e.g. `OpenCode`), in which case the orchestrator
+    /// skips `FileKind::PluginManifest` writes and removals for that provider.
+    ///
+    /// Capability accessor — parallel to [`Adapter::emits_hooks`]. The
+    /// `Option` shape collapses "does this provider support plugin manifests"
+    /// and "what directory does its manifest live in" into a single method.
+    fn plugin_manifest_dir(&self) -> Option<&'static str>;
+
+    /// Subdirectory name under the destination root for `kind`.
+    ///
+    /// Single source of truth for the per-`FileKind` directory mapping. The
+    /// five "static" kinds map to their canonical names; `PluginManifest`
+    /// delegates to [`Adapter::plugin_manifest_dir`] so providers without a
+    /// plugin concept (`OpenCode`) return `None` and the orchestrator skips
+    /// the write. Provided as a trait default — adapters shouldn't override
+    /// it (the five static names are not provider-specific knowledge), but
+    /// they're free to if a future provider has a non-standard layout.
+    fn dir_for_kind(&self, kind: FileKind) -> Option<&'static str> {
+        match kind {
+            FileKind::Agents => Some("agents"),
+            FileKind::Commands => Some("commands"),
+            FileKind::Rules => Some("rules"),
+            FileKind::Skills => Some("skills"),
+            FileKind::Hooks => Some("hooks"),
+            FileKind::PluginManifest => self.plugin_manifest_dir(),
+        }
+    }
 }

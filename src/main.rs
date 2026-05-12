@@ -124,8 +124,12 @@ fn main() -> Result<()> {
             let sync_targets = config.sync_targets();
             let adapter_configs = AgentspecConfig::adapter_configs(&sync_targets);
             // The `compile` command path has no sync destination — adapters
-            // produce canonical output anchored at `Path` mode. Pass an empty
-            // map so each adapter falls back to `ProviderCompileTarget::default`.
+            // produce canonical, provider-config-dir-agnostic output anchored
+            // at `SyncDestinationMode::Compile`. Pass an empty map so each
+            // adapter falls back to `ProviderCompileTarget::default`. Plugin
+            // manifests are gated on `ctx.mode == Plugin` inside each adapter,
+            // so any `plugin-*` TOML fields set under `[sync.<provider>]`
+            // never leak into `generated/<provider>/` output.
             let compile_targets: HashMap<Provider, ProviderCompileTarget> = HashMap::new();
 
             let providers: Vec<Provider> = if compile_args.provider.is_empty() {

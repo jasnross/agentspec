@@ -59,7 +59,12 @@ pub fn sync_plan(
         // for providers that never used a given kind (e.g., OpenCode +
         // Hooks).
         for &kind in FileKind::all() {
-            let dest = resolve_dest_dir(*provider, kind, target, &dest_root, home)?;
+            // `None` here means this provider doesn't support `kind` (today:
+            // only PluginManifest for `OpenCode`). Skip the `ManifestTrackedWrite`
+            // entirely — there's nothing to write and nothing to track.
+            let Some(dest) = resolve_dest_dir(*provider, kind, target, &dest_root, home)? else {
+                continue;
+            };
             let files = files_for_kind(result, *provider, kind);
 
             writes.push(ManifestTrackedWrite {
@@ -131,34 +136,44 @@ pub fn resolve_sync_targets(
 /// Resolves the per-kind destination directory under a provider's sync root.
 ///
 /// `dest_root` is the per-provider sync destination root the adapter computed
-/// during `compile_specs` (e.g. `~/.claude` for User mode, `<cwd>/.claude` for
-/// Project mode, `<dir>` for Path mode). For Path mode we honour the explicit
-/// `dir` from `SyncTargetConfig` (tilde-expanded) so the `--dest` override
-/// wins; for User/Project modes the adapter's `dest_root` is canonical.
+/// during `compile_specs` (e.g. `~/.claude` for User mode, `<cwd>/.claude`
+/// for Project mode, `<dir>` for Plugin mode). For Plugin mode we honour the
+/// explicit `dir` from `SyncTargetConfig` (tilde-expanded) so the
+/// `--dest`/TOML value wins; for User/Project modes the adapter's
+/// `dest_root` is canonical.
 ///
-/// Errors if `mode = "path"` and `dir` is unset — surfacing the
+/// Returns `Ok(None)` when the provider doesn't support `kind` — today, only
+/// for [`FileKind::PluginManifest`] on providers whose
+/// `Adapter::plugin_manifest_dir()` returns `None` (i.e., `OpenCode`). The
+/// caller skips the write in that case. Returns `Ok(Some(_))` for every
+/// other (provider, kind) pair.
+///
+/// Errors if `mode = "plugin"` and `dir` is unset — surfacing the
 /// misconfiguration loudly rather than silently falling back to a User-mode
 /// default. Validation of this combination should ideally happen at config
-/// load time (see TODO.md); doing it here is a defense-in-depth check.
+/// load time (see `TODO.md`); doing it here is a defense-in-depth check.
 fn resolve_dest_dir(
     provider: Provider,
     kind: FileKind,
     config: &SyncTargetConfig,
     dest_root: &Path,
     home: &Path,
-) -> Result<PathBuf> {
+) -> Result<Option<PathBuf>> {
     let base = match config.mode {
-        SyncMode::Path => match config.dir.as_deref() {
+        SyncMode::Plugin => match config.dir.as_deref() {
             Some(d) => expand_tilde(d, home),
             None => {
                 anyhow::bail!(
-                    "sync mode is 'path' but no `dir` configured for provider '{provider}'"
+                    "sync mode is 'plugin' but no `dir` configured for provider '{provider}'"
                 );
             }
         },
         SyncMode::User | SyncMode::Project => dest_root.to_path_buf(),
     };
-    Ok(base.join(kind.dir_name()))
+    match provider.adapter().dir_for_kind(kind) {
+        Some(dir) => Ok(Some(base.join(dir))),
+        None => Ok(None),
+    }
 }
 
 /// Extracts files from `result` that belong to the given provider and kind.
@@ -312,13 +327,13 @@ mod tests {
         );
 
         let claude_target = SyncTargetConfig {
-            mode: SyncMode::Path,
+            mode: SyncMode::Plugin,
             dir: Some("/out/claude".to_string()),
             ..SyncTargetConfig::default()
         };
 
         let opencode_target = SyncTargetConfig {
-            mode: SyncMode::Path,
+            mode: SyncMode::Plugin,
             dir: Some("/out/opencode".to_string()),
             ..SyncTargetConfig::default()
         };
@@ -332,11 +347,12 @@ mod tests {
         let plan = sync_plan(&mut result, &targets, home).expect("sync_plan should succeed");
 
         // Every provider in the targets list gets one `ManifestTrackedWrite`
-        // per `FileKind` variant — even for kinds that provider doesn't emit
-        // — so stale-cleanup runs uniformly. With 5 kinds × 2 providers, the
-        // plan carries 10 writes; non-emitting kinds will have empty `files`
-        // and become no-ops at emit time.
-        assert_eq!(plan.writes.len(), FileKind::all().len() * 2);
+        // per `FileKind` variant the provider supports. Providers without
+        // a plugin concept (today: `OpenCode`) skip `FileKind::PluginManifest`,
+        // so the count is `FileKind::all().len() * 2 - 1` (Claude supports
+        // all six kinds; OpenCode skips PluginManifest). Non-emitting kinds
+        // have empty `files` and become no-ops at emit time.
+        assert_eq!(plan.writes.len(), FileKind::all().len() * 2 - 1);
 
         // No post-write patches in this test: the unit-test `CompileResult` is
         // constructed by hand without calling `compile_specs`, so no
@@ -372,7 +388,8 @@ mod tests {
             Path::new("/home/user/.claude"),
             &home(),
         )
-        .expect("user-mode resolution");
+        .expect("user-mode resolution")
+        .expect("kind supported by provider");
         assert_eq!(result, PathBuf::from("/home/user/.claude/agents"));
     }
 
@@ -389,14 +406,15 @@ mod tests {
             Path::new("/work/project/.cursor"),
             &home(),
         )
-        .expect("project-mode resolution");
+        .expect("project-mode resolution")
+        .expect("kind supported by provider");
         assert_eq!(result, PathBuf::from("/work/project/.cursor/skills"));
     }
 
     #[test]
-    fn test_resolve_dest_path_explicit_dir_overrides_dest_root() {
+    fn test_resolve_dest_plugin_explicit_dir_overrides_dest_root() {
         let config = SyncTargetConfig {
-            mode: SyncMode::Path,
+            mode: SyncMode::Plugin,
             dir: Some("~/foo".to_string()),
             ..Default::default()
         };
@@ -407,17 +425,18 @@ mod tests {
             Path::new("/should-be-ignored"),
             &home(),
         )
-        .expect("path-mode resolution with explicit dir");
+        .expect("plugin-mode resolution with explicit dir")
+        .expect("kind supported by provider");
         assert_eq!(result, PathBuf::from("/home/user/foo/skills"));
     }
 
     #[test]
-    fn test_resolve_dest_path_missing_dir_errors() {
-        // Path mode without `dir`: must error rather than silently falling
+    fn test_resolve_dest_plugin_missing_dir_errors() {
+        // Plugin mode without `dir`: must error rather than silently falling
         // back to the adapter's User-mode default — that fallback would mask
         // a real misconfiguration.
         let config = SyncTargetConfig {
-            mode: SyncMode::Path,
+            mode: SyncMode::Plugin,
             ..Default::default()
         };
         let err = resolve_dest_dir(
@@ -427,11 +446,57 @@ mod tests {
             Path::new("/should-not-be-consulted"),
             &home(),
         )
-        .expect_err("path-mode without dir must error");
+        .expect_err("plugin-mode without dir must error");
         assert!(
             err.to_string()
-                .contains("sync mode is 'path' but no `dir` configured for provider 'opencode'"),
+                .contains("sync mode is 'plugin' but no `dir` configured for provider 'opencode'"),
             "error message should name the misconfigured provider, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_resolve_dest_plugin_manifest_dispatches_through_adapter() {
+        // Plugin manifest kind: Claude returns `.claude-plugin`, Cursor returns
+        // `.cursor-plugin`, `OpenCode` returns `None` (no plugin concept).
+        let config = SyncTargetConfig {
+            mode: SyncMode::Plugin,
+            dir: Some("/out".to_string()),
+            ..Default::default()
+        };
+
+        let claude = resolve_dest_dir(
+            Provider::Claude,
+            FileKind::PluginManifest,
+            &config,
+            Path::new("/should-be-ignored"),
+            &home(),
+        )
+        .expect("claude resolution")
+        .expect("claude supports plugin manifest");
+        assert_eq!(claude, PathBuf::from("/out/.claude-plugin"));
+
+        let cursor = resolve_dest_dir(
+            Provider::Cursor,
+            FileKind::PluginManifest,
+            &config,
+            Path::new("/should-be-ignored"),
+            &home(),
+        )
+        .expect("cursor resolution")
+        .expect("cursor supports plugin manifest");
+        assert_eq!(cursor, PathBuf::from("/out/.cursor-plugin"));
+
+        let opencode = resolve_dest_dir(
+            Provider::OpenCode,
+            FileKind::PluginManifest,
+            &config,
+            Path::new("/should-be-ignored"),
+            &home(),
+        )
+        .expect("opencode resolution");
+        assert!(
+            opencode.is_none(),
+            "OpenCode has no plugin concept; expected None, got {opencode:?}"
         );
     }
 }

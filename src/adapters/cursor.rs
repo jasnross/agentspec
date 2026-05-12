@@ -13,7 +13,10 @@ use super::hooks_helpers::{
 use super::{
     Adapter, AdapterOutput, CompileCtx, RemovalOutput, RemoveCtx, SyncDestinationMode, TidyOutcome,
 };
-use crate::compile::{AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode};
+use crate::compile::{
+    AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode,
+    PluginManifest as SpecPluginManifest,
+};
 use crate::hooks_merge::{merge_owned, remove_owned};
 use crate::plan::{ConfigPatch, FileKind, expand_tilde};
 use crate::presets::ProviderPresetsMap;
@@ -47,6 +50,13 @@ struct CursorRuleFrontmatter {
 
 const HOST_FILENAME: &str = "hooks.json";
 const HOOK_DOTDIR: &str = ".cursor";
+/// Cursor's plugin-root env var. The host runtime sets `${CURSOR_PLUGIN_ROOT}`
+/// in plugin scope; agentspec assigns it inline in merged-mode hook commands
+/// so plugin-shaped scripts can reference sibling assets like
+/// `${CURSOR_PLUGIN_ROOT}/rules` when synced project/user-wide. See
+/// <https://cursor.com/docs/plugins>.
+const PLUGIN_ROOT_ENV_VAR: &str = "CURSOR_PLUGIN_ROOT";
+const PLUGIN_MANIFEST_DIR: &str = ".cursor-plugin";
 
 /// Zero-sized adapter for the Cursor provider.
 #[derive(Debug)]
@@ -80,6 +90,16 @@ impl Adapter for CursorAdapter {
             files: hook_files,
         } = synthesize_hooks(&hook_specs, emit_mode)?;
         files.extend(hook_files);
+
+        // Cursor's plugin manifest is conditionally emitted: only when
+        // `mode == Plugin` AND the binary supplied manifest fields. Cursor
+        // installs cleanly with no manifest file at all, so omitting here is
+        // safe when no plugin-* fields are configured.
+        if ctx.mode == SyncDestinationMode::Plugin
+            && let Some(manifest) = ctx.adapter_config.and_then(|c| c.plugin_manifest.as_ref())
+        {
+            files.push(build_plugin_manifest_file(manifest)?);
+        }
 
         let dest_root = config_dir(ctx.mode, ctx.target_dir, ctx.home, ctx.cwd);
 
@@ -146,6 +166,10 @@ impl Adapter for CursorAdapter {
 
     fn emits_hooks(&self) -> bool {
         true
+    }
+
+    fn plugin_manifest_dir(&self) -> Option<&'static str> {
+        Some(PLUGIN_MANIFEST_DIR)
     }
 }
 
@@ -277,13 +301,58 @@ impl CursorAdapter {
     }
 }
 
+/// Cursor's `.cursor-plugin/plugin.json` shape.
+///
+/// v1 emits `name` (required), `version`, `description`, `author { name }`.
+/// Cursor's schema additionally supports `displayName`, `category`, `tags`,
+/// `logo`, `publisher`, etc.; those are out of scope per the plan's
+/// "What We're NOT Doing" list.
+#[serde_with::skip_serializing_none]
+#[derive(Serialize)]
+struct CursorPluginManifestJson<'a> {
+    name: &'a str,
+    version: Option<&'a str>,
+    description: Option<&'a str>,
+    author: Option<PluginAuthorJson<'a>>,
+}
+
+#[derive(Serialize)]
+struct PluginAuthorJson<'a> {
+    name: &'a str,
+}
+
+/// Build the `.cursor-plugin/plugin.json` `GeneratedFile`.
+fn build_plugin_manifest_file(manifest: &SpecPluginManifest) -> Result<GeneratedFile> {
+    let json = CursorPluginManifestJson {
+        name: &manifest.name,
+        version: manifest.version.as_deref(),
+        description: manifest.description.as_deref(),
+        author: manifest
+            .author
+            .as_ref()
+            .map(|a| PluginAuthorJson { name: &a.name }),
+    };
+    let mut content = serde_json::to_vec_pretty(&json)
+        .context("failed to serialize Cursor .cursor-plugin/plugin.json")?;
+    content.push(b'\n');
+    Ok(GeneratedFile::binary(
+        Provider::Cursor,
+        FileKind::PluginManifest,
+        Path::new(PLUGIN_MANIFEST_DIR).join("plugin.json"),
+        content,
+        None,
+    ))
+}
+
 /// Forwards to the shared `hook_compile::synthesize_hooks` with Cursor's
-/// provider/dotdir/JSON-builder bound. Keeps the adapter-local call site
-/// stable while the shared synthesis lives in one place.
+/// provider, dotdir, plugin-root env-var name, and JSON-builder bound.
+/// Keeps the adapter-local call site stable while the shared synthesis
+/// lives in one place.
 fn synthesize_hooks(specs: &[&HookSpec], emit_mode: HookEmitMode) -> Result<HookSynthesis> {
     hook_compile::synthesize_hooks(
         Provider::Cursor,
         HOOK_DOTDIR,
+        PLUGIN_ROOT_ENV_VAR,
         specs,
         emit_mode,
         build_cursor_hooks_json,
@@ -299,7 +368,7 @@ fn config_dir(
     match mode {
         SyncDestinationMode::User => home.join(HOOK_DOTDIR),
         SyncDestinationMode::Project => cwd.join(HOOK_DOTDIR),
-        SyncDestinationMode::Path => target_dir.map_or_else(
+        SyncDestinationMode::Plugin | SyncDestinationMode::Compile => target_dir.map_or_else(
             || home.join(HOOK_DOTDIR),
             |d| {
                 d.to_str()
@@ -554,7 +623,7 @@ mod tests {
         let home = Path::new("/tmp/home");
         let cwd = Path::new("/tmp/cwd");
         let ctx = CompileCtx {
-            mode: SyncDestinationMode::Path,
+            mode: SyncDestinationMode::Compile,
             home,
             cwd,
             target_dir: None,
@@ -615,7 +684,7 @@ mod tests {
     fn test_adapt_agent_with_prefix() {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
-            content_prefix: None,
+            ..AdapterConfig::default()
         };
         let spec = Spec::Agent(AgentSpec {
             path: "test.md".into(),
@@ -642,7 +711,7 @@ mod tests {
     fn test_adapt_skill_with_prefix() {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
-            content_prefix: None,
+            ..AdapterConfig::default()
         };
         let spec = Spec::Skill(SkillSpec {
             path: "test.md".into(),
@@ -846,7 +915,7 @@ mod tests {
         );
         assert_eq!(
             result.entries[0].command,
-            "CLAUDE_PLUGIN_ROOT=$HOME/.cursor $HOME/.cursor/hooks/scripts/init.sh"
+            "CURSOR_PLUGIN_ROOT=$HOME/.cursor $HOME/.cursor/hooks/scripts/init.sh"
         );
     }
 
@@ -854,7 +923,7 @@ mod tests {
     fn test_adapt_rule_with_prefix() {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_string()),
-            content_prefix: None,
+            ..AdapterConfig::default()
         };
         let spec = Spec::Rule(RuleSpec {
             path: "test.md".into(),
@@ -868,6 +937,90 @@ mod tests {
 
         let files = compile_one(spec, Some(&cfg));
         assert_eq!(files[0].path.to_str(), Some("rules/tw-test-rule.mdc"));
+    }
+
+    #[test]
+    fn test_build_plugin_manifest_file_emits_all_fields() {
+        use crate::compile::{PluginAuthor, PluginManifest};
+
+        let manifest = PluginManifest {
+            name: "tw".to_string(),
+            version: Some("0.1.0".to_string()),
+            description: Some("Thoughts workflow plugin".to_string()),
+            author: Some(PluginAuthor {
+                name: "Jason".to_string(),
+            }),
+        };
+        let file = build_plugin_manifest_file(&manifest).expect("manifest builds");
+        assert_eq!(file.provider, Provider::Cursor);
+        assert_eq!(file.kind, FileKind::PluginManifest);
+        assert_eq!(file.path.to_str(), Some(".cursor-plugin/plugin.json"));
+
+        let content = String::from_utf8(file.content.clone()).expect("utf-8");
+        let parsed: serde_json::Value = serde_json::from_str(&content).expect("valid json");
+        assert_eq!(parsed["name"], "tw");
+        assert_eq!(parsed["version"], "0.1.0");
+        assert_eq!(parsed["description"], "Thoughts workflow plugin");
+        assert_eq!(parsed["author"]["name"], "Jason");
+    }
+
+    #[test]
+    fn test_compile_emits_cursor_manifest_in_plugin_mode_with_config() {
+        use crate::compile::PluginManifest;
+
+        let presets = HashMap::new();
+        let cfg = AdapterConfig {
+            plugin_manifest: Some(PluginManifest {
+                name: "tw".to_string(),
+                version: None,
+                description: None,
+                author: None,
+            }),
+            ..AdapterConfig::default()
+        };
+        let ctx = CompileCtx {
+            mode: SyncDestinationMode::Plugin,
+            home: Path::new("/tmp/home"),
+            cwd: Path::new("/tmp/cwd"),
+            target_dir: Some(Path::new("/out")),
+            presets: &presets,
+            adapter_config: Some(&cfg),
+            overwrite: false,
+        };
+        let output = CursorAdapter.compile(&[], &ctx).expect("compile");
+        assert!(
+            output
+                .files
+                .iter()
+                .any(|f| f.kind == FileKind::PluginManifest
+                    && f.path.to_str() == Some(".cursor-plugin/plugin.json")),
+            "expected `.cursor-plugin/plugin.json` in plugin mode"
+        );
+    }
+
+    #[test]
+    fn test_compile_skips_cursor_manifest_in_plugin_mode_without_config() {
+        // Per the plan: Cursor's manifest is conditionally emitted. When
+        // `mode == Plugin` but no plugin-* fields are configured, the rest
+        // of the tree still emits but `.cursor-plugin/plugin.json` is omitted.
+        let presets = HashMap::new();
+        let ctx = CompileCtx {
+            mode: SyncDestinationMode::Plugin,
+            home: Path::new("/tmp/home"),
+            cwd: Path::new("/tmp/cwd"),
+            target_dir: Some(Path::new("/out")),
+            presets: &presets,
+            adapter_config: None,
+            overwrite: false,
+        };
+        let output = CursorAdapter.compile(&[], &ctx).expect("compile");
+        assert!(
+            output
+                .files
+                .iter()
+                .all(|f| f.kind != FileKind::PluginManifest),
+            "Cursor must NOT emit a manifest file when no plugin-* fields are configured"
+        );
     }
 
     #[test]

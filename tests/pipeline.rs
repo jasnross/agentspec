@@ -502,7 +502,11 @@ fn test_sync_provider_unconfigured_errors_without_dest() {
 }
 
 #[test]
-fn test_sync_provider_unconfigured_with_dest_allowed() {
+fn test_sync_provider_unconfigured_with_dest_requires_plugin_name() {
+    // Per the plan: `--dest <path>` implies `mode = "plugin"`. Plugin mode
+    // requires `plugin-name`. Since v1 ships no `--plugin-name` CLI flag,
+    // running `agentspec sync --provider X --dest <path>` without a TOML
+    // `plugin-name` errors with the validation message.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     let home = dir.join("home");
@@ -521,12 +525,14 @@ fn test_sync_provider_unconfigured_with_dest_allowed() {
         .output()
         .expect("failed to run agentspec sync --provider claude --dest");
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "sync should succeed:\n{stderr}");
-    // --dest should route files to the specified directory.
     assert!(
-        dest.join("agents").exists(),
-        "agents dir should be created under --dest"
+        !output.status.success(),
+        "sync --dest without plugin-name must error"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("plugin-name"),
+        "error should mention plugin-name, got:\n{stderr}"
     );
 }
 
@@ -1333,9 +1339,12 @@ fn test_compile_emits_hooks_for_claude_and_cursor() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "compile failed:\n{stderr}");
 
-    // Both Claude and Cursor receive the same script content (Cursor aliases
-    // ${CLAUDE_PLUGIN_ROOT} natively at plugin scope).
-    for provider in ["claude", "cursor"] {
+    // Each provider's hook commands anchor on its own plugin-root env var:
+    // Claude → ${CLAUDE_PLUGIN_ROOT}, Cursor → ${CURSOR_PLUGIN_ROOT}.
+    for (provider, env_var) in [
+        ("claude", "CLAUDE_PLUGIN_ROOT"),
+        ("cursor", "CURSOR_PLUGIN_ROOT"),
+    ] {
         let json = dir.join(format!("generated/{provider}/hooks/hooks.json"));
         assert!(json.exists(), "{provider}: hooks.json should be emitted");
         let content = std::fs::read_to_string(&json).expect("failed to read hooks.json");
@@ -1343,9 +1352,10 @@ fn test_compile_emits_hooks_for_claude_and_cursor() {
             content.contains("init-thoughts"),
             "{provider}: hooks.json should contain init-thoughts agentspec_id, got:\n{content}"
         );
+        let expected = format!("${{{env_var}}}/hooks/scripts/init-thoughts.sh");
         assert!(
-            content.contains("${CLAUDE_PLUGIN_ROOT}/hooks/scripts/init-thoughts.sh"),
-            "{provider}: hooks.json should anchor scripts under CLAUDE_PLUGIN_ROOT"
+            content.contains(&expected),
+            "{provider}: hooks.json should anchor scripts under {env_var}, got:\n{content}"
         );
 
         // Both entry scripts AND the `_common.sh` helper that
@@ -1565,14 +1575,16 @@ fn test_compile_opencode_verbose_lists_skipped_hooks() {
 }
 
 #[test]
-fn test_sync_claude_path_mode_writes_hooks() {
+fn test_sync_claude_plugin_mode_writes_hooks() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
     let dest = dir.join("plugin-claude");
     write_sync_config(
         &dir,
-        &[SyncEntry::new("claude", "path").with_dir(dest.to_str().expect("dest path utf-8"))],
+        &[SyncEntry::new("claude", "plugin")
+            .with_dir(dest.to_str().expect("dest path utf-8"))
+            .with_plugin_name("test-plugin")],
     );
 
     let home = dir.join("home");
@@ -1585,16 +1597,274 @@ fn test_sync_claude_path_mode_writes_hooks() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "sync (path mode) should succeed:\n{stderr}"
+        "sync (plugin mode) should succeed:\n{stderr}"
     );
 
     assert!(
         dest.join("hooks/hooks.json").exists(),
-        "hooks.json should land under the plugin path destination"
+        "hooks.json should land under the plugin destination"
     );
     assert!(
         dest.join("hooks/scripts/init-thoughts.sh").exists(),
-        "hook script should land under the plugin path destination"
+        "hook script should land under the plugin destination"
+    );
+}
+
+#[test]
+fn test_sync_claude_plugin_mode_emits_plugin_manifest() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    let dest = dir.join("plugin-claude");
+    write_sync_config(
+        &dir,
+        &[SyncEntry::new("claude", "plugin")
+            .with_dir(dest.to_str().expect("dest path utf-8"))
+            .with_plugin_name("tw")
+            .with_plugin_version("0.1.0")
+            .with_plugin_description("Thoughts workflow")
+            .with_plugin_author("Jason")],
+    );
+
+    let home = dir.join("home");
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--provider", "claude"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "plugin-mode sync should succeed:\n{stderr}"
+    );
+
+    let manifest_path = dest.join(".claude-plugin/plugin.json");
+    assert!(
+        manifest_path.exists(),
+        "Claude plugin manifest should land at .claude-plugin/plugin.json"
+    );
+    let manifest_str =
+        std::fs::read_to_string(&manifest_path).expect("read plugin.json should succeed");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&manifest_str).expect("plugin.json should be valid JSON");
+    assert_eq!(parsed["name"], "tw");
+    assert_eq!(parsed["version"], "0.1.0");
+    assert_eq!(parsed["description"], "Thoughts workflow");
+    assert_eq!(parsed["author"]["name"], "Jason");
+
+    // Hook command anchors use ${CLAUDE_PLUGIN_ROOT} in plugin mode.
+    let hooks_str = std::fs::read_to_string(dest.join("hooks/hooks.json"))
+        .expect("read hooks.json should succeed");
+    assert!(
+        hooks_str.contains("${CLAUDE_PLUGIN_ROOT}/hooks/scripts/"),
+        "Claude plugin-mode hooks should anchor at \\${{CLAUDE_PLUGIN_ROOT}}:\n{hooks_str}"
+    );
+}
+
+#[test]
+fn test_sync_cursor_plugin_mode_emits_plugin_manifest_when_fields_set() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    let dest = dir.join("plugin-cursor");
+    write_sync_config(
+        &dir,
+        &[SyncEntry::new("cursor", "plugin")
+            .with_dir(dest.to_str().expect("dest path utf-8"))
+            .with_plugin_name("tw")
+            .with_plugin_version("0.1.0")],
+    );
+
+    let home = dir.join("home");
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--provider", "cursor"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "plugin-mode cursor sync should succeed:\n{stderr}"
+    );
+
+    let manifest_path = dest.join(".cursor-plugin/plugin.json");
+    assert!(
+        manifest_path.exists(),
+        "Cursor plugin manifest should land at .cursor-plugin/plugin.json"
+    );
+    let parsed: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&manifest_path).expect("read cursor plugin.json"),
+    )
+    .expect("cursor plugin.json should be valid JSON");
+    assert_eq!(parsed["name"], "tw");
+    assert_eq!(parsed["version"], "0.1.0");
+
+    // Cursor plugin-mode hooks anchor at ${CURSOR_PLUGIN_ROOT}, NOT CLAUDE_PLUGIN_ROOT.
+    let hooks_str = std::fs::read_to_string(dest.join("hooks/hooks.json"))
+        .expect("read cursor hooks.json should succeed");
+    assert!(
+        hooks_str.contains("${CURSOR_PLUGIN_ROOT}/hooks/scripts/"),
+        "Cursor plugin-mode hooks should anchor at \\${{CURSOR_PLUGIN_ROOT}}:\n{hooks_str}"
+    );
+    assert!(
+        !hooks_str.contains("CLAUDE_PLUGIN_ROOT"),
+        "Cursor plugin-mode hooks must NOT reference CLAUDE_PLUGIN_ROOT:\n{hooks_str}"
+    );
+}
+
+#[test]
+fn test_sync_claude_plugin_mode_remove_cleans_manifest() {
+    // agentspec remove must clean up the plugin tree including
+    // `.claude-plugin/plugin.json` and the manifest sidecar, and rmdir
+    // the empty `.claude-plugin/` directory afterwards.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    let dest = dir.join("plugin-claude");
+    write_sync_config(
+        &dir,
+        &[SyncEntry::new("claude", "plugin")
+            .with_dir(dest.to_str().expect("dest path utf-8"))
+            .with_plugin_name("tw")],
+    );
+
+    let home = dir.join("home");
+    let sync = std::process::Command::new(agentspec())
+        .args(["sync", "--provider", "claude"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync");
+    assert!(
+        sync.status.success(),
+        "sync setup: {}",
+        String::from_utf8_lossy(&sync.stderr)
+    );
+    assert!(dest.join(".claude-plugin/plugin.json").exists());
+
+    let remove = std::process::Command::new(agentspec())
+        .args(["remove", "--provider", "claude"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec remove");
+    let stderr = String::from_utf8_lossy(&remove.stderr);
+    assert!(remove.status.success(), "remove should succeed:\n{stderr}");
+
+    assert!(
+        !dest.join(".claude-plugin/plugin.json").exists(),
+        "plugin.json should be removed"
+    );
+    assert!(
+        !dest.join(".claude-plugin").exists(),
+        ".claude-plugin/ should be rmdir'd after manifest removal (empty)"
+    );
+}
+
+#[test]
+fn test_sync_plugin_mode_rejects_missing_plugin_name() {
+    // Plugin mode requires plugin-name; validation must error with a clear
+    // message naming the offending provider.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let dest = dir.join("plugin-claude");
+    write_sync_config(
+        &dir,
+        &[SyncEntry::new("claude", "plugin").with_dir(dest.to_str().expect("dest path utf-8"))],
+    );
+
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--provider", "claude"])
+        .env("HOME", dir.join("home"))
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync");
+    assert!(
+        !output.status.success(),
+        "sync must fail when plugin-name is missing in plugin mode"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("plugin-name"),
+        "error should mention plugin-name, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("[sync.claude]"),
+        "error should name the offending provider, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn test_sync_rejects_mode_path_at_parse_time() {
+    // Pre-1.0: `mode = "path"` is deleted; parsing it must produce an
+    // unknown-variant error rather than silently accepting it.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let dest = dir.join("plugin-claude");
+    let dest_str = dest.to_str().expect("dest path utf-8");
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        format!("[sync.claude]\nmode = \"path\"\ndir = \"{dest_str}\"\n"),
+    )
+    .expect("write agentspec.toml");
+
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--provider", "claude"])
+        .env("HOME", dir.join("home"))
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync");
+    assert!(
+        !output.status.success(),
+        "mode = \"path\" must be rejected at parse time"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown variant") || stderr.contains("failed to parse"),
+        "error should explain the parse failure, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn test_compile_does_not_emit_plugin_manifest_even_when_plugin_fields_set() {
+    // `agentspec compile` produces canonical, provider-config-dir-agnostic
+    // output under `generated/<provider>/`. The presence of `plugin-*` fields
+    // in `[sync.<provider>]` config must NOT cause compile to emit a manifest
+    // (only sync in plugin mode does).
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    let dest = dir.join("plugin-claude");
+    write_sync_config(
+        &dir,
+        &[SyncEntry::new("claude", "plugin")
+            .with_dir(dest.to_str().expect("dest path utf-8"))
+            .with_plugin_name("tw")],
+    );
+
+    let output = std::process::Command::new(agentspec())
+        .args(["compile"])
+        .env("HOME", dir.join("home"))
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+    assert!(
+        output.status.success(),
+        "compile should succeed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let generated_claude = dir.join("generated/claude");
+    assert!(
+        generated_claude.exists(),
+        "compile should produce generated/claude/"
+    );
+    assert!(
+        !generated_claude.join(".claude-plugin").exists(),
+        "compile must NOT emit .claude-plugin/ even when plugin-* fields are set: \
+         compile output is provider-config-dir-agnostic"
     );
 }
 
@@ -1745,14 +2015,19 @@ fn test_sync_refuses_higher_manifest_version() {
 /// Describes one `[sync.<provider>]` block emitted by `write_sync_config`.
 ///
 /// Use `SyncEntry::new(provider, mode)` for the canonical `mode = "..."`-only
-/// form. Chain `.with_prefix("...")`, `.with_content_prefix("...")`, or
-/// `.with_dir("...")` to add optional per-block fields.
+/// form. Chain `.with_prefix("...")`, `.with_content_prefix("...")`,
+/// `.with_dir("...")`, `.with_plugin_name("...")`, etc. to add optional
+/// per-block fields.
 struct SyncEntry<'a> {
     provider: &'a str,
     mode: &'a str,
     prefix: Option<&'a str>,
     content_prefix: Option<&'a str>,
     dir: Option<&'a str>,
+    plugin_name: Option<&'a str>,
+    plugin_version: Option<&'a str>,
+    plugin_description: Option<&'a str>,
+    plugin_author: Option<&'a str>,
 }
 
 impl<'a> SyncEntry<'a> {
@@ -1763,6 +2038,10 @@ impl<'a> SyncEntry<'a> {
             prefix: None,
             content_prefix: None,
             dir: None,
+            plugin_name: None,
+            plugin_version: None,
+            plugin_description: None,
+            plugin_author: None,
         }
     }
 
@@ -1778,6 +2057,26 @@ impl<'a> SyncEntry<'a> {
 
     fn with_dir(mut self, dir: &'a str) -> Self {
         self.dir = Some(dir);
+        self
+    }
+
+    fn with_plugin_name(mut self, name: &'a str) -> Self {
+        self.plugin_name = Some(name);
+        self
+    }
+
+    fn with_plugin_version(mut self, version: &'a str) -> Self {
+        self.plugin_version = Some(version);
+        self
+    }
+
+    fn with_plugin_description(mut self, description: &'a str) -> Self {
+        self.plugin_description = Some(description);
+        self
+    }
+
+    fn with_plugin_author(mut self, author: &'a str) -> Self {
+        self.plugin_author = Some(author);
         self
     }
 }
@@ -1817,6 +2116,18 @@ cursor = { model = "fast" }
         }
         if let Some(dir_val) = entry.dir {
             let _ = writeln!(sections, "dir = \"{dir_val}\"");
+        }
+        if let Some(name) = entry.plugin_name {
+            let _ = writeln!(sections, "plugin-name = \"{name}\"");
+        }
+        if let Some(version) = entry.plugin_version {
+            let _ = writeln!(sections, "plugin-version = \"{version}\"");
+        }
+        if let Some(description) = entry.plugin_description {
+            let _ = writeln!(sections, "plugin-description = \"{description}\"");
+        }
+        if let Some(author) = entry.plugin_author {
+            let _ = writeln!(sections, "plugin-author = \"{author}\"");
         }
     }
     let r = std::fs::write(dir.join("agentspec.toml"), sections);

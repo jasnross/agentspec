@@ -23,6 +23,37 @@ pub struct AdapterConfig {
     /// Literal prefix for content/model-facing names (e.g., `"tw:"` → `"tw:{id}"`).
     /// When `None`, `content_prefix()` falls back to `"{prefix}-"`.
     pub content_prefix: Option<String>,
+    /// Plugin manifest fields supplied by the binary's `SyncTargetConfig`.
+    ///
+    /// `Some(_)` only when the user configured `mode = "plugin"` with at least
+    /// `plugin-name` set. The Claude adapter emits `.claude-plugin/plugin.json`
+    /// from this struct when `ctx.mode == SyncDestinationMode::Plugin` and this
+    /// is `Some`; Cursor's `.cursor-plugin/plugin.json` is conditional on the
+    /// same predicate, with absence meaning "no manifest file emitted".
+    pub plugin_manifest: Option<PluginManifest>,
+}
+
+/// Plugin manifest fields shared across providers.
+///
+/// `name` is required (validated at config-resolve time when `mode = "plugin"`);
+/// the other fields are passthrough text the adapter serializes into the
+/// provider-appropriate `plugin.json` shape.
+#[derive(Clone, Debug)]
+pub struct PluginManifest {
+    pub name: String,
+    pub version: Option<String>,
+    pub description: Option<String>,
+    pub author: Option<PluginAuthor>,
+}
+
+/// Author sub-record for plugin manifests.
+///
+/// Both Claude and Cursor accept an object shape (`{ name, email? }`); v1
+/// emits the name-only shape. Email support is deferred (see TODO #17 in
+/// `agentspec/TODO.md`).
+#[derive(Clone, Debug)]
+pub struct PluginAuthor {
+    pub name: String,
 }
 
 /// How a provider's hook entries should reach disk.
@@ -169,8 +200,9 @@ impl GeneratedFile {
 /// "Use config structs at module boundaries" guidance.
 ///
 /// Providers absent from the orchestrator's target map default to
-/// `SyncDestinationMode::Path` with `target_dir: None` and `overwrite: false`
-/// — appropriate for the `compile` command path which has no sync destination.
+/// `SyncDestinationMode::Compile` with `target_dir: None` and
+/// `overwrite: false` — appropriate for the `compile` command path which has
+/// no sync destination.
 #[derive(Clone, Debug)]
 pub struct ProviderCompileTarget {
     pub mode: SyncDestinationMode,
@@ -181,7 +213,7 @@ pub struct ProviderCompileTarget {
 impl Default for ProviderCompileTarget {
     fn default() -> Self {
         Self {
-            mode: SyncDestinationMode::Path,
+            mode: SyncDestinationMode::Compile,
             target_dir: None,
             overwrite: false,
         }
@@ -368,6 +400,7 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_owned()),
             content_prefix: Some("tw:".to_owned()),
+            ..AdapterConfig::default()
         };
         assert_eq!(cfg.content_prefix(), Some("tw:".to_owned()));
     }
@@ -392,6 +425,7 @@ mod tests {
         let cfg = AdapterConfig {
             prefix: Some("tw".to_owned()),
             content_prefix: Some("tw:".to_owned()),
+            ..AdapterConfig::default()
         };
         assert_eq!(cfg.file_prefix(), Some("tw-".to_owned()));
     }

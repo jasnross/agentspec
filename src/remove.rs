@@ -97,14 +97,16 @@ pub fn remove_plan(
         // Each (provider, kind) still gets a `RemoveWrite` so `emit_remove`
         // can delete every manifest-tracked file at the per-kind dest dir.
         // The destination is the adapter's `dest_root` joined with the kind
-        // dir name. Iterate every `FileKind` so providers that previously
-        // emitted a kind they no longer support still get their stale
-        // manifest cleaned up.
+        // dir name (dispatched through `Adapter::dir_for_kind` so providers
+        // without a plugin concept skip `FileKind::PluginManifest`).
         for &kind in FileKind::all() {
+            let Some(kind_dir) = adapter.dir_for_kind(kind) else {
+                continue;
+            };
             writes.push(RemoveWrite {
                 provider: *provider,
                 kind,
-                destination: dest_root.join(kind.dir_name()),
+                destination: dest_root.join(kind_dir),
             });
         }
     }
