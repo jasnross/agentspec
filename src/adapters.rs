@@ -224,6 +224,34 @@ pub trait Adapter: std::fmt::Debug + Send + Sync {
     /// and "what directory does its manifest live in" into a single method.
     fn plugin_manifest_dir(&self) -> Option<&'static str>;
 
+    /// Whether this provider's hook host runtime fully implements the
+    /// canonical output schema's UI-facing / agent-facing / context-injection
+    /// fields. Defaults to `true`; providers with documented partial
+    /// implementations override to `false` so the compile stage can surface
+    /// an `agentspec warning:` when hook specs target a provider that won't
+    /// fully honour `user_facing_message` / `decision_reason` /
+    /// `additional_context`.
+    ///
+    /// Capability accessor — keeps the warning-firing gate provider-opaque
+    /// at the orchestrator level (no `match provider { ... }` in
+    /// `compile_specs`).
+    fn fully_implements_canonical_output(&self) -> bool {
+        true
+    }
+
+    /// Whether this provider's `session_start` hook fires on conversation
+    /// resume (as well as on initial conversation creation). Defaults to
+    /// `true`; providers that only fire on creation override to `false`.
+    /// The compile stage surfaces a cross-provider asymmetry warning when
+    /// hook specs target multiple providers that disagree on this value
+    /// (e.g. Claude + Cursor for the same `session_start` hook).
+    ///
+    /// Capability accessor — keeps the cross-provider parity gate from
+    /// naming any specific provider in `compile_specs`.
+    fn session_start_fires_on_resume(&self) -> bool {
+        true
+    }
+
     /// Subdirectory name under the destination root for `kind`.
     ///
     /// Single source of truth for the per-`FileKind` directory mapping. The

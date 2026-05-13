@@ -3802,3 +3802,294 @@ fn test_full_round_trip_all_providers() {
         "opencode.json must round-trip"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Phase 4: shim manifest round-trip + cross-provider portability warnings
+// ---------------------------------------------------------------------------
+
+/// Replace the fixture's `hooks.toml` with custom content for tests that
+/// need an event other than the standard `user_prompt_submit`/`pre_tool_use`
+/// pair installed by `install_hook_fixture`.
+///
+/// Uses the `assert!(…is_ok…)` idiom rather than `.expect()` for the same
+/// reason `install_hook_fixture` does: `clippy.toml`'s
+/// `allow-expect-in-tests` exemption only covers `#[test]` fns, not free
+/// helpers.
+fn write_hooks_toml(dir: &Path, toml: &str) {
+    let hooks_dir = dir.join("spec/hooks");
+    let r = std::fs::create_dir_all(&hooks_dir);
+    assert!(r.is_ok(), "mkdir hooks: {r:?}");
+    let r = std::fs::write(hooks_dir.join("hooks.toml"), toml);
+    assert!(r.is_ok(), "write hooks.toml: {r:?}");
+}
+
+/// Install a single `session_start` hook with a placeholder user script.
+/// Used by the session-start asymmetry warning tests.
+fn install_session_start_hook_fixture(dir: &Path) {
+    let scripts_dir = dir.join("spec/hooks/scripts");
+    let r = std::fs::create_dir_all(&scripts_dir);
+    assert!(r.is_ok(), "create scripts dir: {r:?}");
+    write_hooks_toml(
+        dir,
+        r#"
+[hooks.startup]
+event = "session_start"
+script = "scripts/startup.sh"
+"#,
+    );
+    let r = std::fs::write(scripts_dir.join("startup.sh"), "#!/bin/sh\nexit 0\n");
+    assert!(r.is_ok(), "write startup.sh: {r:?}");
+    set_script_permissions(&scripts_dir);
+}
+
+#[test]
+fn test_sync_remove_round_trip_cleans_shim_files() {
+    // Phase 4 manifest validation: shim files (the per-event `_wrappers/`
+    // scripts) round-trip cleanly through `agentspec sync` → `remove`.
+    // After sync they exist; after remove they're gone, and the
+    // `_wrappers/` directory is rmdir'd because it's empty.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    let dest = dir.join("plugin-claude");
+    write_sync_config(
+        &dir,
+        &[SyncEntry::new("claude", "plugin")
+            .with_dir(dest.to_str().expect("dest path utf-8"))
+            .with_plugin_name("tw")],
+    );
+    let home = dir.join("home");
+
+    let sync = std::process::Command::new(agentspec())
+        .args(["sync", "--provider", "claude"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec sync spawn");
+    assert!(
+        sync.status.success(),
+        "sync should succeed: {}",
+        String::from_utf8_lossy(&sync.stderr)
+    );
+
+    // After sync: both shim files exist on disk.
+    let wrappers_dir = dest.join("hooks/scripts/_wrappers");
+    assert!(
+        wrappers_dir.join("pre_tool_use.sh").exists(),
+        "pre_tool_use shim should land after sync"
+    );
+    assert!(
+        wrappers_dir.join("user_prompt_submit.sh").exists(),
+        "user_prompt_submit shim should land after sync"
+    );
+
+    // Sanity check: manifest exists and references one of the shim paths.
+    let manifest_path = dest.join("hooks/.agentspec-manifest.json");
+    assert!(
+        manifest_path.exists(),
+        "hooks manifest should exist after sync"
+    );
+    let manifest_body = std::fs::read_to_string(&manifest_path).expect("read manifest");
+    assert!(
+        manifest_body.contains("_wrappers/pre_tool_use.sh"),
+        "manifest should track pre_tool_use shim, got:\n{manifest_body}"
+    );
+    assert!(
+        manifest_body.contains("_wrappers/user_prompt_submit.sh"),
+        "manifest should track user_prompt_submit shim, got:\n{manifest_body}"
+    );
+
+    let remove = std::process::Command::new(agentspec())
+        .args(["remove", "--provider", "claude"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec remove spawn");
+    assert!(
+        remove.status.success(),
+        "remove should succeed: {}",
+        String::from_utf8_lossy(&remove.stderr)
+    );
+
+    // After remove: shim files gone and `_wrappers/` directory pruned.
+    assert!(
+        !wrappers_dir.exists(),
+        "_wrappers/ directory should be rmdir'd once empty (no surviving children)"
+    );
+}
+
+#[test]
+fn test_sync_orphan_cleanup_removes_stale_shim() {
+    // Phase 4 orphan handling: an initial sync emits both shims; mutating
+    // `hooks.toml` to remove the `pre_tool_use` hook and syncing again
+    // must delete the now-orphaned `_wrappers/pre_tool_use.sh` shim from
+    // disk (the manifest-diff sweep recognises it's no longer in the
+    // emitted file set).
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    let dest = dir.join("plugin-claude");
+    write_sync_config(
+        &dir,
+        &[SyncEntry::new("claude", "plugin")
+            .with_dir(dest.to_str().expect("dest path utf-8"))
+            .with_plugin_name("tw")],
+    );
+    let home = dir.join("home");
+
+    // First sync — both shims land.
+    let first = std::process::Command::new(agentspec())
+        .args(["sync", "--provider", "claude"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec sync spawn");
+    assert!(first.status.success(), "first sync should succeed");
+    let wrappers_dir = dest.join("hooks/scripts/_wrappers");
+    assert!(wrappers_dir.join("pre_tool_use.sh").exists());
+    assert!(wrappers_dir.join("user_prompt_submit.sh").exists());
+
+    // Mutate hooks.toml to drop the pre_tool_use entry.
+    write_hooks_toml(
+        &dir,
+        r#"
+[hooks.init-thoughts]
+event = "user_prompt_submit"
+script = "scripts/init-thoughts.sh"
+"#,
+    );
+
+    let second = std::process::Command::new(agentspec())
+        .args(["sync", "--provider", "claude"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec sync spawn");
+    assert!(
+        second.status.success(),
+        "second sync should succeed: {}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+
+    // Surviving shim still present; orphaned shim is gone.
+    assert!(
+        wrappers_dir.join("user_prompt_submit.sh").exists(),
+        "user_prompt_submit shim must survive the second sync"
+    );
+    assert!(
+        !wrappers_dir.join("pre_tool_use.sh").exists(),
+        "pre_tool_use shim must be cleaned by the manifest-diff sweep on second sync"
+    );
+}
+
+#[test]
+fn test_compile_emits_cursor_partial_output_warning_when_cursor_targeted() {
+    // Cursor partial-output warning fires whenever Cursor is in the active
+    // provider list and any hook spec exists. The standard fixture has
+    // both pre_tool_use and user_prompt_submit hooks, so any Cursor-active
+    // compile should surface the warning on stderr.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+
+    let output = std::process::Command::new(agentspec())
+        .args(["compile", "--provider", "cursor"])
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec compile spawn");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+    assert!(
+        stderr.contains("Cursor has partial implementation"),
+        "expected Cursor partial-output warning on stderr, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn test_compile_does_not_emit_cursor_warning_when_only_claude_targeted() {
+    // Negative case for the Cursor partial-output warning: Claude-only
+    // compile must NOT surface a Cursor-related warning. Regression guard
+    // against future logic that fires the warning regardless of the
+    // active provider set.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+
+    let output = std::process::Command::new(agentspec())
+        .args(["compile", "--provider", "claude"])
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec compile spawn");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+    assert!(
+        !stderr.contains("Cursor has partial implementation"),
+        "Claude-only compile must not surface Cursor warning, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn test_compile_emits_session_start_asymmetry_warning_for_cross_provider_fixture() {
+    // session_start asymmetry warning fires only when BOTH Claude AND
+    // Cursor are targeted by a session_start hook (cross-provider parity
+    // concern). Default compile run (all configured providers) with a
+    // session_start fixture should surface the warning.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_session_start_hook_fixture(&dir);
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec compile spawn");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+    assert!(
+        stderr.contains("session_start asymmetry"),
+        "expected session_start asymmetry warning on stderr, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn test_compile_does_not_emit_session_start_warning_when_only_cursor_targeted() {
+    // Regression guard for the cross-provider gate: a session_start hook
+    // compiled only for Cursor must NOT surface the asymmetry warning —
+    // single-provider users don't have a parity expectation to violate.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_session_start_hook_fixture(&dir);
+
+    let output = std::process::Command::new(agentspec())
+        .args(["compile", "--provider", "cursor"])
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec compile spawn");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+    assert!(
+        !stderr.contains("session_start asymmetry"),
+        "Cursor-only compile must not surface session_start asymmetry warning, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn test_compile_emits_no_warnings_for_non_hook_fixture() {
+    // Sanity check: a compile without hook specs surfaces no Phase 4
+    // warnings. Both warning gates require `has_any_hook == true`.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    // No hook fixture installed.
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec compile spawn");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+    assert!(
+        !stderr.contains("agentspec warning:"),
+        "non-hook fixture must surface no agentspec warnings, got:\n{stderr}"
+    );
+}

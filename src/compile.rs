@@ -251,19 +251,74 @@ impl CompileResult {
 /// Diagnostics surfaced from the compile stage that depend on the active
 /// provider list (and so can't be computed during load).
 ///
-/// Today this only carries hook-skip notifications for `OpenCode`; the
-/// per-provider summary and per-spec listing are formatted by the binary.
-/// Mirrors `LoadReport` in shape: each pipeline stage that produces stage-only
-/// diagnostics owns its own report struct and returns it alongside its result.
+/// Carries hook-skip notifications for `OpenCode` and cross-provider
+/// portability warnings emitted when a hook fixture would behave
+/// asymmetrically across the active provider set (e.g., Cursor's partial
+/// output-schema implementation, session-start firing asymmetry). The
+/// per-provider summary, per-spec listing, and warning printout are
+/// formatted by the binary. Mirrors `LoadReport` in shape: each pipeline
+/// stage that produces stage-only diagnostics owns its own report struct
+/// and returns it alongside its result.
 #[derive(Debug, Default)]
 pub struct CompileDiagnostics {
     pub skipped_hooks: Vec<SkippedHook>,
+    pub warnings: Vec<CompileWarning>,
 }
 
 #[derive(Debug)]
 pub struct SkippedHook {
     pub provider: Provider,
     pub hook_id: String,
+}
+
+/// Cross-provider portability warnings emitted by the compile stage.
+///
+/// Each variant fires under a precise condition derived from adapter
+/// capability accessors (e.g. [`Adapter::fully_implements_canonical_output`])
+/// — `compile_specs` does not name any specific provider. The binary's
+/// `surface_compile_diagnostics` renders these as
+/// `agentspec warning:`-prefixed stderr lines. Suppression via a future
+/// config flag is a TODO; for v1, the only escape hatch is omitting the
+/// offending hook spec or the offending provider from the active list.
+///
+/// [`Adapter::fully_implements_canonical_output`]: crate::adapters::Adapter::fully_implements_canonical_output
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CompileWarning {
+    /// A targeted provider's hook host runtime only partially implements
+    /// the canonical output schema's UI/agent/context fields — some
+    /// `user_facing_message`, `decision_reason`, and `additional_context`
+    /// values may not surface to the user or model. Fires per-provider
+    /// whenever an `emits_hooks() == true` provider with
+    /// `fully_implements_canonical_output() == false` is in the active
+    /// set and at least one hook spec exists.
+    PartialOutputImpl(Provider),
+    /// At least one active hook-emitting provider does NOT fire
+    /// `session_start` on conversation resume, while another does — a
+    /// cross-provider parity gap that the canonical schema cannot bridge.
+    /// Fires when at least one hook spec targets `session_start` AND the
+    /// active provider set spans both `session_start_fires_on_resume() ==
+    /// true` and `session_start_fires_on_resume() == false` adapters.
+    /// Single-provider configurations never trip this gate.
+    SessionStartAsymmetry,
+}
+
+impl CompileWarning {
+    /// Human-readable diagnostic text shown to the user on stderr.
+    pub fn message(&self) -> String {
+        match self {
+            Self::PartialOutputImpl(provider) => {
+                format!(
+                    "{} has partial implementation of `user_message`/`agent_message`/`additional_context` hook output fields; canonical `user_facing_message`, `decision_reason`, and `additional_context` values may not surface in the {} UI/agent context. See docs/hooks-canonical.md#{}-known-limitations. (Suppression via config flag is on the roadmap.)",
+                    provider.display_name(),
+                    provider.display_name(),
+                    provider,
+                )
+            }
+            Self::SessionStartAsymmetry => String::from(
+                "session_start asymmetry: at least one targeted provider does not fire `session_start` on conversation resume; the canonical `session_start` event reflects this. To trigger logic on resume firings, branch on `provider_raw.source == \"resume\"` (provider-specific). See docs/hooks-canonical.md#session-start-asymmetry.",
+            ),
+        }
+    }
 }
 
 /// Compile validated specs into provider-specific generated files.
@@ -380,6 +435,63 @@ pub(crate) fn compile_specs(
 
     // Sort output files by path for deterministic ordering
     files.sort_by(|a, b| a.path.cmp(&b.path));
+
+    // Cross-provider portability warnings. Evaluated after the per-provider
+    // compile loop so the active provider set is fully known. Both gates
+    // are capability-based, not literal-based: the orchestrator iterates
+    // adapters and consults `Adapter::fully_implements_canonical_output`
+    // and `Adapter::session_start_fires_on_resume` rather than naming any
+    // specific provider. Adding a new provider with similar limitations
+    // requires implementing only its adapter.
+    //
+    // The gates intentionally differ:
+    // - `PartialOutputImpl` fires per-provider (one warning per offending
+    //   provider in the active set), since the limitation is local to the
+    //   provider's runtime.
+    // - `SessionStartAsymmetry` fires once globally when the active set
+    //   spans adapters that disagree on resume-firing — a cross-provider
+    //   parity gap that the canonical schema cannot bridge. Single-provider
+    //   configurations can't trip this gate by construction.
+    let (has_any_hook, has_session_start_hook) = specs.iter().fold(
+        (false, false),
+        |(any_hook, any_session_start), spec| match spec {
+            Spec::Hook(h) => (
+                true,
+                any_session_start || matches!(h.frontmatter.event, HookEvent::SessionStart),
+            ),
+            Spec::Agent(_) | Spec::Skill(_) | Spec::Rule(_) => (any_hook, any_session_start),
+        },
+    );
+    if has_any_hook {
+        for &provider in &sorted_providers {
+            let adapter = provider.adapter();
+            if adapter.emits_hooks() && !adapter.fully_implements_canonical_output() {
+                diagnostics
+                    .warnings
+                    .push(CompileWarning::PartialOutputImpl(provider));
+            }
+        }
+    }
+    if has_session_start_hook {
+        let mut any_fires_on_resume = false;
+        let mut any_does_not_fire_on_resume = false;
+        for &provider in &sorted_providers {
+            let adapter = provider.adapter();
+            if !adapter.emits_hooks() {
+                continue;
+            }
+            if adapter.session_start_fires_on_resume() {
+                any_fires_on_resume = true;
+            } else {
+                any_does_not_fire_on_resume = true;
+            }
+        }
+        if any_fires_on_resume && any_does_not_fire_on_resume {
+            diagnostics
+                .warnings
+                .push(CompileWarning::SessionStartAsymmetry);
+        }
+    }
 
     Ok((
         CompileResult {

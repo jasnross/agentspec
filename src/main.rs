@@ -326,6 +326,14 @@ fn compile_targets_from(
 fn surface_compile_diagnostics(diagnostics: &CompileDiagnostics, display: ReportDisplay) {
     use std::collections::BTreeMap;
 
+    // Cross-provider portability warnings — printed regardless of display
+    // mode since each represents a real behavioral asymmetry the user
+    // should know about. The set is small (at most a handful per run) and
+    // each line is `agentspec warning:`-prefixed for easy filtering.
+    for warning in &diagnostics.warnings {
+        eprintln!("agentspec warning: {}", warning.message());
+    }
+
     if diagnostics.skipped_hooks.is_empty() {
         return;
     }

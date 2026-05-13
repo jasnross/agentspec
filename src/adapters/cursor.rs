@@ -171,6 +171,21 @@ impl Adapter for CursorAdapter {
     fn plugin_manifest_dir(&self) -> Option<&'static str> {
         Some(PLUGIN_MANIFEST_DIR)
     }
+
+    fn fully_implements_canonical_output(&self) -> bool {
+        // Cursor 3.2.21 only partially implements `user_message`,
+        // `agent_message`, and `additional_context` from hook stdout —
+        // those fields don't surface in the UI or agent context as of
+        // that version. Documented at `docs/hooks-canonical.md#cursor-known-limitations`.
+        false
+    }
+
+    fn session_start_fires_on_resume(&self) -> bool {
+        // Cursor's `sessionStart` fires only on initial conversation
+        // creation, not on resume. Documented at
+        // `docs/hooks-canonical.md#session-start-asymmetry`.
+        false
+    }
 }
 
 impl CursorAdapter {
