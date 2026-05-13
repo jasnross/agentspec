@@ -196,6 +196,40 @@ impl HookEvent {
             Self::PreToolUse | Self::PostToolUse | Self::PostToolUseFailure
         )
     }
+
+    /// Canonical `snake_case` name (matches the `#[serde(rename_all = "snake_case")]`
+    /// wire form). Used by the shim codegen and snapshot-file naming.
+    pub fn snake_case(self) -> &'static str {
+        match self {
+            Self::PreToolUse => "pre_tool_use",
+            Self::PostToolUse => "post_tool_use",
+            Self::PostToolUseFailure => "post_tool_use_failure",
+            Self::SessionStart => "session_start",
+            Self::SessionEnd => "session_end",
+            Self::Stop => "stop",
+            Self::PreCompact => "pre_compact",
+            Self::SubagentStart => "subagent_start",
+            Self::SubagentStop => "subagent_stop",
+            Self::UserPromptSubmit => "user_prompt_submit",
+        }
+    }
+
+    /// `PascalCase` event name — the Claude wire form for
+    /// `hookEventName` and the Rust variant identifier.
+    pub fn pascal_case(self) -> &'static str {
+        match self {
+            Self::PreToolUse => "PreToolUse",
+            Self::PostToolUse => "PostToolUse",
+            Self::PostToolUseFailure => "PostToolUseFailure",
+            Self::SessionStart => "SessionStart",
+            Self::SessionEnd => "SessionEnd",
+            Self::Stop => "Stop",
+            Self::PreCompact => "PreCompact",
+            Self::SubagentStart => "SubagentStart",
+            Self::SubagentStop => "SubagentStop",
+            Self::UserPromptSubmit => "UserPromptSubmit",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

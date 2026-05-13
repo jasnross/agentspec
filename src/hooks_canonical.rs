@@ -22,6 +22,8 @@
 //! field removals, type changes, or renames — bump the major version and
 //! user hook scripts may need updates.
 
+pub mod shim_template;
+
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
@@ -42,12 +44,58 @@ fn default_schema_version() -> String {
 ///
 /// Distinct from [`crate::provider::Provider`] (which carries a heavier
 /// adapter-dispatch trait object). [`ProviderName`] is a plain string enum
-/// suitable for embedding in the canonical payload's `provider` field.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+/// suitable for embedding in the canonical payload's `provider` field. Only
+/// hook-emitting providers (Claude and Cursor) are representable —
+/// `Provider::OpenCode` has no canonical wire form because its adapter
+/// doesn't emit hooks.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderName {
     Claude,
     Cursor,
+}
+
+impl ProviderName {
+    /// Wire-form name as a `'static` string slice (`"claude"` / `"cursor"`).
+    ///
+    /// Used by shim codegen and anywhere else the literal is embedded into
+    /// generated output. Mirrors the `#[serde(rename_all = "lowercase")]`
+    /// wire form without paying for `serde_json::to_string`'s quoting.
+    pub fn wire_name(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Cursor => "cursor",
+        }
+    }
+
+    /// Translate a [`crate::provider::Provider`] to its canonical wire form.
+    ///
+    /// Returns `None` for `Provider::OpenCode`, whose adapter does not
+    /// emit hooks and therefore has no canonical wire identity. Callers
+    /// that have already gated on `provider.adapter().emits_hooks()` can
+    /// rely on this returning `Some`.
+    ///
+    /// [`TryFrom<Provider>`] is the idiomatic alternative; both spellings
+    /// are kept because `from_provider` reads more cleanly at call sites
+    /// that already pattern-match on `Option`.
+    pub fn from_provider(provider: crate::provider::Provider) -> Option<Self> {
+        Self::try_from(provider).ok()
+    }
+}
+
+impl TryFrom<crate::provider::Provider> for ProviderName {
+    /// On failure, return the original `Provider` value — `Provider::OpenCode`
+    /// is the only failure case today, and surfacing it lets callers branch
+    /// on the unsupported provider for diagnostics.
+    type Error = crate::provider::Provider;
+
+    fn try_from(provider: crate::provider::Provider) -> Result<Self, Self::Error> {
+        match provider {
+            crate::provider::Provider::Claude => Ok(Self::Claude),
+            crate::provider::Provider::Cursor => Ok(Self::Cursor),
+            crate::provider::Provider::OpenCode => Err(provider),
+        }
+    }
 }
 
 /// Canonical permission outcome.
@@ -371,7 +419,7 @@ fn optional_string(value: &Value, key: &str) -> String {
 // filters null fields, since `hookEventName` is a literal and survives.
 fn to_claude_stdout(output: &CanonicalOutput, event: HookEvent) -> String {
     let mut inner = serde_json::Map::new();
-    inner.insert("hookEventName".into(), json!(event_pascal(event)));
+    inner.insert("hookEventName".into(), json!(event.pascal_case()));
     if let Some(decision) = output.permission_decision {
         inner.insert("permissionDecision".into(), json!(decision));
     }
@@ -416,21 +464,6 @@ fn to_cursor_stdout(output: &CanonicalOutput) -> String {
         map.insert("updated_input".into(), input.clone());
     }
     Value::Object(map).to_string()
-}
-
-fn event_pascal(event: HookEvent) -> &'static str {
-    match event {
-        HookEvent::PreToolUse => "PreToolUse",
-        HookEvent::PostToolUse => "PostToolUse",
-        HookEvent::PostToolUseFailure => "PostToolUseFailure",
-        HookEvent::SessionStart => "SessionStart",
-        HookEvent::SessionEnd => "SessionEnd",
-        HookEvent::Stop => "Stop",
-        HookEvent::PreCompact => "PreCompact",
-        HookEvent::SubagentStart => "SubagentStart",
-        HookEvent::SubagentStop => "SubagentStop",
-        HookEvent::UserPromptSubmit => "UserPromptSubmit",
-    }
 }
 
 #[cfg(test)]
