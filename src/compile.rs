@@ -307,11 +307,15 @@ impl CompileWarning {
     pub fn message(&self) -> String {
         match self {
             Self::PartialOutputImpl(provider) => {
+                // URL anchors at the parent `## Documented limitations`
+                // section rather than templating a per-provider subsection
+                // name — the per-provider subsections may not exist for
+                // every adapter that ever returns
+                // `fully_implements_canonical_output() == false`.
                 format!(
-                    "{} has partial implementation of `user_message`/`agent_message`/`additional_context` hook output fields; canonical `user_facing_message`, `decision_reason`, and `additional_context` values may not surface in the {} UI/agent context. See docs/hooks-canonical.md#{}-known-limitations. (Suppression via config flag is on the roadmap.)",
+                    "{} has partial implementation of `user_message`/`agent_message`/`additional_context` hook output fields; canonical `user_facing_message`, `decision_reason`, and `additional_context` values may not surface in the {} UI/agent context. See docs/hooks-canonical.md#documented-limitations. (Suppression via config flag is on the roadmap.)",
                     provider.display_name(),
                     provider.display_name(),
-                    provider,
                 )
             }
             Self::SessionStartAsymmetry => String::from(

@@ -162,6 +162,14 @@ script = "scripts/audit-bash.sh"
 
 `spec/hooks/scripts/` contains both entry scripts (referenced by `[hooks.<id>].script`) and any helper scripts they `source` — agentspec walks the directory and copies all files. Helper conventions like `_common.sh` are supported. The `_agentspec_*` filename prefix is reserved for future use and rejected at load time.
 
+#### Canonical payload format
+
+Hook scripts receive **canonical JSON** on stdin and emit canonical JSON on stdout — a provider-neutral wire format that produces semantically identical behavior under Claude Code and Cursor. agentspec generates a per-event POSIX shell shim (one per `(provider, HookEvent)` pair) that translates between each provider's native shape and the canonical shape; scripts never see raw provider stdin.
+
+`jq` is a runtime prerequisite — the shim invokes it twice per hook firing (input + output translation). Install via `brew install jq` / `apt install jq` / your package manager of choice. If `jq` is missing at hook-fire time, the shim prints a clear `agentspec: jq is required …` error and exits 1.
+
+See [`docs/hooks-canonical.md`](docs/hooks-canonical.md) for the full canonical schema reference (per-event input/output field tables, `provider_raw` escape hatch, documented limitations, schema-versioning policy, and migration examples).
+
 #### Hook events
 
 | Canonical event         | Claude               | Cursor               |
