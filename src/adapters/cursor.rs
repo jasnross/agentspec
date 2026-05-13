@@ -915,7 +915,7 @@ mod tests {
         );
         assert_eq!(
             result.entries[0].command,
-            "CURSOR_PLUGIN_ROOT=$HOME/.cursor $HOME/.cursor/hooks/scripts/init.sh"
+            "CURSOR_PLUGIN_ROOT=$HOME/.cursor $HOME/.cursor/hooks/scripts/_wrappers/session_start.sh $HOME/.cursor/hooks/scripts/init.sh"
         );
     }
 

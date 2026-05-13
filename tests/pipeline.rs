@@ -1365,13 +1365,132 @@ fn test_compile_emits_hooks_for_claude_and_cursor() {
             let path = dir.join(format!("generated/{provider}/hooks/scripts/{script}"));
             assert!(path.exists(), "{provider}: {script} should be emitted");
         }
+
+        // Phase 3: each distinct HookEvent in the fixture gets its own shim
+        // under `hooks/scripts/_wrappers/<event>.sh`. The fixture targets
+        // `user_prompt_submit` and `pre_tool_use` — assert both shims land
+        // and that the `hooks.json` command field invokes the shim with
+        // the user script as its argument.
+        for event in ["user_prompt_submit", "pre_tool_use"] {
+            let shim = dir.join(format!(
+                "generated/{provider}/hooks/scripts/_wrappers/{event}.sh"
+            ));
+            assert!(shim.exists(), "{provider}: shim {event}.sh should exist");
+            let shim_body = std::fs::read_to_string(&shim).expect("read shim");
+            assert!(
+                shim_body.starts_with("#!/usr/bin/env sh"),
+                "{provider}: shim {event}.sh should be a POSIX shell script, got:\n{shim_body}"
+            );
+            assert!(
+                shim_body.contains("command -v jq"),
+                "{provider}: shim {event}.sh should include the jq guard"
+            );
+            assert!(
+                shim_body.contains(&format!("\"{provider}\"")),
+                "{provider}: shim {event}.sh should embed its own provider literal"
+            );
+        }
+
+        // Command field shape: `<shim> <user_script>`. Both halves must
+        // anchor under the same `${env_var}` so the user script path
+        // resolves identically to the shim's.
+        let expected_command_pre_tool_use = format!(
+            "${{{env_var}}}/hooks/scripts/_wrappers/pre_tool_use.sh ${{{env_var}}}/hooks/scripts/audit-bash.sh"
+        );
+        assert!(
+            content.contains(&expected_command_pre_tool_use),
+            "{provider}: hooks.json command should invoke per-event shim with user script as argument, expected substring:\n  {expected_command_pre_tool_use}\ngot:\n{content}"
+        );
     }
+
+    // Regression for the per-provider env-var fix: each provider's shim
+    // must contain only its own provider name, never the other's.
+    let claude_shim = dir.join("generated/claude/hooks/scripts/_wrappers/pre_tool_use.sh");
+    let cursor_shim = dir.join("generated/cursor/hooks/scripts/_wrappers/pre_tool_use.sh");
+    let claude_body = std::fs::read_to_string(&claude_shim).expect("read claude shim");
+    let cursor_body = std::fs::read_to_string(&cursor_shim).expect("read cursor shim");
+    assert!(
+        !claude_body.contains("\"cursor\""),
+        "Claude shim must not contain Cursor provider literal"
+    );
+    assert!(
+        !cursor_body.contains("\"claude\""),
+        "Cursor shim must not contain Claude provider literal"
+    );
 
     // OpenCode does not receive hook output in v1.
     assert!(
         !dir.join("generated/opencode/hooks").exists(),
         "OpenCode should not receive hooks/ directory in v1"
     );
+}
+
+#[test]
+fn test_compile_dedups_shim_per_event_per_provider() {
+    // Phase 3: two hook specs targeting the same canonical HookEvent
+    // produce exactly one shim file per provider — deduplication is
+    // per-(provider, event), not per-spec.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let hooks_dir = dir.join("spec/hooks");
+    let scripts_dir = hooks_dir.join("scripts");
+    std::fs::create_dir_all(&scripts_dir).expect("create scripts dir");
+    // Two pre_tool_use hooks (different matchers, different scripts) plus
+    // one user_prompt_submit. Expect 2 shims per provider.
+    std::fs::write(
+        hooks_dir.join("hooks.toml"),
+        r#"
+[hooks.audit-bash]
+event = "pre_tool_use"
+matcher = "Bash"
+script = "scripts/audit-bash.sh"
+
+[hooks.audit-edit]
+event = "pre_tool_use"
+matcher = "Edit"
+script = "scripts/audit-edit.sh"
+
+[hooks.greet]
+event = "user_prompt_submit"
+script = "scripts/greet.sh"
+"#,
+    )
+    .expect("write hooks.toml");
+    for script in ["audit-bash.sh", "audit-edit.sh", "greet.sh"] {
+        std::fs::write(scripts_dir.join(script), "#!/bin/sh\nexit 0\n").expect("write script");
+    }
+    set_script_permissions(&scripts_dir);
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("run agentspec compile");
+    assert!(
+        output.status.success(),
+        "compile failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    for provider in ["claude", "cursor"] {
+        let wrappers_dir = dir.join(format!("generated/{provider}/hooks/scripts/_wrappers"));
+        let mut entries: Vec<String> = std::fs::read_dir(&wrappers_dir)
+            .expect("read _wrappers dir")
+            .filter_map(|e| {
+                e.ok()
+                    .and_then(|e| e.file_name().to_str().map(str::to_string))
+            })
+            .collect();
+        entries.sort();
+        assert_eq!(
+            entries,
+            vec![
+                "pre_tool_use.sh".to_string(),
+                "user_prompt_submit.sh".to_string()
+            ],
+            "{provider}: expected exactly one shim per distinct event, got: {entries:?}"
+        );
+    }
 }
 
 #[test]
@@ -1916,9 +2035,11 @@ fn test_sync_claude_project_mode_merges_hooks_into_settings_json() {
         content.contains("\"_agentspec_id\""),
         "settings.json should contain sentinel, got:\n{content}"
     );
+    // Phase 3: command wraps the user script with a per-event shim
+    // invocation — `<shim> <user_script>`.
     assert!(
-        content.contains("CLAUDE_PLUGIN_ROOT=${CLAUDE_PROJECT_DIR}/.claude ${CLAUDE_PROJECT_DIR}/.claude/hooks/scripts/init-thoughts.sh"),
-        "command should set CLAUDE_PLUGIN_ROOT inline and anchor under \\${{CLAUDE_PROJECT_DIR}} for Project mode, got:\n{content}"
+        content.contains("CLAUDE_PLUGIN_ROOT=${CLAUDE_PROJECT_DIR}/.claude ${CLAUDE_PROJECT_DIR}/.claude/hooks/scripts/_wrappers/user_prompt_submit.sh ${CLAUDE_PROJECT_DIR}/.claude/hooks/scripts/init-thoughts.sh"),
+        "command should set CLAUDE_PLUGIN_ROOT inline and invoke per-event shim under \\${{CLAUDE_PROJECT_DIR}} for Project mode, got:\n{content}"
     );
 }
 
@@ -1963,11 +2084,13 @@ fn test_sync_claude_user_mode_merges_hooks_into_settings_json() {
         content.contains("\"_agentspec_id\""),
         "settings.json should contain sentinel, got:\n{content}"
     );
+    // Phase 3: command wraps the user script with a per-event shim
+    // invocation — `<shim> <user_script>`.
     assert!(
         content.contains(
-            "CLAUDE_PLUGIN_ROOT=$HOME/.claude $HOME/.claude/hooks/scripts/init-thoughts.sh"
+            "CLAUDE_PLUGIN_ROOT=$HOME/.claude $HOME/.claude/hooks/scripts/_wrappers/user_prompt_submit.sh $HOME/.claude/hooks/scripts/init-thoughts.sh"
         ),
-        "command should set CLAUDE_PLUGIN_ROOT inline and anchor under $HOME for User mode, got:\n{content}"
+        "command should set CLAUDE_PLUGIN_ROOT inline and invoke per-event shim under $HOME for User mode, got:\n{content}"
     );
 }
 

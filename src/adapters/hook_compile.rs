@@ -12,9 +12,10 @@ use std::path::{Component, Path, PathBuf};
 use anyhow::Result;
 
 use crate::compile::{EmittedHookEntry, GeneratedFile, HookEmitMode};
+use crate::hooks_canonical::{ProviderName, shim_template};
 use crate::plan::FileKind;
 use crate::provider::Provider;
-use crate::spec::HookSpec;
+use crate::spec::{HookEvent, HookSpec};
 
 /// Per-provider hook synthesis result — entries (always populated when there
 /// are hook specs) plus the supporting-script and bundled-JSON files this
@@ -56,6 +57,7 @@ where
 
     let entries = build_emitted_hook_entries(specs, dotdir, plugin_root_env_var, emit_mode);
     let mut files = build_hook_script_files(provider, specs);
+    files.extend(build_shim_files(provider, specs));
     if matches!(emit_mode, HookEmitMode::Bundled) {
         let json = build_bundled_json(&entries)?;
         files.push(GeneratedFile::text(
@@ -94,25 +96,59 @@ fn build_hook_script_files(provider: Provider, specs: &[&HookSpec]) -> Vec<Gener
         .collect()
 }
 
+/// Build the per-provider shim files — one per distinct [`HookEvent`] used
+/// by `specs`, emitted under `hooks/scripts/_wrappers/<event>.sh`.
+///
+/// Shims are agentspec-generated canonical-translation wrappers. They are
+/// emitted at Compile stage so each provider's tree gets its own shim with
+/// the provider-specific `jq` programs baked in. Deduplication is
+/// per-provider — N hook specs targeting the same event produce one shim
+/// file per provider, even when the specs reference different user
+/// scripts.
+///
+/// Returns an empty vector for providers that have no canonical wire form
+/// (`Provider::OpenCode`). In practice `synthesize_hooks` is only called
+/// from hook-emitting providers, so this branch is defensive rather than
+/// load-bearing.
+fn build_shim_files(provider: Provider, specs: &[&HookSpec]) -> Vec<GeneratedFile> {
+    let Ok(canonical_provider) = ProviderName::try_from(provider) else {
+        return Vec::new();
+    };
+    // Distinct events in source order (`Vec::contains` for dedup avoids
+    // requiring `HookEvent: Hash`/`Ord` for what is typically a 1–5
+    // element collection).
+    let mut events: Vec<HookEvent> = Vec::new();
+    for spec in specs {
+        if !events.contains(&spec.frontmatter.event) {
+            events.push(spec.frontmatter.event);
+        }
+    }
+    events
+        .into_iter()
+        .map(|event| {
+            let relative_path = Path::new("hooks")
+                .join("scripts")
+                .join("_wrappers")
+                .join(format!("{}.sh", event.snake_case()));
+            GeneratedFile::binary(
+                provider,
+                FileKind::Hooks,
+                relative_path,
+                shim_template::shim_script(canonical_provider, event).into_bytes(),
+                Some(0o755),
+            )
+        })
+        .collect()
+}
+
 /// Build canonical `EmittedHookEntry` rows from hook specs.
 ///
-/// The `command` field's anchor depends on `(dotdir, plugin_root_env_var,
-/// emit_mode)`:
-/// - Bundled (Plugin / compile-output mode): `${<plugin_root_env_var>}/hooks/scripts/<f>`
-///   — the host runtime sets this variable to the plugin root, so the
-///   command can reference the script directly. The `dotdir` parameter is
-///   unused in this mode.
-/// - `MergedUser`: `<plugin_root_env_var>=$HOME/<dotdir> $HOME/<dotdir>/hooks/scripts/<f>`.
-///   `$HOME` not `~/...` because Claude's hook-command runtime isn't
-///   documented to expand `~`.
-/// - `MergedProject`: `<plugin_root_env_var>=${CLAUDE_PROJECT_DIR}/<dotdir>
-///   ${CLAUDE_PROJECT_DIR}/<dotdir>/hooks/scripts/<f>`. Cursor's behavior
-///   with `${CLAUDE_PROJECT_DIR}` outside plugin scope is not documented —
-///   must be verified empirically against a real Cursor build before 1.0.
-///
-/// `dotdir` and `plugin_root_env_var` are supplied by the calling adapter
-/// (Claude: `".claude"` + `"CLAUDE_PLUGIN_ROOT"`; Cursor: `".cursor"` +
-/// `"CURSOR_PLUGIN_ROOT"`) so this helper carries no provider knowledge.
+/// Each entry's `command` field is computed by [`hook_command_anchor`],
+/// which wraps the user script in a per-event shim invocation. The shape
+/// is `<shim> <user_script>`, with both halves anchored under the same
+/// per-mode base (plugin-root env var for Bundled; `$HOME/<dotdir>` for
+/// `MergedUser`; `${CLAUDE_PROJECT_DIR}/<dotdir>` for `MergedProject`).
+/// See [`hook_command_anchor`] for the full per-mode shape.
 fn build_emitted_hook_entries(
     specs: &[&HookSpec],
     dotdir: &str,
@@ -141,7 +177,13 @@ fn build_emitted_hook_entries(
             EmittedHookEntry {
                 event: s.frontmatter.event,
                 matcher: s.frontmatter.matcher.clone(),
-                command: hook_command_anchor(dotdir, plugin_root_env_var, emit_mode, &filename),
+                command: hook_command_anchor(
+                    dotdir,
+                    plugin_root_env_var,
+                    emit_mode,
+                    s.frontmatter.event,
+                    &filename,
+                ),
                 timeout: s.frontmatter.timeout,
                 agentspec_id: s.frontmatter.id.clone(),
             }
@@ -150,35 +192,173 @@ fn build_emitted_hook_entries(
 }
 
 /// Compute the `command` string for a hook entry given the dotdir, the
-/// per-provider plugin-root env var name, and the emit mode.
+/// per-provider plugin-root env var name, the emit mode, the canonical
+/// event, and the user script's filename.
 ///
-/// In Bundled (plugin or compile-output) mode the host runtime sets
-/// `${<plugin_root_env_var>}` to the plugin root, so we just reference the
-/// script directly. In Merged (User/Project) modes the host doesn't set
-/// that variable — but hook scripts authored for the plugin distribution
-/// model commonly reference `${<plugin_root_env_var>}/rules`,
-/// `${<plugin_root_env_var>}/skills`, etc. to find sibling assets. We assign
-/// it inline (`FOO=bar cmd`, standard POSIX) so plugin-shaped scripts keep
-/// working when synced project/user-wide. The assigned value is the config
-/// dir (e.g., `$HOME/.claude` for User mode), where agentspec also writes
-/// those sibling kinds.
+/// The emitted command invokes the per-event shim with the user script's
+/// path as its sole argument:
+/// `<shim> <user_script>`, where `<shim>` resolves to
+/// `<anchor>/hooks/scripts/_wrappers/<event>.sh` and `<user_script>`
+/// resolves to `<anchor>/hooks/scripts/<filename>`. The anchor itself is
+/// mode-dependent:
+/// - Bundled (Plugin / compile-output mode): `${<plugin_root_env_var>}` —
+///   the host runtime sets this variable to the plugin root.
+/// - `MergedUser`: `$HOME/<dotdir>`, prefixed by an inline
+///   `<plugin_root_env_var>=$HOME/<dotdir>` assignment so plugin-shaped
+///   scripts that reference `${<plugin_root_env_var>}/...` for sibling
+///   assets keep working at user scope.
+/// - `MergedProject`: `${CLAUDE_PROJECT_DIR}/<dotdir>`, prefixed similarly.
+///   Cursor's behavior with `${CLAUDE_PROJECT_DIR}` outside plugin scope
+///   is not documented — must be verified empirically against a real
+///   Cursor build before 1.0.
+///
+/// `dotdir`, `plugin_root_env_var`, and `event` are supplied by the
+/// calling adapter or the spec — this helper carries no provider
+/// knowledge.
 fn hook_command_anchor(
     dotdir: &str,
     plugin_root_env_var: &'static str,
     emit_mode: HookEmitMode,
+    event: HookEvent,
     filename: &str,
 ) -> String {
-    match emit_mode {
-        HookEmitMode::Bundled => {
-            format!("${{{plugin_root_env_var}}}/hooks/scripts/{filename}")
-        }
+    let (env_assignment, anchor_base) = match emit_mode {
+        HookEmitMode::Bundled => (String::new(), format!("${{{plugin_root_env_var}}}")),
         HookEmitMode::MergedUser => {
             let cd = format!("$HOME/{dotdir}");
-            format!("{plugin_root_env_var}={cd} {cd}/hooks/scripts/{filename}")
+            (format!("{plugin_root_env_var}={cd} "), cd)
         }
         HookEmitMode::MergedProject => {
             let cd = format!("${{CLAUDE_PROJECT_DIR}}/{dotdir}");
-            format!("{plugin_root_env_var}={cd} {cd}/hooks/scripts/{filename}")
+            (format!("{plugin_root_env_var}={cd} "), cd)
         }
+    };
+    let shim_path = format!(
+        "{anchor_base}/hooks/scripts/_wrappers/{}.sh",
+        event.snake_case()
+    );
+    let user_script_path = format!("{anchor_base}/hooks/scripts/{filename}");
+    format!("{env_assignment}{shim_path} {user_script_path}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::spec::HookFrontmatter;
+
+    fn hook_spec(id: &str, event: HookEvent) -> HookSpec {
+        HookSpec {
+            path: PathBuf::from("/tmp/hooks.toml"),
+            frontmatter: HookFrontmatter {
+                id: id.to_string(),
+                event,
+                script: format!("scripts/{id}.sh").into(),
+                matcher: None,
+                timeout: None,
+                description: None,
+                tags: None,
+            },
+            body: String::new(),
+            supporting_files: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn build_shim_files_dedups_per_event_per_provider() {
+        // Two specs both targeting `pre_tool_use` → exactly one shim file
+        // per provider. Deduplication is provider-scoped: each provider's
+        // tree gets its own copy with provider-specific jq programs.
+        let a = hook_spec("audit-bash", HookEvent::PreToolUse);
+        let b = hook_spec("audit-edit", HookEvent::PreToolUse);
+        let specs: Vec<&HookSpec> = vec![&a, &b];
+
+        let claude = build_shim_files(Provider::Claude, &specs);
+        assert_eq!(claude.len(), 1, "expected 1 Claude shim, got {claude:?}");
+        assert_eq!(claude[0].provider, Provider::Claude);
+        assert!(
+            claude[0]
+                .path
+                .ends_with("hooks/scripts/_wrappers/pre_tool_use.sh"),
+            "unexpected Claude shim path: {:?}",
+            claude[0].path
+        );
+
+        let cursor = build_shim_files(Provider::Cursor, &specs);
+        assert_eq!(cursor.len(), 1, "expected 1 Cursor shim, got {cursor:?}");
+        assert_eq!(cursor[0].provider, Provider::Cursor);
+        assert!(
+            cursor[0]
+                .path
+                .ends_with("hooks/scripts/_wrappers/pre_tool_use.sh"),
+            "unexpected Cursor shim path: {:?}",
+            cursor[0].path
+        );
+
+        // Provider-specific content: bytes differ even though path is
+        // identically-shaped across providers.
+        assert_ne!(
+            claude[0].content, cursor[0].content,
+            "Claude and Cursor shim bytes should differ"
+        );
+    }
+
+    #[test]
+    fn build_shim_files_empty_specs_returns_empty_vec() {
+        // Empty input → no shims. Guards against accidentally emitting an
+        // empty `_wrappers/` directory or stray files when no hooks are
+        // configured.
+        let specs: Vec<&HookSpec> = Vec::new();
+        assert!(build_shim_files(Provider::Claude, &specs).is_empty());
+        assert!(build_shim_files(Provider::Cursor, &specs).is_empty());
+    }
+
+    #[test]
+    fn build_shim_files_opencode_returns_empty_vec() {
+        // OpenCode's adapter doesn't emit hooks. Even if the helper is
+        // accidentally called with `Provider::OpenCode`, it must return
+        // an empty Vec rather than panicking or emitting incorrect output.
+        let a = hook_spec("init", HookEvent::SessionStart);
+        let specs: Vec<&HookSpec> = vec![&a];
+        assert!(build_shim_files(Provider::OpenCode, &specs).is_empty());
+    }
+
+    #[test]
+    fn build_shim_files_emits_one_per_distinct_event() {
+        // Three specs across two events → 2 shims per provider. Source
+        // order is preserved (the `Vec::contains` dedup keeps insertion
+        // order), so iteration is deterministic.
+        let a = hook_spec("a", HookEvent::PreToolUse);
+        let b = hook_spec("b", HookEvent::PreToolUse);
+        let c = hook_spec("c", HookEvent::SessionStart);
+        let specs: Vec<&HookSpec> = vec![&a, &b, &c];
+        let claude = build_shim_files(Provider::Claude, &specs);
+        assert_eq!(claude.len(), 2);
+        assert!(
+            claude[0].path.ends_with("_wrappers/pre_tool_use.sh"),
+            "first shim should be pre_tool_use, got: {:?}",
+            claude[0].path
+        );
+        assert!(
+            claude[1].path.ends_with("_wrappers/session_start.sh"),
+            "second shim should be session_start, got: {:?}",
+            claude[1].path
+        );
+    }
+
+    #[test]
+    fn hook_command_anchor_bundled_invokes_shim_with_user_script() {
+        // Bundled mode: `${ENV}/hooks/scripts/_wrappers/<event>.sh ${ENV}/hooks/scripts/<filename>`.
+        // Same anchor for both halves; no inline env-var assignment.
+        let cmd = hook_command_anchor(
+            ".claude",
+            "CLAUDE_PLUGIN_ROOT",
+            HookEmitMode::Bundled,
+            HookEvent::PreToolUse,
+            "audit.sh",
+        );
+        assert_eq!(
+            cmd,
+            "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/_wrappers/pre_tool_use.sh ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/audit.sh"
+        );
     }
 }

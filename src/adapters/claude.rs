@@ -1081,7 +1081,7 @@ mod tests {
         let result = synthesize_hooks(&[&spec], HookEmitMode::Bundled).expect("expected value");
         assert_eq!(
             result.entries[0].command,
-            "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/git/pre-commit.sh"
+            "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/_wrappers/pre_tool_use.sh ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/git/pre-commit.sh"
         );
     }
 
@@ -1097,7 +1097,7 @@ mod tests {
         let result = synthesize_hooks(&[&spec], HookEmitMode::Bundled).expect("expected value");
         assert_eq!(
             result.entries[0].command,
-            "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/init.sh"
+            "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/_wrappers/session_start.sh ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/init.sh"
         );
     }
 
@@ -1196,22 +1196,25 @@ mod tests {
         // sets `CLAUDE_PLUGIN_ROOT` inline so plugin-shaped scripts that
         // reference `$CLAUDE_PLUGIN_ROOT/rules` etc. resolve correctly when
         // the host runtime doesn't set that variable for non-plugin scope.
+        // Phase 3 wraps the command with a per-event shim invocation:
+        // `<shim> <user_script>`.
         let spec = make_hook_spec("init", HookEvent::SessionStart, None);
         let result = synthesize_hooks(&[&spec], HookEmitMode::MergedUser).expect("expected ok");
         assert_eq!(
             result.entries[0].command,
-            "CLAUDE_PLUGIN_ROOT=$HOME/.claude $HOME/.claude/hooks/scripts/init.sh"
+            "CLAUDE_PLUGIN_ROOT=$HOME/.claude $HOME/.claude/hooks/scripts/_wrappers/session_start.sh $HOME/.claude/hooks/scripts/init.sh"
         );
     }
 
     #[test]
     fn test_synthesize_hooks_merged_project_anchor_includes_plugin_root_assignment() {
         // MergedProject: ${CLAUDE_PROJECT_DIR} anchor + inline CLAUDE_PLUGIN_ROOT.
+        // Same Phase 3 shim wrapping as the MergedUser case above.
         let spec = make_hook_spec("init", HookEvent::SessionStart, None);
         let result = synthesize_hooks(&[&spec], HookEmitMode::MergedProject).expect("expected ok");
         assert_eq!(
             result.entries[0].command,
-            "CLAUDE_PLUGIN_ROOT=${CLAUDE_PROJECT_DIR}/.claude ${CLAUDE_PROJECT_DIR}/.claude/hooks/scripts/init.sh"
+            "CLAUDE_PLUGIN_ROOT=${CLAUDE_PROJECT_DIR}/.claude ${CLAUDE_PROJECT_DIR}/.claude/hooks/scripts/_wrappers/session_start.sh ${CLAUDE_PROJECT_DIR}/.claude/hooks/scripts/init.sh"
         );
     }
 
