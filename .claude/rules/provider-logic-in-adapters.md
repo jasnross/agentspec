@@ -16,7 +16,7 @@ A useful test when writing a function: **could a new provider be added by writin
 `src/adapters/` contains two kinds of files, and the "provider-specific logic belongs in adapters" rule applies differently to each:
 
 - **Adapter implementations** (`claude.rs`, `cursor.rs`, `opencode.rs`): one file per provider, each containing the `impl Adapter for X { ... }` block plus the closures and helpers that encode that provider's specifics — frontmatter shapes, JSON wrapping, manifest emission, post-write patches. These files own provider knowledge.
-- **Shared helpers** (`hook_compile.rs`, `hooks_merge.rs`, the `Adapter` trait in `src/adapters.rs`): agentspec-pipeline code that adapters call. These take `Provider` as a parameter (or accept adapter-supplied closures) and produce per-provider output, but they don't *own* provider knowledge — they dispatch on inputs supplied by the calling adapter or the orchestrator.
+- **Shared helpers** (`hook_compile.rs`, `hooks_merge.rs`, the `Adapter` trait in `src/adapters.rs`): agentspec-pipeline code that adapters call. These take `Provider` as a parameter (or accept adapter-supplied closures) and produce per-provider output, but they don't _own_ provider knowledge — they dispatch on inputs supplied by the calling adapter or the orchestrator.
 
 A useful litmus test: **does this code change require modifying `src/adapters/<provider>.rs`?**
 
@@ -35,9 +35,9 @@ The distinction matters because "code inside `src/adapters/`" is not synonymous 
 
 ### Common failure modes
 
-- **Reading "adapter's `synthesize_hooks`" and concluding `synthesize_hooks` is an adapter method.** `synthesize_hooks` is a shared helper in `hook_compile.rs` that adapters *call*. Each provider's adapter passes its own parameters (`dotdir`, `plugin_root_env_var`, closures), but the helper itself has no provider knowledge to own.
+- **Reading "adapter's `synthesize_hooks`" and concluding `synthesize_hooks` is an adapter method.** `synthesize_hooks` is a shared helper in `hook_compile.rs` that adapters _call_. Each provider's adapter passes its own parameters (`dotdir`, `plugin_root_env_var`, closures), but the helper itself has no provider knowledge to own.
 - **Concluding that taking `Provider` as a parameter is automatically a rule violation.** It isn't — dispatch on a parameter is fine. The violation would be `match provider` arms with different logic, different field names, or different output shapes.
-- **Putting agentspec-pipeline logic in adapter implementations because "it touches provider-specific output."** Provider-specific *content* belongs in the adapter; cross-cutting *orchestration* belongs in the shared helpers that all adapters call. If two adapter implementations would have nearly-identical code for the same orchestration, that's the shared-helper case.
+- **Putting agentspec-pipeline logic in adapter implementations because "it touches provider-specific output."** Provider-specific _content_ belongs in the adapter; cross-cutting _orchestration_ belongs in the shared helpers that all adapters call. If two adapter implementations would have nearly-identical code for the same orchestration, that's the shared-helper case.
 
 ## Hardcoded paths via match
 

@@ -451,10 +451,12 @@ const CURSOR_OUT: &str = r"{
 
 #[cfg(test)]
 mod tests {
+    use std::process::{Command, Stdio};
+
+    use serde_json::Value;
+
     use super::*;
     use crate::hooks_canonical::{CanonicalInput, CanonicalOutput, PermissionDecision};
-    use serde_json::Value;
-    use std::process::{Command, Stdio};
 
     // ------------------------------------------------------------------
     // Content spot-checks: cheap structural assertions that the generated
