@@ -198,16 +198,20 @@ impl Adapter for ClaudeAdapter {
         }
     }
 
-    /// Returns the name the AI model uses to reference this spec.
+    /// Returns the name which should be used to refer to the spec in the generated body content.
     ///
     /// For Claude, all spec types use `{content_prefix}{id}` when a content prefix
     /// is configured (either explicitly or derived from `prefix`).
-    fn model_facing_name(&self, spec: &Spec, cfg: Option<&AdapterConfig>) -> String {
+    fn body_spec_name(&self, spec: &Spec, cfg: Option<&AdapterConfig>) -> String {
         let id = spec.id();
         match cfg.and_then(AdapterConfig::content_prefix) {
             Some(prefix) => format!("{prefix}{id}"),
             None => id.to_owned(),
         }
+    }
+
+    fn body_skill_root(&self) -> Option<&'static str> {
+        Some("${CLAUDE_SKILL_DIR}")
     }
 
     fn emits_hooks(&self) -> bool {
@@ -950,7 +954,7 @@ mod tests {
         });
 
         assert_eq!(
-            ClaudeAdapter.model_facing_name(&spec, Some(&cfg)),
+            ClaudeAdapter.body_spec_name(&spec, Some(&cfg)),
             "tw:test-agent"
         );
     }
@@ -1237,7 +1241,7 @@ mod tests {
         });
 
         assert_eq!(
-            ClaudeAdapter.model_facing_name(&spec, Some(&cfg)),
+            ClaudeAdapter.body_spec_name(&spec, Some(&cfg)),
             "tw-test-agent"
         );
     }

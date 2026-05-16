@@ -13,7 +13,7 @@ use agentspec::plan::compile_plan;
 use agentspec::presets::ProviderPresetsMap;
 use agentspec::provider::Provider;
 use agentspec::specs::{IgnoreMatcher, LoadReport, SpecDirs, Specs, ValidatedSpecs};
-use agentspec::templating::{TemplateContext, TemplatingResources, resolve_fragments};
+use agentspec::templating::{TemplateContext, Templating, resolve_fragments};
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use cli::{Cli, Command};
@@ -256,9 +256,9 @@ fn load_and_validate(
     Ok((validated, report))
 }
 
-fn load_templating(config: &AgentspecConfig) -> Result<TemplatingResources> {
+fn load_templating(config: &AgentspecConfig) -> Result<Templating> {
     let sources = config.resolve(&config.spec.sources_dir);
-    TemplatingResources::load(&sources.join("fragments"))
+    Templating::load(&sources.join("fragments"))
 }
 
 /// Runs the compile step and reports the compiled file count. The compile
@@ -268,7 +268,7 @@ fn load_templating(config: &AgentspecConfig) -> Result<TemplatingResources> {
 // would just rename, not reduce, the call-site noise.
 fn run_compile(
     validated: &ValidatedSpecs,
-    templating: &TemplatingResources,
+    templating: &Templating,
     presets: &ProviderPresetsMap,
     providers: &[Provider],
     adapter_configs: &HashMap<Provider, AdapterConfig>,

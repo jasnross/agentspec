@@ -198,8 +198,12 @@ pub trait Adapter: std::fmt::Debug + Send + Sync {
     /// `OpenCode`'s `"read"`).
     fn body_tool_name(&self, tool: &ToolFrontmatter) -> &'static str;
 
-    /// Compute the model-facing name for a spec (with prefix transforms applied).
-    fn model_facing_name(&self, spec: &Spec, cfg: Option<&AdapterConfig>) -> String;
+    /// Returns the name which should be used to refer to the spec in the generated body content.
+    fn body_spec_name(&self, spec: &Spec, cfg: Option<&AdapterConfig>) -> String;
+
+    /// The root directory marker for skills to reference their path. Used for including
+    /// references to scripts in skill content.
+    fn body_skill_root(&self) -> Option<&'static str>;
 
     /// Whether this provider emits hook entries.
     ///

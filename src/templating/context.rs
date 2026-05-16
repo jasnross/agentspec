@@ -6,6 +6,42 @@ use crate::compile::AdapterConfig;
 use crate::provider::Provider;
 use crate::spec::Spec;
 
+/// Top-level template context injected into every render call.
+///
+/// Extend by adding fields here; each field becomes a top-level template variable.
+#[derive(Clone, Debug, Serialize)]
+pub struct TemplateContext {
+    pub specs: SpecsContext,
+}
+
+impl TemplateContext {
+    /// Build the template context from validated specs using canonical
+    /// (unprefixed) IDs. Used by the `validate` command and as the default
+    /// when no provider context is available.
+    pub fn from_specs(specs: &[Spec]) -> Self {
+        Self {
+            specs: build_specs_context(specs, |s| s.id().to_owned()),
+        }
+    }
+
+    /// Build a provider-specific template context with prefix-aware names
+    /// and keyed access maps.
+    ///
+    /// The `name` field in each [`SpecEntry`] is the model-facing name for
+    /// the target provider (e.g., `tw-gh-safe` for Claude, `gh-safe` for
+    /// `OpenCode` skills).
+    pub fn from_specs_for_provider(
+        specs: &[Spec],
+        provider: Provider,
+        adapter_config: Option<&AdapterConfig>,
+    ) -> Self {
+        let adapter = provider.adapter();
+        Self {
+            specs: build_specs_context(specs, |s| adapter.body_spec_name(s, adapter_config)),
+        }
+    }
+}
+
 /// A single spec entry exposed to templates.
 #[derive(Clone, Debug, Serialize)]
 pub struct SpecEntry {
@@ -37,24 +73,11 @@ pub struct SpecsContext {
     pub rule: BTreeMap<String, SpecEntry>,
 }
 
-/// Top-level template context injected into every render call.
-///
-/// Extend by adding fields here; each field becomes a top-level template variable.
-#[derive(Clone, Debug, Serialize)]
-pub struct TemplateContext {
-    pub specs: SpecsContext,
-}
-
-/// Replace hyphens with underscores for `MiniJinja` dot-access compatibility.
-fn normalize_key(id: &str) -> String {
-    id.replace('-', "_")
-}
-
 /// Shared logic for building a [`SpecsContext`] from specs.
 ///
 /// `name_fn` determines how each entry's `name` is computed: canonical ID for
 /// unprefixed contexts, or the model-facing name for provider-specific contexts.
-fn build_context(specs: &[Spec], name_fn: impl Fn(&Spec) -> String) -> SpecsContext {
+fn build_specs_context(specs: &[Spec], name_fn: impl Fn(&Spec) -> String) -> SpecsContext {
     let mut agents_list = Vec::new();
     let mut skills_list = Vec::new();
     let mut rules_list = Vec::new();
@@ -114,32 +137,9 @@ fn build_context(specs: &[Spec], name_fn: impl Fn(&Spec) -> String) -> SpecsCont
     }
 }
 
-impl TemplateContext {
-    /// Build the template context from validated specs using canonical
-    /// (unprefixed) IDs. Used by the `validate` command and as the default
-    /// when no provider context is available.
-    pub fn from_specs(specs: &[Spec]) -> Self {
-        Self {
-            specs: build_context(specs, |s| s.id().to_owned()),
-        }
-    }
-
-    /// Build a provider-specific template context with prefix-aware names
-    /// and keyed access maps.
-    ///
-    /// The `name` field in each [`SpecEntry`] is the model-facing name for
-    /// the target provider (e.g., `tw-gh-safe` for Claude, `gh-safe` for
-    /// `OpenCode` skills).
-    pub fn from_specs_for_provider(
-        specs: &[Spec],
-        provider: Provider,
-        adapter_config: Option<&AdapterConfig>,
-    ) -> Self {
-        let adapter = provider.adapter();
-        Self {
-            specs: build_context(specs, |s| adapter.model_facing_name(s, adapter_config)),
-        }
-    }
+/// Replace hyphens with underscores for `MiniJinja` dot-access compatibility.
+fn normalize_key(id: &str) -> String {
+    id.replace('-', "_")
 }
 
 #[cfg(test)]

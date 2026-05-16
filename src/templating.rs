@@ -20,11 +20,11 @@ use crate::provider::Provider;
 /// only the reusable fragment data. The `TemplateContext` is built at the point
 /// of use (inside the compile loop) where provider-specific information is
 /// available.
-pub struct TemplatingResources {
+pub struct Templating {
     fragment_map: HashMap<String, String>,
 }
 
-impl TemplatingResources {
+impl Templating {
     /// Load fragment files from the given directory.
     pub fn load(fragments_dir: &Path) -> Result<Self> {
         let fragment_map = load_fragments(fragments_dir)?;

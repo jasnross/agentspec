@@ -10,6 +10,8 @@ use super::context::TemplateContext;
 use crate::provider::Provider;
 use crate::spec::{Spec, ToolFrontmatter};
 
+// TODO: This file has taken on more responsibilities than just fragments. We should reorganize once it becomes clearer where the other concerns belong.
+
 /// Resolve fragment references in spec bodies by rendering them through `MiniJinja`.
 ///
 /// Each spec body is treated as an inline template. Specs that contain no template
@@ -30,7 +32,7 @@ pub fn resolve_fragments(
 
         let body = template
             .render(&ctx)
-            .with_context(|| format!("failed to resolve fragments in {}", spec.path().display()))?;
+            .with_context(|| format!("failed to render template in {}", spec.path().display()))?;
 
         match &mut spec {
             Spec::Agent(s) => s.body = body,
@@ -106,7 +108,34 @@ pub fn build_environment(
 
     env.add_function("tool", move |name: String| resolve_tool(&name, provider));
 
+    env.add_function("script_path", move |path: String| {
+        resolve_script_path(&path, provider)
+    });
+
     Ok(env)
+}
+
+fn resolve_script_path(
+    path: &String,
+    provider: Option<Provider>,
+) -> Result<String, minijinja::Error> {
+    let Some(p) = provider else {
+        return Ok(path.to_owned());
+    };
+
+    let end = Path::new(path);
+
+    if end.has_root() {
+        return Err(minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!("script path must be relative. got: {}", end.display()),
+        ));
+    }
+
+    Ok(match p.adapter().body_skill_root() {
+        Some(root) => format!("{}/{}", root, end.display()),
+        None => end.display().to_string(),
+    })
 }
 
 /// Resolve a canonical tool name to the provider-specific body-level name.

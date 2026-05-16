@@ -154,7 +154,7 @@ impl Adapter for OpenCodeAdapter {
         }
     }
 
-    /// Returns the name the AI model uses to reference this spec.
+    /// Returns the name which should be used to refer to the spec in the generated body content.
     ///
     /// - **Agents**: the model-facing name is prefixed via `content_prefix()`,
     ///   which may differ from the file-path prefix.
@@ -165,7 +165,7 @@ impl Adapter for OpenCodeAdapter {
     /// - **Rules**: have no model-facing name (auto-loaded content). Returns the
     ///   canonical ID as a best-effort fallback; spec authors should not typically
     ///   reference rules by name.
-    fn model_facing_name(&self, spec: &Spec, cfg: Option<&AdapterConfig>) -> String {
+    fn body_spec_name(&self, spec: &Spec, cfg: Option<&AdapterConfig>) -> String {
         let id = spec.id();
         match spec {
             Spec::Agent(_) => match cfg.and_then(AdapterConfig::content_prefix) {
@@ -174,6 +174,10 @@ impl Adapter for OpenCodeAdapter {
             },
             Spec::Skill(_) | Spec::Rule(_) | Spec::Hook(_) => id.to_owned(),
         }
+    }
+
+    fn body_skill_root(&self) -> Option<&'static str> {
+        None
     }
 
     fn emits_hooks(&self) -> bool {

@@ -9,7 +9,7 @@ use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
 use crate::spec::{HookEvent, Spec};
 use crate::specs::ValidatedSpecs;
-use crate::templating::{TemplateContext, TemplatingResources, resolve_fragments};
+use crate::templating::{TemplateContext, Templating, resolve_fragments};
 
 /// Per-provider configuration passed to adapters at compile time.
 ///
@@ -347,7 +347,7 @@ impl CompileWarning {
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     validated: &ValidatedSpecs,
-    templating: &TemplatingResources,
+    templating: &Templating,
     presets: &ProviderPresetsMap,
     providers: &[Provider],
     adapter_configs: &HashMap<Provider, AdapterConfig>,
@@ -373,7 +373,7 @@ pub fn run(
 #[allow(clippy::too_many_arguments)] // mirrors `run` — see allow note there
 pub(crate) fn compile_specs(
     specs: &[Spec],
-    templating: &TemplatingResources,
+    templating: &Templating,
     presets: &ProviderPresetsMap,
     providers: &[Provider],
     adapter_configs: &HashMap<Provider, AdapterConfig>,
