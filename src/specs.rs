@@ -701,6 +701,23 @@ fn load_hook_specs(
                 script_path.display()
             );
         }
+        if frontmatter.events.is_empty() {
+            bail!(
+                "hook '{id}' in {} has an empty `events` list; at least one event is required",
+                toml_path.display()
+            );
+        }
+        let mut seen_events = Vec::with_capacity(frontmatter.events.len());
+        for event in &frontmatter.events {
+            if seen_events.contains(event) {
+                bail!(
+                    "hook '{id}' in {} lists event '{}' more than once",
+                    toml_path.display(),
+                    event.snake_case()
+                );
+            }
+            seen_events.push(*event);
+        }
         frontmatter.id = id;
         specs.push(Spec::Hook(HookSpec {
             path: toml_path.clone(),
@@ -1385,7 +1402,7 @@ Agent body.
 
     fn write_hook_fixture(dir: &Path, id: &str, event: &str, script_name: &str) {
         let toml =
-            format!("[hooks.{id}]\nevent = \"{event}\"\nscript = \"scripts/{script_name}\"\n");
+            format!("[hooks.{id}]\nevents = [\"{event}\"]\nscript = \"scripts/{script_name}\"\n");
         fs::create_dir_all(dir.join("scripts")).expect("expected value");
         fs::write(dir.join("hooks.toml"), toml).expect("expected value");
         fs::write(
@@ -1423,11 +1440,11 @@ Agent body.
         // must preserve insertion order.
         let toml = "
 [hooks.zeta]
-event = \"session_start\"
+events = [\"session_start\"]
 script = \"scripts/zeta.sh\"
 
 [hooks.alpha]
-event = \"session_end\"
+events = [\"session_end\"]
 script = \"scripts/alpha.sh\"
 ";
         fs::write(hooks_dir.join("hooks.toml"), toml).expect("expected value");
@@ -1477,11 +1494,11 @@ script = \"scripts/alpha.sh\"
         fs::create_dir_all(hooks_dir.join("scripts")).expect("expected value");
         let toml = "
 [hooks.foo]
-event = \"session_start\"
+events = [\"session_start\"]
 script = \"scripts/foo.sh\"
 
 [hooks.foo]
-event = \"session_end\"
+events = [\"session_end\"]
 script = \"scripts/foo.sh\"
 ";
         fs::write(hooks_dir.join("hooks.toml"), toml).expect("expected value");
@@ -1500,7 +1517,7 @@ script = \"scripts/foo.sh\"
         // Uppercase id — rejected by `validate_hook_id`.
         let toml = "
 [hooks.BadID]
-event = \"session_start\"
+events = [\"session_start\"]
 script = \"scripts/x.sh\"
 ";
         fs::write(hooks_dir.join("hooks.toml"), toml).expect("expected value");
@@ -1544,7 +1561,7 @@ script = \"scripts/x.sh\"
         fs::write(hooks_dir.join("init.sh"), "#!/bin/sh\n").expect("expected value");
         let toml = "
 [hooks.init]
-event = \"session_start\"
+events = [\"session_start\"]
 script = \"init.sh\"
 ";
         fs::write(hooks_dir.join("hooks.toml"), toml).expect("expected value");
@@ -1569,7 +1586,7 @@ script = \"init.sh\"
             .expect("expected value");
         let toml = "
 [hooks.init]
-event = \"session_start\"
+events = [\"session_start\"]
 script = \"scripts/init.sh\"
 ";
         fs::write(hooks_dir.join("hooks.toml"), toml).expect("expected value");
@@ -1589,7 +1606,7 @@ script = \"scripts/init.sh\"
         let toml = "
 [hooks.foo]
 id = \"bar\"
-event = \"session_start\"
+events = [\"session_start\"]
 script = \"scripts/init.sh\"
 ";
         let result: Result<HookSpecFile, _> = toml::from_str(toml);
@@ -1626,7 +1643,7 @@ script = \"scripts/init.sh\"
         fs::create_dir_all(hooks_dir.join("scripts")).expect("expected value");
         let toml = "
 [hooks.init]
-event = \"session_start\"
+events = [\"session_start\"]
 script = \"scripts/missing.sh\"
 ";
         fs::write(hooks_dir.join("hooks.toml"), toml).expect("expected value");

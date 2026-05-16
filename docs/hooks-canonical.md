@@ -314,7 +314,7 @@ fi
 
 ```toml
 [hooks.block-env-writes]
-event = "pre_tool_use"
+events = ["pre_tool_use"]
 matcher = "Bash"
 script = "scripts/block-env-writes.sh"
 description = "Block Bash commands that touch .env files"

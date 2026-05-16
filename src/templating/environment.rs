@@ -178,7 +178,7 @@ mod tests {
             path: PathBuf::from("/tmp/hooks.toml"),
             frontmatter: HookFrontmatter {
                 id: "dummy-hook".to_string(),
-                event: HookEvent::SessionStart,
+                events: vec![HookEvent::SessionStart],
                 script: PathBuf::from("scripts/init.sh"),
                 matcher: None,
                 timeout: None,

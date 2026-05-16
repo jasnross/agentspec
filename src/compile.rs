@@ -460,7 +460,7 @@ pub(crate) fn compile_specs(
         |(any_hook, any_session_start), spec| match spec {
             Spec::Hook(h) => (
                 true,
-                any_session_start || matches!(h.frontmatter.event, HookEvent::SessionStart),
+                any_session_start || h.frontmatter.events.contains(&HookEvent::SessionStart),
             ),
             Spec::Agent(_) | Spec::Skill(_) | Spec::Rule(_) => (any_hook, any_session_start),
         },

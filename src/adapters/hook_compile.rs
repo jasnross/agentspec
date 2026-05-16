@@ -119,8 +119,10 @@ fn build_shim_files(provider: Provider, specs: &[&HookSpec]) -> Vec<GeneratedFil
     // element collection).
     let mut events: Vec<HookEvent> = Vec::new();
     for spec in specs {
-        if !events.contains(&spec.frontmatter.event) {
-            events.push(spec.frontmatter.event);
+        for &event in &spec.frontmatter.events {
+            if !events.contains(&event) {
+                events.push(event);
+            }
         }
     }
     events
@@ -157,36 +159,31 @@ fn build_emitted_hook_entries(
 ) -> Vec<EmittedHookEntry> {
     specs
         .iter()
-        .map(|s| {
-            // The frontmatter `script` is documented as relative to
-            // `spec/hooks/` and validated to live under `scripts/` (see
-            // `validate_hook_script_path` in specs.rs). Strip any leading
-            // `./` and the required `scripts/` segment so the command
-            // anchor — which already includes `hooks/scripts/` — preserves
-            // any nested subdirectory layout (e.g., `git/pre-commit.sh`).
-            // `Path::strip_prefix("scripts")` does not handle a leading
-            // `./` component, so iterate components instead.
+        .flat_map(|s| {
             let path_under_scripts: PathBuf = s
                 .frontmatter
                 .script
                 .components()
                 .skip_while(|c| matches!(c, Component::CurDir))
-                .skip(1) // the "scripts" component, enforced by validation
+                .skip(1)
                 .collect();
             let filename = path_under_scripts.to_string_lossy().into_owned();
-            EmittedHookEntry {
-                event: s.frontmatter.event,
-                matcher: s.frontmatter.matcher.clone(),
-                command: hook_command_anchor(
-                    dotdir,
-                    plugin_root_env_var,
-                    emit_mode,
-                    s.frontmatter.event,
-                    &filename,
-                ),
-                timeout: s.frontmatter.timeout,
-                agentspec_id: s.frontmatter.id.clone(),
-            }
+            s.frontmatter
+                .events
+                .iter()
+                .map(move |&event| EmittedHookEntry {
+                    event,
+                    matcher: s.frontmatter.matcher.clone(),
+                    command: hook_command_anchor(
+                        dotdir,
+                        plugin_root_env_var,
+                        emit_mode,
+                        event,
+                        &filename,
+                    ),
+                    timeout: s.frontmatter.timeout,
+                    agentspec_id: s.frontmatter.id.clone(),
+                })
         })
         .collect()
 }
@@ -248,12 +245,12 @@ mod tests {
     use super::*;
     use crate::spec::HookFrontmatter;
 
-    fn hook_spec(id: &str, event: HookEvent) -> HookSpec {
+    fn hook_spec(id: &str, events: Vec<HookEvent>) -> HookSpec {
         HookSpec {
             path: PathBuf::from("/tmp/hooks.toml"),
             frontmatter: HookFrontmatter {
                 id: id.to_string(),
-                event,
+                events,
                 script: format!("scripts/{id}.sh").into(),
                 matcher: None,
                 timeout: None,
@@ -270,8 +267,8 @@ mod tests {
         // Two specs both targeting `pre_tool_use` → exactly one shim file
         // per provider. Deduplication is provider-scoped: each provider's
         // tree gets its own copy with provider-specific jq programs.
-        let a = hook_spec("audit-bash", HookEvent::PreToolUse);
-        let b = hook_spec("audit-edit", HookEvent::PreToolUse);
+        let a = hook_spec("audit-bash", vec![HookEvent::PreToolUse]);
+        let b = hook_spec("audit-edit", vec![HookEvent::PreToolUse]);
         let specs: Vec<&HookSpec> = vec![&a, &b];
 
         let claude = build_shim_files(Provider::Claude, &specs);
@@ -319,7 +316,7 @@ mod tests {
         // OpenCode's adapter doesn't emit hooks. Even if the helper is
         // accidentally called with `Provider::OpenCode`, it must return
         // an empty Vec rather than panicking or emitting incorrect output.
-        let a = hook_spec("init", HookEvent::SessionStart);
+        let a = hook_spec("init", vec![HookEvent::SessionStart]);
         let specs: Vec<&HookSpec> = vec![&a];
         assert!(build_shim_files(Provider::OpenCode, &specs).is_empty());
     }
@@ -329,9 +326,9 @@ mod tests {
         // Three specs across two events → 2 shims per provider. Source
         // order is preserved (the `Vec::contains` dedup keeps insertion
         // order), so iteration is deterministic.
-        let a = hook_spec("a", HookEvent::PreToolUse);
-        let b = hook_spec("b", HookEvent::PreToolUse);
-        let c = hook_spec("c", HookEvent::SessionStart);
+        let a = hook_spec("a", vec![HookEvent::PreToolUse]);
+        let b = hook_spec("b", vec![HookEvent::PreToolUse]);
+        let c = hook_spec("c", vec![HookEvent::SessionStart]);
         let specs: Vec<&HookSpec> = vec![&a, &b, &c];
         let claude = build_shim_files(Provider::Claude, &specs);
         assert_eq!(claude.len(), 2);
@@ -345,6 +342,32 @@ mod tests {
             "second shim should be session_start, got: {:?}",
             claude[1].path
         );
+    }
+
+    #[test]
+    fn build_emitted_hook_entries_expands_multi_event_spec() {
+        let spec = hook_spec(
+            "multi",
+            vec![HookEvent::PreToolUse, HookEvent::SessionStart],
+        );
+        let specs: Vec<&HookSpec> = vec![&spec];
+        let entries = build_emitted_hook_entries(
+            &specs,
+            ".claude",
+            "CLAUDE_PLUGIN_ROOT",
+            HookEmitMode::Bundled,
+        );
+        assert_eq!(
+            entries.len(),
+            2,
+            "one spec with 2 events should produce 2 entries"
+        );
+        assert_eq!(entries[0].event, HookEvent::PreToolUse);
+        assert_eq!(entries[1].event, HookEvent::SessionStart);
+        assert_eq!(entries[0].agentspec_id, "multi");
+        assert_eq!(entries[1].agentspec_id, "multi");
+        assert!(entries[0].command.contains("_wrappers/pre_tool_use.sh"));
+        assert!(entries[1].command.contains("_wrappers/session_start.sh"));
     }
 
     #[test]

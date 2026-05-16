@@ -149,13 +149,13 @@ Hooks are scripts that fire on session events (e.g., before a tool runs, when a 
 
 ```toml
 [hooks.init-thoughts]
-event = "user_prompt_submit"
+events = ["user_prompt_submit"]
 script = "scripts/init-thoughts.sh"
 description = "Seed THOUGHTS_DIR context at the start of each turn"
 timeout = 30
 
 [hooks.audit-bash]
-event = "pre_tool_use"
+events = ["pre_tool_use"]
 matcher = "Bash"
 script = "scripts/audit-bash.sh"
 ```

@@ -1012,7 +1012,7 @@ mod tests {
             path: std::path::PathBuf::from("/tmp/hooks.toml"),
             frontmatter: crate::spec::HookFrontmatter {
                 id: id.to_string(),
-                event,
+                events: vec![event],
                 script: format!("scripts/{id}.sh").into(),
                 matcher: matcher.map(str::to_string),
                 timeout: None,

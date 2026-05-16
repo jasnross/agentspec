@@ -156,8 +156,8 @@ pub struct HookFrontmatter {
     /// Stable identifier; populated from the `[hooks.<id>]` TOML table key.
     #[serde(skip)]
     pub id: String,
-    /// Provider-neutral event name (e.g., `pre_tool_use`).
-    pub event: HookEvent,
+    /// Provider-neutral event(s) this hook targets.
+    pub events: Vec<HookEvent>,
     /// Path to the script implementation, relative to `spec/hooks/`.
     pub script: PathBuf,
     /// Tool-name matcher; only valid on tool-execute events.
@@ -330,7 +330,7 @@ mod tests {
             path: PathBuf::from("/tmp/hooks.toml"),
             frontmatter: HookFrontmatter {
                 id: id.to_string(),
-                event: HookEvent::SessionStart,
+                events: vec![HookEvent::SessionStart],
                 script: PathBuf::from("scripts/init.sh"),
                 matcher: None,
                 timeout: None,

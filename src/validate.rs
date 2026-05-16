@@ -59,21 +59,30 @@ pub fn validate_semantics(specs: &[Spec], presets: &ProviderPresetsMap) -> Vec<S
             });
         }
 
-        // Hook event/matcher compatibility: a `matcher` is only valid on the
-        // tool-execute events. `HookEvent::allows_matcher` codifies the rule;
-        // both providers agree on the answer, so it lives on the enum.
         if let Spec::Hook(hook_spec) = spec
             && hook_spec.frontmatter.matcher.is_some()
-            && !hook_spec.frontmatter.event.allows_matcher()
         {
-            errors.push(SemanticError {
-                path: hook_spec.path.clone(),
-                message: format!(
-                    "hook '{}' uses event '{:?}' which does not accept a `matcher`; \
-                     only pre_tool_use, post_tool_use, and post_tool_use_failure may set one",
-                    hook_spec.frontmatter.id, hook_spec.frontmatter.event,
-                ),
-            });
+            let bad_events: Vec<_> = hook_spec
+                .frontmatter
+                .events
+                .iter()
+                .filter(|e| !e.allows_matcher())
+                .collect();
+            if !bad_events.is_empty() {
+                errors.push(SemanticError {
+                    path: hook_spec.path.clone(),
+                    message: format!(
+                        "hook '{}' sets `matcher` but targets event(s) that do not accept one: {}; \
+                         only pre_tool_use, post_tool_use, and post_tool_use_failure may use a matcher",
+                        hook_spec.frontmatter.id,
+                        bad_events
+                            .iter()
+                            .map(|e| e.snake_case())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    ),
+                });
+            }
         }
 
         let execution = match spec {
@@ -194,12 +203,12 @@ mod tests {
         })
     }
 
-    fn make_hook(id: &str, event: HookEvent, matcher: Option<&str>) -> Spec {
+    fn make_hook(id: &str, events: Vec<HookEvent>, matcher: Option<&str>) -> Spec {
         Spec::Hook(HookSpec {
             path: PathBuf::from("hooks.toml"),
             frontmatter: HookFrontmatter {
                 id: id.to_string(),
-                event,
+                events,
                 script: PathBuf::from(format!("scripts/{id}.sh")),
                 matcher: matcher.map(str::to_string),
                 timeout: None,
@@ -354,8 +363,7 @@ mod tests {
 
     #[test]
     fn test_hook_empty_body_does_not_error() {
-        // Hooks have empty bodies by design; the empty-body check must skip them.
-        let specs = vec![make_hook("init", HookEvent::SessionStart, None)];
+        let specs = vec![make_hook("init", vec![HookEvent::SessionStart], None)];
         let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
         assert!(
             errors.is_empty(),
@@ -365,7 +373,11 @@ mod tests {
 
     #[test]
     fn test_hook_matcher_on_tool_event_passes() {
-        let specs = vec![make_hook("audit", HookEvent::PreToolUse, Some("Bash|Edit"))];
+        let specs = vec![make_hook(
+            "audit",
+            vec![HookEvent::PreToolUse],
+            Some("Bash|Edit"),
+        )];
         let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
         assert!(
             errors.is_empty(),
@@ -375,11 +387,15 @@ mod tests {
 
     #[test]
     fn test_hook_matcher_on_non_tool_event_errors() {
-        let specs = vec![make_hook("init", HookEvent::SessionStart, Some("anything"))];
+        let specs = vec![make_hook(
+            "init",
+            vec![HookEvent::SessionStart],
+            Some("anything"),
+        )];
         let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
         let matcher_errors: Vec<_> = errors
             .iter()
-            .filter(|e| e.message.contains("does not accept a `matcher`"))
+            .filter(|e| e.message.contains("do not accept one"))
             .collect();
         assert_eq!(
             matcher_errors.len(),
@@ -387,15 +403,55 @@ mod tests {
             "expected exactly one matcher error, got all: {errors:?}"
         );
         assert!(matcher_errors[0].message.contains("'init'"));
+        assert!(matcher_errors[0].message.contains("session_start"));
+    }
+
+    #[test]
+    fn test_hook_matcher_on_mixed_events_errors() {
+        let specs = vec![make_hook(
+            "mixed",
+            vec![HookEvent::PreToolUse, HookEvent::SessionStart],
+            Some("Edit"),
+        )];
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        let matcher_errors: Vec<_> = errors
+            .iter()
+            .filter(|e| e.message.contains("do not accept one"))
+            .collect();
+        assert_eq!(
+            matcher_errors.len(),
+            1,
+            "expected one error for mixed events with matcher, got: {errors:?}"
+        );
+        assert!(matcher_errors[0].message.contains("session_start"));
+        assert!(
+            matcher_errors[0]
+                .message
+                .starts_with("hook 'mixed' sets `matcher` but targets event(s) that do not accept one: session_start"),
+            "error should list only the offending event, got: {}",
+            matcher_errors[0].message
+        );
+    }
+
+    #[test]
+    fn test_hook_matcher_on_all_tool_events_passes() {
+        let specs = vec![make_hook(
+            "audit",
+            vec![HookEvent::PreToolUse, HookEvent::PostToolUse],
+            Some("Bash"),
+        )];
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        assert!(
+            errors.is_empty(),
+            "expected no errors for matcher on all-tool-events, got: {errors:?}"
+        );
     }
 
     #[test]
     fn test_hook_id_collides_with_skill_id() {
-        // The existing duplicate-ID check is global across spec types — a hook
-        // with the same ID as an agent/skill/rule errors.
         let specs = vec![
             make_skill("gh-safe", "body"),
-            make_hook("gh-safe", HookEvent::SessionStart, None),
+            make_hook("gh-safe", vec![HookEvent::SessionStart], None),
         ];
         let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
         assert!(
@@ -409,8 +465,8 @@ mod tests {
     #[test]
     fn test_hook_duplicate_ids_within_hooks_error() {
         let specs = vec![
-            make_hook("init", HookEvent::SessionStart, None),
-            make_hook("init", HookEvent::SessionEnd, None),
+            make_hook("init", vec![HookEvent::SessionStart], None),
+            make_hook("init", vec![HookEvent::SessionEnd], None),
         ];
         let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
         assert!(

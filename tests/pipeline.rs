@@ -1296,12 +1296,12 @@ fn install_hook_fixture(dir: &Path) {
         hooks_dir.join("hooks.toml"),
         r#"
 [hooks.init-thoughts]
-event = "user_prompt_submit"
+events = ["user_prompt_submit"]
 script = "scripts/init-thoughts.sh"
 description = "Seed THOUGHTS_DIR context at the start of each turn"
 
 [hooks.audit-bash]
-event = "pre_tool_use"
+events = ["pre_tool_use"]
 matcher = "Bash"
 script = "scripts/audit-bash.sh"
 "#,
@@ -1441,17 +1441,17 @@ fn test_compile_dedups_shim_per_event_per_provider() {
         hooks_dir.join("hooks.toml"),
         r#"
 [hooks.audit-bash]
-event = "pre_tool_use"
+events = ["pre_tool_use"]
 matcher = "Bash"
 script = "scripts/audit-bash.sh"
 
 [hooks.audit-edit]
-event = "pre_tool_use"
+events = ["pre_tool_use"]
 matcher = "Edit"
 script = "scripts/audit-edit.sh"
 
 [hooks.greet]
-event = "user_prompt_submit"
+events = ["user_prompt_submit"]
 script = "scripts/greet.sh"
 "#,
     )
@@ -1489,6 +1489,91 @@ script = "scripts/greet.sh"
                 "user_prompt_submit.sh".to_string()
             ],
             "{provider}: expected exactly one shim per distinct event, got: {entries:?}"
+        );
+    }
+}
+
+#[test]
+fn test_compile_multi_event_hook_expands_to_separate_entries() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let hooks_dir = dir.join("spec/hooks");
+    let scripts_dir = hooks_dir.join("scripts");
+    std::fs::create_dir_all(&scripts_dir).expect("create scripts dir");
+    std::fs::write(
+        hooks_dir.join("hooks.toml"),
+        r#"
+[hooks.multi]
+events = ["pre_tool_use", "session_start"]
+matcher = "Bash"
+script = "scripts/multi.sh"
+"#,
+    )
+    .expect("write hooks.toml");
+    std::fs::write(scripts_dir.join("multi.sh"), "#!/bin/sh\nexit 0\n").expect("write script");
+    set_script_permissions(&scripts_dir);
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("run agentspec compile");
+    // Should fail validation: matcher on session_start
+    assert!(
+        !output.status.success(),
+        "compile should reject matcher on non-tool event"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("session_start"),
+        "error should name offending event, got:\n{stderr}"
+    );
+
+    // Fix: remove the non-tool event, keep only tool events
+    std::fs::write(
+        hooks_dir.join("hooks.toml"),
+        r#"
+[hooks.multi]
+events = ["pre_tool_use", "post_tool_use"]
+matcher = "Bash"
+script = "scripts/multi.sh"
+"#,
+    )
+    .expect("rewrite hooks.toml");
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("run agentspec compile");
+    assert!(
+        output.status.success(),
+        "compile should succeed for multi-event with matcher on tool events: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Verify both events appear in the compiled output for each provider
+    for provider in ["claude", "cursor"] {
+        let json_path = dir.join(format!("generated/{provider}/hooks/hooks.json"));
+        let json = std::fs::read_to_string(&json_path).expect("read hooks.json");
+        // The same agentspec_id should appear under both event keys
+        let count = json.matches("\"multi\"").count();
+        assert!(
+            count >= 2,
+            "{provider}: expected 'multi' agentspec_id under both events, found {count} occurrences in:\n{json}"
+        );
+    }
+
+    // Both events should get shim files
+    for provider in ["claude", "cursor"] {
+        let wrappers = dir.join(format!("generated/{provider}/hooks/scripts/_wrappers"));
+        assert!(
+            wrappers.join("pre_tool_use.sh").exists(),
+            "{provider}: pre_tool_use shim should exist"
+        );
+        assert!(
+            wrappers.join("post_tool_use.sh").exists(),
+            "{provider}: post_tool_use shim should exist"
         );
     }
 }
@@ -1561,7 +1646,7 @@ fn test_compile_rejects_hook_script_path_traversal() {
         hooks_dir.join("hooks.toml"),
         r#"
 [hooks.bad]
-event = "session_start"
+events = ["session_start"]
 script = "../../etc/passwd"
 "#,
     )
@@ -3833,7 +3918,7 @@ fn install_session_start_hook_fixture(dir: &Path) {
         dir,
         r#"
 [hooks.startup]
-event = "session_start"
+events = ["session_start"]
 script = "scripts/startup.sh"
 "#,
     );
@@ -3954,7 +4039,7 @@ fn test_sync_orphan_cleanup_removes_stale_shim() {
         &dir,
         r#"
 [hooks.init-thoughts]
-event = "user_prompt_submit"
+events = ["user_prompt_submit"]
 script = "scripts/init-thoughts.sh"
 "#,
     );
