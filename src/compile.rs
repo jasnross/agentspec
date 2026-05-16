@@ -398,10 +398,9 @@ pub(crate) fn compile_specs(
         // Per-provider template resolution stays in the orchestrator —
         // templating is provider-agnostic plumbing that should not be
         // duplicated across adapters.
-        let env = templating.build_environment(Some(provider))?;
         let adapter_config = adapter_configs.get(&provider);
         let context = TemplateContext::from_specs_for_provider(specs, provider, adapter_config);
-        let resolved = resolve_fragments(specs.to_vec(), &env, &context)?;
+        let resolved = resolve_fragments(specs.to_vec(), templating, Some(provider), &context)?;
 
         let target = compile_targets.get(&provider).unwrap_or(&default_target);
         let ctx = CompileCtx {

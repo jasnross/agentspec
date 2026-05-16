@@ -60,11 +60,8 @@ fn main() -> Result<()> {
             // users run to inspect their `[spec].ignore` effect.
             surface_load_report(&dirs.ignore, &report, ReportDisplay::Full);
             let templating = load_templating(&config)?;
-            // Check template syntax by resolving with unprefixed context.
-            // `None` provider → `tool()` passes canonical names through unchanged.
-            let env = templating.build_environment(None)?;
             let context = TemplateContext::from_specs(validated.specs());
-            resolve_fragments(validated.into_specs(), &env, &context)?;
+            resolve_fragments(validated.into_specs(), &templating, None, &context)?;
             eprintln!("validation complete");
         }
         Command::Sync(sync_args) => {

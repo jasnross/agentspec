@@ -3,26 +3,32 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use minijinja::{Environment, Value};
+use minijinja::Value;
 use walkdir::WalkDir;
 
+use super::Templating;
 use super::context::TemplateContext;
+use crate::provider::Provider;
 use crate::spec::Spec;
 
 /// Resolve fragment references in spec bodies by rendering them through `MiniJinja`.
 ///
-/// Each spec body is treated as an inline template. Specs that contain no template
+/// Each spec body is treated as an inline template rendered in a per-spec
+/// environment so that spec-type-specific helpers (e.g. `script_path()` for
+/// skills) are available only where appropriate. Specs that contain no template
 /// syntax pass through unchanged. Operates on validated specs so that template
 /// resolution is decoupled from the spec loading/validation lifecycle.
 pub fn resolve_fragments(
     specs: Vec<Spec>,
-    env: &Environment<'_>,
+    templating: &Templating,
+    provider: Option<Provider>,
     context: &TemplateContext,
 ) -> Result<Vec<Spec>> {
     let ctx = Value::from_serialize(context);
     let mut resolved = Vec::with_capacity(specs.len());
 
     for mut spec in specs {
+        let env = templating.build_environment(provider, &spec)?;
         let template = env
             .template_from_str(spec.body())
             .with_context(|| format!("failed to parse template in {}", spec.path().display()))?;
@@ -88,7 +94,7 @@ mod tests {
     use crate::spec::{
         AgentFrontmatter, AgentSpec, RuleFrontmatter, RuleSpec, SkillFrontmatter, SkillSpec,
     };
-    use crate::templating::environment::build_environment;
+    use crate::templating::Templating;
 
     fn empty_context() -> TemplateContext {
         TemplateContext::from_specs(&[])
@@ -124,8 +130,7 @@ mod tests {
 
     #[test]
     fn test_resolve_fragments_no_syntax() {
-        let fragments = HashMap::new();
-        let env = build_environment(&fragments, None).expect("expected value");
+        let templating = Templating::from_fragments(HashMap::new());
 
         let specs = vec![Spec::Agent(AgentSpec {
             path: "test.md".into(),
@@ -139,7 +144,8 @@ mod tests {
             body: "Plain body with no template syntax.".to_string(),
         })];
 
-        let resolved = resolve_fragments(specs, &env, &empty_context()).expect("expected value");
+        let resolved =
+            resolve_fragments(specs, &templating, None, &empty_context()).expect("expected value");
         let Spec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
@@ -150,8 +156,7 @@ mod tests {
     fn test_resolve_fragments_with_include() {
         let mut fragments = HashMap::new();
         fragments.insert("footer.md".to_string(), "-- End --".to_string());
-
-        let env = build_environment(&fragments, None).expect("expected value");
+        let templating = Templating::from_fragments(fragments);
 
         let specs = vec![Spec::Agent(AgentSpec {
             path: "test.md".into(),
@@ -165,7 +170,8 @@ mod tests {
             body: "Body.\n{% include \"footer.md\" %}".to_string(),
         })];
 
-        let resolved = resolve_fragments(specs, &env, &empty_context()).expect("expected value");
+        let resolved =
+            resolve_fragments(specs, &templating, None, &empty_context()).expect("expected value");
         let Spec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
@@ -231,8 +237,7 @@ mod tests {
     #[test]
     fn test_specs_agents_length() {
         let ctx = test_context();
-        let fragments = HashMap::new();
-        let env = build_environment(&fragments, None).expect("expected value");
+        let templating = Templating::from_fragments(HashMap::new());
 
         let specs = vec![Spec::Agent(AgentSpec {
             path: "test.md".into(),
@@ -246,7 +251,7 @@ mod tests {
             body: "{{ specs.agents | length }}".to_owned(),
         })];
 
-        let resolved = resolve_fragments(specs, &env, &ctx).expect("expected value");
+        let resolved = resolve_fragments(specs, &templating, None, &ctx).expect("expected value");
         let Spec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
@@ -256,8 +261,7 @@ mod tests {
     #[test]
     fn test_specs_agents_sorted_names() {
         let ctx = test_context();
-        let fragments = HashMap::new();
-        let env = build_environment(&fragments, None).expect("expected value");
+        let templating = Templating::from_fragments(HashMap::new());
 
         let specs = vec![Spec::Agent(AgentSpec {
             path: "test.md".into(),
@@ -271,7 +275,7 @@ mod tests {
             body: "{% for agent in specs.agents %}{{ agent.name }}\n{% endfor %}".to_owned(),
         })];
 
-        let resolved = resolve_fragments(specs, &env, &ctx).expect("expected value");
+        let resolved = resolve_fragments(specs, &templating, None, &ctx).expect("expected value");
         let Spec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
@@ -281,8 +285,7 @@ mod tests {
     #[test]
     fn test_specs_all_type_field() {
         let ctx = test_context();
-        let fragments = HashMap::new();
-        let env = build_environment(&fragments, None).expect("expected value");
+        let templating = Templating::from_fragments(HashMap::new());
 
         let specs = vec![Spec::Agent(AgentSpec {
             path: "test.md".into(),
@@ -296,7 +299,7 @@ mod tests {
             body: "{{ specs.all[0].type }}".to_owned(),
         })];
 
-        let resolved = resolve_fragments(specs, &env, &ctx).expect("expected value");
+        let resolved = resolve_fragments(specs, &templating, None, &ctx).expect("expected value");
         let Spec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
@@ -311,7 +314,7 @@ mod tests {
             "listing.md".to_owned(),
             "Skills: {{ specs.skills | length }}".to_owned(),
         );
-        let env = build_environment(&fragments, None).expect("expected value");
+        let templating = Templating::from_fragments(fragments);
 
         let specs = vec![Spec::Agent(AgentSpec {
             path: "test.md".into(),
@@ -325,7 +328,7 @@ mod tests {
             body: "{% include \"listing.md\" %}".to_owned(),
         })];
 
-        let resolved = resolve_fragments(specs, &env, &ctx).expect("expected value");
+        let resolved = resolve_fragments(specs, &templating, None, &ctx).expect("expected value");
         let Spec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
@@ -335,8 +338,7 @@ mod tests {
     #[test]
     fn test_no_variable_usage_unchanged() {
         let ctx = test_context();
-        let fragments = HashMap::new();
-        let env = build_environment(&fragments, None).expect("expected value");
+        let templating = Templating::from_fragments(HashMap::new());
 
         let specs = vec![Spec::Agent(AgentSpec {
             path: "test.md".into(),
@@ -350,7 +352,7 @@ mod tests {
             body: "Plain body with no template syntax.".to_owned(),
         })];
 
-        let resolved = resolve_fragments(specs, &env, &ctx).expect("expected value");
+        let resolved = resolve_fragments(specs, &templating, None, &ctx).expect("expected value");
         let Spec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
@@ -397,8 +399,7 @@ mod tests {
         let ctx =
             TemplateContext::from_specs_for_provider(&all_specs, Provider::Claude, Some(&cfg));
 
-        let fragments = HashMap::new();
-        let env = build_environment(&fragments, None).expect("expected value");
+        let templating = Templating::from_fragments(HashMap::new());
 
         // A spec body that references another spec by keyed access
         let specs = vec![Spec::Skill(SkillSpec {
@@ -416,10 +417,40 @@ mod tests {
             supporting_files: Vec::new(),
         })];
 
-        let resolved = resolve_fragments(specs, &env, &ctx).expect("expected value");
+        let resolved = resolve_fragments(specs, &templating, None, &ctx).expect("expected value");
         let Spec::Skill(ref s) = resolved[0] else {
             panic!("expected Skill variant")
         };
         assert_eq!(s.body, "Agent: tw-test-agent");
+    }
+
+    #[test]
+    fn test_resolve_fragments_errors_for_non_skill_script_path() {
+        use crate::provider::Provider;
+
+        let templating = Templating::from_fragments(HashMap::new());
+        let specs = vec![Spec::Agent(AgentSpec {
+            path: "agent.md".into(),
+            frontmatter: AgentFrontmatter {
+                id: "test-agent".to_owned(),
+                description: "An agent".to_owned(),
+                tags: None,
+                execution: None,
+                capabilities: None,
+            },
+            body: r#"{{ script_path("scripts/foo.sh") }}"#.to_owned(),
+        })];
+
+        let err = resolve_fragments(specs, &templating, Some(Provider::Claude), &empty_context())
+            .expect_err("expected render error for script_path in agent body");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("failed to render template in"),
+            "expected with_context prefix in error, got: {msg}"
+        );
+        assert!(
+            msg.contains("script_path"),
+            "expected 'script_path' in error, got: {msg}"
+        );
     }
 }

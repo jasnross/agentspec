@@ -13,6 +13,7 @@ pub use fragments::resolve_fragments;
 use minijinja::Environment;
 
 use crate::provider::Provider;
+use crate::spec::Spec;
 
 /// Reusable templating infrastructure: owns the fragment map and builds
 /// `MiniJinja` environments on demand.
@@ -33,15 +34,19 @@ impl Templating {
         Ok(Self { fragment_map })
     }
 
-    /// Build a `MiniJinja` environment with all loaded fragments available as
-    /// templates. The returned environment borrows from `self`, so it cannot
-    /// outlive the `TemplatingResources`.
-    ///
-    /// When `provider` is `Some`, the environment's `tool()` function resolves
-    /// canonical tool names to provider-specific body-level names. When `None`
-    /// (e.g., during `agentspec validate`), `tool()` passes the canonical name
-    /// through unchanged after verifying it is a known tool.
-    pub fn build_environment(&self, provider: Option<Provider>) -> Result<Environment<'_>> {
-        build_environment(&self.fragment_map, provider)
+    /// Build a `MiniJinja` environment for `spec` with all loaded fragments
+    /// available as templates. See [`environment::build_environment`] for the
+    /// full contract, including `script_path()` gating.
+    pub fn build_environment(
+        &self,
+        provider: Option<Provider>,
+        spec: &Spec,
+    ) -> Result<Environment<'_>> {
+        build_environment(&self.fragment_map, provider, spec)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_fragments(fragment_map: HashMap<String, String>) -> Self {
+        Self { fragment_map }
     }
 }
