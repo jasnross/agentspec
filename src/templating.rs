@@ -1,4 +1,5 @@
 mod context;
+mod environment;
 mod fragments;
 
 use std::collections::HashMap;
@@ -6,8 +7,9 @@ use std::path::Path;
 
 use anyhow::Result;
 pub use context::TemplateContext;
+use environment::build_environment;
+use fragments::load_fragments;
 pub use fragments::resolve_fragments;
-use fragments::{build_environment, load_fragments};
 use minijinja::Environment;
 
 use crate::provider::Provider;
