@@ -17,7 +17,7 @@ use crate::spec::{Spec, ToolFrontmatter};
 /// (e.g., during `agentspec validate`), `tool()` passes the canonical name
 /// through unchanged after verifying it is a known tool.
 ///
-/// `script_path()` is additionally registered when `spec` is `Spec::Skill(_)`.
+/// `script()` is additionally registered when `spec` is `Spec::Skill(_)`.
 /// Calling it from an agent, rule, or hook body produces an `UnknownFunction`
 /// render error.
 pub fn build_environment(
@@ -39,43 +39,49 @@ pub fn build_environment(
 
     if let Spec::Skill(s) = spec {
         let known_scripts: HashSet<PathBuf> = s.supporting_files.keys().cloned().collect();
-        env.add_function("script_path", move |path: String| {
-            resolve_script_path(&path, provider, &known_scripts)
+        env.add_function("script", move |name: String| {
+            resolve_script(&name, provider, &known_scripts)
         });
     }
     Ok(env)
 }
 
-fn resolve_script_path(
-    path: &str,
+fn resolve_script(
+    name: &str,
     provider: Option<Provider>,
     known_scripts: &HashSet<PathBuf>,
 ) -> Result<String, minijinja::Error> {
-    let end = Path::new(path);
+    let relative = Path::new(name);
 
-    if end.has_root() {
+    if relative.has_root()
+        || relative
+            .components()
+            .any(|c| c == std::path::Component::ParentDir)
+    {
         return Err(minijinja::Error::new(
             minijinja::ErrorKind::InvalidOperation,
-            format!("script path must be relative. got: {}", end.display()),
+            format!("script() path must be relative without '..', got: \"{name}\""),
         ));
     }
 
-    if !known_scripts.contains(end) {
+    let full_path = PathBuf::from("scripts").join(relative);
+
+    if !known_scripts.contains(&full_path) {
         return Err(minijinja::Error::new(
             minijinja::ErrorKind::InvalidOperation,
             format!(
-                "script_path(\"{path}\") references a file not found in this skill's supporting files"
+                "script(\"{name}\") references a file not found in this skill's scripts/ directory"
             ),
         ));
     }
 
     let Some(p) = provider else {
-        return Ok(path.to_owned());
+        return Ok(full_path.display().to_string());
     };
 
     Ok(match p.adapter().body_skill_root() {
-        Some(root) => format!("{}/{}", root, end.display()),
-        None => end.display().to_string(),
+        Some(root) => format!("{}/{}", root, full_path.display()),
+        None => full_path.display().to_string(),
     })
 }
 
@@ -397,12 +403,12 @@ mod tests {
     }
 
     #[test]
-    fn test_script_path_registered_for_skill_body() {
+    fn test_script_registered_for_skill_body() {
         let fragments = HashMap::new();
         let env = build_environment(&fragments, Some(Provider::Claude), &dummy_skill_spec())
             .expect("expected value");
         let template = env
-            .template_from_str(r#"{{ script_path("scripts/foo.sh") }}"#)
+            .template_from_str(r#"{{ script("foo.sh") }}"#)
             .expect("expected value");
         let out = template
             .render(minijinja::context! {})
@@ -411,12 +417,12 @@ mod tests {
     }
 
     #[test]
-    fn test_script_path_passes_through_for_cursor_skill() {
+    fn test_script_passes_through_for_cursor_skill() {
         let fragments = HashMap::new();
         let env = build_environment(&fragments, Some(Provider::Cursor), &dummy_skill_spec())
             .expect("expected value");
         let template = env
-            .template_from_str(r#"{{ script_path("scripts/foo.sh") }}"#)
+            .template_from_str(r#"{{ script("foo.sh") }}"#)
             .expect("expected value");
         let out = template
             .render(minijinja::context! {})
@@ -425,12 +431,12 @@ mod tests {
     }
 
     #[test]
-    fn test_script_path_not_registered_for_agent_body() {
+    fn test_script_not_registered_for_agent_body() {
         let fragments = HashMap::new();
         let env = build_environment(&fragments, Some(Provider::Claude), &dummy_agent_spec())
             .expect("expected value");
         let template = env
-            .template_from_str(r#"{{ script_path("scripts/foo.sh") }}"#)
+            .template_from_str(r#"{{ script("foo.sh") }}"#)
             .expect("expected value");
         let err = template
             .render(minijinja::context! {})
@@ -441,18 +447,18 @@ mod tests {
             "expected 'unknown' in error, got: {msg}"
         );
         assert!(
-            msg.contains("script_path"),
-            "expected 'script_path' in error, got: {msg}"
+            msg.contains("script"),
+            "expected 'script' in error, got: {msg}"
         );
     }
 
     #[test]
-    fn test_script_path_not_registered_for_rule_body() {
+    fn test_script_not_registered_for_rule_body() {
         let fragments = HashMap::new();
         let env = build_environment(&fragments, Some(Provider::Claude), &dummy_rule_spec())
             .expect("expected value");
         let template = env
-            .template_from_str(r#"{{ script_path("scripts/foo.sh") }}"#)
+            .template_from_str(r#"{{ script("foo.sh") }}"#)
             .expect("expected value");
         let err = template
             .render(minijinja::context! {})
@@ -463,18 +469,18 @@ mod tests {
             "expected 'unknown' in error, got: {msg}"
         );
         assert!(
-            msg.contains("script_path"),
-            "expected 'script_path' in error, got: {msg}"
+            msg.contains("script"),
+            "expected 'script' in error, got: {msg}"
         );
     }
 
     #[test]
-    fn test_script_path_not_registered_for_hook_body() {
+    fn test_script_not_registered_for_hook_body() {
         let fragments = HashMap::new();
         let env = build_environment(&fragments, Some(Provider::Claude), &dummy_hook_spec())
             .expect("expected value");
         let template = env
-            .template_from_str(r#"{{ script_path("scripts/foo.sh") }}"#)
+            .template_from_str(r#"{{ script("foo.sh") }}"#)
             .expect("expected value");
         let err = template
             .render(minijinja::context! {})
@@ -485,17 +491,17 @@ mod tests {
             "expected 'unknown' in error, got: {msg}"
         );
         assert!(
-            msg.contains("script_path"),
-            "expected 'script_path' in error, got: {msg}"
+            msg.contains("script"),
+            "expected 'script' in error, got: {msg}"
         );
     }
 
     #[test]
-    fn test_script_path_validate_mode_skill_renders() {
+    fn test_script_validate_mode_skill_renders() {
         let fragments = HashMap::new();
         let env = build_environment(&fragments, None, &dummy_skill_spec()).expect("expected value");
         let template = env
-            .template_from_str(r#"{{ script_path("scripts/foo.sh") }}"#)
+            .template_from_str(r#"{{ script("foo.sh") }}"#)
             .expect("expected value");
         let out = template
             .render(minijinja::context! {})
@@ -504,11 +510,11 @@ mod tests {
     }
 
     #[test]
-    fn test_script_path_validate_mode_agent_errors() {
+    fn test_script_validate_mode_agent_errors() {
         let fragments = HashMap::new();
         let env = build_environment(&fragments, None, &dummy_agent_spec()).expect("expected value");
         let template = env
-            .template_from_str(r#"{{ script_path("scripts/foo.sh") }}"#)
+            .template_from_str(r#"{{ script("foo.sh") }}"#)
             .expect("expected value");
         let err = template
             .render(minijinja::context! {})
@@ -519,13 +525,13 @@ mod tests {
             "expected 'unknown' in error, got: {msg}"
         );
         assert!(
-            msg.contains("script_path"),
-            "expected 'script_path' in error, got: {msg}"
+            msg.contains("script"),
+            "expected 'script' in error, got: {msg}"
         );
     }
 
     #[test]
-    fn test_script_path_missing_file_errors() {
+    fn test_script_missing_file_errors() {
         use crate::spec::SupportingFile;
         let mut supporting_files = IndexMap::new();
         supporting_files.insert(
@@ -553,15 +559,15 @@ mod tests {
         let env =
             build_environment(&fragments, Some(Provider::Claude), &spec).expect("expected value");
         let template = env
-            .template_from_str(r#"{{ script_path("scripts/missing.sh") }}"#)
+            .template_from_str(r#"{{ script("missing.sh") }}"#)
             .expect("expected value");
         let err = template
             .render(minijinja::context! {})
             .expect_err("expected render error for missing script");
         let msg = format!("{err:#}");
         assert!(
-            msg.contains("scripts/missing.sh"),
-            "error should name the missing path, got: {msg}"
+            msg.contains("missing.sh"),
+            "error should name the missing file, got: {msg}"
         );
         assert!(
             msg.contains("not found"),
@@ -570,7 +576,7 @@ mod tests {
     }
 
     #[test]
-    fn test_script_path_missing_file_errors_in_validate_mode() {
+    fn test_script_missing_file_errors_in_validate_mode() {
         use crate::spec::SupportingFile;
         let mut supporting_files = IndexMap::new();
         supporting_files.insert(
@@ -597,19 +603,99 @@ mod tests {
         let fragments = HashMap::new();
         let env = build_environment(&fragments, None, &spec).expect("expected value");
         let template = env
-            .template_from_str(r#"{{ script_path("scripts/missing.sh") }}"#)
+            .template_from_str(r#"{{ script("missing.sh") }}"#)
             .expect("expected value");
         let err = template
             .render(minijinja::context! {})
             .expect_err("expected render error for missing script in validate mode");
         let msg = format!("{err:#}");
         assert!(
-            msg.contains("scripts/missing.sh"),
-            "error should name the missing path, got: {msg}"
+            msg.contains("missing.sh"),
+            "error should name the missing file, got: {msg}"
         );
         assert!(
             msg.contains("not found"),
             "error should say 'not found', got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_script_allows_nested_path() {
+        use crate::spec::SupportingFile;
+        let mut supporting_files = IndexMap::new();
+        supporting_files.insert(
+            PathBuf::from("scripts/subdir/nested.sh"),
+            SupportingFile {
+                content: vec![],
+                mode: 0o755,
+            },
+        );
+        let spec = Spec::Skill(SkillSpec {
+            path: PathBuf::from("/tmp/skill.md"),
+            frontmatter: SkillFrontmatter {
+                id: "dummy-skill".to_string(),
+                description: None,
+                tags: None,
+                user_invocable: false,
+                agent_invocable: false,
+                execution: None,
+                capabilities: None,
+            },
+            body: String::new(),
+            supporting_files,
+        });
+        let fragments = HashMap::new();
+        let env =
+            build_environment(&fragments, Some(Provider::Claude), &spec).expect("expected value");
+        let template = env
+            .template_from_str(r#"{{ script("subdir/nested.sh") }}"#)
+            .expect("expected value");
+        let out = template
+            .render(minijinja::context! {})
+            .expect("expected value");
+        assert_eq!(out, "${CLAUDE_SKILL_DIR}/scripts/subdir/nested.sh");
+
+        let env =
+            build_environment(&fragments, Some(Provider::Cursor), &spec).expect("expected value");
+        let template = env
+            .template_from_str(r#"{{ script("subdir/nested.sh") }}"#)
+            .expect("expected value");
+        let out = template
+            .render(minijinja::context! {})
+            .expect("expected value");
+        assert_eq!(out, "scripts/subdir/nested.sh");
+    }
+
+    #[test]
+    fn test_script_rejects_parent_traversal() {
+        let fragments = HashMap::new();
+        let env = build_environment(&fragments, Some(Provider::Claude), &dummy_skill_spec())
+            .expect("expected value");
+        let template = env
+            .template_from_str(r#"{{ script("../foo.sh") }}"#)
+            .expect("expected value");
+        let err = template
+            .render(minijinja::context! {})
+            .expect_err("expected render error for parent traversal");
+        let msg = format!("{err:#}");
+        assert!(msg.contains(".."), "error should mention '..', got: {msg}");
+    }
+
+    #[test]
+    fn test_script_rejects_absolute_path() {
+        let fragments = HashMap::new();
+        let env = build_environment(&fragments, Some(Provider::Claude), &dummy_skill_spec())
+            .expect("expected value");
+        let template = env
+            .template_from_str(r#"{{ script("/etc/foo.sh") }}"#)
+            .expect("expected value");
+        let err = template
+            .render(minijinja::context! {})
+            .expect_err("expected render error for absolute path");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("relative"),
+            "error should mention 'relative', got: {msg}"
         );
     }
 

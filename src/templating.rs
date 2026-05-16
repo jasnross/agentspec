@@ -36,7 +36,7 @@ impl Templating {
 
     /// Build a `MiniJinja` environment for `spec` with all loaded fragments
     /// available as templates. See [`environment::build_environment`] for the
-    /// full contract, including `script_path()` gating.
+    /// full contract, including `script()` gating.
     pub fn build_environment(
         &self,
         provider: Option<Provider>,

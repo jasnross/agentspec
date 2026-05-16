@@ -14,7 +14,7 @@ use crate::spec::Spec;
 /// Resolve fragment references in spec bodies by rendering them through `MiniJinja`.
 ///
 /// Each spec body is treated as an inline template rendered in a per-spec
-/// environment so that spec-type-specific helpers (e.g. `script_path()` for
+/// environment so that spec-type-specific helpers (e.g. `script()` for
 /// skills) are available only where appropriate. Specs that contain no template
 /// syntax pass through unchanged. Operates on validated specs so that template
 /// resolution is decoupled from the spec loading/validation lifecycle.
@@ -427,7 +427,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_fragments_errors_for_non_skill_script_path() {
+    fn test_resolve_fragments_errors_for_non_skill_script() {
         use crate::provider::Provider;
 
         let templating = Templating::from_fragments(HashMap::new());
@@ -440,19 +440,19 @@ mod tests {
                 execution: None,
                 capabilities: None,
             },
-            body: r#"{{ script_path("scripts/foo.sh") }}"#.to_owned(),
+            body: r#"{{ script("foo.sh") }}"#.to_owned(),
         })];
 
         let err = resolve_fragments(specs, &templating, Some(Provider::Claude), &empty_context())
-            .expect_err("expected render error for script_path in agent body");
+            .expect_err("expected render error for script() in agent body");
         let msg = format!("{err:#}");
         assert!(
             msg.contains("failed to render template in"),
             "expected with_context prefix in error, got: {msg}"
         );
         assert!(
-            msg.contains("script_path"),
-            "expected 'script_path' in error, got: {msg}"
+            msg.contains("script"),
+            "expected 'script' in error, got: {msg}"
         );
     }
 }
