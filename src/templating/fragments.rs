@@ -90,6 +90,8 @@ pub fn load_fragments(fragments_dir: &Path) -> Result<HashMap<String, String>> {
 mod tests {
     use std::fs;
 
+    use indexmap::IndexMap;
+
     use super::*;
     use crate::spec::{
         AgentFrontmatter, AgentSpec, RuleFrontmatter, RuleSpec, SkillFrontmatter, SkillSpec,
@@ -218,7 +220,7 @@ mod tests {
                     capabilities: None,
                 },
                 body: String::new(),
-                supporting_files: Vec::new(),
+                supporting_files: IndexMap::new(),
             }),
             Spec::Rule(RuleSpec {
                 path: "my-rule.md".into(),
@@ -388,7 +390,7 @@ mod tests {
                     capabilities: None,
                 },
                 body: String::new(),
-                supporting_files: Vec::new(),
+                supporting_files: IndexMap::new(),
             }),
         ];
 
@@ -414,7 +416,7 @@ mod tests {
                 capabilities: None,
             },
             body: "Agent: {{ specs.agent.test_agent.name }}".to_owned(),
-            supporting_files: Vec::new(),
+            supporting_files: IndexMap::new(),
         })];
 
         let resolved = resolve_fragments(specs, &templating, None, &ctx).expect("expected value");

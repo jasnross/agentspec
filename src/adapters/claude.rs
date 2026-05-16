@@ -677,11 +677,11 @@ fn adapt_skill_spec(
         content,
     )];
 
-    for sf in spec.supporting_files {
+    for (rel_path, sf) in spec.supporting_files {
         files.push(GeneratedFile::binary(
             Provider::Claude,
             FileKind::Skills,
-            skill_dir.join(&sf.relative_path),
+            skill_dir.join(&rel_path),
             sf.content,
             Some(sf.mode),
         ));
@@ -1020,7 +1020,7 @@ mod tests {
                 tags: None,
             },
             body: String::new(),
-            supporting_files: Vec::new(),
+            supporting_files: IndexMap::new(),
         }
     }
 

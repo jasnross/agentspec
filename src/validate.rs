@@ -140,6 +140,8 @@ pub fn validate_semantics(specs: &[Spec], presets: &ProviderPresetsMap) -> Vec<S
 mod tests {
     use std::path::PathBuf;
 
+    use indexmap::IndexMap;
+
     use super::*;
     use crate::presets::{ProviderPresets, ProviderPresetsMap};
     use crate::spec::{
@@ -176,7 +178,7 @@ mod tests {
                 capabilities: None,
             },
             body: body.to_string(),
-            supporting_files: vec![],
+            supporting_files: IndexMap::new(),
         })
     }
 
@@ -205,7 +207,7 @@ mod tests {
                 tags: None,
             },
             body: String::new(),
-            supporting_files: Vec::new(),
+            supporting_files: IndexMap::new(),
         })
     }
 

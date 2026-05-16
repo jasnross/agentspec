@@ -1,5 +1,5 @@
-use std::collections::HashMap;
-use std::path::Path;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use minijinja::Environment;
@@ -37,23 +37,20 @@ pub fn build_environment(
 
     env.add_function("tool", move |name: String| resolve_tool(&name, provider));
 
-    if matches!(spec, Spec::Skill(_)) {
+    if let Spec::Skill(s) = spec {
+        let known_scripts: HashSet<PathBuf> = s.supporting_files.keys().cloned().collect();
         env.add_function("script_path", move |path: String| {
-            resolve_script_path(&path, provider)
+            resolve_script_path(&path, provider, &known_scripts)
         });
     }
-
     Ok(env)
 }
 
 fn resolve_script_path(
-    path: &String,
+    path: &str,
     provider: Option<Provider>,
+    known_scripts: &HashSet<PathBuf>,
 ) -> Result<String, minijinja::Error> {
-    let Some(p) = provider else {
-        return Ok(path.to_owned());
-    };
-
     let end = Path::new(path);
 
     if end.has_root() {
@@ -62,6 +59,19 @@ fn resolve_script_path(
             format!("script path must be relative. got: {}", end.display()),
         ));
     }
+
+    if !known_scripts.contains(end) {
+        return Err(minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!(
+                "script_path(\"{path}\") references a file not found in this skill's supporting files"
+            ),
+        ));
+    }
+
+    let Some(p) = provider else {
+        return Ok(path.to_owned());
+    };
 
     Ok(match p.adapter().body_skill_root() {
         Some(root) => format!("{}/{}", root, end.display()),
@@ -92,6 +102,8 @@ mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
 
+    use indexmap::IndexMap;
+
     use super::*;
     use crate::provider::Provider;
     use crate::spec::{
@@ -114,6 +126,15 @@ mod tests {
     }
 
     fn dummy_skill_spec() -> Spec {
+        use crate::spec::SupportingFile;
+        let mut supporting_files = IndexMap::new();
+        supporting_files.insert(
+            PathBuf::from("scripts/foo.sh"),
+            SupportingFile {
+                content: vec![],
+                mode: 0o755,
+            },
+        );
         Spec::Skill(SkillSpec {
             path: PathBuf::from("/tmp/skill.md"),
             frontmatter: SkillFrontmatter {
@@ -126,7 +147,7 @@ mod tests {
                 capabilities: None,
             },
             body: String::new(),
-            supporting_files: Vec::new(),
+            supporting_files,
         })
     }
 
@@ -155,7 +176,7 @@ mod tests {
                 tags: None,
             },
             body: String::new(),
-            supporting_files: Vec::new(),
+            supporting_files: IndexMap::new(),
         })
     }
 
@@ -500,6 +521,95 @@ mod tests {
         assert!(
             msg.contains("script_path"),
             "expected 'script_path' in error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_script_path_missing_file_errors() {
+        use crate::spec::SupportingFile;
+        let mut supporting_files = IndexMap::new();
+        supporting_files.insert(
+            PathBuf::from("scripts/exists.sh"),
+            SupportingFile {
+                content: vec![],
+                mode: 0o755,
+            },
+        );
+        let spec = Spec::Skill(SkillSpec {
+            path: PathBuf::from("/tmp/skill.md"),
+            frontmatter: SkillFrontmatter {
+                id: "dummy-skill".to_string(),
+                description: None,
+                tags: None,
+                user_invocable: false,
+                agent_invocable: false,
+                execution: None,
+                capabilities: None,
+            },
+            body: String::new(),
+            supporting_files,
+        });
+        let fragments = HashMap::new();
+        let env =
+            build_environment(&fragments, Some(Provider::Claude), &spec).expect("expected value");
+        let template = env
+            .template_from_str(r#"{{ script_path("scripts/missing.sh") }}"#)
+            .expect("expected value");
+        let err = template
+            .render(minijinja::context! {})
+            .expect_err("expected render error for missing script");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("scripts/missing.sh"),
+            "error should name the missing path, got: {msg}"
+        );
+        assert!(
+            msg.contains("not found"),
+            "error should say 'not found', got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_script_path_missing_file_errors_in_validate_mode() {
+        use crate::spec::SupportingFile;
+        let mut supporting_files = IndexMap::new();
+        supporting_files.insert(
+            PathBuf::from("scripts/exists.sh"),
+            SupportingFile {
+                content: vec![],
+                mode: 0o755,
+            },
+        );
+        let spec = Spec::Skill(SkillSpec {
+            path: PathBuf::from("/tmp/skill.md"),
+            frontmatter: SkillFrontmatter {
+                id: "dummy-skill".to_string(),
+                description: None,
+                tags: None,
+                user_invocable: false,
+                agent_invocable: false,
+                execution: None,
+                capabilities: None,
+            },
+            body: String::new(),
+            supporting_files,
+        });
+        let fragments = HashMap::new();
+        let env = build_environment(&fragments, None, &spec).expect("expected value");
+        let template = env
+            .template_from_str(r#"{{ script_path("scripts/missing.sh") }}"#)
+            .expect("expected value");
+        let err = template
+            .render(minijinja::context! {})
+            .expect_err("expected render error for missing script in validate mode");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("scripts/missing.sh"),
+            "error should name the missing path, got: {msg}"
+        );
+        assert!(
+            msg.contains("not found"),
+            "error should say 'not found', got: {msg}"
         );
     }
 

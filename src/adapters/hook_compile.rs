@@ -84,11 +84,11 @@ fn build_hook_script_files(provider: Provider, specs: &[&HookSpec]) -> Vec<Gener
     first
         .supporting_files
         .iter()
-        .map(|sf| {
+        .map(|(rel_path, sf)| {
             GeneratedFile::binary(
                 provider,
                 FileKind::Hooks,
-                Path::new("hooks").join(&sf.relative_path),
+                Path::new("hooks").join(rel_path),
                 sf.content.clone(),
                 Some(sf.mode),
             )
@@ -243,6 +243,8 @@ fn hook_command_anchor(
 
 #[cfg(test)]
 mod tests {
+    use indexmap::IndexMap;
+
     use super::*;
     use crate::spec::HookFrontmatter;
 
@@ -259,7 +261,7 @@ mod tests {
                 tags: None,
             },
             body: String::new(),
-            supporting_files: Vec::new(),
+            supporting_files: IndexMap::new(),
         }
     }
 

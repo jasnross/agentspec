@@ -559,11 +559,11 @@ fn adapt_skill_spec(spec: SkillSpec, cfg: Option<&AdapterConfig>) -> Result<Vec<
         content,
     )];
 
-    for sf in spec.supporting_files {
+    for (rel_path, sf) in spec.supporting_files {
         files.push(GeneratedFile::binary(
             Provider::Cursor,
             FileKind::Skills,
-            skill_dir.join(&sf.relative_path),
+            skill_dir.join(&rel_path),
             sf.content,
             Some(sf.mode),
         ));
@@ -632,6 +632,8 @@ fn build_cursor_hooks_json(entries: &[EmittedHookEntry]) -> Result<String> {
 mod tests {
     use std::collections::HashMap;
 
+    use indexmap::IndexMap;
+
     use super::*;
     use crate::spec::{
         AgentFrontmatter, AgentSpec, RuleFrontmatter, RuleSpec, SkillFrontmatter, SkillSpec,
@@ -666,7 +668,7 @@ mod tests {
                 tags: None,
             },
             body: String::new(),
-            supporting_files: Vec::new(),
+            supporting_files: IndexMap::new(),
         }
     }
 
@@ -744,7 +746,7 @@ mod tests {
                 agent_invocable: true,
             },
             body: "Body.".to_string(),
-            supporting_files: vec![],
+            supporting_files: IndexMap::new(),
         });
 
         let files = compile_one(spec, Some(&cfg));

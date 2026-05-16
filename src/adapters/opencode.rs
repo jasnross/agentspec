@@ -334,11 +334,11 @@ fn adapt_skill_spec(
             content,
         ));
 
-        for sf in supporting_files {
+        for (rel_path, sf) in supporting_files {
             files.push(GeneratedFile::binary(
                 Provider::OpenCode,
                 FileKind::Skills,
-                skill_dir.join(&sf.relative_path),
+                skill_dir.join(&rel_path),
                 sf.content,
                 Some(sf.mode),
             ));
@@ -802,7 +802,7 @@ mod tests {
                 agent_invocable: false,
             },
             body: "Body.".to_string(),
-            supporting_files: vec![],
+            supporting_files: IndexMap::new(),
         });
 
         let files = compile_one(spec, Some(&cfg));

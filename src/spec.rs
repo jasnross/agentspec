@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug)]
@@ -84,8 +85,9 @@ pub struct SkillSpec {
     pub frontmatter: SkillFrontmatter,
     /// Spec body (Markdown content after frontmatter)
     pub body: String,
-    /// Additional files bundled with the skill
-    pub supporting_files: Vec<SupportingFile>,
+    /// Additional files bundled with the skill, keyed by path relative to the
+    /// skill directory.
+    pub supporting_files: IndexMap<PathBuf, SupportingFile>,
 }
 
 #[derive(Clone, Debug)]
@@ -106,11 +108,11 @@ pub struct HookSpec {
     pub frontmatter: HookFrontmatter,
     /// Always empty for hooks; the empty-body validation check is exempt for this variant.
     pub body: String,
-    /// Files under `spec/hooks/scripts/` (recursive), `relative_path` rooted at
+    /// Files under `spec/hooks/scripts/` (recursive), keyed by path relative to
     /// the hooks dir (so `scripts/init.sh`). Every `HookSpec` produced from one
-    /// `hooks.toml` carries the same list — emission is deduplicated by emitting
+    /// `hooks.toml` carries the same map — emission is deduplicated by emitting
     /// from a single provider-level synthesis pass, not per spec.
-    pub supporting_files: Vec<SupportingFile>,
+    pub supporting_files: IndexMap<PathBuf, SupportingFile>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -264,8 +266,6 @@ pub enum ToolFrontmatter {
 
 #[derive(Clone, Debug)]
 pub struct SupportingFile {
-    /// Path relative to the skill directory
-    pub relative_path: PathBuf,
     /// Raw file content
     pub content: Vec<u8>,
     /// Standard rwx permission bits (mode & 0o0777) sourced from the
@@ -309,7 +309,7 @@ mod tests {
                 capabilities: None,
             },
             body: String::new(),
-            supporting_files: Vec::new(),
+            supporting_files: IndexMap::new(),
         })
     }
 
@@ -338,7 +338,7 @@ mod tests {
                 tags: None,
             },
             body: String::new(),
-            supporting_files: Vec::new(),
+            supporting_files: IndexMap::new(),
         })
     }
 

@@ -432,7 +432,7 @@ fn load_single_skill(
     // Collect supporting files (non-.md files anywhere under the skill directory).
     // WalkDir recurses into subdirectories (e.g., scripts/), preserving the path
     // relative to the skill root so adapters emit the correct nested layout.
-    let mut supporting_files = Vec::new();
+    let mut supporting_files = IndexMap::new();
     for entry in WalkDir::new(skill_dir)
         .into_iter()
         .filter_entry(|e| !should_ignore_entry(e, anchor, ignore, report))
@@ -469,13 +469,15 @@ fn load_single_skill(
             .with_context(|| format!("failed to stat {}", entry_path.display()))?;
         let mode = metadata.permissions().mode() & 0o0777;
 
-        supporting_files.push(SupportingFile {
+        supporting_files.insert(
             relative_path,
-            content: file_content,
-            mode,
-        });
+            SupportingFile {
+                content: file_content,
+                mode,
+            },
+        );
     }
-    supporting_files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+    supporting_files.sort_keys();
 
     Ok(Some(Spec::Skill(SkillSpec {
         path: md_path,
@@ -786,13 +788,13 @@ fn collect_hook_scripts(
     ignore: &IgnoreMatcher,
     anchor: &Path,
     report: &mut LoadReport,
-) -> Result<Vec<SupportingFile>> {
+) -> Result<IndexMap<PathBuf, SupportingFile>> {
     if !scripts_dir.is_dir() {
-        return Ok(Vec::new());
+        return Ok(IndexMap::new());
     }
 
     let hooks_dir = scripts_dir.parent().unwrap_or(scripts_dir);
-    let mut files = Vec::new();
+    let mut files = IndexMap::new();
     for entry in WalkDir::new(scripts_dir)
         .into_iter()
         .filter_entry(|e| !should_ignore_entry(e, anchor, ignore, report))
@@ -837,13 +839,12 @@ fn collect_hook_scripts(
         let metadata = fs::metadata(entry_path)
             .with_context(|| format!("failed to stat {}", entry_path.display()))?;
         let mode = metadata.permissions().mode() & 0o0777;
-        files.push(SupportingFile {
-            relative_path: relative_path.to_path_buf(),
-            content,
-            mode,
-        });
+        files.insert(
+            relative_path.to_path_buf(),
+            SupportingFile { content, mode },
+        );
     }
-    files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+    files.sort_keys();
     Ok(files)
 }
 
@@ -957,10 +958,17 @@ Agent body.
         assert_eq!(s.frontmatter.id, "my-skill");
         assert_eq!(s.supporting_files.len(), 1);
         assert_eq!(
-            s.supporting_files[0].relative_path,
+            *s.supporting_files.keys().next().expect("expected value"),
             std::path::PathBuf::from("scripts/helper.sh")
         );
-        assert_eq!(s.supporting_files[0].mode, 0o755);
+        assert_eq!(
+            s.supporting_files
+                .values()
+                .next()
+                .expect("expected value")
+                .mode,
+            0o755
+        );
     }
 
     #[test]
@@ -991,7 +999,14 @@ Agent body.
             panic!("expected Skill variant")
         };
         assert_eq!(s.supporting_files.len(), 1);
-        assert_eq!(s.supporting_files[0].mode, 0o600);
+        assert_eq!(
+            s.supporting_files
+                .values()
+                .next()
+                .expect("expected value")
+                .mode,
+            0o600
+        );
     }
 
     #[test]
@@ -1209,11 +1224,7 @@ Agent body.
         let Spec::Skill(ref s) = specs[0] else {
             panic!("expected Skill variant")
         };
-        let supporting_paths: Vec<_> = s
-            .supporting_files
-            .iter()
-            .map(|f| f.relative_path.clone())
-            .collect();
+        let supporting_paths: Vec<_> = s.supporting_files.keys().cloned().collect();
         assert_eq!(supporting_paths, vec![PathBuf::from("helper.sh")]);
         assert_eq!(report.ignored.len(), 1);
         assert_eq!(report.pattern_hits, vec![1]);

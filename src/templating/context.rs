@@ -144,6 +144,8 @@ fn normalize_key(id: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use indexmap::IndexMap;
+
     use super::*;
     use crate::spec::{
         AgentFrontmatter, AgentSpec, RuleFrontmatter, RuleSpec, SkillFrontmatter, SkillSpec,
@@ -180,7 +182,7 @@ mod tests {
                 capabilities: None,
             },
             body: String::new(),
-            supporting_files: Vec::new(),
+            supporting_files: IndexMap::new(),
         })
     }
 
