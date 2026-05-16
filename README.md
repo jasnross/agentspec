@@ -499,9 +499,9 @@ On each sync, the manifest enables:
 
 When `--force` overwrites a user-owned file, the original is backed up as `<filename>.bak.<timestamp>` in the same directory before being replaced.
 
-## Removing
+## Remove
 
-`agentspec remove` reverses a prior `sync`. For every configured provider it deletes manifest-tracked files in the tool's config directory, strips `_agentspec_id`-tagged entries from Claude's `settings.json` and Cursor's `hooks.json` (preserving comments and user-authored entries via the same CST-aware merge layer used by sync), filters prefix-matched paths from OpenCode's `opencode.json` `instructions[]`, and rmdir's emptied destination directories — all without ever deleting the host config files. Host file paths follow the configured sync mode: `~/.claude/settings.json`, `~/.cursor/hooks.json`, and `~/.config/opencode/opencode.json` for User mode; the project-local equivalents (`.claude/`, `.cursor/`, `.opencode/`) for Project mode.
+`agentspec remove` reverses a prior `sync` by removing all agentspec-tracked files and configuration.
 
 ```sh
 agentspec remove                       # every provider configured under [sync.<provider>]
@@ -509,25 +509,8 @@ agentspec remove --provider claude     # narrow to one provider (repeatable / co
 agentspec remove --dry-run             # preview every file/manifest deletion without writing
 ```
 
-### Worked example
-
-```sh
-# Sync writes provider files plus manifest entries.
-agentspec sync --provider claude
-ls ~/.claude/agents/                   # test-agent.md, .agentspec-manifest.json, ...
-
-# Reverse the sync.
-agentspec remove --provider claude
-ls ~/.claude/                          # the parent dir survives; agents/ is gone
-cat ~/.claude/settings.json            # any user-authored entries (and comments) remain
-```
-
 ### What is not removed
 
 - **`generated/<provider>/`** — `compile` output is independent of `sync`; `remove` reverses `sync`, not `compile`.
 - **`.bak.<timestamp>` files** — backups created when `sync --force` overwrites a user-owned file are not in the manifest. Clean them up by hand if you no longer need them: `find ~/.claude -name '*.bak.*' -delete`.
 - **Files agentspec did not write** — anything not recorded in `.agentspec-manifest.json` is treated as user-owned and left alone, even if it looks like agentspec output. The manifest is the source of truth.
-
-### Trust model
-
-`remove` matches `sync`'s posture: there is no interactive confirmation prompt. Use `--dry-run` to preview every action — files that would be deleted, manifests that would be removed, dest dirs that would be rmdir'd, and a "M user-authored entries remain in `<file>`" line for each host config that still has user-authored content (the line is suppressed when nothing user-authored remains, so silence on a clean tidy is expected) — before running for real.
