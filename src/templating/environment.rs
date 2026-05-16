@@ -19,7 +19,8 @@ use crate::spec::{Spec, ToolFrontmatter};
 ///
 /// `script()` is additionally registered when `spec` is `Spec::Skill(_)`.
 /// Calling it from an agent, rule, or hook body produces an `UnknownFunction`
-/// render error.
+/// render error. (`Lenient` undefined behavior applies to variable lookups only;
+/// unknown function calls raise `UnknownFunction` regardless.)
 pub fn build_environment(
     fragments: &HashMap<String, String>,
     provider: Option<Provider>,
@@ -75,13 +76,11 @@ fn resolve_script(
         ));
     }
 
-    let Some(p) = provider else {
-        return Ok(full_path.display().to_string());
-    };
-
-    Ok(match p.adapter().body_skill_root() {
-        Some(root) => format!("{}/{}", root, full_path.display()),
-        None => full_path.display().to_string(),
+    // Use explicit '/' so skill content always contains POSIX paths regardless of host OS.
+    let posix_path = format!("scripts/{name}");
+    Ok(match provider.and_then(|p| p.adapter().body_skill_root()) {
+        Some(root) => format!("{root}/{posix_path}"),
+        None => posix_path,
     })
 }
 
@@ -114,7 +113,7 @@ mod tests {
     use crate::provider::Provider;
     use crate::spec::{
         AgentFrontmatter, AgentSpec, HookEvent, HookFrontmatter, HookSpec, RuleFrontmatter,
-        RuleSpec, SkillFrontmatter, SkillSpec,
+        RuleSpec, SkillFrontmatter, SkillSpec, SupportingFile,
     };
 
     fn dummy_agent_spec() -> Spec {
@@ -132,15 +131,20 @@ mod tests {
     }
 
     fn dummy_skill_spec() -> Spec {
-        use crate::spec::SupportingFile;
+        dummy_skill_spec_with_files(&["foo.sh"])
+    }
+
+    fn dummy_skill_spec_with_files(names: &[&str]) -> Spec {
         let mut supporting_files = IndexMap::new();
-        supporting_files.insert(
-            PathBuf::from("scripts/foo.sh"),
-            SupportingFile {
-                content: vec![],
-                mode: 0o755,
-            },
-        );
+        for name in names {
+            supporting_files.insert(
+                PathBuf::from(format!("scripts/{name}")),
+                SupportingFile {
+                    content: vec![],
+                    mode: 0o755,
+                },
+            );
+        }
         Spec::Skill(SkillSpec {
             path: PathBuf::from("/tmp/skill.md"),
             frontmatter: SkillFrontmatter {
@@ -404,29 +408,21 @@ mod tests {
 
     #[test]
     fn test_script_registered_for_skill_body() {
-        let fragments = HashMap::new();
-        let env = build_environment(&fragments, Some(Provider::Claude), &dummy_skill_spec())
-            .expect("expected value");
-        let template = env
-            .template_from_str(r#"{{ script("foo.sh") }}"#)
-            .expect("expected value");
-        let out = template
-            .render(minijinja::context! {})
-            .expect("expected value");
+        let out = render_body(
+            r#"{{ script("foo.sh") }}"#,
+            Some(Provider::Claude),
+            &dummy_skill_spec(),
+        );
         assert_eq!(out, "${CLAUDE_SKILL_DIR}/scripts/foo.sh");
     }
 
     #[test]
     fn test_script_passes_through_for_cursor_skill() {
-        let fragments = HashMap::new();
-        let env = build_environment(&fragments, Some(Provider::Cursor), &dummy_skill_spec())
-            .expect("expected value");
-        let template = env
-            .template_from_str(r#"{{ script("foo.sh") }}"#)
-            .expect("expected value");
-        let out = template
-            .render(minijinja::context! {})
-            .expect("expected value");
+        let out = render_body(
+            r#"{{ script("foo.sh") }}"#,
+            Some(Provider::Cursor),
+            &dummy_skill_spec(),
+        );
         assert_eq!(out, "scripts/foo.sh");
     }
 
@@ -498,14 +494,7 @@ mod tests {
 
     #[test]
     fn test_script_validate_mode_skill_renders() {
-        let fragments = HashMap::new();
-        let env = build_environment(&fragments, None, &dummy_skill_spec()).expect("expected value");
-        let template = env
-            .template_from_str(r#"{{ script("foo.sh") }}"#)
-            .expect("expected value");
-        let out = template
-            .render(minijinja::context! {})
-            .expect("expected value");
+        let out = render_body(r#"{{ script("foo.sh") }}"#, None, &dummy_skill_spec());
         assert_eq!(out, "scripts/foo.sh");
     }
 
@@ -532,29 +521,7 @@ mod tests {
 
     #[test]
     fn test_script_missing_file_errors() {
-        use crate::spec::SupportingFile;
-        let mut supporting_files = IndexMap::new();
-        supporting_files.insert(
-            PathBuf::from("scripts/exists.sh"),
-            SupportingFile {
-                content: vec![],
-                mode: 0o755,
-            },
-        );
-        let spec = Spec::Skill(SkillSpec {
-            path: PathBuf::from("/tmp/skill.md"),
-            frontmatter: SkillFrontmatter {
-                id: "dummy-skill".to_string(),
-                description: None,
-                tags: None,
-                user_invocable: false,
-                agent_invocable: false,
-                execution: None,
-                capabilities: None,
-            },
-            body: String::new(),
-            supporting_files,
-        });
+        let spec = dummy_skill_spec_with_files(&["exists.sh"]);
         let fragments = HashMap::new();
         let env =
             build_environment(&fragments, Some(Provider::Claude), &spec).expect("expected value");
@@ -577,29 +544,7 @@ mod tests {
 
     #[test]
     fn test_script_missing_file_errors_in_validate_mode() {
-        use crate::spec::SupportingFile;
-        let mut supporting_files = IndexMap::new();
-        supporting_files.insert(
-            PathBuf::from("scripts/exists.sh"),
-            SupportingFile {
-                content: vec![],
-                mode: 0o755,
-            },
-        );
-        let spec = Spec::Skill(SkillSpec {
-            path: PathBuf::from("/tmp/skill.md"),
-            frontmatter: SkillFrontmatter {
-                id: "dummy-skill".to_string(),
-                description: None,
-                tags: None,
-                user_invocable: false,
-                agent_invocable: false,
-                execution: None,
-                capabilities: None,
-            },
-            body: String::new(),
-            supporting_files,
-        });
+        let spec = dummy_skill_spec_with_files(&["exists.sh"]);
         let fragments = HashMap::new();
         let env = build_environment(&fragments, None, &spec).expect("expected value");
         let template = env
@@ -621,48 +566,18 @@ mod tests {
 
     #[test]
     fn test_script_allows_nested_path() {
-        use crate::spec::SupportingFile;
-        let mut supporting_files = IndexMap::new();
-        supporting_files.insert(
-            PathBuf::from("scripts/subdir/nested.sh"),
-            SupportingFile {
-                content: vec![],
-                mode: 0o755,
-            },
+        let spec = dummy_skill_spec_with_files(&["subdir/nested.sh"]);
+        let out = render_body(
+            r#"{{ script("subdir/nested.sh") }}"#,
+            Some(Provider::Claude),
+            &spec,
         );
-        let spec = Spec::Skill(SkillSpec {
-            path: PathBuf::from("/tmp/skill.md"),
-            frontmatter: SkillFrontmatter {
-                id: "dummy-skill".to_string(),
-                description: None,
-                tags: None,
-                user_invocable: false,
-                agent_invocable: false,
-                execution: None,
-                capabilities: None,
-            },
-            body: String::new(),
-            supporting_files,
-        });
-        let fragments = HashMap::new();
-        let env =
-            build_environment(&fragments, Some(Provider::Claude), &spec).expect("expected value");
-        let template = env
-            .template_from_str(r#"{{ script("subdir/nested.sh") }}"#)
-            .expect("expected value");
-        let out = template
-            .render(minijinja::context! {})
-            .expect("expected value");
         assert_eq!(out, "${CLAUDE_SKILL_DIR}/scripts/subdir/nested.sh");
-
-        let env =
-            build_environment(&fragments, Some(Provider::Cursor), &spec).expect("expected value");
-        let template = env
-            .template_from_str(r#"{{ script("subdir/nested.sh") }}"#)
-            .expect("expected value");
-        let out = template
-            .render(minijinja::context! {})
-            .expect("expected value");
+        let out = render_body(
+            r#"{{ script("subdir/nested.sh") }}"#,
+            Some(Provider::Cursor),
+            &spec,
+        );
         assert_eq!(out, "scripts/subdir/nested.sh");
     }
 

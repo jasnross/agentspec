@@ -202,7 +202,7 @@ pub trait Adapter: std::fmt::Debug + Send + Sync {
     fn body_spec_name(&self, spec: &Spec, cfg: Option<&AdapterConfig>) -> String;
 
     /// The root directory marker for skills to reference their path. Used for including
-    /// references to scripts in skill content.
+    /// references to scripts in skill content. Implementations must not include a trailing slash.
     fn body_skill_root(&self) -> Option<&'static str>;
 
     /// Whether this provider emits hook entries.
