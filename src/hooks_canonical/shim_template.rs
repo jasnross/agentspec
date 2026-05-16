@@ -107,10 +107,12 @@ USER_OUTPUT=$(printf '%s' "$CANONICAL" | "$1")
 USER_EXIT=$?
 
 if [ -n "$USER_OUTPUT" ]; then
-    printf '%s' "$USER_OUTPUT" | jq -c '__OUTPUT_JQ__'
+    exec 9>&1
+    JQ_ERR=$(printf '%s' "$USER_OUTPUT" | jq -c '__OUTPUT_JQ__' 2>&1 1>&9)
     JQ_OUTPUT_EXIT=$?
+    exec 9>&-
     if [ "$JQ_OUTPUT_EXIT" -ne 0 ]; then
-        printf 'agentspec: output translation failed (jq exited %s); user script emitted output that is not valid canonical JSON\n' "$JQ_OUTPUT_EXIT" >&2
+        printf 'agentspec: output translation failed (jq exited %s): %s\n' "$JQ_OUTPUT_EXIT" "$JQ_ERR" >&2
         exit 1
     fi
 fi
@@ -143,16 +145,14 @@ fn input_jq_program(provider: ProviderName, event: HookEvent) -> &'static str {
     }
 }
 
+const CANONICAL_OUTPUT_VALIDATE: &str = r#"(if type != "object" then error("expected JSON object, got " + type) else . end) | (([keys[] | select(. as $k | ["schema_version","permission_decision","decision_reason","user_facing_message","additional_context","updated_input"] | index($k) | not)]) as $u | if ($u | length) > 0 then error("unrecognized canonical output fields: " + ($u | join(", "))) else . end) | "#;
+
 fn output_jq_program(provider: ProviderName, event: HookEvent) -> Cow<'static, str> {
-    match provider {
-        ProviderName::Claude => {
-            Cow::Owned(CLAUDE_OUT.replace("__EVENT_PASCAL__", event.pascal_case()))
-        }
-        // Cursor's output program is event-uniform — no substitution
-        // needed, so we can return the `'static` constant as-is and avoid
-        // the allocation.
-        ProviderName::Cursor => Cow::Borrowed(CURSOR_OUT),
-    }
+    let transform = match provider {
+        ProviderName::Claude => CLAUDE_OUT.replace("__EVENT_PASCAL__", event.pascal_case()),
+        ProviderName::Cursor => CURSOR_OUT.to_string(),
+    };
+    Cow::Owned(format!("{CANONICAL_OUTPUT_VALIDATE}{transform}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -1028,6 +1028,177 @@ printf '%s' '{"permission_decision":"deny","decision_reason":"blocked"}'
                     "output parity mismatch for {provider:?}/{event:?}:\n  rust={rust_value}\n  jq={jq_value}",
                 );
             }
+        }
+    }
+
+    #[test]
+    fn e2e_provider_shaped_output_rejected() {
+        if !jq_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shim = write_shim(dir.path(), ProviderName::Claude, HookEvent::PreToolUse);
+        let user = write_user_script(
+            dir.path(),
+            "user.sh",
+            r#"#!/usr/bin/env sh
+cat > /dev/null
+printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"}}'
+"#,
+        );
+        let provider_stdin = r#"{"session_id":"s","cwd":"/p","tool_name":"Bash","tool_input":{}}"#;
+        let (code, _stdout, stderr) = exec_shim_with_stdin(&shim, &user, provider_stdin);
+        assert_eq!(code, 1, "stderr={stderr}");
+        assert!(stderr.contains("unrecognized"), "stderr={stderr}");
+        assert!(stderr.contains("hookSpecificOutput"), "stderr={stderr}");
+    }
+
+    #[test]
+    fn e2e_typo_in_canonical_field_rejected() {
+        if !jq_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shim = write_shim(dir.path(), ProviderName::Claude, HookEvent::PreToolUse);
+        let user = write_user_script(
+            dir.path(),
+            "user.sh",
+            r#"#!/usr/bin/env sh
+cat > /dev/null
+printf '%s' '{"permmission_decision":"deny"}'
+"#,
+        );
+        let provider_stdin = r#"{"session_id":"s","cwd":"/p","tool_name":"Bash","tool_input":{}}"#;
+        let (code, _stdout, stderr) = exec_shim_with_stdin(&shim, &user, provider_stdin);
+        assert_eq!(code, 1, "stderr={stderr}");
+        assert!(stderr.contains("unrecognized"), "stderr={stderr}");
+        assert!(stderr.contains("permmission_decision"), "stderr={stderr}");
+    }
+
+    #[test]
+    fn e2e_non_object_output_rejected() {
+        if !jq_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shim = write_shim(dir.path(), ProviderName::Claude, HookEvent::PreToolUse);
+        let user = write_user_script(
+            dir.path(),
+            "user.sh",
+            "#!/usr/bin/env sh\ncat > /dev/null\nprintf '%s' '[\"deny\"]'\n",
+        );
+        let provider_stdin = r#"{"session_id":"s","cwd":"/p","tool_name":"Bash","tool_input":{}}"#;
+        let (code, _stdout, stderr) = exec_shim_with_stdin(&shim, &user, provider_stdin);
+        assert_eq!(code, 1, "stderr={stderr}");
+        assert!(stderr.contains("expected JSON object"), "stderr={stderr}");
+    }
+
+    #[test]
+    fn e2e_valid_canonical_output_passes_validation() {
+        if !jq_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shim = write_shim(dir.path(), ProviderName::Cursor, HookEvent::PreToolUse);
+        let user = write_user_script(
+            dir.path(),
+            "user.sh",
+            r#"#!/usr/bin/env sh
+cat > /dev/null
+printf '%s' '{"permission_decision":"deny","decision_reason":"blocked"}'
+"#,
+        );
+        let provider_stdin = r#"{"conversation_id":"c","workspace_roots":["/p"],"tool_name":"shell","tool_input":{}}"#;
+        let (code, stdout, stderr) = exec_shim_with_stdin(&shim, &user, provider_stdin);
+        assert_eq!(code, 0, "stderr={stderr}");
+        let parsed: Value = serde_json::from_str(stdout.trim()).expect("parse output");
+        assert_eq!(parsed["permission"], "deny");
+        assert_eq!(parsed["agent_message"], "blocked");
+    }
+
+    #[test]
+    fn e2e_empty_output_skips_validation() {
+        if !jq_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shim = write_shim(dir.path(), ProviderName::Claude, HookEvent::PreToolUse);
+        let user = write_user_script(
+            dir.path(),
+            "user.sh",
+            "#!/usr/bin/env sh\ncat > /dev/null\n",
+        );
+        let provider_stdin = r#"{"session_id":"s","cwd":"/p","tool_name":"Bash","tool_input":{}}"#;
+        let (code, stdout, stderr) = exec_shim_with_stdin(&shim, &user, provider_stdin);
+        assert_eq!(code, 0, "stderr={stderr}");
+        assert!(stdout.is_empty(), "stdout should be empty: {stdout}");
+    }
+
+    #[test]
+    fn e2e_schema_version_accepted() {
+        if !jq_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shim = write_shim(dir.path(), ProviderName::Claude, HookEvent::PreToolUse);
+        let user = write_user_script(
+            dir.path(),
+            "user.sh",
+            r#"#!/usr/bin/env sh
+cat > /dev/null
+printf '%s' '{"schema_version":"1.0.0","permission_decision":"deny"}'
+"#,
+        );
+        let provider_stdin = r#"{"session_id":"s","cwd":"/p","tool_name":"Bash","tool_input":{}}"#;
+        let (code, _stdout, stderr) = exec_shim_with_stdin(&shim, &user, provider_stdin);
+        assert_eq!(code, 0, "stderr={stderr}");
+    }
+
+    #[test]
+    fn parity_output_rejection_rust_vs_jq() {
+        if !jq_available() {
+            return;
+        }
+        let invalid_outputs = [
+            (
+                r#"{"hookSpecificOutput":{"permissionDecision":"deny"}}"#,
+                "unknown fields",
+            ),
+            (r#"{"permmission_decision":"deny"}"#, "typo field"),
+            (r#"["deny"]"#, "non-object"),
+            (
+                r#"{"permission_decision":"deny","extra_debug":"foo"}"#,
+                "extra field",
+            ),
+        ];
+        let program = output_jq_program(ProviderName::Claude, HookEvent::PreToolUse);
+        for (input, label) in invalid_outputs {
+            let rust_result = serde_json::from_str::<CanonicalOutput>(input);
+            assert!(rust_result.is_err(), "Rust should reject {label}: {input}");
+
+            let jq_result = Command::new("jq")
+                .arg("-c")
+                .arg(program.as_ref())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .and_then(|mut child| {
+                    use std::io::Write;
+                    child
+                        .stdin
+                        .take()
+                        .expect("jq stdin")
+                        .write_all(input.as_bytes())
+                        .expect("write");
+                    child.wait_with_output()
+                })
+                .expect("run jq");
+            assert!(
+                !jq_result.status.success(),
+                "jq should reject {label}: {input} (stderr={})",
+                String::from_utf8_lossy(&jq_result.stderr),
+            );
         }
     }
 }

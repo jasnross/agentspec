@@ -83,6 +83,14 @@ Hook scripts emit canonical JSON on stdout to influence the host runtime. All fi
 
 **Malformed-output handling.** If a script writes non-empty stdout that isn't valid canonical JSON, the output-translation jq fails and the shim exits 1 with an `agentspec: output translation failed …` stderr message. This intentionally overrides the script's own exit code: a hook bug should be loudly visible to the user, not silently hidden as "no decision".
 
+The shim also rejects output containing unrecognized field names or non-object types. The six recognized canonical output fields are: `schema_version`, `permission_decision`, `decision_reason`, `user_facing_message`, `additional_context`, `updated_input`. Any other field name causes validation to fail with an error naming the specific unrecognized fields:
+
+```
+agentspec: output translation failed (jq exited 5): jq: error (at <stdin>:0): unrecognized canonical output fields: hookSpecificOutput, hookEventName
+```
+
+This catches common mistakes such as emitting provider-shaped JSON (e.g., Claude's `hookSpecificOutput` wrapper) or typos in canonical field names (e.g., `permmission_decision`). The validation mirrors the Rust-side `deny_unknown_fields` attribute on `CanonicalOutput`.
+
 ## The `provider_raw` escape hatch
 
 Every canonical input carries `provider_raw`, a verbatim copy of the original provider stdin. Use it when:

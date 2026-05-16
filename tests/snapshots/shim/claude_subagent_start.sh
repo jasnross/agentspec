@@ -38,7 +38,8 @@ USER_OUTPUT=$(printf '%s' "$CANONICAL" | "$1")
 USER_EXIT=$?
 
 if [ -n "$USER_OUTPUT" ]; then
-    printf '%s' "$USER_OUTPUT" | jq -c '{
+    exec 9>&1
+    JQ_ERR=$(printf '%s' "$USER_OUTPUT" | jq -c '(if type != "object" then error("expected JSON object, got " + type) else . end) | (([keys[] | select(. as $k | ["schema_version","permission_decision","decision_reason","user_facing_message","additional_context","updated_input"] | index($k) | not)]) as $u | if ($u | length) > 0 then error("unrecognized canonical output fields: " + ($u | join(", "))) else . end) | {
   hookSpecificOutput: ({
     hookEventName: "SubagentStart",
     permissionDecision: .permission_decision,
@@ -46,10 +47,11 @@ if [ -n "$USER_OUTPUT" ]; then
     additionalContext: .additional_context,
     updatedInput: .updated_input
   } | with_entries(select(.value != null)))
-}'
+}' 2>&1 1>&9)
     JQ_OUTPUT_EXIT=$?
+    exec 9>&-
     if [ "$JQ_OUTPUT_EXIT" -ne 0 ]; then
-        printf 'agentspec: output translation failed (jq exited %s); user script emitted output that is not valid canonical JSON\n' "$JQ_OUTPUT_EXIT" >&2
+        printf 'agentspec: output translation failed (jq exited %s): %s\n' "$JQ_OUTPUT_EXIT" "$JQ_ERR" >&2
         exit 1
     fi
 fi
