@@ -113,7 +113,7 @@ Two pedantic lints are explicitly allowed: `similar_names` (flags unambiguous pa
 
 Any `#[allow(clippy::...)]` should include a nearby comment explaining why it's needed and keep scope as narrow as possible (item-level over module-level).
 
-Run `cargo fmt && cargo clippy --all-targets` before committing; CI enforces both.
+Run `just check` before committing to ensure linting, tests, and formatting pass; CI enforces this.
 
 ## Serde
 
