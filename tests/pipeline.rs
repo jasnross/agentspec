@@ -54,6 +54,17 @@ fn set_script_permissions(dir: &Path) {
 #[cfg(not(unix))]
 fn set_script_permissions(_dir: &Path) {}
 
+#[cfg(unix)]
+fn add_symlink_to_fixture(dir: &Path, link_rel: &str, target_rel: &str) {
+    let link_path = dir.join(link_rel);
+    if let Some(parent) = link_path.parent() {
+        let r = std::fs::create_dir_all(parent);
+        assert!(r.is_ok(), "create parent for symlink: {r:?}");
+    }
+    let r = std::os::unix::fs::symlink(std::path::Path::new(target_rel), &link_path);
+    assert!(r.is_ok(), "create symlink: {r:?}");
+}
+
 fn agentspec() -> &'static str {
     env!("CARGO_BIN_EXE_agentspec")
 }
@@ -4177,4 +4188,85 @@ fn test_compile_emits_no_warnings_for_non_hook_fixture() {
         !stderr.contains("agentspec warning:"),
         "non-hook fixture must surface no agentspec warnings, got:\n{stderr}"
     );
+}
+
+#[test]
+#[cfg(unix)]
+fn test_compile_resolves_symlinked_supporting_file() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    add_symlink_to_fixture(
+        &dir,
+        "spec/skills/scripted-skill/scripts/from-helper.sh",
+        "helper.sh",
+    );
+    set_script_permissions(&dir.join("spec/skills/scripted-skill/scripts"));
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    let generated = dir.join("generated/claude/skills/scripted-skill/scripts/from-helper.sh");
+    assert!(generated.exists(), "symlinked file not in compiled output");
+    assert!(
+        !generated
+            .symlink_metadata()
+            .expect("stat")
+            .file_type()
+            .is_symlink(),
+        "compiled output must be a regular file, not a symlink"
+    );
+
+    let original = std::fs::read(dir.join("spec/skills/scripted-skill/scripts/helper.sh"))
+        .expect("read original");
+    let resolved = std::fs::read(&generated).expect("read generated");
+    assert_eq!(original, resolved, "resolved content must match target");
+}
+
+#[test]
+#[cfg(unix)]
+fn test_compile_resolves_symlinked_hook_script() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+
+    add_symlink_to_fixture(
+        &dir,
+        "spec/hooks/scripts/from-skill.sh",
+        "../../skills/scripted-skill/scripts/helper.sh",
+    );
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    let generated = dir.join("generated/claude/hooks/scripts/from-skill.sh");
+    assert!(
+        generated.exists(),
+        "symlinked hook script not in compiled output"
+    );
+    assert!(
+        !generated
+            .symlink_metadata()
+            .expect("stat")
+            .file_type()
+            .is_symlink(),
+        "compiled output must be a regular file, not a symlink"
+    );
+
+    let original = std::fs::read(dir.join("spec/skills/scripted-skill/scripts/helper.sh"))
+        .expect("read original");
+    let resolved = std::fs::read(&generated).expect("read generated");
+    assert_eq!(original, resolved, "resolved content must match target");
 }
