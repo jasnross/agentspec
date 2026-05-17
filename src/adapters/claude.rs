@@ -1085,7 +1085,7 @@ mod tests {
         let result = synthesize_hooks(&[&spec], HookEmitMode::Bundled).expect("expected value");
         assert_eq!(
             result.entries[0].command,
-            "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/_wrappers/pre_tool_use.sh ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/git/pre-commit.sh"
+            "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/_wrappers/pre_tool_use.sh ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/git/pre-commit.sh audit"
         );
     }
 
@@ -1101,7 +1101,7 @@ mod tests {
         let result = synthesize_hooks(&[&spec], HookEmitMode::Bundled).expect("expected value");
         assert_eq!(
             result.entries[0].command,
-            "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/_wrappers/session_start.sh ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/init.sh"
+            "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/_wrappers/session_start.sh ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/init.sh init"
         );
     }
 
@@ -1206,7 +1206,7 @@ mod tests {
         let result = synthesize_hooks(&[&spec], HookEmitMode::MergedUser).expect("expected ok");
         assert_eq!(
             result.entries[0].command,
-            "CLAUDE_PLUGIN_ROOT=$HOME/.claude $HOME/.claude/hooks/scripts/_wrappers/session_start.sh $HOME/.claude/hooks/scripts/init.sh"
+            "CLAUDE_PLUGIN_ROOT=$HOME/.claude $HOME/.claude/hooks/scripts/_wrappers/session_start.sh $HOME/.claude/hooks/scripts/init.sh init"
         );
     }
 
@@ -1218,7 +1218,7 @@ mod tests {
         let result = synthesize_hooks(&[&spec], HookEmitMode::MergedProject).expect("expected ok");
         assert_eq!(
             result.entries[0].command,
-            "CLAUDE_PLUGIN_ROOT=${CLAUDE_PROJECT_DIR}/.claude ${CLAUDE_PROJECT_DIR}/.claude/hooks/scripts/_wrappers/session_start.sh ${CLAUDE_PROJECT_DIR}/.claude/hooks/scripts/init.sh"
+            "CLAUDE_PLUGIN_ROOT=${CLAUDE_PROJECT_DIR}/.claude ${CLAUDE_PROJECT_DIR}/.claude/hooks/scripts/_wrappers/session_start.sh ${CLAUDE_PROJECT_DIR}/.claude/hooks/scripts/init.sh init"
         );
     }
 

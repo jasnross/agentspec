@@ -66,7 +66,7 @@ fn update_mode() -> bool {
 }
 
 #[test]
-fn all_twenty_shims_match_committed_goldens() {
+fn all_twenty_shims_match_committed_golden_output() {
     std::fs::create_dir_all(snapshot_dir()).expect("create snapshot dir");
     let update = update_mode();
     let mut failures: Vec<String> = Vec::new();

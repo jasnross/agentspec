@@ -57,6 +57,7 @@ pub fn shim_script(provider: ProviderName, event: HookEvent) -> String {
     let event_snake = event.snake_case();
     let input_jq = input_jq_program(provider, event);
     let output_jq = output_jq_program(provider, event);
+    let log_tag_init = r#"LOG_TAG="agentspec [$HOOK_ID]""#.to_string();
 
     // String replacement (not `format!`) so the embedded `jq` programs need
     // no `{{` / `}}` escaping for their literal `{` / `}` braces.
@@ -71,6 +72,7 @@ pub fn shim_script(provider: ProviderName, event: HookEvent) -> String {
     SHIM_TEMPLATE
         .replace("__INPUT_JQ__", input_jq)
         .replace("__OUTPUT_JQ__", &output_jq)
+        .replace("__LOG_TAG_INIT__", &log_tag_init)
         .replace("__PROVIDER__", provider_wire)
         .replace("__EVENT_SNAKE__", event_snake)
         .replace("__SCHEMA_VERSION__", SCHEMA_VERSION)
@@ -81,25 +83,28 @@ const SHIM_TEMPLATE: &str = r#"#!/usr/bin/env sh
 # schema_version: __SCHEMA_VERSION__
 # DO NOT EDIT — regenerate via `agentspec compile`.
 
+HOOK_ID="${2:-}"
+__LOG_TAG_INIT__
+
 if ! command -v jq >/dev/null 2>&1; then
-    printf 'agentspec: jq is required for canonical hook translation but was not found on PATH. Install jq (e.g., `brew install jq`, `apt install jq`) and reload the hook host.\n' >&2
+    printf '%s: jq is required for canonical hook translation but was not found on PATH. Install jq (e.g., `brew install jq`, `apt install jq`) and reload the hook host.\n' "$LOG_TAG" >&2
     exit 1
 fi
 
 if [ -z "$1" ]; then
-    printf 'agentspec: hook script path missing (expected as first argument)\n' >&2
+    printf '%s: hook script path missing (expected as first argument)\n' "$LOG_TAG" >&2
     exit 1
 fi
 
 if [ ! -x "$1" ]; then
-    printf 'agentspec: hook script not found or not executable: %s\n' "$1" >&2
+    printf '%s: hook script not found or not executable: %s\n' "$LOG_TAG" "$1" >&2
     exit 1
 fi
 
 CANONICAL=$(jq -c '__INPUT_JQ__')
 JQ_INPUT_EXIT=$?
 if [ "$JQ_INPUT_EXIT" -ne 0 ]; then
-    printf 'agentspec: input translation failed (jq exited %s); provider stdin is not valid JSON or did not match the expected shape\n' "$JQ_INPUT_EXIT" >&2
+    printf '%s: input translation failed (jq exited %s); provider stdin is not valid JSON or did not match the expected shape\n' "$LOG_TAG" "$JQ_INPUT_EXIT" >&2
     exit 1
 fi
 
@@ -112,7 +117,7 @@ if [ -n "$USER_OUTPUT" ]; then
     JQ_OUTPUT_EXIT=$?
     exec 9>&-
     if [ "$JQ_OUTPUT_EXIT" -ne 0 ]; then
-        printf 'agentspec: output translation failed (jq exited %s): %s\n' "$JQ_OUTPUT_EXIT" "$JQ_ERR" >&2
+        printf '%s: output translation failed (jq exited %s): %s\n' "$LOG_TAG" "$JQ_OUTPUT_EXIT" "$JQ_ERR" >&2
         exit 1
     fi
 fi
@@ -499,6 +504,12 @@ mod tests {
     fn output_jq_embeds_hook_event_name_pascal() {
         let s = shim_script(ProviderName::Claude, HookEvent::UserPromptSubmit);
         assert!(s.contains(r#"hookEventName: "UserPromptSubmit""#));
+    }
+
+    #[test]
+    fn output_includes_log_tag() {
+        let s = shim_script(ProviderName::Claude, HookEvent::PreToolUse);
+        assert!(s.contains(r#"LOG_TAG="agentspec [$HOOK_ID]""#));
     }
 
     #[test]

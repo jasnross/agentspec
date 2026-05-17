@@ -168,6 +168,7 @@ fn build_emitted_hook_entries(
                 .skip(1)
                 .collect();
             let filename = path_under_scripts.to_string_lossy().into_owned();
+            let hook_id = s.frontmatter.id.clone();
             s.frontmatter
                 .events
                 .iter()
@@ -180,6 +181,7 @@ fn build_emitted_hook_entries(
                         emit_mode,
                         event,
                         &filename,
+                        &hook_id,
                     ),
                     timeout: s.frontmatter.timeout,
                     agentspec_id: s.frontmatter.id.clone(),
@@ -218,6 +220,7 @@ fn hook_command_anchor(
     emit_mode: HookEmitMode,
     event: HookEvent,
     filename: &str,
+    hook_id: &str,
 ) -> String {
     let (env_assignment, anchor_base) = match emit_mode {
         HookEmitMode::Bundled => (String::new(), format!("${{{plugin_root_env_var}}}")),
@@ -235,7 +238,7 @@ fn hook_command_anchor(
         event.snake_case()
     );
     let user_script_path = format!("{anchor_base}/hooks/scripts/{filename}");
-    format!("{env_assignment}{shim_path} {user_script_path}")
+    format!("{env_assignment}{shim_path} {user_script_path} {hook_id}")
 }
 
 #[cfg(test)]
@@ -263,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn build_shim_files_dedups_per_event_per_provider() {
+    fn build_shim_files_deduplicates_per_event_per_provider() {
         // Two specs both targeting `pre_tool_use` → exactly one shim file
         // per provider. Deduplication is provider-scoped: each provider's
         // tree gets its own copy with provider-specific jq programs.
@@ -371,19 +374,18 @@ mod tests {
     }
 
     #[test]
-    fn hook_command_anchor_bundled_invokes_shim_with_user_script() {
-        // Bundled mode: `${ENV}/hooks/scripts/_wrappers/<event>.sh ${ENV}/hooks/scripts/<filename>`.
-        // Same anchor for both halves; no inline env-var assignment.
+    fn hook_command_anchor_bundled_invokes_shim_with_user_script_and_hook_id() {
         let cmd = hook_command_anchor(
             ".claude",
             "CLAUDE_PLUGIN_ROOT",
             HookEmitMode::Bundled,
             HookEvent::PreToolUse,
             "audit.sh",
+            "audit-bash",
         );
         assert_eq!(
             cmd,
-            "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/_wrappers/pre_tool_use.sh ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/audit.sh"
+            "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/_wrappers/pre_tool_use.sh ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/audit.sh audit-bash"
         );
     }
 }

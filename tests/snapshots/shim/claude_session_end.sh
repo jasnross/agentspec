@@ -3,18 +3,21 @@
 # schema_version: 1.0.0
 # DO NOT EDIT — regenerate via `agentspec compile`.
 
+HOOK_ID="${2:-}"
+LOG_TAG="agentspec [$HOOK_ID]"
+
 if ! command -v jq >/dev/null 2>&1; then
-    printf 'agentspec: jq is required for canonical hook translation but was not found on PATH. Install jq (e.g., `brew install jq`, `apt install jq`) and reload the hook host.\n' >&2
+    printf '%s: jq is required for canonical hook translation but was not found on PATH. Install jq (e.g., `brew install jq`, `apt install jq`) and reload the hook host.\n' "$LOG_TAG" >&2
     exit 1
 fi
 
 if [ -z "$1" ]; then
-    printf 'agentspec: hook script path missing (expected as first argument)\n' >&2
+    printf '%s: hook script path missing (expected as first argument)\n' "$LOG_TAG" >&2
     exit 1
 fi
 
 if [ ! -x "$1" ]; then
-    printf 'agentspec: hook script not found or not executable: %s\n' "$1" >&2
+    printf '%s: hook script not found or not executable: %s\n' "$LOG_TAG" "$1" >&2
     exit 1
 fi
 
@@ -30,7 +33,7 @@ CANONICAL=$(jq -c '{
 }')
 JQ_INPUT_EXIT=$?
 if [ "$JQ_INPUT_EXIT" -ne 0 ]; then
-    printf 'agentspec: input translation failed (jq exited %s); provider stdin is not valid JSON or did not match the expected shape\n' "$JQ_INPUT_EXIT" >&2
+    printf '%s: input translation failed (jq exited %s); provider stdin is not valid JSON or did not match the expected shape\n' "$LOG_TAG" "$JQ_INPUT_EXIT" >&2
     exit 1
 fi
 
@@ -51,7 +54,7 @@ if [ -n "$USER_OUTPUT" ]; then
     JQ_OUTPUT_EXIT=$?
     exec 9>&-
     if [ "$JQ_OUTPUT_EXIT" -ne 0 ]; then
-        printf 'agentspec: output translation failed (jq exited %s): %s\n' "$JQ_OUTPUT_EXIT" "$JQ_ERR" >&2
+        printf '%s: output translation failed (jq exited %s): %s\n' "$LOG_TAG" "$JQ_OUTPUT_EXIT" "$JQ_ERR" >&2
         exit 1
     fi
 fi
