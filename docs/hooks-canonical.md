@@ -8,11 +8,11 @@ Claude Code and Cursor each have their own hook payload shape — different fiel
 
 agentspec wraps every user hook script with a per-event POSIX shell shim that translates between the provider's native shape and a single canonical shape. The user's script sees canonical JSON on stdin and emits canonical JSON on stdout. Identical scripts produce semantically identical behavior under both providers, modulo a small set of documented limitations covered below.
 
-The shim is generated at agentspec-compile time, ships as plain `#!/usr/bin/env sh` + `jq`, and has no Rust-binary runtime dependency on the user's machine.
+The shim is generated at agentspec-compile time, ships as plain `#!/usr/bin/env sh` + `jq`, and has no Rust-binary runtime dependency on the user's machine. Every shim carries both Claude and Cursor jq dialects and auto-detects the host at runtime, so a plugin compiled for one provider works correctly when running inside the other (cross-host scenarios).
 
 ## Runtime prerequisites
 
-The shim invokes [`jq`](https://jqlang.org/) twice per hook firing — once to translate provider stdin into canonical JSON, once to translate the script's canonical stdout into provider stdout. `jq` must be installed on the user's machine and on `PATH` at hook-fire time.
+The shim invokes [`jq`](https://jqlang.org/) three times per hook firing — once to detect the host provider, once to translate provider stdin into canonical JSON, and once to translate the script's canonical stdout into provider stdout. `jq` must be installed on the user's machine and on `PATH` at hook-fire time.
 
 | Platform        | Install command                                         |
 | --------------- | ------------------------------------------------------- |
@@ -117,7 +117,9 @@ fi
 
 ## The `provider` discriminator
 
-Every canonical input carries `provider` as a top-level string: `"claude"` or `"cursor"`. Use it when you need a single branch in the script for unbridgeable behavior:
+Every canonical input carries `provider` as a top-level string: `"claude"` or `"cursor"`. This reflects the **detected host runtime**, not the provider whose plugin tree the shim was compiled into. In native scenarios (host matches plugin), the two are the same. In cross-host scenarios (e.g., a Claude Code plugin running inside Cursor), `provider` reflects the host — so a script reading `provider` always knows which provider's runtime is actually executing the hook.
+
+Use `provider` when you need a single branch in the script for unbridgeable behavior:
 
 ```sh
 #!/usr/bin/env sh
@@ -131,6 +133,19 @@ esac
 ```
 
 Most hooks don't need this — the whole point of the canonical schema is to make provider-specific branches unnecessary. Reach for it when the documented limitations below force your hand.
+
+## Cross-host detection
+
+Every shim carries both Claude and Cursor jq dialects and auto-detects the host runtime at startup. Detection checks for the `cursor_version` field in the raw provider payload — always present on Cursor, never present on Claude:
+
+- If `cursor_version` is present → Cursor host detected; the shim uses Cursor's input/output jq programs.
+- If `cursor_version` is absent → Claude host detected; the shim uses Claude's input/output jq programs.
+
+This means a plugin compiled for Claude Code works correctly when running inside Cursor (and vice versa). Canonical fields are extracted using the detected host's dialect, and output is translated to the detected host's format.
+
+In native scenarios (host matches the plugin provider), behavior is unchanged from a single-dialect shim. The detection adds one lightweight `jq -e '.cursor_version'` invocation per hook firing (total: 3 jq invocations instead of 2).
+
+Hook scripts do not need to be aware of cross-host detection — the canonical schema hides the difference. The `provider` field in canonical input reflects the detected host, so scripts that branch on `provider` automatically get the correct value regardless of which provider's plugin tree they were installed from.
 
 ## Documented limitations
 

@@ -21,7 +21,10 @@ if [ ! -x "$1" ]; then
     exit 1
 fi
 
-CANONICAL=$(jq -c '{
+RAW=$(cat)
+
+if printf '%s' "$RAW" | jq -e '.cursor_version' >/dev/null 2>&1; then
+    INPUT_JQ='{
   schema_version: "1.0.0",
   provider: "cursor",
   event: "stop",
@@ -30,7 +33,37 @@ CANONICAL=$(jq -c '{
   cwd: .workspace_roots[0],
   transcript_path: .transcript_path,
   provider_raw: .
-}')
+}'
+    OUTPUT_JQ='(if type != "object" then error("expected JSON object, got " + type) else . end) | (([keys[] | select(. as $k | ["schema_version","permission_decision","decision_reason","user_facing_message","additional_context","updated_input"] | index($k) | not)]) as $u | if ($u | length) > 0 then error("unrecognized canonical output fields: " + ($u | join(", "))) else . end) | {
+  permission: .permission_decision,
+  agent_message: .decision_reason,
+  user_message: .user_facing_message,
+  additional_context: .additional_context,
+  updated_input: .updated_input
+} | with_entries(select(.value != null))'
+else
+    INPUT_JQ='{
+  schema_version: "1.0.0",
+  provider: "claude",
+  event: "stop",
+  session_id: .session_id,
+  agent_id: .agent_id,
+  cwd: .cwd,
+  transcript_path: .transcript_path,
+  provider_raw: .
+}'
+    OUTPUT_JQ='(if type != "object" then error("expected JSON object, got " + type) else . end) | (([keys[] | select(. as $k | ["schema_version","permission_decision","decision_reason","user_facing_message","additional_context","updated_input"] | index($k) | not)]) as $u | if ($u | length) > 0 then error("unrecognized canonical output fields: " + ($u | join(", "))) else . end) | {
+  hookSpecificOutput: ({
+    hookEventName: "Stop",
+    permissionDecision: .permission_decision,
+    permissionDecisionReason: (.decision_reason // .user_facing_message),
+    additionalContext: .additional_context,
+    updatedInput: .updated_input
+  } | with_entries(select(.value != null)))
+}'
+fi
+
+CANONICAL=$(printf '%s' "$RAW" | jq -c "$INPUT_JQ")
 JQ_INPUT_EXIT=$?
 if [ "$JQ_INPUT_EXIT" -ne 0 ]; then
     printf '%s: input translation failed (jq exited %s); provider stdin is not valid JSON or did not match the expected shape\n' "$LOG_TAG" "$JQ_INPUT_EXIT" >&2
@@ -42,13 +75,7 @@ USER_EXIT=$?
 
 if [ -n "$USER_OUTPUT" ]; then
     exec 9>&1
-    JQ_ERR=$(printf '%s' "$USER_OUTPUT" | jq -c '(if type != "object" then error("expected JSON object, got " + type) else . end) | (([keys[] | select(. as $k | ["schema_version","permission_decision","decision_reason","user_facing_message","additional_context","updated_input"] | index($k) | not)]) as $u | if ($u | length) > 0 then error("unrecognized canonical output fields: " + ($u | join(", "))) else . end) | {
-  permission: .permission_decision,
-  agent_message: .decision_reason,
-  user_message: .user_facing_message,
-  additional_context: .additional_context,
-  updated_input: .updated_input
-} | with_entries(select(.value != null))' 2>&1 1>&9)
+    JQ_ERR=$(printf '%s' "$USER_OUTPUT" | jq -c "$OUTPUT_JQ" 2>&1 1>&9)
     JQ_OUTPUT_EXIT=$?
     exec 9>&-
     if [ "$JQ_OUTPUT_EXIT" -ne 0 ]; then

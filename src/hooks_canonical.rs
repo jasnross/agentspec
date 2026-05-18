@@ -232,6 +232,21 @@ impl CanonicalInput {
         self.event_specific.event()
     }
 
+    /// Detect the host provider from raw hook stdin.
+    ///
+    /// Mirrors the shim's `jq -e '.cursor_version'` check: if
+    /// `cursor_version` is present the host is Cursor, otherwise Claude.
+    /// Only hook-emitting providers (Claude and Cursor) are candidates.
+    pub fn detect_provider(raw: &str) -> Result<ProviderName> {
+        let value: Value =
+            serde_json::from_str(raw).context("parsing provider hook stdin as JSON")?;
+        if value.get("cursor_version").is_some() {
+            Ok(ProviderName::Cursor)
+        } else {
+            Ok(ProviderName::Claude)
+        }
+    }
+
     /// Reference implementation of provider stdin → canonical translation.
     ///
     /// Used by tests to verify the codegen'd jq programs produce the same
@@ -248,6 +263,16 @@ impl CanonicalInput {
             ProviderName::Claude => from_claude(value, event),
             ProviderName::Cursor => from_cursor(value, event),
         }
+    }
+
+    /// Auto-detecting variant of [`Self::from_provider_stdin`].
+    ///
+    /// Detects the host provider from `raw` via [`Self::detect_provider`],
+    /// then translates accordingly. This is the Rust equivalent of the
+    /// shim's full pipeline (detect host → select dialect → translate).
+    pub fn from_provider_stdin_auto(raw: &str, event: HookEvent) -> Result<Self> {
+        let provider = Self::detect_provider(raw)?;
+        Self::from_provider_stdin(provider, raw, event)
     }
 }
 
@@ -484,6 +509,7 @@ mod tests {
 
     fn cursor_pre_tool_use_raw() -> &'static str {
         r#"{
+            "cursor_version": "3.2.21",
             "conversation_id": "conv-abc",
             "workspace_roots": ["/home/u/proj"],
             "hook_event_name": "preToolUse",
@@ -495,6 +521,7 @@ mod tests {
 
     fn cursor_pre_tool_use_subagent_raw() -> &'static str {
         r#"{
+            "cursor_version": "3.2.21",
             "conversation_id": "child-id",
             "parent_conversation_id": "root-id",
             "workspace_roots": ["/home/u/proj"],

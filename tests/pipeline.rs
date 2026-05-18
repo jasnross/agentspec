@@ -1414,19 +1414,28 @@ fn test_compile_emits_hooks_for_claude_and_cursor() {
         );
     }
 
-    // Regression for the per-provider env-var fix: each provider's shim
-    // must contain only its own provider name, never the other's.
+    // Cross-host detection: every shim now carries both providers' jq
+    // dialects. Verify the banner identifies the plugin provider and both
+    // providers' input jq programs are embedded.
     let claude_shim = dir.join("generated/claude/hooks/scripts/_wrappers/pre_tool_use.sh");
     let cursor_shim = dir.join("generated/cursor/hooks/scripts/_wrappers/pre_tool_use.sh");
     let claude_body = std::fs::read_to_string(&claude_shim).expect("read claude shim");
     let cursor_body = std::fs::read_to_string(&cursor_shim).expect("read cursor shim");
     assert!(
-        !claude_body.contains("\"cursor\""),
-        "Claude shim must not contain Cursor provider literal"
+        claude_body.contains("agentspec-generated shim: claude"),
+        "Claude shim banner must name claude as the plugin provider"
     );
     assert!(
-        !cursor_body.contains("\"claude\""),
-        "Cursor shim must not contain Claude provider literal"
+        cursor_body.contains("agentspec-generated shim: cursor"),
+        "Cursor shim banner must name cursor as the plugin provider"
+    );
+    assert!(
+        claude_body.contains("\"claude\"") && claude_body.contains("\"cursor\""),
+        "Claude shim must contain both providers' jq dialects for cross-host detection"
+    );
+    assert!(
+        cursor_body.contains("\"claude\"") && cursor_body.contains("\"cursor\""),
+        "Cursor shim must contain both providers' jq dialects for cross-host detection"
     );
 
     // OpenCode does not receive hook output in v1.

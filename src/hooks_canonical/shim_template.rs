@@ -36,8 +36,6 @@
 //!   output-format bugs loudly rather than letting them appear as "hook
 //!   silently emitted nothing" to the provider runtime.
 
-use std::borrow::Cow;
-
 use crate::hooks_canonical::{ProviderName, SCHEMA_VERSION};
 use crate::spec::HookEvent;
 
@@ -49,14 +47,21 @@ use crate::spec::HookEvent;
 /// and `jq` on `PATH`, and a user-supplied hook script at `$1`, the shim
 /// has no runtime dependencies.
 ///
+/// Every shim carries both Claude and Cursor jq dialects and selects the
+/// correct pair at runtime via `cursor_version` field detection. The
+/// `provider` argument determines only the banner comment (which
+/// provider's plugin tree this shim was compiled into).
+///
 /// Codegen is deterministic — calling this with the same arguments always
 /// produces byte-identical output, which is what makes snapshot tests
 /// meaningful as a drift detector.
 pub fn shim_script(provider: ProviderName, event: HookEvent) -> String {
-    let provider_wire = provider.wire_name();
+    let plugin_provider = provider.wire_name();
     let event_snake = event.snake_case();
-    let input_jq = input_jq_program(provider, event);
-    let output_jq = output_jq_program(provider, event);
+    let claude_in = claude_input_jq(event);
+    let cursor_in = cursor_input_jq(event);
+    let claude_out = claude_output_jq(event);
+    let cursor_out = cursor_output_jq();
     let log_tag_init = r#"LOG_TAG="agentspec [$HOOK_ID]""#.to_string();
 
     // String replacement (not `format!`) so the embedded `jq` programs need
@@ -65,21 +70,20 @@ pub fn shim_script(provider: ProviderName, event: HookEvent) -> String {
     // Order matters: insert the jq programs first (they themselves contain
     // `__SCHEMA_VERSION__` placeholders), then substitute the literal
     // tokens last so the placeholder substitution reaches into the
-    // freshly-inserted jq program text. `String::replace` is single-pass
-    // and does not recurse — if `__SCHEMA_VERSION__` were substituted
-    // before the jq insertion, the placeholders inside the jq program
-    // would survive unsubstituted.
+    // freshly-inserted jq program text.
     SHIM_TEMPLATE
-        .replace("__INPUT_JQ__", input_jq)
-        .replace("__OUTPUT_JQ__", &output_jq)
+        .replace("__CLAUDE_INPUT_JQ__", claude_in)
+        .replace("__CURSOR_INPUT_JQ__", cursor_in)
+        .replace("__CLAUDE_OUTPUT_JQ__", &claude_out)
+        .replace("__CURSOR_OUTPUT_JQ__", &cursor_out)
         .replace("__LOG_TAG_INIT__", &log_tag_init)
-        .replace("__PROVIDER__", provider_wire)
+        .replace("__PLUGIN_PROVIDER__", plugin_provider)
         .replace("__EVENT_SNAKE__", event_snake)
         .replace("__SCHEMA_VERSION__", SCHEMA_VERSION)
 }
 
 const SHIM_TEMPLATE: &str = r#"#!/usr/bin/env sh
-# agentspec-generated shim: __PROVIDER__ __EVENT_SNAKE__
+# agentspec-generated shim: __PLUGIN_PROVIDER__ __EVENT_SNAKE__
 # schema_version: __SCHEMA_VERSION__
 # DO NOT EDIT — regenerate via `agentspec compile`.
 
@@ -101,7 +105,17 @@ if [ ! -x "$1" ]; then
     exit 1
 fi
 
-CANONICAL=$(jq -c '__INPUT_JQ__')
+RAW=$(cat)
+
+if printf '%s' "$RAW" | jq -e '.cursor_version' >/dev/null 2>&1; then
+    INPUT_JQ='__CURSOR_INPUT_JQ__'
+    OUTPUT_JQ='__CURSOR_OUTPUT_JQ__'
+else
+    INPUT_JQ='__CLAUDE_INPUT_JQ__'
+    OUTPUT_JQ='__CLAUDE_OUTPUT_JQ__'
+fi
+
+CANONICAL=$(printf '%s' "$RAW" | jq -c "$INPUT_JQ")
 JQ_INPUT_EXIT=$?
 if [ "$JQ_INPUT_EXIT" -ne 0 ]; then
     printf '%s: input translation failed (jq exited %s); provider stdin is not valid JSON or did not match the expected shape\n' "$LOG_TAG" "$JQ_INPUT_EXIT" >&2
@@ -113,7 +127,7 @@ USER_EXIT=$?
 
 if [ -n "$USER_OUTPUT" ]; then
     exec 9>&1
-    JQ_ERR=$(printf '%s' "$USER_OUTPUT" | jq -c '__OUTPUT_JQ__' 2>&1 1>&9)
+    JQ_ERR=$(printf '%s' "$USER_OUTPUT" | jq -c "$OUTPUT_JQ" 2>&1 1>&9)
     JQ_OUTPUT_EXIT=$?
     exec 9>&-
     if [ "$JQ_OUTPUT_EXIT" -ne 0 ]; then
@@ -125,39 +139,61 @@ fi
 exit "$USER_EXIT"
 "#;
 
+fn claude_input_jq(event: HookEvent) -> &'static str {
+    match event {
+        HookEvent::PreToolUse => CLAUDE_PRE_TOOL_USE_IN,
+        HookEvent::PostToolUse => CLAUDE_POST_TOOL_USE_IN,
+        HookEvent::PostToolUseFailure => CLAUDE_POST_TOOL_USE_FAILURE_IN,
+        HookEvent::SessionStart => CLAUDE_ENVELOPE_IN_SESSION_START,
+        HookEvent::SessionEnd => CLAUDE_ENVELOPE_IN_SESSION_END,
+        HookEvent::Stop => CLAUDE_ENVELOPE_IN_STOP,
+        HookEvent::PreCompact => CLAUDE_ENVELOPE_IN_PRE_COMPACT,
+        HookEvent::SubagentStart => CLAUDE_ENVELOPE_IN_SUBAGENT_START,
+        HookEvent::SubagentStop => CLAUDE_ENVELOPE_IN_SUBAGENT_STOP,
+        HookEvent::UserPromptSubmit => CLAUDE_USER_PROMPT_SUBMIT_IN,
+    }
+}
+
+fn cursor_input_jq(event: HookEvent) -> &'static str {
+    match event {
+        HookEvent::PreToolUse => CURSOR_PRE_TOOL_USE_IN,
+        HookEvent::PostToolUse => CURSOR_POST_TOOL_USE_IN,
+        HookEvent::PostToolUseFailure => CURSOR_POST_TOOL_USE_FAILURE_IN,
+        HookEvent::SessionStart => CURSOR_ENVELOPE_IN_SESSION_START,
+        HookEvent::SessionEnd => CURSOR_ENVELOPE_IN_SESSION_END,
+        HookEvent::Stop => CURSOR_ENVELOPE_IN_STOP,
+        HookEvent::PreCompact => CURSOR_ENVELOPE_IN_PRE_COMPACT,
+        HookEvent::SubagentStart => CURSOR_ENVELOPE_IN_SUBAGENT_START,
+        HookEvent::SubagentStop => CURSOR_ENVELOPE_IN_SUBAGENT_STOP,
+        HookEvent::UserPromptSubmit => CURSOR_USER_PROMPT_SUBMIT_IN,
+    }
+}
+
+#[cfg(test)]
 fn input_jq_program(provider: ProviderName, event: HookEvent) -> &'static str {
-    match (provider, event) {
-        (ProviderName::Claude, HookEvent::PreToolUse) => CLAUDE_PRE_TOOL_USE_IN,
-        (ProviderName::Claude, HookEvent::PostToolUse) => CLAUDE_POST_TOOL_USE_IN,
-        (ProviderName::Claude, HookEvent::PostToolUseFailure) => CLAUDE_POST_TOOL_USE_FAILURE_IN,
-        (ProviderName::Claude, HookEvent::SessionStart) => CLAUDE_ENVELOPE_IN_SESSION_START,
-        (ProviderName::Claude, HookEvent::SessionEnd) => CLAUDE_ENVELOPE_IN_SESSION_END,
-        (ProviderName::Claude, HookEvent::Stop) => CLAUDE_ENVELOPE_IN_STOP,
-        (ProviderName::Claude, HookEvent::PreCompact) => CLAUDE_ENVELOPE_IN_PRE_COMPACT,
-        (ProviderName::Claude, HookEvent::SubagentStart) => CLAUDE_ENVELOPE_IN_SUBAGENT_START,
-        (ProviderName::Claude, HookEvent::SubagentStop) => CLAUDE_ENVELOPE_IN_SUBAGENT_STOP,
-        (ProviderName::Claude, HookEvent::UserPromptSubmit) => CLAUDE_USER_PROMPT_SUBMIT_IN,
-        (ProviderName::Cursor, HookEvent::PreToolUse) => CURSOR_PRE_TOOL_USE_IN,
-        (ProviderName::Cursor, HookEvent::PostToolUse) => CURSOR_POST_TOOL_USE_IN,
-        (ProviderName::Cursor, HookEvent::PostToolUseFailure) => CURSOR_POST_TOOL_USE_FAILURE_IN,
-        (ProviderName::Cursor, HookEvent::SessionStart) => CURSOR_ENVELOPE_IN_SESSION_START,
-        (ProviderName::Cursor, HookEvent::SessionEnd) => CURSOR_ENVELOPE_IN_SESSION_END,
-        (ProviderName::Cursor, HookEvent::Stop) => CURSOR_ENVELOPE_IN_STOP,
-        (ProviderName::Cursor, HookEvent::PreCompact) => CURSOR_ENVELOPE_IN_PRE_COMPACT,
-        (ProviderName::Cursor, HookEvent::SubagentStart) => CURSOR_ENVELOPE_IN_SUBAGENT_START,
-        (ProviderName::Cursor, HookEvent::SubagentStop) => CURSOR_ENVELOPE_IN_SUBAGENT_STOP,
-        (ProviderName::Cursor, HookEvent::UserPromptSubmit) => CURSOR_USER_PROMPT_SUBMIT_IN,
+    match provider {
+        ProviderName::Claude => claude_input_jq(event),
+        ProviderName::Cursor => cursor_input_jq(event),
     }
 }
 
 const CANONICAL_OUTPUT_VALIDATE: &str = r#"(if type != "object" then error("expected JSON object, got " + type) else . end) | (([keys[] | select(. as $k | ["schema_version","permission_decision","decision_reason","user_facing_message","additional_context","updated_input"] | index($k) | not)]) as $u | if ($u | length) > 0 then error("unrecognized canonical output fields: " + ($u | join(", "))) else . end) | "#;
 
-fn output_jq_program(provider: ProviderName, event: HookEvent) -> Cow<'static, str> {
-    let transform = match provider {
-        ProviderName::Claude => CLAUDE_OUT.replace("__EVENT_PASCAL__", event.pascal_case()),
-        ProviderName::Cursor => CURSOR_OUT.to_string(),
-    };
-    Cow::Owned(format!("{CANONICAL_OUTPUT_VALIDATE}{transform}"))
+fn claude_output_jq(event: HookEvent) -> String {
+    let transform = CLAUDE_OUT.replace("__EVENT_PASCAL__", event.pascal_case());
+    format!("{CANONICAL_OUTPUT_VALIDATE}{transform}")
+}
+
+fn cursor_output_jq() -> String {
+    format!("{CANONICAL_OUTPUT_VALIDATE}{CURSOR_OUT}")
+}
+
+#[cfg(test)]
+fn output_jq_program(provider: ProviderName, event: HookEvent) -> String {
+    match provider {
+        ProviderName::Claude => claude_output_jq(event),
+        ProviderName::Cursor => cursor_output_jq(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -486,18 +522,21 @@ mod tests {
     #[test]
     fn cursor_shim_provider_literal() {
         let s = shim_script(ProviderName::Cursor, HookEvent::PreToolUse);
+        // Both providers' input jq programs are embedded for cross-host detection.
         assert!(s.contains(r#"provider: "cursor""#));
+        assert!(s.contains(r#"provider: "claude""#));
         assert!(s.contains(r#"event: "pre_tool_use""#));
-        // Regression guard for the per-provider env-var fix: Cursor shim
-        // must not reference the Claude wire name in any literal.
-        assert!(!s.contains(r#"provider: "claude""#));
+        // Banner identifies the plugin provider.
+        assert!(s.contains("agentspec-generated shim: cursor pre_tool_use"));
     }
 
     #[test]
     fn claude_shim_provider_literal() {
         let s = shim_script(ProviderName::Claude, HookEvent::SessionStart);
         assert!(s.contains(r#"provider: "claude""#));
+        assert!(s.contains(r#"provider: "cursor""#));
         assert!(s.contains(r#"event: "session_start""#));
+        assert!(s.contains("agentspec-generated shim: claude session_start"));
     }
 
     #[test]
@@ -736,7 +775,7 @@ cat > /dev/null
 printf '%s' '{"permission_decision":"deny","decision_reason":"blocked"}'
 "#,
         );
-        let provider_stdin = r#"{"conversation_id":"conv-1","workspace_roots":["/p"],"tool_name":"shell","tool_input":{"command":"ls"}}"#;
+        let provider_stdin = r#"{"cursor_version":"3.2","conversation_id":"conv-1","workspace_roots":["/p"],"tool_name":"shell","tool_input":{"command":"ls"}}"#;
         let (code, stdout, stderr) = exec_shim_with_stdin(&shim, &user, provider_stdin);
         assert_eq!(code, 0, "exit code; stderr={stderr}");
         let parsed: Value = serde_json::from_str(stdout.trim()).expect("parse output");
@@ -842,7 +881,7 @@ printf '%s' '{"permission_decision":"deny","decision_reason":"blocked"}'
             "user.sh",
             "#!/usr/bin/env sh\ncat > /dev/null\nprintf '%s' 'this is not canonical json'\n",
         );
-        let provider_stdin = r#"{"conversation_id":"c","workspace_roots":["/p"],"tool_name":"shell","tool_input":{}}"#;
+        let provider_stdin = r#"{"cursor_version":"3.2","conversation_id":"c","workspace_roots":["/p"],"tool_name":"shell","tool_input":{}}"#;
         let (code, _stdout, stderr) = exec_shim_with_stdin(&shim, &user, provider_stdin);
         assert_eq!(code, 1, "stderr={stderr}");
         assert!(
@@ -923,18 +962,20 @@ printf '%s' '{"permission_decision":"deny","decision_reason":"blocked"}'
             }
             (ProviderName::Claude, _) => r#"{"session_id":"sess","cwd":"/p"}"#,
             (ProviderName::Cursor, HookEvent::PreToolUse) => {
-                r#"{"conversation_id":"conv","workspace_roots":["/p"],"tool_name":"shell","tool_use_id":"t1","tool_input":{"command":"ls"}}"#
+                r#"{"cursor_version":"3.2","conversation_id":"conv","workspace_roots":["/p"],"tool_name":"shell","tool_use_id":"t1","tool_input":{"command":"ls"}}"#
             }
             (ProviderName::Cursor, HookEvent::PostToolUse) => {
-                r#"{"conversation_id":"conv","workspace_roots":["/p"],"tool_name":"shell","tool_use_id":"t1","tool_input":{"command":"ls"},"tool_output":"{\"stdout\":\"hi\"}"}"#
+                r#"{"cursor_version":"3.2","conversation_id":"conv","workspace_roots":["/p"],"tool_name":"shell","tool_use_id":"t1","tool_input":{"command":"ls"},"tool_output":"{\"stdout\":\"hi\"}"}"#
             }
             (ProviderName::Cursor, HookEvent::PostToolUseFailure) => {
-                r#"{"conversation_id":"conv","workspace_roots":["/p"],"tool_name":"shell","tool_use_id":"t1","tool_input":{"command":"ls"},"tool_output":"{\"error\":\"boom\"}"}"#
+                r#"{"cursor_version":"3.2","conversation_id":"conv","workspace_roots":["/p"],"tool_name":"shell","tool_use_id":"t1","tool_input":{"command":"ls"},"tool_output":"{\"error\":\"boom\"}"}"#
             }
             (ProviderName::Cursor, HookEvent::UserPromptSubmit) => {
-                r#"{"conversation_id":"conv","workspace_roots":["/p"],"prompt":"hello"}"#
+                r#"{"cursor_version":"3.2","conversation_id":"conv","workspace_roots":["/p"],"prompt":"hello"}"#
             }
-            (ProviderName::Cursor, _) => r#"{"conversation_id":"conv","workspace_roots":["/p"]}"#,
+            (ProviderName::Cursor, _) => {
+                r#"{"cursor_version":"3.2","conversation_id":"conv","workspace_roots":["/p"]}"#
+            }
         }
     }
 
@@ -1119,7 +1160,7 @@ cat > /dev/null
 printf '%s' '{"permission_decision":"deny","decision_reason":"blocked"}'
 "#,
         );
-        let provider_stdin = r#"{"conversation_id":"c","workspace_roots":["/p"],"tool_name":"shell","tool_input":{}}"#;
+        let provider_stdin = r#"{"cursor_version":"3.2","conversation_id":"c","workspace_roots":["/p"],"tool_name":"shell","tool_input":{}}"#;
         let (code, stdout, stderr) = exec_shim_with_stdin(&shim, &user, provider_stdin);
         assert_eq!(code, 0, "stderr={stderr}");
         let parsed: Value = serde_json::from_str(stdout.trim()).expect("parse output");
@@ -1189,7 +1230,7 @@ printf '%s' '{"schema_version":"1.0.0","permission_decision":"deny"}'
 
             let jq_result = Command::new("jq")
                 .arg("-c")
-                .arg(program.as_ref())
+                .arg(&program)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -1210,6 +1251,241 @@ printf '%s' '{"schema_version":"1.0.0","permission_decision":"deny"}'
                 "jq should reject {label}: {input} (stderr={})",
                 String::from_utf8_lossy(&jq_result.stderr),
             );
+        }
+    }
+
+    #[test]
+    fn e2e_claude_shim_receives_cursor_input_detects_host() {
+        if !jq_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shim = write_shim(dir.path(), ProviderName::Claude, HookEvent::PreToolUse);
+        let user = write_user_script(
+            dir.path(),
+            "user.sh",
+            r#"#!/usr/bin/env sh
+jq -e '.provider == "cursor" and .session_id == "conv-1" and .cwd == "/ws" and .tool_name == "shell"' > /dev/null || exit 7
+"#,
+        );
+        let cursor_stdin = r#"{"cursor_version":"3.2","conversation_id":"conv-1","workspace_roots":["/ws"],"tool_name":"shell","tool_use_id":"t1","tool_input":{"command":"ls"}}"#;
+        let (code, _stdout, stderr) = exec_shim_with_stdin(&shim, &user, cursor_stdin);
+        assert_eq!(code, 0, "cross-host detection failed; stderr={stderr}");
+    }
+
+    #[test]
+    fn e2e_claude_shim_receives_cursor_input_deny_outputs_flat() {
+        if !jq_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shim = write_shim(dir.path(), ProviderName::Claude, HookEvent::PreToolUse);
+        let user = write_user_script(
+            dir.path(),
+            "user.sh",
+            r#"#!/usr/bin/env sh
+cat > /dev/null
+printf '%s' '{"permission_decision":"deny","decision_reason":"blocked"}'
+"#,
+        );
+        let cursor_stdin = r#"{"cursor_version":"3.2","conversation_id":"conv-1","workspace_roots":["/ws"],"tool_name":"shell","tool_use_id":"t1","tool_input":{"command":"ls"}}"#;
+        let (code, stdout, stderr) = exec_shim_with_stdin(&shim, &user, cursor_stdin);
+        assert_eq!(code, 0, "stderr={stderr}");
+        let parsed: Value = serde_json::from_str(stdout.trim()).expect("parse output");
+        assert_eq!(parsed["permission"], "deny");
+        assert_eq!(parsed["agent_message"], "blocked");
+        assert!(
+            parsed.get("hookSpecificOutput").is_none(),
+            "cross-host output should be flat Cursor format, not nested Claude"
+        );
+    }
+
+    #[test]
+    fn e2e_cursor_shim_receives_claude_input_detects_host() {
+        if !jq_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shim = write_shim(dir.path(), ProviderName::Cursor, HookEvent::PreToolUse);
+        let user = write_user_script(
+            dir.path(),
+            "user.sh",
+            r#"#!/usr/bin/env sh
+jq -e '.provider == "claude" and .session_id == "sess-1" and .cwd == "/home/u"' > /dev/null || exit 7
+"#,
+        );
+        let claude_stdin = r#"{"session_id":"sess-1","cwd":"/home/u","tool_name":"Bash","tool_use_id":"t1","tool_input":{"command":"ls"}}"#;
+        let (code, _stdout, stderr) = exec_shim_with_stdin(&shim, &user, claude_stdin);
+        assert_eq!(
+            code, 0,
+            "reverse cross-host detection failed; stderr={stderr}"
+        );
+    }
+
+    #[test]
+    fn e2e_cursor_shim_receives_claude_input_deny_outputs_nested() {
+        if !jq_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shim = write_shim(dir.path(), ProviderName::Cursor, HookEvent::PreToolUse);
+        let user = write_user_script(
+            dir.path(),
+            "user.sh",
+            r#"#!/usr/bin/env sh
+cat > /dev/null
+printf '%s' '{"permission_decision":"deny","decision_reason":"blocked"}'
+"#,
+        );
+        let claude_stdin = r#"{"session_id":"sess-1","cwd":"/home/u","tool_name":"Bash","tool_use_id":"t1","tool_input":{"command":"ls"}}"#;
+        let (code, stdout, stderr) = exec_shim_with_stdin(&shim, &user, claude_stdin);
+        assert_eq!(code, 0, "stderr={stderr}");
+        let parsed: Value = serde_json::from_str(stdout.trim()).expect("parse output");
+        assert_eq!(parsed["hookSpecificOutput"]["permissionDecision"], "deny");
+        assert_eq!(
+            parsed["hookSpecificOutput"]["permissionDecisionReason"],
+            "blocked"
+        );
+        assert!(
+            parsed.get("permission").is_none(),
+            "cross-host output should be nested Claude format, not flat Cursor"
+        );
+    }
+
+    #[test]
+    fn e2e_native_host_unchanged_after_refactor() {
+        if !jq_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        // Claude native: verify canonical input fields and nested output
+        let shim = write_shim(dir.path(), ProviderName::Claude, HookEvent::PreToolUse);
+        let user = write_user_script(
+            dir.path(),
+            "user_claude.sh",
+            r#"#!/usr/bin/env sh
+jq -e '.provider == "claude" and .session_id == "sess" and .cwd == "/p"' > /dev/null || exit 7
+printf '%s' '{"permission_decision":"deny","decision_reason":"test"}'
+"#,
+        );
+        let (code, stdout, stderr) = exec_shim_with_stdin(
+            &shim,
+            &user,
+            r#"{"session_id":"sess","cwd":"/p","tool_name":"Bash","tool_use_id":"t1","tool_input":{"command":"ls"}}"#,
+        );
+        assert_eq!(code, 0, "Claude native; stderr={stderr}");
+        let parsed: Value = serde_json::from_str(stdout.trim()).expect("parse Claude output");
+        assert_eq!(parsed["hookSpecificOutput"]["permissionDecision"], "deny");
+
+        // Cursor native: verify canonical input fields and flat output
+        let shim = write_shim(dir.path(), ProviderName::Cursor, HookEvent::PreToolUse);
+        let user = write_user_script(
+            dir.path(),
+            "user_cursor.sh",
+            r#"#!/usr/bin/env sh
+jq -e '.provider == "cursor" and .session_id == "conv" and .cwd == "/p"' > /dev/null || exit 7
+printf '%s' '{"permission_decision":"deny","decision_reason":"test"}'
+"#,
+        );
+        let (code, stdout, stderr) = exec_shim_with_stdin(
+            &shim,
+            &user,
+            r#"{"cursor_version":"3.2","conversation_id":"conv","workspace_roots":["/p"],"tool_name":"shell","tool_use_id":"t1","tool_input":{"command":"ls"}}"#,
+        );
+        assert_eq!(code, 0, "Cursor native; stderr={stderr}");
+        let parsed: Value = serde_json::from_str(stdout.trim()).expect("parse Cursor output");
+        assert_eq!(parsed["permission"], "deny");
+        assert_eq!(parsed["agent_message"], "test");
+    }
+
+    #[test]
+    fn parity_cross_host_input_rust_vs_jq() {
+        if !jq_available() {
+            return;
+        }
+        let events = [
+            HookEvent::PreToolUse,
+            HookEvent::PostToolUse,
+            HookEvent::PostToolUseFailure,
+            HookEvent::SessionStart,
+            HookEvent::SessionEnd,
+            HookEvent::Stop,
+            HookEvent::PreCompact,
+            HookEvent::SubagentStart,
+            HookEvent::SubagentStop,
+            HookEvent::UserPromptSubmit,
+        ];
+        for event in events {
+            for fixture_provider in [ProviderName::Claude, ProviderName::Cursor] {
+                let raw = fixture_for(fixture_provider, event);
+                let rust_canonical = CanonicalInput::from_provider_stdin_auto(raw, event)
+                    .unwrap_or_else(|e| {
+                        panic!("Rust auto-detect failed for {fixture_provider:?}/{event:?}: {e}")
+                    });
+                let rust_value: Value =
+                    serde_json::to_value(&rust_canonical).expect("serialize Rust canonical");
+
+                let detected = CanonicalInput::detect_provider(raw)
+                    .unwrap_or_else(|e| panic!("detect_provider failed: {e}"));
+                let jq_program =
+                    input_jq_program(detected, event).replace("__SCHEMA_VERSION__", SCHEMA_VERSION);
+                let jq_value = run_jq(&jq_program, raw);
+
+                assert_eq!(
+                    rust_value, jq_value,
+                    "cross-host input parity mismatch: fixture={fixture_provider:?}, event={event:?}, detected={detected:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn parity_cross_host_output_rust_vs_jq() {
+        if !jq_available() {
+            return;
+        }
+        let canonical_outputs = [
+            CanonicalOutput {
+                schema_version: SCHEMA_VERSION.to_string(),
+                permission_decision: Some(PermissionDecision::Deny),
+                decision_reason: Some("blocked".into()),
+                user_facing_message: None,
+                additional_context: None,
+                updated_input: None,
+            },
+            CanonicalOutput {
+                schema_version: SCHEMA_VERSION.to_string(),
+                permission_decision: Some(PermissionDecision::Deny),
+                decision_reason: Some("for model".into()),
+                user_facing_message: Some("for user".into()),
+                additional_context: Some("ctx".into()),
+                updated_input: Some(serde_json::json!({"command": "ls -al"})),
+            },
+        ];
+        let events = [
+            HookEvent::PreToolUse,
+            HookEvent::PostToolUse,
+            HookEvent::SessionStart,
+            HookEvent::UserPromptSubmit,
+        ];
+        for event in events {
+            for detected in [ProviderName::Claude, ProviderName::Cursor] {
+                let program = output_jq_program(detected, event);
+                for out in &canonical_outputs {
+                    let canonical_wire = serde_json::to_string(out).expect("serialize");
+                    let rust_text = out
+                        .to_provider_stdout(detected, event)
+                        .expect("Rust to_provider_stdout");
+                    let rust_value: Value =
+                        serde_json::from_str(&rust_text).expect("parse Rust out");
+                    let jq_value = run_jq(&program, &canonical_wire);
+                    assert_eq!(
+                        rust_value, jq_value,
+                        "cross-host output parity mismatch: detected={detected:?}, event={event:?}",
+                    );
+                }
+            }
         }
     }
 }
