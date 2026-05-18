@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use globset::GlobBuilder;
+
 use crate::presets::ProviderPresetsMap;
 use crate::spec::Spec;
 
@@ -62,27 +64,13 @@ pub fn validate_semantics(specs: &[Spec], presets: &ProviderPresetsMap) -> Vec<S
         if let Spec::Hook(hook_spec) = spec
             && hook_spec.frontmatter.matcher.is_some()
         {
-            let bad_events: Vec<_> = hook_spec
-                .frontmatter
-                .events
-                .iter()
-                .filter(|e| !e.allows_matcher())
-                .collect();
-            if !bad_events.is_empty() {
-                errors.push(SemanticError {
-                    path: hook_spec.path.clone(),
-                    message: format!(
-                        "hook '{}' sets `matcher` but targets event(s) that do not accept one: {}; \
-                         only pre_tool_use, post_tool_use, and post_tool_use_failure may use a matcher",
-                        hook_spec.frontmatter.id,
-                        bad_events
-                            .iter()
-                            .map(|e| e.snake_case())
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                    ),
-                });
-            }
+            validate_hook_matcher(hook_spec, &mut errors);
+        }
+
+        if let Spec::Rule(rule_spec) = spec
+            && let Some(paths) = &rule_spec.frontmatter.paths
+        {
+            validate_rule_paths(&rule_spec.path, paths, &mut errors);
         }
 
         let execution = match spec {
@@ -145,6 +133,48 @@ pub fn validate_semantics(specs: &[Spec], presets: &ProviderPresetsMap) -> Vec<S
     errors
 }
 
+fn validate_hook_matcher(hook_spec: &crate::spec::HookSpec, errors: &mut Vec<SemanticError>) {
+    let bad_events: Vec<_> = hook_spec
+        .frontmatter
+        .events
+        .iter()
+        .filter(|e| !e.allows_matcher())
+        .collect();
+    if !bad_events.is_empty() {
+        errors.push(SemanticError {
+            path: hook_spec.path.clone(),
+            message: format!(
+                "hook '{}' sets `matcher` but targets event(s) that do not accept one: {}; \
+                 only pre_tool_use, post_tool_use, and post_tool_use_failure may use a matcher",
+                hook_spec.frontmatter.id,
+                bad_events
+                    .iter()
+                    .map(|e| e.snake_case())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ),
+        });
+    }
+}
+
+fn validate_rule_paths(path: &std::path::Path, paths: &[String], errors: &mut Vec<SemanticError>) {
+    if paths.is_empty() {
+        errors.push(SemanticError {
+            path: path.to_path_buf(),
+            message: "paths must contain at least one pattern when specified".to_string(),
+        });
+        return;
+    }
+    for pat in paths {
+        if let Err(err) = GlobBuilder::new(pat).literal_separator(true).build() {
+            errors.push(SemanticError {
+                path: path.to_path_buf(),
+                message: format!("invalid glob pattern '{pat}': {err}"),
+            });
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -192,12 +222,17 @@ mod tests {
     }
 
     fn make_rule(id: &str, body: &str) -> Spec {
+        make_rule_with_paths(id, body, None)
+    }
+
+    fn make_rule_with_paths(id: &str, body: &str, paths: Option<Vec<String>>) -> Spec {
         Spec::Rule(RuleSpec {
             path: PathBuf::from(format!("{id}.md")),
             frontmatter: RuleFrontmatter {
                 id: id.to_string(),
                 description: None,
                 tags: None,
+                paths,
             },
             body: body.to_string(),
         })
@@ -474,6 +509,47 @@ mod tests {
                 .iter()
                 .any(|e| e.message.contains("duplicate id 'init'")),
             "expected duplicate-id error, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_semantics_rule_paths_empty_rejected() {
+        let spec = make_rule_with_paths("my-rule", "body", Some(vec![]));
+        let errors = validate_semantics(&[spec], &ProviderPresetsMap::new());
+        assert!(
+            errors.iter().any(|e| e
+                .message
+                .contains("paths must contain at least one pattern")),
+            "expected empty-paths error, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_semantics_rule_paths_invalid_glob_rejected() {
+        let spec = make_rule_with_paths("my-rule", "body", Some(vec!["[unterminated".to_string()]));
+        let errors = validate_semantics(&[spec], &ProviderPresetsMap::new());
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("invalid glob pattern '[unterminated'")),
+            "expected invalid-glob error, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_semantics_rule_paths_valid_passes() {
+        let spec = make_rule_with_paths(
+            "my-rule",
+            "body",
+            Some(vec![
+                "src/components/**/*.tsx".to_string(),
+                "src/hooks/**/*.ts".to_string(),
+            ]),
+        );
+        let errors = validate_semantics(&[spec], &ProviderPresetsMap::new());
+        assert!(
+            errors.is_empty(),
+            "expected no errors for valid paths, got: {errors:?}"
         );
     }
 }

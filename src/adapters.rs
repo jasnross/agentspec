@@ -256,6 +256,16 @@ pub trait Adapter: std::fmt::Debug + Send + Sync {
         true
     }
 
+    /// Whether this provider supports path-scoped rules (rules that
+    /// activate only when files matching a glob pattern are in context).
+    /// Defaults to `true`; providers without native path scoping override
+    /// to `false`. The compile stage surfaces a per-provider portability
+    /// warning when path-scoped rule specs target a provider that returns
+    /// `false`.
+    fn supports_path_scoped_rules(&self) -> bool {
+        true
+    }
+
     /// Subdirectory name under the destination root for `kind`.
     ///
     /// Single source of truth for the per-`FileKind` directory mapping. The

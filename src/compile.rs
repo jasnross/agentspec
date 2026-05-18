@@ -300,6 +300,11 @@ pub enum CompileWarning {
     /// true` and `session_start_fires_on_resume() == false` adapters.
     /// Single-provider configurations never trip this gate.
     SessionStartAsymmetry,
+    /// At least one rule spec has `paths` set, and the named provider does
+    /// not support native path scoping. The rule is emitted as always-on for
+    /// that provider. Fires per-provider via `supports_path_scoped_rules() ==
+    /// false`.
+    PathScopedRulesUnsupported(Provider),
 }
 
 impl CompileWarning {
@@ -320,6 +325,11 @@ impl CompileWarning {
             }
             Self::SessionStartAsymmetry => String::from(
                 "session_start asymmetry: at least one targeted provider does not fire `session_start` on conversation resume; the canonical `session_start` event reflects this. To trigger logic on resume firings, branch on `provider_raw.source == \"resume\"` (provider-specific). See docs/hooks-canonical.md#session-start-asymmetry.",
+            ),
+            Self::PathScopedRulesUnsupported(provider) => format!(
+                "{} does not support path-scoped rules; rules with `paths` will be emitted as always-on for {}.",
+                provider.display_name(),
+                provider.display_name(),
             ),
         }
     }
@@ -493,6 +503,19 @@ pub(crate) fn compile_specs(
             diagnostics
                 .warnings
                 .push(CompileWarning::SessionStartAsymmetry);
+        }
+    }
+
+    let has_any_path_scoped_rule = specs
+        .iter()
+        .any(|spec| matches!(spec, Spec::Rule(r) if r.frontmatter.paths.is_some()));
+    if has_any_path_scoped_rule {
+        for &provider in &sorted_providers {
+            if !provider.adapter().supports_path_scoped_rules() {
+                diagnostics
+                    .warnings
+                    .push(CompileWarning::PathScopedRulesUnsupported(provider));
+            }
         }
     }
 

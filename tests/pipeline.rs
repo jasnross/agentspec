@@ -207,6 +207,98 @@ fn test_compile_generates_expected_files() {
 }
 
 #[test]
+fn test_compile_path_scoped_rule_outputs() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    // Claude: path-scoped rule emits frontmatter with paths array
+    let claude_react = dir.join("generated/claude/rules/react-components.md");
+    assert!(
+        claude_react.exists(),
+        "missing claude react-components rule"
+    );
+    let claude_react_content =
+        std::fs::read_to_string(&claude_react).expect("failed to read claude react-components");
+    assert!(
+        claude_react_content.starts_with("---"),
+        "claude path-scoped rule should have frontmatter"
+    );
+    assert!(
+        claude_react_content.contains("paths:"),
+        "claude path-scoped rule should have paths key"
+    );
+    assert!(
+        claude_react_content.contains("src/components/**/*.tsx"),
+        "claude path-scoped rule should contain first glob"
+    );
+
+    // Cursor: path-scoped rule emits alwaysApply: false and globs field
+    let cursor_react = dir.join("generated/cursor/rules/react-components.mdc");
+    assert!(
+        cursor_react.exists(),
+        "missing cursor react-components rule"
+    );
+    let cursor_react_content =
+        std::fs::read_to_string(&cursor_react).expect("failed to read cursor react-components");
+    assert!(
+        cursor_react_content.contains("alwaysApply: false"),
+        "cursor path-scoped rule should have alwaysApply: false"
+    );
+    assert!(
+        cursor_react_content.contains("globs:"),
+        "cursor path-scoped rule should have globs field"
+    );
+    assert!(
+        cursor_react_content.contains("src/components/**/*.tsx"),
+        "cursor path-scoped rule should contain first glob"
+    );
+
+    // OpenCode: path-scoped rule is emitted as always-on (no paths or globs)
+    let opencode_react = dir.join("generated/opencode/rules/react-components/AGENTS.md");
+    assert!(
+        opencode_react.exists(),
+        "missing opencode react-components rule"
+    );
+    let opencode_react_content =
+        std::fs::read_to_string(&opencode_react).expect("failed to read opencode react-components");
+    assert!(
+        !opencode_react_content.contains("paths:"),
+        "opencode rule should not contain paths"
+    );
+    assert!(
+        !opencode_react_content.contains("globs:"),
+        "opencode rule should not contain globs"
+    );
+
+    // Portability warning fires for OpenCode (path-scoped rules unsupported)
+    assert!(
+        stderr.contains("OpenCode does not support path-scoped rules"),
+        "expected OpenCode path-scoped warning, got:\n{stderr}"
+    );
+
+    // Regression: non-path-scoped rules (general-guidance, api-design) are unaffected
+    assert!(
+        dir.join("generated/claude/rules/general-guidance.md")
+            .exists(),
+        "general-guidance regression: claude rule missing"
+    );
+    assert!(
+        dir.join("generated/cursor/rules/general-guidance.mdc")
+            .exists(),
+        "general-guidance regression: cursor rule missing"
+    );
+}
+
+#[test]
 fn test_compile_resolves_tool_per_provider() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
@@ -4180,8 +4272,9 @@ fn test_compile_does_not_emit_session_start_warning_when_only_cursor_targeted() 
 
 #[test]
 fn test_compile_emits_no_warnings_for_non_hook_fixture() {
-    // Sanity check: a compile without hook specs surfaces no Phase 4
-    // warnings. Both warning gates require `has_any_hook == true`.
+    // Sanity check: a compile without hook specs surfaces no hook-related
+    // warnings. The `PartialOutputImpl` and `SessionStartAsymmetry` gates both
+    // require `has_any_hook == true`; neither should fire here.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     // No hook fixture installed.
@@ -4194,8 +4287,12 @@ fn test_compile_emits_no_warnings_for_non_hook_fixture() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "compile failed:\n{stderr}");
     assert!(
-        !stderr.contains("agentspec warning:"),
-        "non-hook fixture must surface no agentspec warnings, got:\n{stderr}"
+        !stderr.contains("partial implementation"),
+        "non-hook fixture must not surface PartialOutputImpl warning, got:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("session_start asymmetry"),
+        "non-hook fixture must not surface SessionStartAsymmetry warning, got:\n{stderr}"
     );
 }
 

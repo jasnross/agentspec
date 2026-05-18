@@ -193,6 +193,7 @@ mod tests {
                 id: id.to_owned(),
                 description: description.map(ToOwned::to_owned),
                 tags: None,
+                paths: None,
             },
             body: String::new(),
         })

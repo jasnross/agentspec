@@ -168,6 +168,7 @@ mod tests {
                 id: "dummy-rule".to_string(),
                 description: None,
                 tags: None,
+                paths: None,
             },
             body: String::new(),
         })

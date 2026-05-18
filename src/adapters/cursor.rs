@@ -41,10 +41,12 @@ struct CursorSkillFrontmatter {
 }
 
 // See: https://cursor.com/docs/rules#rule-file-format
+#[serde_with::skip_serializing_none]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CursorRuleFrontmatter {
     description: String,
+    globs: Option<String>,
     always_apply: bool,
 }
 
@@ -575,9 +577,16 @@ fn adapt_skill_spec(spec: SkillSpec, cfg: Option<&AdapterConfig>) -> Result<Vec<
 fn adapt_rule_spec(spec: RuleSpec, cfg: Option<&AdapterConfig>) -> Result<Vec<GeneratedFile>> {
     let description = spec.frontmatter.description.unwrap_or_default();
 
+    let (always_apply, globs) = if let Some(paths) = spec.frontmatter.paths {
+        (false, Some(paths.join(", ")))
+    } else {
+        (true, None)
+    };
+
     let frontmatter = CursorRuleFrontmatter {
         description,
-        always_apply: true,
+        globs,
+        always_apply,
     };
 
     let frontmatter_str = serde_yml::to_string(&frontmatter)?;
@@ -952,6 +961,7 @@ mod tests {
                 id: "test-rule".to_string(),
                 description: Some("A test rule".to_string()),
                 tags: None,
+                paths: None,
             },
             body: "Rule body.".to_string(),
         });
@@ -1092,5 +1102,64 @@ mod tests {
         };
         let output = CursorAdapter.compile(&[], &ctx).expect("compile");
         assert_eq!(output.dest_root, PathBuf::from("/work/project/.cursor"));
+    }
+
+    #[test]
+    fn test_adapt_rule_without_paths() {
+        let spec = Spec::Rule(RuleSpec {
+            path: "test.md".into(),
+            frontmatter: RuleFrontmatter {
+                id: "my-rule".to_string(),
+                description: Some("A rule".to_string()),
+                tags: None,
+                paths: None,
+            },
+            body: "Rule body.".to_string(),
+        });
+
+        let files = compile_one(spec, None);
+        assert_eq!(files.len(), 1);
+        let content = String::from_utf8(files[0].content.clone()).expect("utf8");
+        assert!(
+            content.contains("alwaysApply: true"),
+            "rule without paths should have alwaysApply: true, got: {content}"
+        );
+        assert!(
+            !content.contains("globs:"),
+            "rule without paths should have no globs field, got: {content}"
+        );
+    }
+
+    #[test]
+    fn test_adapt_rule_with_paths() {
+        let spec = Spec::Rule(RuleSpec {
+            path: "test.md".into(),
+            frontmatter: RuleFrontmatter {
+                id: "react-rule".to_string(),
+                description: Some("React conventions".to_string()),
+                tags: None,
+                paths: Some(vec![
+                    "src/components/**/*.tsx".to_string(),
+                    "src/hooks/**/*.ts".to_string(),
+                ]),
+            },
+            body: "Rule body.".to_string(),
+        });
+
+        let files = compile_one(spec, None);
+        assert_eq!(files.len(), 1);
+        let content = String::from_utf8(files[0].content.clone()).expect("utf8");
+        assert!(
+            content.contains("alwaysApply: false"),
+            "rule with paths should have alwaysApply: false, got: {content}"
+        );
+        assert!(
+            content.contains("globs:"),
+            "rule with paths should have globs field, got: {content}"
+        );
+        assert!(
+            content.contains("src/components/**/*.tsx, src/hooks/**/*.ts"),
+            "globs should be comma-separated, got: {content}"
+        );
     }
 }

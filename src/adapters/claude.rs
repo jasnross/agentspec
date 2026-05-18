@@ -33,6 +33,13 @@ struct ClaudeAgentFrontmatter {
     tools: Option<Vec<ClaudeTool>>,
 }
 
+// See: https://code.claude.com/docs/en/memory#path-specific-rules
+#[serde_with::skip_serializing_none]
+#[derive(Serialize)]
+struct ClaudeRuleFrontmatter {
+    paths: Option<Vec<String>>,
+}
+
 // See: https://code.claude.com/docs/en/skills#frontmatter-reference
 #[serde_with::skip_serializing_none]
 #[derive(Serialize)]
@@ -112,7 +119,7 @@ impl Adapter for ClaudeAdapter {
                     ctx.presets,
                     ctx.adapter_config,
                 )?),
-                Spec::Rule(s) => files.extend(adapt_rule_spec(s, ctx.adapter_config)),
+                Spec::Rule(s) => files.extend(adapt_rule_spec(s, ctx.adapter_config)?),
                 // Hook scripts (entry scripts AND helpers under `scripts/`) are
                 // emitted by `synthesize_hooks` exactly once per provider, drawn
                 // from `supporting_files` collected by `load_hook_specs`. Per-spec
@@ -690,18 +697,26 @@ fn adapt_skill_spec(
     Ok(files)
 }
 
-fn adapt_rule_spec(spec: &RuleSpec, cfg: Option<&AdapterConfig>) -> Vec<GeneratedFile> {
-    let content = format!("{}\n", spec.body.trim()).into_bytes();
+fn adapt_rule_spec(spec: &RuleSpec, cfg: Option<&AdapterConfig>) -> Result<Vec<GeneratedFile>> {
     let file_prefix = cfg.and_then(AdapterConfig::file_prefix).unwrap_or_default();
     let path = Path::new("rules").join(format!("{file_prefix}{}.md", spec.frontmatter.id));
+    let body = spec.body.trim();
 
-    vec![GeneratedFile {
+    let content = if let Some(paths) = spec.frontmatter.paths.clone() {
+        let frontmatter = ClaudeRuleFrontmatter { paths: Some(paths) };
+        let frontmatter_str = serde_yml::to_string(&frontmatter)?;
+        format!("---\n{frontmatter_str}---\n\n{body}\n")
+    } else {
+        format!("{body}\n")
+    };
+
+    Ok(vec![GeneratedFile {
         provider: Provider::Claude,
         kind: FileKind::Rules,
         path,
-        content,
+        content: content.into_bytes(),
         mode: None,
-    }]
+    }])
 }
 
 fn adapt_tool(tool: &ToolFrontmatter) -> Vec<ClaudeTool> {
@@ -909,6 +924,7 @@ mod tests {
                 id: "test-rule".to_string(),
                 description: Some("A test rule".to_string()),
                 tags: None,
+                paths: None,
             },
             body: "Rule body.".to_string(),
         });
@@ -1405,6 +1421,100 @@ mod tests {
         assert!(
             v.get("matcher").is_none(),
             "claude entry: matcher is on the wrapper, not the entry"
+        );
+    }
+
+    #[test]
+    fn test_adapt_rule_without_paths() {
+        let spec = Spec::Rule(RuleSpec {
+            path: "test.md".into(),
+            frontmatter: RuleFrontmatter {
+                id: "my-rule".to_string(),
+                description: None,
+                tags: None,
+                paths: None,
+            },
+            body: "Rule body.".to_string(),
+        });
+
+        let files = compile_one(spec, None);
+        assert_eq!(files.len(), 1);
+        let content = String::from_utf8(files[0].content.clone()).expect("utf8");
+        assert!(
+            !content.starts_with("---"),
+            "rule without paths should have no frontmatter, got: {content}"
+        );
+        assert!(content.contains("Rule body."), "body should be present");
+    }
+
+    #[test]
+    fn test_adapt_rule_with_paths() {
+        let spec = Spec::Rule(RuleSpec {
+            path: "test.md".into(),
+            frontmatter: RuleFrontmatter {
+                id: "react-rule".to_string(),
+                description: None,
+                tags: None,
+                paths: Some(vec![
+                    "src/components/**/*.tsx".to_string(),
+                    "src/hooks/**/*.ts".to_string(),
+                ]),
+            },
+            body: "Rule body.".to_string(),
+        });
+
+        let files = compile_one(spec, None);
+        assert_eq!(files.len(), 1);
+        let content = String::from_utf8(files[0].content.clone()).expect("utf8");
+        assert!(
+            content.starts_with("---\n"),
+            "rule with paths should start with frontmatter delimiter, got: {content}"
+        );
+        assert!(
+            content.contains("paths:"),
+            "frontmatter should contain paths key, got: {content}"
+        );
+        assert!(
+            content.contains("src/components/**/*.tsx"),
+            "frontmatter should contain first path, got: {content}"
+        );
+        assert!(
+            content.contains("src/hooks/**/*.ts"),
+            "frontmatter should contain second path, got: {content}"
+        );
+        assert!(
+            content.contains("Rule body."),
+            "body should follow frontmatter, got: {content}"
+        );
+    }
+
+    #[test]
+    fn test_adapt_rule_with_paths_and_prefix() {
+        let cfg = AdapterConfig {
+            prefix: Some("tw".to_string()),
+            ..AdapterConfig::default()
+        };
+        let spec = Spec::Rule(RuleSpec {
+            path: "test.md".into(),
+            frontmatter: RuleFrontmatter {
+                id: "react-rule".to_string(),
+                description: None,
+                tags: None,
+                paths: Some(vec!["src/**/*.tsx".to_string()]),
+            },
+            body: "Rule body.".to_string(),
+        });
+
+        let files = compile_one(spec, Some(&cfg));
+        assert_eq!(
+            files[0].path.to_str(),
+            Some("rules/tw-react-rule.md"),
+            "prefix should be applied to file path"
+        );
+        let content = String::from_utf8(files[0].content.clone()).expect("utf8");
+        assert!(
+            content.contains("src/**/*.tsx"),
+            "path glob should appear in frontmatter, got: {content}"
         );
     }
 }

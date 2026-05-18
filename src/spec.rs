@@ -143,6 +143,7 @@ pub struct RuleFrontmatter {
     pub id: String,
     pub description: Option<String>,
     pub tags: Option<Vec<String>>,
+    pub paths: Option<Vec<String>>,
 }
 
 /// A single hook entry, parsed from a `[hooks.<id>]` table in `hooks.toml`.
@@ -320,6 +321,7 @@ mod tests {
                 id: id.to_string(),
                 description: description.map(str::to_string),
                 tags: None,
+                paths: None,
             },
             body: String::new(),
         })

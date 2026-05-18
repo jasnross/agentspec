@@ -228,6 +228,7 @@ mod tests {
                     id: "my-rule".to_owned(),
                     description: Some("Rule description".to_owned()),
                     tags: None,
+                    paths: None,
                 },
                 body: String::new(),
             }),

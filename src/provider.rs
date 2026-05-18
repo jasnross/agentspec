@@ -81,4 +81,11 @@ mod tests {
         let _: &dyn Adapter = Provider::Cursor.adapter();
         let _: &dyn Adapter = Provider::OpenCode.adapter();
     }
+
+    #[test]
+    fn test_supports_path_scoped_rules_capability() {
+        assert!(Provider::Claude.adapter().supports_path_scoped_rules());
+        assert!(Provider::Cursor.adapter().supports_path_scoped_rules());
+        assert!(!Provider::OpenCode.adapter().supports_path_scoped_rules());
+    }
 }

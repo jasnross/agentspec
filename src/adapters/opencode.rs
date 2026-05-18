@@ -187,6 +187,10 @@ impl Adapter for OpenCodeAdapter {
     fn plugin_manifest_dir(&self) -> Option<&'static str> {
         None
     }
+
+    fn supports_path_scoped_rules(&self) -> bool {
+        false
+    }
 }
 
 fn config_dir(
@@ -1423,6 +1427,7 @@ mod tests {
                 id: "zulu".to_string(),
                 description: None,
                 tags: None,
+                paths: None,
             },
             body: "zulu body".to_string(),
         });
@@ -1432,6 +1437,7 @@ mod tests {
                 id: "alpha".to_string(),
                 description: None,
                 tags: None,
+                paths: None,
             },
             body: "alpha body".to_string(),
         });
@@ -1549,6 +1555,62 @@ mod tests {
             instructions[0].as_str().expect("string"),
             "/user/AGENTS.md",
             "user-authored entry must be preserved"
+        );
+    }
+
+    #[test]
+    fn test_adapt_rule_with_paths_ignored() {
+        let presets = HashMap::new();
+        let ctx = CompileCtx {
+            mode: SyncDestinationMode::Compile,
+            home: Path::new("/home"),
+            cwd: Path::new("/work"),
+            target_dir: None,
+            presets: &presets,
+            adapter_config: None,
+            overwrite: false,
+        };
+
+        let rule_with_paths = Spec::Rule(crate::spec::RuleSpec {
+            path: "react.md".into(),
+            frontmatter: crate::spec::RuleFrontmatter {
+                id: "react-rule".to_string(),
+                description: None,
+                tags: None,
+                paths: Some(vec!["src/**/*.tsx".to_string()]),
+            },
+            body: "Rule body.".to_string(),
+        });
+        let rule_without_paths = Spec::Rule(crate::spec::RuleSpec {
+            path: "react-plain.md".into(),
+            frontmatter: crate::spec::RuleFrontmatter {
+                id: "react-rule-plain".to_string(),
+                description: None,
+                tags: None,
+                paths: None,
+            },
+            body: "Rule body.".to_string(),
+        });
+
+        let with_paths = OpenCodeAdapter
+            .compile(&[rule_with_paths], &ctx)
+            .expect("compile")
+            .files;
+        let without_paths = OpenCodeAdapter
+            .compile(&[rule_without_paths], &ctx)
+            .expect("compile")
+            .files;
+
+        let content_with = String::from_utf8(with_paths[0].content.clone()).expect("utf8");
+        let content_without = String::from_utf8(without_paths[0].content.clone()).expect("utf8");
+
+        assert!(
+            !content_with.contains("paths:") && !content_with.contains("globs:"),
+            "opencode rule should not contain paths or globs, got: {content_with}"
+        );
+        assert_eq!(
+            content_with, content_without,
+            "opencode should emit identical output regardless of paths field"
         );
     }
 }
