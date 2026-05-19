@@ -152,6 +152,8 @@ impl AgentspecConfig {
                     version: t.plugin_version.clone(),
                     description: t.plugin_description.clone(),
                     author: t.plugin_author.clone().map(|name| PluginAuthor { name }),
+                    repository: t.plugin_repository.clone(),
+                    license: t.plugin_license.clone(),
                 });
                 (
                     *p,
@@ -312,6 +314,10 @@ pub struct SyncTargetConfig {
     /// Plugin author name (`plugin.json` `author.name`). Email is not yet
     /// surfaced — see `TODO.md` #17.
     pub plugin_author: Option<String>,
+    /// Plugin repository URL (`plugin.json` `repository` field).
+    pub plugin_repository: Option<String>,
+    /// Plugin license identifier (`plugin.json` `license` field).
+    pub plugin_license: Option<String>,
 }
 
 impl SyncTargetConfig {
@@ -914,6 +920,8 @@ plugin-name = "tw"
 plugin-version = "0.1.0"
 plugin-description = "Thoughts workflow"
 plugin-author = "Jason"
+plugin-repository = "https://github.com/jasnross/tw"
+plugin-license = "MIT"
 "#;
         fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
         let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
@@ -927,6 +935,11 @@ plugin-author = "Jason"
             Some("Thoughts workflow")
         );
         assert_eq!(target.plugin_author.as_deref(), Some("Jason"));
+        assert_eq!(
+            target.plugin_repository.as_deref(),
+            Some("https://github.com/jasnross/tw")
+        );
+        assert_eq!(target.plugin_license.as_deref(), Some("MIT"));
     }
 
     #[test]
@@ -999,6 +1012,8 @@ mode = "path"
             plugin_version: Some("0.1.0".to_string()),
             plugin_description: Some("desc".to_string()),
             plugin_author: Some("Jason".to_string()),
+            plugin_repository: Some("https://github.com/jasnross/tw".to_string()),
+            plugin_license: Some("MIT".to_string()),
             ..SyncTargetConfig::default()
         };
         let configs = AgentspecConfig::adapter_configs(&[(Provider::Claude, target)]);
@@ -1014,6 +1029,11 @@ mode = "path"
             manifest.author.as_ref().map(|a| a.name.as_str()),
             Some("Jason")
         );
+        assert_eq!(
+            manifest.repository.as_deref(),
+            Some("https://github.com/jasnross/tw")
+        );
+        assert_eq!(manifest.license.as_deref(), Some("MIT"));
     }
 
     #[test]

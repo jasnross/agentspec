@@ -363,10 +363,9 @@ impl ClaudeAdapter {
 
 /// Claude's `.claude-plugin/plugin.json` shape.
 ///
-/// Only the v1 manifest fields are emitted — `name`, `version`, `description`,
-/// `author { name }`. Additional fields documented in Claude's plugin schema
-/// (`dependencies`, `contributes`, `userConfig`, etc.) are out of scope per
-/// the plan's "What We're NOT Doing" list.
+/// Emits `name`, `version`, `description`, `author { name }`, `repository`,
+/// and `license`. Additional fields documented in Claude's plugin schema
+/// (`dependencies`, `contributes`, `userConfig`, etc.) are out of scope.
 #[serde_with::skip_serializing_none]
 #[derive(Serialize)]
 struct ClaudePluginManifestJson<'a> {
@@ -374,6 +373,8 @@ struct ClaudePluginManifestJson<'a> {
     version: Option<&'a str>,
     description: Option<&'a str>,
     author: Option<PluginAuthorJson<'a>>,
+    repository: Option<&'a str>,
+    license: Option<&'a str>,
 }
 
 /// Author sub-record. Both providers' author schemas accept
@@ -394,6 +395,8 @@ fn build_plugin_manifest_file(manifest: &SpecPluginManifest) -> Result<Generated
             .author
             .as_ref()
             .map(|a| PluginAuthorJson { name: &a.name }),
+        repository: manifest.repository.as_deref(),
+        license: manifest.license.as_deref(),
     };
     let mut content = serde_json::to_vec_pretty(&json)
         .context("failed to serialize Claude .claude-plugin/plugin.json")?;
@@ -1293,6 +1296,8 @@ mod tests {
             author: Some(PluginAuthor {
                 name: "Jason".to_string(),
             }),
+            repository: Some("https://github.com/jasnross/tw".to_string()),
+            license: Some("MIT".to_string()),
         };
         let file = build_plugin_manifest_file(&manifest).expect("manifest builds");
         assert_eq!(file.provider, Provider::Claude);
@@ -1305,6 +1310,8 @@ mod tests {
         assert_eq!(parsed["version"], "0.1.0");
         assert_eq!(parsed["description"], "Thoughts workflow plugin");
         assert_eq!(parsed["author"]["name"], "Jason");
+        assert_eq!(parsed["repository"], "https://github.com/jasnross/tw");
+        assert_eq!(parsed["license"], "MIT");
     }
 
     #[test]
@@ -1316,6 +1323,8 @@ mod tests {
             version: None,
             description: None,
             author: None,
+            repository: None,
+            license: None,
         };
         let file = build_plugin_manifest_file(&manifest).expect("manifest builds");
         let content = String::from_utf8(file.content.clone()).expect("utf-8");
@@ -1342,6 +1351,8 @@ mod tests {
                 author: Some(PluginAuthor {
                     name: "Author".to_string(),
                 }),
+                repository: None,
+                license: None,
             }),
             ..AdapterConfig::default()
         };
@@ -1383,6 +1394,8 @@ mod tests {
                 version: None,
                 description: None,
                 author: None,
+                repository: None,
+                license: None,
             }),
             ..AdapterConfig::default()
         };

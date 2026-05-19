@@ -324,10 +324,10 @@ impl CursorAdapter {
 
 /// Cursor's `.cursor-plugin/plugin.json` shape.
 ///
-/// v1 emits `name` (required), `version`, `description`, `author { name }`.
-/// Cursor's schema additionally supports `displayName`, `category`, `tags`,
-/// `logo`, `publisher`, etc.; those are out of scope per the plan's
-/// "What We're NOT Doing" list.
+/// Emits `name` (required), `version`, `description`, `author { name }`,
+/// `repository`, and `license`. Cursor's schema additionally supports
+/// `displayName`, `category`, `tags`, `logo`, `publisher`, etc.; those are
+/// out of scope.
 #[serde_with::skip_serializing_none]
 #[derive(Serialize)]
 struct CursorPluginManifestJson<'a> {
@@ -335,6 +335,8 @@ struct CursorPluginManifestJson<'a> {
     version: Option<&'a str>,
     description: Option<&'a str>,
     author: Option<PluginAuthorJson<'a>>,
+    repository: Option<&'a str>,
+    license: Option<&'a str>,
 }
 
 #[derive(Serialize)]
@@ -352,6 +354,8 @@ fn build_plugin_manifest_file(manifest: &SpecPluginManifest) -> Result<Generated
             .author
             .as_ref()
             .map(|a| PluginAuthorJson { name: &a.name }),
+        repository: manifest.repository.as_deref(),
+        license: manifest.license.as_deref(),
     };
     let mut content = serde_json::to_vec_pretty(&json)
         .context("failed to serialize Cursor .cursor-plugin/plugin.json")?;
@@ -981,6 +985,8 @@ mod tests {
             author: Some(PluginAuthor {
                 name: "Jason".to_string(),
             }),
+            repository: Some("https://github.com/jasnross/tw".to_string()),
+            license: Some("MIT".to_string()),
         };
         let file = build_plugin_manifest_file(&manifest).expect("manifest builds");
         assert_eq!(file.provider, Provider::Cursor);
@@ -993,6 +999,8 @@ mod tests {
         assert_eq!(parsed["version"], "0.1.0");
         assert_eq!(parsed["description"], "Thoughts workflow plugin");
         assert_eq!(parsed["author"]["name"], "Jason");
+        assert_eq!(parsed["repository"], "https://github.com/jasnross/tw");
+        assert_eq!(parsed["license"], "MIT");
     }
 
     #[test]
@@ -1006,6 +1014,8 @@ mod tests {
                 version: None,
                 description: None,
                 author: None,
+                repository: None,
+                license: None,
             }),
             ..AdapterConfig::default()
         };

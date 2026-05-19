@@ -36,7 +36,8 @@ pub struct AdapterConfig {
 /// Plugin manifest fields shared across providers.
 ///
 /// `name` is required (validated at config-resolve time when `mode = "plugin"`);
-/// the other fields are passthrough text the adapter serializes into the
+/// the other fields (`version`, `description`, `author`, `repository`,
+/// `license`) are passthrough text the adapter serializes into the
 /// provider-appropriate `plugin.json` shape.
 #[derive(Clone, Debug)]
 pub struct PluginManifest {
@@ -44,6 +45,8 @@ pub struct PluginManifest {
     pub version: Option<String>,
     pub description: Option<String>,
     pub author: Option<PluginAuthor>,
+    pub repository: Option<String>,
+    pub license: Option<String>,
 }
 
 /// Author sub-record for plugin manifests.
