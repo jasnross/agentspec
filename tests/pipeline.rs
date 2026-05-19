@@ -1939,7 +1939,7 @@ fn test_sync_claude_plugin_mode_emits_plugin_manifest() {
             .with_plugin_name("tw")
             .with_plugin_version("0.1.0")
             .with_plugin_description("Thoughts workflow")
-            .with_plugin_author("Jason")],
+            .with_plugin_author("Jason", Some("jason@example.com"))],
     );
 
     let home = dir.join("home");
@@ -1968,6 +1968,7 @@ fn test_sync_claude_plugin_mode_emits_plugin_manifest() {
     assert_eq!(parsed["version"], "0.1.0");
     assert_eq!(parsed["description"], "Thoughts workflow");
     assert_eq!(parsed["author"]["name"], "Jason");
+    assert_eq!(parsed["author"]["email"], "jason@example.com");
 
     // Hook command anchors use ${CLAUDE_PLUGIN_ROOT} in plugin mode.
     let hooks_str = std::fs::read_to_string(dest.join("hooks/hooks.json"))
@@ -2347,7 +2348,7 @@ struct SyncEntry<'a> {
     plugin_name: Option<&'a str>,
     plugin_version: Option<&'a str>,
     plugin_description: Option<&'a str>,
-    plugin_author: Option<&'a str>,
+    plugin_author: Option<(&'a str, Option<&'a str>)>,
 }
 
 impl<'a> SyncEntry<'a> {
@@ -2395,8 +2396,8 @@ impl<'a> SyncEntry<'a> {
         self
     }
 
-    fn with_plugin_author(mut self, author: &'a str) -> Self {
-        self.plugin_author = Some(author);
+    fn with_plugin_author(mut self, name: &'a str, email: Option<&'a str>) -> Self {
+        self.plugin_author = Some((name, email));
         self
     }
 }
@@ -2446,8 +2447,15 @@ cursor = { model = "fast" }
         if let Some(description) = entry.plugin_description {
             let _ = writeln!(sections, "plugin-description = \"{description}\"");
         }
-        if let Some(author) = entry.plugin_author {
-            let _ = writeln!(sections, "plugin-author = \"{author}\"");
+        if let Some((name, email)) = entry.plugin_author {
+            if let Some(email) = email {
+                let _ = writeln!(
+                    sections,
+                    "plugin-author = {{ name = \"{name}\", email = \"{email}\" }}"
+                );
+            } else {
+                let _ = writeln!(sections, "plugin-author = {{ name = \"{name}\" }}");
+            }
         }
     }
     let r = std::fs::write(dir.join("agentspec.toml"), sections);

@@ -151,7 +151,10 @@ impl AgentspecConfig {
                     name,
                     version: t.plugin_version.clone(),
                     description: t.plugin_description.clone(),
-                    author: t.plugin_author.clone().map(|name| PluginAuthor { name }),
+                    author: t.plugin_author.as_ref().map(|a| PluginAuthor {
+                        name: a.name.clone(),
+                        email: a.email.clone(),
+                    }),
                     repository: t.plugin_repository.clone(),
                     license: t.plugin_license.clone(),
                 });
@@ -275,6 +278,14 @@ impl Default for CompileConfig {
     }
 }
 
+/// Plugin author as an inline TOML table: `plugin-author = { name = "...", email = "..." }`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginAuthorConfig {
+    pub name: String,
+    pub email: Option<String>,
+}
+
 /// Per-provider sync target configuration.
 ///
 /// Controls where and how generated files are distributed for a single provider.
@@ -311,9 +322,9 @@ pub struct SyncTargetConfig {
     pub plugin_version: Option<String>,
     /// Plugin description (`plugin.json` `description` field).
     pub plugin_description: Option<String>,
-    /// Plugin author name (`plugin.json` `author.name`). Email is not yet
-    /// surfaced — see `TODO.md` #17.
-    pub plugin_author: Option<String>,
+    /// Plugin author (`plugin.json` `author` object).
+    /// Inline table: `plugin-author = { name = "...", email = "..." }`.
+    pub plugin_author: Option<PluginAuthorConfig>,
     /// Plugin repository URL (`plugin.json` `repository` field).
     pub plugin_repository: Option<String>,
     /// Plugin license identifier (`plugin.json` `license` field).
@@ -919,7 +930,7 @@ dir = "plugin-claude"
 plugin-name = "tw"
 plugin-version = "0.1.0"
 plugin-description = "Thoughts workflow"
-plugin-author = "Jason"
+plugin-author = { name = "Jason", email = "jason@example.com" }
 plugin-repository = "https://github.com/jasnross/tw"
 plugin-license = "MIT"
 "#;
@@ -934,12 +945,48 @@ plugin-license = "MIT"
             target.plugin_description.as_deref(),
             Some("Thoughts workflow")
         );
-        assert_eq!(target.plugin_author.as_deref(), Some("Jason"));
+        let author = target.plugin_author.as_ref().expect("author present");
+        assert_eq!(author.name, "Jason");
+        assert_eq!(author.email.as_deref(), Some("jason@example.com"));
         assert_eq!(
             target.plugin_repository.as_deref(),
             Some("https://github.com/jasnross/tw")
         );
         assert_eq!(target.plugin_license.as_deref(), Some("MIT"));
+    }
+
+    #[test]
+    fn test_parse_plugin_author_name_only() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[sync.claude]
+mode = "plugin"
+dir = "plugin-claude"
+plugin-name = "tw"
+plugin-author = { name = "Jason" }
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+        let target = config.resolve_sync_target(Provider::Claude, &SyncFlags::default());
+        let author = target.plugin_author.as_ref().expect("author present");
+        assert_eq!(author.name, "Jason");
+        assert!(author.email.is_none());
+    }
+
+    #[test]
+    fn test_parse_plugin_author_rejects_unknown_field() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[sync.claude]
+mode = "plugin"
+dir = "plugin-claude"
+plugin-name = "tw"
+plugin-author = { name = "Jason", eamil = "typo@example.com" }
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let err = AgentspecConfig::discover(tmp.path()).expect_err("expected parse error");
+        let full = format!("{err:#}");
+        assert!(full.contains("failed to parse"), "error: {full}");
     }
 
     #[test]
@@ -1011,7 +1058,10 @@ mode = "path"
             plugin_name: Some("tw".to_string()),
             plugin_version: Some("0.1.0".to_string()),
             plugin_description: Some("desc".to_string()),
-            plugin_author: Some("Jason".to_string()),
+            plugin_author: Some(PluginAuthorConfig {
+                name: "Jason".to_string(),
+                email: Some("jason@example.com".to_string()),
+            }),
             plugin_repository: Some("https://github.com/jasnross/tw".to_string()),
             plugin_license: Some("MIT".to_string()),
             ..SyncTargetConfig::default()
@@ -1025,10 +1075,9 @@ mode = "path"
         assert_eq!(manifest.name, "tw");
         assert_eq!(manifest.version.as_deref(), Some("0.1.0"));
         assert_eq!(manifest.description.as_deref(), Some("desc"));
-        assert_eq!(
-            manifest.author.as_ref().map(|a| a.name.as_str()),
-            Some("Jason")
-        );
+        let author = manifest.author.as_ref().expect("author present");
+        assert_eq!(author.name, "Jason");
+        assert_eq!(author.email.as_deref(), Some("jason@example.com"));
         assert_eq!(
             manifest.repository.as_deref(),
             Some("https://github.com/jasnross/tw")

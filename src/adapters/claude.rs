@@ -363,7 +363,7 @@ impl ClaudeAdapter {
 
 /// Claude's `.claude-plugin/plugin.json` shape.
 ///
-/// Emits `name`, `version`, `description`, `author { name }`, `repository`,
+/// Emits `name`, `version`, `description`, `author { name, email? }`, `repository`,
 /// and `license`. Additional fields documented in Claude's plugin schema
 /// (`dependencies`, `contributes`, `userConfig`, etc.) are out of scope.
 #[serde_with::skip_serializing_none]
@@ -377,12 +377,12 @@ struct ClaudePluginManifestJson<'a> {
     license: Option<&'a str>,
 }
 
-/// Author sub-record. Both providers' author schemas accept
-/// `{ name, email? }`; v1 emits the name-only shape (email deferred per
-/// `TODO.md` #17).
+/// Author sub-record. Both providers' author schemas accept `{ name, email? }`.
+#[serde_with::skip_serializing_none]
 #[derive(Serialize)]
 struct PluginAuthorJson<'a> {
     name: &'a str,
+    email: Option<&'a str>,
 }
 
 /// Build the `.claude-plugin/plugin.json` `GeneratedFile`.
@@ -391,10 +391,10 @@ fn build_plugin_manifest_file(manifest: &SpecPluginManifest) -> Result<Generated
         name: &manifest.name,
         version: manifest.version.as_deref(),
         description: manifest.description.as_deref(),
-        author: manifest
-            .author
-            .as_ref()
-            .map(|a| PluginAuthorJson { name: &a.name }),
+        author: manifest.author.as_ref().map(|a| PluginAuthorJson {
+            name: &a.name,
+            email: a.email.as_deref(),
+        }),
         repository: manifest.repository.as_deref(),
         license: manifest.license.as_deref(),
     };
@@ -1295,6 +1295,7 @@ mod tests {
             description: Some("Thoughts workflow plugin".to_string()),
             author: Some(PluginAuthor {
                 name: "Jason".to_string(),
+                email: Some("jason@example.com".to_string()),
             }),
             repository: Some("https://github.com/jasnross/tw".to_string()),
             license: Some("MIT".to_string()),
@@ -1310,6 +1311,7 @@ mod tests {
         assert_eq!(parsed["version"], "0.1.0");
         assert_eq!(parsed["description"], "Thoughts workflow plugin");
         assert_eq!(parsed["author"]["name"], "Jason");
+        assert_eq!(parsed["author"]["email"], "jason@example.com");
         assert_eq!(parsed["repository"], "https://github.com/jasnross/tw");
         assert_eq!(parsed["license"], "MIT");
     }
@@ -1337,6 +1339,31 @@ mod tests {
     }
 
     #[test]
+    fn test_build_plugin_manifest_file_omits_author_email_when_none() {
+        use crate::compile::{PluginAuthor, PluginManifest};
+
+        let manifest = PluginManifest {
+            name: "tw".to_string(),
+            version: None,
+            description: None,
+            author: Some(PluginAuthor {
+                name: "Jason".to_string(),
+                email: None,
+            }),
+            repository: None,
+            license: None,
+        };
+        let file = build_plugin_manifest_file(&manifest).expect("manifest builds");
+        let content = String::from_utf8(file.content.clone()).expect("utf-8");
+        let parsed: serde_json::Value = serde_json::from_str(&content).expect("valid json");
+        assert_eq!(parsed["author"]["name"], "Jason");
+        assert!(
+            parsed["author"].get("email").is_none(),
+            "email key should be absent, not null: {content}"
+        );
+    }
+
+    #[test]
     fn test_compile_emits_plugin_manifest_in_plugin_mode_with_config() {
         use crate::compile::{PluginAuthor, PluginManifest};
 
@@ -1350,6 +1377,7 @@ mod tests {
                 description: None,
                 author: Some(PluginAuthor {
                     name: "Author".to_string(),
+                    email: Some("author@example.com".to_string()),
                 }),
                 repository: None,
                 license: None,

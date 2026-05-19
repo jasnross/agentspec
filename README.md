@@ -400,7 +400,7 @@ mode = "user"
 # plugin-name = "my-plugin"  # required when mode = "plugin"; controls skill namespace + marketplace slug
 # plugin-version = "0.1.0"   # optional; any string (neither provider enforces SemVer)
 # plugin-description = "..."  # optional human-readable description
-# plugin-author = "Name"     # optional author name (Email support deferred — see TODO #17)
+# plugin-author = { name = "Name", email = "name@example.com" }  # optional author (email optional)
 ```
 
 ## Model presets

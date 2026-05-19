@@ -51,12 +51,11 @@ pub struct PluginManifest {
 
 /// Author sub-record for plugin manifests.
 ///
-/// Both Claude and Cursor accept an object shape (`{ name, email? }`); v1
-/// emits the name-only shape. Email support is deferred (see TODO #17 in
-/// `agentspec/TODO.md`).
+/// Both Claude and Cursor accept an object shape (`{ name, email? }`).
 #[derive(Clone, Debug)]
 pub struct PluginAuthor {
     pub name: String,
+    pub email: Option<String>,
 }
 
 /// How a provider's hook entries should reach disk.
