@@ -72,7 +72,8 @@
     - Both providers' schemas accept `{ name, email? }`; the v1 limit is a scope decision, not a provider constraint
     - Likely shape: accept either a bare string or an inline table `plugin-author = { name = "...", email = "..." }` in TOML; serde untagged enum on the field. Both adapter manifests pass the structure through as-is (still one shared internal struct)
     - Out of scope for the initial plugin-mode plan; revisit when a user asks or when a multi-author shape (`authors = [...]`) comes up alongside it
-16. Auto-install `jq` for plugin-mode hooks via the plugin persistent-data directory
+16. Support plugin-repository and plugin-license in plugin-mode manifest emission
+17. Auto-install `jq` for plugin-mode hooks via the plugin persistent-data directory
     - v1 of the canonical hook payload shim (plan `thoughts/plans/2026-05-10-agentspec-hook-payload-translation-shim.md`) treats `jq` as an external prerequisite — if it isn't installed on the user's machine, the shim prints a clear error and exits non-zero. This works but pushes a small one-time install onto plugin end users
     - Both providers already expose a writable, persistent-across-updates per-plugin directory: Claude Code's `${CLAUDE_PLUGIN_DATA}` (`~/.claude/plugins/data/{id}/`, documented at https://code.claude.com/docs/en/plugins-reference#persistent-data-directory) and Cursor's `${CURSOR_PLUGIN_DATA}` (path undocumented; injected only into plugin hooks). Both substrates landed before this TODO was written
     - Likely shape: a `SessionStart` shim that follows the Claude Code docs' manifest-diff-and-reinstall pattern (compare a bundled `jq.sha256` manifest against a copy in the data directory; download + verify on mismatch). One bootstrap script per provider, parameterized by platform/arch via `uname -sm`. SHA256s are stamped into the generated bootstrap script by agentspec at sync time, sourced from upstream jq release attestations
