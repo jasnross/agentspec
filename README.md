@@ -156,7 +156,7 @@ timeout = 30
 
 [hooks.audit-bash]
 events = ["pre_tool_use"]
-matcher = "Bash"
+matcher = "shell"
 script = "scripts/audit-bash.sh"
 ```
 
@@ -185,7 +185,38 @@ See [`docs/hooks-canonical.md`](docs/hooks-canonical.md) for the full canonical 
 | `subagent_stop`         | `SubagentStop`       | `subagentStop`       |
 | `user_prompt_submit`    | `UserPromptSubmit`   | `beforeSubmitPrompt` |
 
-`matcher` is only valid on the three tool-execute events (`pre_tool_use`, `post_tool_use`, `post_tool_use_failure`).
+#### Matchers
+
+The optional `matcher` field filters which tool calls or subagent invocations a hook fires for. agentspec accepts **canonical lowercase tokens** and translates them to each provider's native name at compile time — so spec authors write `matcher = "shell"` once and each provider receives its own identifier in the compiled output.
+
+`matcher` is valid on five events: `pre_tool_use`, `post_tool_use`, `post_tool_use_failure`, `subagent_start`, `subagent_stop`.
+
+**Tool matchers** (canonical → provider):
+
+| Canonical   | Claude            | Cursor      |
+| ----------- | ----------------- | ----------- |
+| `read`      | `Read`            | `Read`      |
+| `write`     | `Write`           | `Write`     |
+| `edit`      | `Edit`            | `Edit`      |
+| `grep`      | `Grep`            | `Grep`      |
+| `glob`      | `Glob`            | `glob`      |
+| `shell`     | `Bash`            | `Shell`     |
+| `webfetch`  | `WebFetch`        | `webfetch`  |
+| `websearch` | `WebSearch`       | `WebSearch` |
+| `question`  | `AskUserQuestion` | `question`  |
+| `tasks`     | `TodoWrite`       | `tasks`     |
+| `subagent`  | `Agent`           | `Task`      |
+| `skill`     | `Skill`           | `skill`     |
+
+**Subagent-type matchers** (canonical → provider):
+
+| Canonical | Claude            | Cursor           |
+| --------- | ----------------- | ---------------- |
+| `general` | `general-purpose` | `generalPurpose` |
+| `explore` | `Explore`         | `explore`        |
+| `plan`    | `Plan`            | `plan`           |
+
+Multi-token matchers join with `|` (e.g., `matcher = "read|write|edit"`); each token is translated independently. When a canonical token has no provider equivalent, the lowercase canonical name is emitted verbatim — it won't match any provider tool, so the hook becomes a no-op for that branch. Non-canonical tokens (MCP tool names like `mcp__memory__create`, provider-specific names, custom subagent types) also pass through unchanged, so you can still write provider-specific matchers when needed.
 
 #### Sync modes
 
