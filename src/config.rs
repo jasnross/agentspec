@@ -198,6 +198,7 @@ impl AgentspecConfig {
             .collect()
     }
 
+    // TODO: It feels like cli_sync_intent_sufficient could be better expressed as just a validation error rather than a boolean check. E.g. if after merging all inputs we don't have everything we need then just print the validation errors.
     /// Returns whether CLI flags provide sufficient explicit intent for CLI-only sync.
     ///
     /// CLI-only sync always requires explicit provider selection via `--provider`.
