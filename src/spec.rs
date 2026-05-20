@@ -192,12 +192,21 @@ pub enum HookEvent {
 }
 
 impl HookEvent {
-    /// Whether this event accepts a `matcher` field (true only for tool-execute events).
+    /// Whether this event accepts a `matcher` field (tool-execute and subagent events).
     pub fn allows_matcher(self) -> bool {
         matches!(
             self,
-            Self::PreToolUse | Self::PostToolUse | Self::PostToolUseFailure
+            Self::PreToolUse
+                | Self::PostToolUse
+                | Self::PostToolUseFailure
+                | Self::SubagentStart
+                | Self::SubagentStop
         )
+    }
+
+    /// Whether this event targets subagent lifecycle (`SubagentStart` / `SubagentStop`).
+    pub fn is_subagent_event(self) -> bool {
+        matches!(self, Self::SubagentStart | Self::SubagentStop)
     }
 
     /// Canonical `snake_case` name (matches the `#[serde(rename_all = "snake_case")]`

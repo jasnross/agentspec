@@ -214,6 +214,19 @@ pub trait Adapter: std::fmt::Debug + Send + Sync {
         Some(self.body_tool_name(tool))
     }
 
+    /// Resolve a canonical subagent-type name to the string this provider
+    /// expects in hook matcher values for subagent events (`SubagentStart`,
+    /// `SubagentStop`).
+    ///
+    /// Canonical types: `general`, `explore`, `plan`. Unrecognized names
+    /// pass through unchanged (handles provider-specific and custom types).
+    ///
+    /// Default: returns the input unchanged. Providers with non-canonical
+    /// subagent-type naming (Claude, Cursor) override.
+    fn matcher_subagent_type<'a>(&self, canonical: &'a str) -> &'a str {
+        canonical
+    }
+
     /// Returns the name which should be used to refer to the spec in the generated body content.
     fn body_spec_name(&self, spec: &Spec, cfg: Option<&AdapterConfig>) -> String;
 

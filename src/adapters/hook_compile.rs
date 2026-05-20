@@ -147,12 +147,13 @@ fn build_shim_files(provider: Provider, specs: &[&HookSpec]) -> Vec<GeneratedFil
 /// Translate a matcher string from canonical token names to the
 /// provider-specific names the adapter expects.
 ///
-/// Splits on `|`, translates each token via the adapter's
-/// `matcher_tool_name` (for tool-execute events) or passes through
-/// unchanged (for non-tool events — subagent translation is added in a
-/// later phase). Non-canonical tokens (MCP tool names, provider-specific
-/// names) pass through unchanged because `parse::<ToolFrontmatter>()`
-/// returns `Err` for them.
+/// Event-type-aware: tool-execute events dispatch through
+/// `matcher_tool_name` (typed `ToolFrontmatter` parsing), subagent events
+/// dispatch through `matcher_subagent_type` (string-to-string mapping),
+/// and all other events pass through unchanged.
+///
+/// Non-canonical tokens (MCP tool names, provider-specific names, custom
+/// subagent types) pass through unchanged.
 fn translate_matcher(adapter: &dyn super::Adapter, event: HookEvent, matcher: &str) -> String {
     if !event.allows_matcher() {
         return matcher.to_owned();
@@ -161,11 +162,15 @@ fn translate_matcher(adapter: &dyn super::Adapter, event: HookEvent, matcher: &s
         .split('|')
         .map(|token| {
             let token = token.trim();
-            token
-                .parse::<ToolFrontmatter>()
-                .ok()
-                .and_then(|t| adapter.matcher_tool_name(&t))
-                .unwrap_or(token)
+            if event.is_subagent_event() {
+                adapter.matcher_subagent_type(token)
+            } else {
+                token
+                    .parse::<ToolFrontmatter>()
+                    .ok()
+                    .and_then(|t| adapter.matcher_tool_name(&t))
+                    .unwrap_or(token)
+            }
         })
         .collect::<Vec<_>>()
         .join("|")
@@ -436,6 +441,18 @@ mod tests {
     fn translate_matcher_unavailable_tool_passes_through() {
         let result = translate_matcher(&CursorAdapter, HookEvent::PreToolUse, "shell|question");
         assert_eq!(result, "Shell|question");
+    }
+
+    #[test]
+    fn translate_matcher_subagent_event() {
+        let result = translate_matcher(&ClaudeAdapter, HookEvent::SubagentStart, "general|explore");
+        assert_eq!(result, "general-purpose|Explore");
+    }
+
+    #[test]
+    fn translate_matcher_subagent_pass_through() {
+        let result = translate_matcher(&CursorAdapter, HookEvent::SubagentStart, "custom-agent");
+        assert_eq!(result, "custom-agent");
     }
 
     #[test]

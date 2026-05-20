@@ -145,7 +145,8 @@ fn validate_hook_matcher(hook_spec: &crate::spec::HookSpec, errors: &mut Vec<Sem
             path: hook_spec.path.clone(),
             message: format!(
                 "hook '{}' sets `matcher` but targets event(s) that do not accept one: {}; \
-                 only pre_tool_use, post_tool_use, and post_tool_use_failure may use a matcher",
+                 only pre_tool_use, post_tool_use, post_tool_use_failure, \
+                 subagent_start, and subagent_stop may use a matcher",
                 hook_spec.frontmatter.id,
                 bad_events
                     .iter()
@@ -479,6 +480,34 @@ mod tests {
         assert!(
             errors.is_empty(),
             "expected no errors for matcher on all-tool-events, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_hook_matcher_on_subagent_start_passes() {
+        let specs = vec![make_hook(
+            "subagent-audit",
+            vec![HookEvent::SubagentStart],
+            Some("general"),
+        )];
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        assert!(
+            errors.is_empty(),
+            "expected no errors for matcher on subagent_start, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_hook_matcher_on_subagent_stop_passes() {
+        let specs = vec![make_hook(
+            "subagent-audit",
+            vec![HookEvent::SubagentStop],
+            Some("general"),
+        )];
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        assert!(
+            errors.is_empty(),
+            "expected no errors for matcher on subagent_stop, got: {errors:?}"
         );
     }
 

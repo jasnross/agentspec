@@ -172,6 +172,14 @@ impl Adapter for CursorAdapter {
         }
     }
 
+    fn matcher_subagent_type<'a>(&self, canonical: &'a str) -> &'a str {
+        match canonical {
+            "general" => "generalPurpose",
+            "explore" => "explore",
+            other => other,
+        }
+    }
+
     /// Returns the name which should be used to refer to the spec in the generated body content.
     ///
     /// For Cursor, all spec types use `{content_prefix}{id}` when a content prefix
@@ -896,6 +904,24 @@ mod tests {
             CursorAdapter.matcher_tool_name(&ToolFrontmatter::Skill),
             None
         );
+    }
+
+    #[test]
+    fn test_matcher_subagent_type_general() {
+        assert_eq!(
+            CursorAdapter.matcher_subagent_type("general"),
+            "generalPurpose"
+        );
+    }
+
+    #[test]
+    fn test_matcher_subagent_type_explore() {
+        assert_eq!(CursorAdapter.matcher_subagent_type("explore"), "explore");
+    }
+
+    #[test]
+    fn test_matcher_subagent_type_plan_passes_through() {
+        assert_eq!(CursorAdapter.matcher_subagent_type("plan"), "plan");
     }
 
     #[test]

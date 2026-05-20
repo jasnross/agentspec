@@ -1407,6 +1407,11 @@ description = "Seed THOUGHTS_DIR context at the start of each turn"
 events = ["pre_tool_use"]
 matcher = "shell"
 script = "scripts/audit-bash.sh"
+
+[hooks.subagent-gate]
+events = ["subagent_start"]
+matcher = "general"
+script = "scripts/subagent-gate.sh"
 "#,
     );
     assert!(r.is_ok(), "write hooks.toml: {r:?}");
@@ -1417,6 +1422,8 @@ script = "scripts/audit-bash.sh"
     assert!(r.is_ok(), "write init-thoughts.sh: {r:?}");
     let r = std::fs::write(scripts_dir.join("audit-bash.sh"), "#!/bin/sh\nexit 0\n");
     assert!(r.is_ok(), "write audit-bash.sh: {r:?}");
+    let r = std::fs::write(scripts_dir.join("subagent-gate.sh"), "#!/bin/sh\nexit 0\n");
+    assert!(r.is_ok(), "write subagent-gate.sh: {r:?}");
     // _common.sh is a helper sourced by init-thoughts.sh; it's not a hook entry
     // point but must still flow through to the destination so the entry script
     // can `source` it at runtime.
@@ -1812,6 +1819,11 @@ fn test_compile_claude_hooks_json_uses_pascal_case_events() {
         claude_json.contains("\"matcher\": \"Bash\""),
         "Claude should translate canonical 'shell' to 'Bash', got:\n{claude_json}"
     );
+    // Canonical subagent-type "general" → Claude's "general-purpose".
+    assert!(
+        claude_json.contains("\"matcher\": \"general-purpose\""),
+        "Claude should translate canonical 'general' to 'general-purpose', got:\n{claude_json}"
+    );
 }
 
 #[test]
@@ -1851,6 +1863,11 @@ fn test_compile_cursor_hooks_json_uses_camel_case_and_version() {
     assert!(
         cursor_json.contains("\"matcher\": \"Shell\""),
         "Cursor should translate canonical 'shell' to 'Shell', got:\n{cursor_json}"
+    );
+    // Canonical subagent-type "general" → Cursor's "generalPurpose".
+    assert!(
+        cursor_json.contains("\"matcher\": \"generalPurpose\""),
+        "Cursor should translate canonical 'general' to 'generalPurpose', got:\n{cursor_json}"
     );
 }
 

@@ -205,6 +205,15 @@ impl Adapter for ClaudeAdapter {
         }
     }
 
+    fn matcher_subagent_type<'a>(&self, canonical: &'a str) -> &'a str {
+        match canonical {
+            "general" => "general-purpose",
+            "explore" => "Explore",
+            "plan" => "Plan",
+            other => other,
+        }
+    }
+
     /// Returns the name which should be used to refer to the spec in the generated body content.
     ///
     /// For Claude, all spec types use `{content_prefix}{id}` when a content prefix
@@ -1008,6 +1017,24 @@ mod tests {
             ClaudeAdapter.body_tool_name(&ToolFrontmatter::Skill),
             "Skill"
         );
+    }
+
+    #[test]
+    fn test_matcher_subagent_type_general() {
+        assert_eq!(
+            ClaudeAdapter.matcher_subagent_type("general"),
+            "general-purpose"
+        );
+    }
+
+    #[test]
+    fn test_matcher_subagent_type_explore() {
+        assert_eq!(ClaudeAdapter.matcher_subagent_type("explore"), "Explore");
+    }
+
+    #[test]
+    fn test_matcher_subagent_type_plan() {
+        assert_eq!(ClaudeAdapter.matcher_subagent_type("plan"), "Plan");
     }
 
     #[test]
