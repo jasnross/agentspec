@@ -11,11 +11,7 @@
    - Claude supports running skills in forked subprocesses via frontmatter fields
    - OpenCode has a similar concept for command execution
    - Currently neither adapter emits the relevant frontmatter to enable this
-6. Consider fanning out `ToolFrontmatter::Subagent` to the full Claude subagent toolkit
-   - `ToolFrontmatter::Tasks` fans out to 6 `ClaudeTool` variants (`TaskCreate`, `TaskGet`, `TaskList`, `TaskUpdate`, `TaskStop`, `TodoWrite`) but `Subagent` maps to just `ClaudeTool::Agent`
-   - Claude's subagent workflow also involves `SendMessage` (resume a subagent); spec authors declaring `tools: [subagent]` likely expect the full toolkit
-   - Adding `SendMessage` requires a new `ClaudeTool` variant and deciding the complete subagent fan-out (potentially also `ToolSearch`, `Monitor`)
-   - Out of scope for the tool-mapping-fixes plan; captured for a follow-up
+6. ~~Consider fanning out `ToolFrontmatter::Subagent` to the full Claude subagent toolkit~~ — RESOLVED: `Subagent` now fans out to `[Agent, SendMessage]` for Claude
 7. Orphan cleanup for merged JSON entries when a sync target is removed
    - Sentinel-based ownership in `hooks_merge` only cleans up `_agentspec_id` entries when agentspec runs the merge for that provider
    - If a user removes `[sync.claude]` from `agentspec.toml` (or deletes all hook specs and the sync target), the next `sync` skips Claude entirely — previously-injected entries persist in `settings.json` as permanent orphans

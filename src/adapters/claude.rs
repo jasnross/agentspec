@@ -76,6 +76,7 @@ enum ClaudeTool {
     PowerShell,
     Read,
     ReadMcpResourceTool,
+    SendMessage,
     Skill,
     TaskCreate,
     TaskGet,
@@ -750,7 +751,7 @@ fn adapt_tool(tool: &ToolFrontmatter) -> Vec<ClaudeTool> {
             ClaudeTool::TaskStop,
             ClaudeTool::TodoWrite,
         ],
-        ToolFrontmatter::Subagent => vec![ClaudeTool::Agent],
+        ToolFrontmatter::Subagent => vec![ClaudeTool::Agent, ClaudeTool::SendMessage],
         ToolFrontmatter::Skill => vec![ClaudeTool::Skill],
     }
 }
@@ -1038,10 +1039,10 @@ mod tests {
     }
 
     #[test]
-    fn test_adapt_tool_subagent_maps_to_agent() {
+    fn test_adapt_tool_subagent_maps_to_agent_and_send_message() {
         let tools = adapt_tool(&ToolFrontmatter::Subagent);
         let yaml = serde_yml::to_string(&tools).expect("expected value");
-        assert_eq!(yaml, "- Agent\n");
+        assert_eq!(yaml, "- Agent\n- SendMessage\n");
     }
 
     #[test]
