@@ -62,7 +62,7 @@ pub fn sync_plan(
             // `None` here means this provider doesn't support `kind` (today:
             // only PluginManifest for `OpenCode`). Skip the `ManifestTrackedWrite`
             // entirely — there's nothing to write and nothing to track.
-            let Some(dest) = resolve_dest_dir(*provider, kind, target, &dest_root, home)? else {
+            let Some(dest) = resolve_dest_dir(*provider, kind, target, &dest_root, home) else {
                 continue;
             };
             let files = files_for_kind(result, *provider, kind);
@@ -142,38 +142,36 @@ pub fn resolve_sync_targets(
 /// `--dest`/TOML value wins; for User/Project modes the adapter's
 /// `dest_root` is canonical.
 ///
-/// Returns `Ok(None)` when the provider doesn't support `kind` — today, only
+/// Returns `None` when the provider doesn't support `kind` — today, only
 /// for [`FileKind::PluginManifest`] on providers whose
 /// `Adapter::plugin_manifest_dir()` returns `None` (i.e., `OpenCode`). The
-/// caller skips the write in that case. Returns `Ok(Some(_))` for every
-/// other (provider, kind) pair.
+/// caller skips the write in that case.
 ///
-/// Errors if `mode = "plugin"` and `dir` is unset — surfacing the
-/// misconfiguration loudly rather than silently falling back to a User-mode
-/// default. Validation of this combination should ideally happen at config
-/// load time (see `TODO.md`); doing it here is a defense-in-depth check.
+/// The `mode = "plugin"` + `dir` constraint is validated at config load time
+/// by `SyncTargetConfig::validate_for_provider`; the `debug_assert!` here is
+/// defense-in-depth for debug builds only.
 fn resolve_dest_dir(
     provider: Provider,
     kind: FileKind,
     config: &SyncTargetConfig,
     dest_root: &Path,
     home: &Path,
-) -> Result<Option<PathBuf>> {
+) -> Option<PathBuf> {
     let base = match config.mode {
-        SyncMode::Plugin => match config.dir.as_deref() {
-            Some(d) => expand_tilde(d, home),
-            None => {
-                anyhow::bail!(
-                    "sync mode is 'plugin' but no `dir` configured for provider '{provider}'"
-                );
-            }
-        },
+        SyncMode::Plugin => {
+            debug_assert!(
+                config.dir.is_some(),
+                "plugin mode requires `dir`; should have been caught by validate_for_provider"
+            );
+            let d = config.dir.as_deref()?;
+            expand_tilde(d, home)
+        }
         SyncMode::User | SyncMode::Project => dest_root.to_path_buf(),
     };
-    match provider.adapter().dir_for_kind(kind) {
-        Some(dir) => Ok(Some(base.join(dir))),
-        None => Ok(None),
-    }
+    provider
+        .adapter()
+        .dir_for_kind(kind)
+        .map(|dir| base.join(dir))
 }
 
 /// Extracts files from `result` that belong to the given provider and kind.
@@ -388,7 +386,6 @@ mod tests {
             Path::new("/home/user/.claude"),
             &home(),
         )
-        .expect("user-mode resolution")
         .expect("kind supported by provider");
         assert_eq!(result, PathBuf::from("/home/user/.claude/agents"));
     }
@@ -406,7 +403,6 @@ mod tests {
             Path::new("/work/project/.cursor"),
             &home(),
         )
-        .expect("project-mode resolution")
         .expect("kind supported by provider");
         assert_eq!(result, PathBuf::from("/work/project/.cursor/skills"));
     }
@@ -425,32 +421,27 @@ mod tests {
             Path::new("/should-be-ignored"),
             &home(),
         )
-        .expect("plugin-mode resolution with explicit dir")
         .expect("kind supported by provider");
         assert_eq!(result, PathBuf::from("/home/user/foo/skills"));
     }
 
     #[test]
-    fn test_resolve_dest_plugin_missing_dir_errors() {
-        // Plugin mode without `dir`: must error rather than silently falling
-        // back to the adapter's User-mode default — that fallback would mask
-        // a real misconfiguration.
+    #[should_panic(expected = "validate_for_provider")]
+    fn test_resolve_dest_plugin_missing_dir_panics_in_debug() {
+        // Plugin mode without `dir`: the `debug_assert!` catches this wiring
+        // bug in debug/test builds. The constraint is validated at config load
+        // time by `validate_for_provider`; reaching `resolve_dest_dir` with
+        // `dir = None` + plugin mode means validation was bypassed.
         let config = SyncTargetConfig {
             mode: SyncMode::Plugin,
             ..Default::default()
         };
-        let err = resolve_dest_dir(
+        let _ = resolve_dest_dir(
             Provider::OpenCode,
             FileKind::Agents,
             &config,
             Path::new("/should-not-be-consulted"),
             &home(),
-        )
-        .expect_err("plugin-mode without dir must error");
-        assert!(
-            err.to_string()
-                .contains("sync mode is 'plugin' but no `dir` configured for provider 'opencode'"),
-            "error message should name the misconfigured provider, got: {err}"
         );
     }
 
@@ -471,7 +462,6 @@ mod tests {
             Path::new("/should-be-ignored"),
             &home(),
         )
-        .expect("claude resolution")
         .expect("claude supports plugin manifest");
         assert_eq!(claude, PathBuf::from("/out/.claude-plugin"));
 
@@ -482,7 +472,6 @@ mod tests {
             Path::new("/should-be-ignored"),
             &home(),
         )
-        .expect("cursor resolution")
         .expect("cursor supports plugin manifest");
         assert_eq!(cursor, PathBuf::from("/out/.cursor-plugin"));
 
@@ -492,8 +481,7 @@ mod tests {
             &config,
             Path::new("/should-be-ignored"),
             &home(),
-        )
-        .expect("opencode resolution");
+        );
         assert!(
             opencode.is_none(),
             "OpenCode has no plugin concept; expected None, got {opencode:?}"

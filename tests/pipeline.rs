@@ -4407,3 +4407,29 @@ fn test_compile_resolves_symlinked_hook_script() {
     let resolved = std::fs::read(&generated).expect("read generated");
     assert_eq!(original, resolved, "resolved content must match target");
 }
+
+#[test]
+fn test_validate_surfaces_config_errors() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = setup(&tmp);
+
+    let toml_path = dir.join("agentspec.toml");
+    let existing = std::fs::read_to_string(&toml_path).expect("read existing toml");
+    let appended =
+        format!("{existing}\n[sync.claude]\nmode = \"plugin\"\nplugin-name = \"test\"\n");
+    std::fs::write(&toml_path, appended).expect("write toml");
+
+    let home = tmp.path().join("fake-home");
+    std::fs::create_dir_all(&home).expect("create fake home");
+
+    let output = run_agentspec(&["validate"], &dir, &home).expect("run agentspec");
+    assert!(
+        !output.status.success(),
+        "agentspec validate should exit non-zero for misconfigured sync target"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("no `dir` configured"),
+        "stderr should contain the config validation error, got: {stderr}"
+    );
+}

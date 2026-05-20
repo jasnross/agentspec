@@ -59,6 +59,18 @@ fn main() -> Result<()> {
             // `validate` always shows the full listing — this is the command
             // users run to inspect their `[spec].ignore` effect.
             surface_load_report(&dirs.ignore, &report, ReportDisplay::Full);
+
+            // Config validation runs after spec validation: spec errors are
+            // more fundamental — if specs fail to load or validate, config
+            // validation is secondary and the user should fix spec issues first.
+            let config_errors = config.validate_sync_config();
+            if !config_errors.is_empty() {
+                for e in &config_errors {
+                    eprintln!("error: {e}");
+                }
+                anyhow::bail!("{} config validation error(s)", config_errors.len());
+            }
+
             let templating = load_templating(&config)?;
             let context = TemplateContext::from_specs(validated.specs());
             resolve_fragments(validated.into_specs(), &templating, None, &context)?;

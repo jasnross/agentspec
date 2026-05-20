@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use agentspec::compile::{AdapterConfig, PluginAuthor, PluginManifest};
 use agentspec::presets::ProviderPresets;
 use agentspec::provider::Provider;
+use agentspec::validate::ValidationError;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 use strum::VariantArray;
@@ -176,6 +177,27 @@ impl AgentspecConfig {
         self.sync.contains_key(&provider_str)
     }
 
+    /// Validate all configured `[sync.<provider>]` blocks.
+    ///
+    /// Returns config-shape errors as `ValidationError` values so they can be
+    /// reported alongside spec validation errors from `validate_semantics`.
+    /// Checks raw TOML config without CLI overrides — CLI-resolved targets are
+    /// validated separately via `validated_sync_target` at sync/remove time.
+    pub fn validate_sync_config(&self) -> Vec<ValidationError> {
+        self.sync_targets()
+            .into_iter()
+            .filter_map(|(provider, target)| {
+                target
+                    .validate_for_provider(provider)
+                    .err()
+                    .map(|e| ValidationError {
+                        path: self.root_dir.join("agentspec.toml"),
+                        message: e.to_string(),
+                    })
+            })
+            .collect()
+    }
+
     /// Returns whether CLI flags provide sufficient explicit intent for CLI-only sync.
     ///
     /// CLI-only sync always requires explicit provider selection via `--provider`.
@@ -334,19 +356,27 @@ pub struct SyncTargetConfig {
 impl SyncTargetConfig {
     /// Validate plugin-mode invariants.
     ///
-    /// In `Plugin` mode, `plugin-name` is required: the Claude plugin manifest
-    /// always emits it (used for skill namespacing), and Cursor's marketplace
-    /// classification relies on it when a manifest is emitted. Other plugin-*
-    /// fields are optional pass-throughs.
+    /// In `Plugin` mode, both `plugin-name` and `dir` are required:
+    /// `plugin-name` is used for Claude skill namespacing and Cursor
+    /// marketplace classification; `dir` supplies the explicit base directory
+    /// for the plugin tree. Other `plugin-*` fields are optional
+    /// pass-throughs.
     ///
-    /// This check runs alongside the existing `dir`-required check in
-    /// [`crate::sync::sync_plan`] / [`crate::remove::remove_plan`] at
-    /// resolve-call time; `TODO.md` #13 tracks hoisting both to config-load
-    /// time as a follow-up.
+    /// Called from both `agentspec validate` (raw TOML config) and
+    /// `validated_sync_target` (CLI-resolved config at sync/remove time).
     pub fn validate_for_provider(&self, provider: Provider) -> Result<()> {
         if self.mode == SyncMode::Plugin && self.plugin_name.is_none() {
             bail!(
-                "[sync.{provider}] has `mode = \"plugin\"` but no `plugin-name` configured; set `plugin-name` to the plugin's identifier (e.g., `plugin-name = \"my-plugin\"`)"
+                "[sync.{provider}] has `mode = \"plugin\"` but no `plugin-name` configured; \
+                 set `plugin-name` to the plugin's identifier \
+                 (e.g., `plugin-name = \"my-plugin\"`)"
+            );
+        }
+        if self.mode == SyncMode::Plugin && self.dir.is_none() {
+            bail!(
+                "[sync.{provider}] has `mode = \"plugin\"` but no `dir` configured; \
+                 set `dir` to the plugin output directory \
+                 (e.g., `dir = \"path/to/plugin\"`)"
             );
         }
         Ok(())
@@ -1113,5 +1143,67 @@ dir = "plugin-claude"
             .validated_sync_target(Provider::Claude, &SyncFlags::default(), false)
             .expect_err("plugin mode without plugin-name must error");
         assert!(err.to_string().contains("plugin-name"), "error: {err}");
+    }
+
+    #[test]
+    fn test_validate_for_provider_rejects_plugin_mode_without_dir() {
+        let target = SyncTargetConfig {
+            mode: SyncMode::Plugin,
+            plugin_name: Some("my-plugin".to_string()),
+            dir: None,
+            ..SyncTargetConfig::default()
+        };
+        let err = target
+            .validate_for_provider(Provider::Claude)
+            .expect_err("plugin mode without dir must error");
+        let msg = err.to_string();
+        assert!(msg.contains("[sync.claude]"), "error: {msg}");
+        assert!(msg.contains("no `dir` configured"), "error: {msg}");
+    }
+
+    #[test]
+    fn test_validate_for_provider_accepts_plugin_mode_with_dir_and_plugin_name() {
+        let target = SyncTargetConfig {
+            mode: SyncMode::Plugin,
+            plugin_name: Some("my-plugin".to_string()),
+            dir: Some("path/to/plugin".to_string()),
+            ..SyncTargetConfig::default()
+        };
+        target
+            .validate_for_provider(Provider::Claude)
+            .expect("plugin mode with both plugin-name and dir validates");
+    }
+
+    #[test]
+    fn test_validate_sync_config_collects_errors_from_multiple_providers() {
+        let mut sync = HashMap::new();
+        sync.insert(
+            "claude".to_string(),
+            SyncTargetConfig {
+                mode: SyncMode::Plugin,
+                plugin_name: None,
+                ..SyncTargetConfig::default()
+            },
+        );
+        sync.insert(
+            "cursor".to_string(),
+            SyncTargetConfig {
+                mode: SyncMode::Plugin,
+                plugin_name: Some("ok".to_string()),
+                dir: None,
+                ..SyncTargetConfig::default()
+            },
+        );
+        let config = AgentspecConfig {
+            sync,
+            root_dir: PathBuf::from("/test"),
+            ..AgentspecConfig::default()
+        };
+        let errors = config.validate_sync_config();
+        assert_eq!(
+            errors.len(),
+            2,
+            "expected two errors (one per misconfigured provider), got: {errors:?}"
+        );
     }
 }

@@ -7,33 +7,33 @@ use globset::GlobBuilder;
 use crate::presets::ProviderPresetsMap;
 use crate::spec::Spec;
 
-/// A semantic validation error.
+/// A validation error (spec semantics or config shape).
 #[derive(Debug)]
-pub struct SemanticError {
+pub struct ValidationError {
     pub path: PathBuf,
     pub message: String,
 }
 
-impl fmt::Display for SemanticError {
+impl fmt::Display for ValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: {}", self.path.display(), self.message)
     }
 }
 
-impl std::error::Error for SemanticError {}
+impl std::error::Error for ValidationError {}
 
 /// Run semantic validation checks on loaded specs.
 ///
 /// Returns all errors found. An empty vec means all checks pass.
 /// This function does no I/O and cannot fail structurally.
-pub fn validate_semantics(specs: &[Spec], presets: &ProviderPresetsMap) -> Vec<SemanticError> {
+pub fn validate_semantics(specs: &[Spec], presets: &ProviderPresetsMap) -> Vec<ValidationError> {
     let mut errors = Vec::new();
     let mut id_set = std::collections::HashSet::new();
 
     for spec in specs {
         // Duplicate ID check
         if !id_set.insert(spec.id()) {
-            errors.push(SemanticError {
+            errors.push(ValidationError {
                 path: spec.path().to_path_buf(),
                 message: format!("duplicate id '{}'", spec.id()),
             });
@@ -43,7 +43,7 @@ pub fn validate_semantics(specs: &[Spec], presets: &ProviderPresetsMap) -> Vec<S
         // Hook specs intentionally have empty bodies (they are TOML-driven, not
         // markdown-bodied), so they are exempt from this check.
         if spec.body().is_empty() && !matches!(spec, Spec::Hook(_)) {
-            errors.push(SemanticError {
+            errors.push(ValidationError {
                 path: spec.path().to_path_buf(),
                 message: "instruction body cannot be empty".to_string(),
             });
@@ -54,7 +54,7 @@ pub fn validate_semantics(specs: &[Spec], presets: &ProviderPresetsMap) -> Vec<S
             && !skill_spec.frontmatter.user_invocable
             && !skill_spec.frontmatter.agent_invocable
         {
-            errors.push(SemanticError {
+            errors.push(ValidationError {
                 path: skill_spec.path.clone(),
                 message: "at least one of user_invocable or agent_invocable must be true"
                     .to_string(),
@@ -84,7 +84,7 @@ pub fn validate_semantics(specs: &[Spec], presets: &ProviderPresetsMap) -> Vec<S
             match presets.get(preset_name) {
                 Some(_) => (),
                 None => {
-                    errors.push(SemanticError {
+                    errors.push(ValidationError {
                         path: spec.path().to_path_buf(),
                         message: format!("unknown preset '{preset_name}'"),
                     });
@@ -114,7 +114,7 @@ pub fn validate_semantics(specs: &[Spec], presets: &ProviderPresetsMap) -> Vec<S
                 continue;
             }
             for (_, path) in entries {
-                errors.push(SemanticError {
+                errors.push(ValidationError {
                     path: path.to_path_buf(),
                     message: format!(
                         "{spec_type} IDs {} all normalize to '{normalized}' \
@@ -133,7 +133,7 @@ pub fn validate_semantics(specs: &[Spec], presets: &ProviderPresetsMap) -> Vec<S
     errors
 }
 
-fn validate_hook_matcher(hook_spec: &crate::spec::HookSpec, errors: &mut Vec<SemanticError>) {
+fn validate_hook_matcher(hook_spec: &crate::spec::HookSpec, errors: &mut Vec<ValidationError>) {
     let bad_events: Vec<_> = hook_spec
         .frontmatter
         .events
@@ -141,7 +141,7 @@ fn validate_hook_matcher(hook_spec: &crate::spec::HookSpec, errors: &mut Vec<Sem
         .filter(|e| !e.allows_matcher())
         .collect();
     if !bad_events.is_empty() {
-        errors.push(SemanticError {
+        errors.push(ValidationError {
             path: hook_spec.path.clone(),
             message: format!(
                 "hook '{}' sets `matcher` but targets event(s) that do not accept one: {}; \
@@ -158,9 +158,13 @@ fn validate_hook_matcher(hook_spec: &crate::spec::HookSpec, errors: &mut Vec<Sem
     }
 }
 
-fn validate_rule_paths(path: &std::path::Path, paths: &[String], errors: &mut Vec<SemanticError>) {
+fn validate_rule_paths(
+    path: &std::path::Path,
+    paths: &[String],
+    errors: &mut Vec<ValidationError>,
+) {
     if paths.is_empty() {
-        errors.push(SemanticError {
+        errors.push(ValidationError {
             path: path.to_path_buf(),
             message: "paths must contain at least one pattern when specified".to_string(),
         });
@@ -168,7 +172,7 @@ fn validate_rule_paths(path: &std::path::Path, paths: &[String], errors: &mut Ve
     }
     for pat in paths {
         if let Err(err) = GlobBuilder::new(pat).literal_separator(true).build() {
-            errors.push(SemanticError {
+            errors.push(ValidationError {
                 path: path.to_path_buf(),
                 message: format!("invalid glob pattern '{pat}': {err}"),
             });

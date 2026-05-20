@@ -15,7 +15,7 @@ use crate::spec::{
     AgentFrontmatter, AgentSpec, HookFrontmatter, HookSpec, RuleFrontmatter, RuleSpec,
     SkillFrontmatter, SkillSpec, Spec, SupportingFile,
 };
-use crate::validate::{SemanticError, validate_semantics};
+use crate::validate::{ValidationError, validate_semantics};
 
 // ---------------------------------------------------------------------------
 // Pipeline stage types
@@ -273,7 +273,7 @@ impl Specs {
     pub fn validate(
         self,
         presets: &ProviderPresetsMap,
-    ) -> Result<ValidatedSpecs, Vec<SemanticError>> {
+    ) -> Result<ValidatedSpecs, Vec<ValidationError>> {
         let errors = validate_semantics(&self.specs, presets);
         if errors.is_empty() {
             Ok(ValidatedSpecs { specs: self.specs })
