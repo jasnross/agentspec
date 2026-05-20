@@ -15,7 +15,7 @@ use crate::compile::{EmittedHookEntry, GeneratedFile, HookEmitMode};
 use crate::hooks_canonical::{ProviderName, shim_template};
 use crate::plan::FileKind;
 use crate::provider::Provider;
-use crate::spec::{HookEvent, HookSpec};
+use crate::spec::{HookEvent, HookSpec, ToolFrontmatter};
 
 /// Per-provider hook synthesis result — entries (always populated when there
 /// are hook specs) plus the supporting-script and bundled-JSON files this
@@ -55,7 +55,8 @@ where
         return Ok(HookSynthesis::default());
     }
 
-    let entries = build_emitted_hook_entries(specs, dotdir, plugin_root_env_var, emit_mode);
+    let entries =
+        build_emitted_hook_entries(specs, provider, dotdir, plugin_root_env_var, emit_mode);
     let mut files = build_hook_script_files(provider, specs);
     files.extend(build_shim_files(provider, specs));
     if matches!(emit_mode, HookEmitMode::Bundled) {
@@ -143,6 +144,33 @@ fn build_shim_files(provider: Provider, specs: &[&HookSpec]) -> Vec<GeneratedFil
         .collect()
 }
 
+/// Translate a matcher string from canonical token names to the
+/// provider-specific names the adapter expects.
+///
+/// Splits on `|`, translates each token via the adapter's
+/// `matcher_tool_name` (for tool-execute events) or passes through
+/// unchanged (for non-tool events — subagent translation is added in a
+/// later phase). Non-canonical tokens (MCP tool names, provider-specific
+/// names) pass through unchanged because `parse::<ToolFrontmatter>()`
+/// returns `Err` for them.
+fn translate_matcher(adapter: &dyn super::Adapter, event: HookEvent, matcher: &str) -> String {
+    if !event.allows_matcher() {
+        return matcher.to_owned();
+    }
+    matcher
+        .split('|')
+        .map(|token| {
+            let token = token.trim();
+            token
+                .parse::<ToolFrontmatter>()
+                .ok()
+                .and_then(|t| adapter.matcher_tool_name(&t))
+                .unwrap_or(token)
+        })
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
 /// Build canonical `EmittedHookEntry` rows from hook specs.
 ///
 /// Each entry's `command` field is computed by [`hook_command_anchor`],
@@ -153,10 +181,12 @@ fn build_shim_files(provider: Provider, specs: &[&HookSpec]) -> Vec<GeneratedFil
 /// See [`hook_command_anchor`] for the full per-mode shape.
 fn build_emitted_hook_entries(
     specs: &[&HookSpec],
+    provider: Provider,
     dotdir: &str,
     plugin_root_env_var: &'static str,
     emit_mode: HookEmitMode,
 ) -> Vec<EmittedHookEntry> {
+    let adapter = provider.adapter();
     specs
         .iter()
         .flat_map(|s| {
@@ -174,7 +204,11 @@ fn build_emitted_hook_entries(
                 .iter()
                 .map(move |&event| EmittedHookEntry {
                     event,
-                    matcher: s.frontmatter.matcher.clone(),
+                    matcher: s
+                        .frontmatter
+                        .matcher
+                        .as_deref()
+                        .map(|m| translate_matcher(adapter, event, m)),
                     command: hook_command_anchor(
                         dotdir,
                         plugin_root_env_var,
@@ -246,6 +280,7 @@ mod tests {
     use indexmap::IndexMap;
 
     use super::*;
+    use crate::adapters::{ClaudeAdapter, CursorAdapter};
     use crate::spec::HookFrontmatter;
 
     fn hook_spec(id: &str, events: Vec<HookEvent>) -> HookSpec {
@@ -356,6 +391,7 @@ mod tests {
         let specs: Vec<&HookSpec> = vec![&spec];
         let entries = build_emitted_hook_entries(
             &specs,
+            Provider::Claude,
             ".claude",
             "CLAUDE_PLUGIN_ROOT",
             HookEmitMode::Bundled,
@@ -371,6 +407,35 @@ mod tests {
         assert_eq!(entries[1].agentspec_id, "multi");
         assert!(entries[0].command.contains("_wrappers/pre_tool_use.sh"));
         assert!(entries[1].command.contains("_wrappers/session_start.sh"));
+    }
+
+    #[test]
+    fn translate_matcher_splits_and_translates() {
+        let result = translate_matcher(&ClaudeAdapter, HookEvent::PreToolUse, "shell|read");
+        assert_eq!(result, "Bash|Read");
+    }
+
+    #[test]
+    fn translate_matcher_passes_through_non_canonical() {
+        let result =
+            translate_matcher(&ClaudeAdapter, HookEvent::PreToolUse, "mcp__memory__create");
+        assert_eq!(result, "mcp__memory__create");
+    }
+
+    #[test]
+    fn translate_matcher_mixed_canonical_and_non_canonical() {
+        let result = translate_matcher(
+            &CursorAdapter,
+            HookEvent::PreToolUse,
+            "shell|mcp__memory__create",
+        );
+        assert_eq!(result, "Shell|mcp__memory__create");
+    }
+
+    #[test]
+    fn translate_matcher_unavailable_tool_passes_through() {
+        let result = translate_matcher(&CursorAdapter, HookEvent::PreToolUse, "shell|question");
+        assert_eq!(result, "Shell|question");
     }
 
     #[test]

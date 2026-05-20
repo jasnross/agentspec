@@ -1405,7 +1405,7 @@ description = "Seed THOUGHTS_DIR context at the start of each turn"
 
 [hooks.audit-bash]
 events = ["pre_tool_use"]
-matcher = "Bash"
+matcher = "shell"
 script = "scripts/audit-bash.sh"
 "#,
     );
@@ -1807,6 +1807,11 @@ fn test_compile_claude_hooks_json_uses_pascal_case_events() {
         claude_json.contains("\"PreToolUse\""),
         "Claude should map pre_tool_use to PreToolUse, got:\n{claude_json}"
     );
+    // Canonical "shell" → Claude's "Bash".
+    assert!(
+        claude_json.contains("\"matcher\": \"Bash\""),
+        "Claude should translate canonical 'shell' to 'Bash', got:\n{claude_json}"
+    );
 }
 
 #[test]
@@ -1842,9 +1847,10 @@ fn test_compile_cursor_hooks_json_uses_camel_case_and_version() {
         "Cursor should map pre_tool_use to preToolUse, got:\n{cursor_json}"
     );
     // Cursor places matcher per-entry (not on a wrapping group).
+    // Canonical "shell" → Cursor's "Shell" (function-call identifier).
     assert!(
-        cursor_json.contains("\"matcher\": \"Bash\""),
-        "Cursor should place matcher per-entry, got:\n{cursor_json}"
+        cursor_json.contains("\"matcher\": \"Shell\""),
+        "Cursor should translate canonical 'shell' to 'Shell', got:\n{cursor_json}"
     );
 }
 

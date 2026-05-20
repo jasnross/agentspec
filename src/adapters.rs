@@ -198,6 +198,22 @@ pub trait Adapter: std::fmt::Debug + Send + Sync {
     /// `OpenCode`'s `"read"`).
     fn body_tool_name(&self, tool: &ToolFrontmatter) -> &'static str;
 
+    /// Resolve a canonical tool to the name this provider expects in hook
+    /// matcher values for tool-execute events (`PreToolUse`, `PostToolUse`,
+    /// `PostToolUseFailure`).
+    ///
+    /// Returns `Some(name)` for tools the provider supports, `None` for
+    /// tools with no provider equivalent. `None` causes the canonical
+    /// token to pass through unchanged in the translated matcher string.
+    ///
+    /// Defaults to `Some(body_tool_name)`, which is correct for providers
+    /// where body references and matcher identifiers coincide (Claude).
+    /// Providers where they differ (Cursor: display labels vs.
+    /// function-call identifiers, plus absent tools) must override.
+    fn matcher_tool_name(&self, tool: &ToolFrontmatter) -> Option<&'static str> {
+        Some(self.body_tool_name(tool))
+    }
+
     /// Returns the name which should be used to refer to the spec in the generated body content.
     fn body_spec_name(&self, spec: &Spec, cfg: Option<&AdapterConfig>) -> String;
 

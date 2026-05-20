@@ -154,6 +154,24 @@ impl Adapter for CursorAdapter {
         }
     }
 
+    #[allow(clippy::match_same_arms)] // exhaustive to catch new ToolFrontmatter variants
+    fn matcher_tool_name(&self, tool: &ToolFrontmatter) -> Option<&'static str> {
+        match tool {
+            ToolFrontmatter::Read => Some("Read"),
+            ToolFrontmatter::Write => Some("Write"),
+            ToolFrontmatter::Edit => Some("Edit"),
+            ToolFrontmatter::Grep => Some("Grep"),
+            ToolFrontmatter::Shell => Some("Shell"),
+            ToolFrontmatter::WebSearch => Some("WebSearch"),
+            ToolFrontmatter::Subagent => Some("Task"),
+            ToolFrontmatter::Glob => None,
+            ToolFrontmatter::WebFetch => None,
+            ToolFrontmatter::Question => None,
+            ToolFrontmatter::Tasks => None,
+            ToolFrontmatter::Skill => None,
+        }
+    }
+
     /// Returns the name which should be used to refer to the spec in the generated body content.
     ///
     /// For Cursor, all spec types use `{content_prefix}{id}` when a content prefix
@@ -825,6 +843,58 @@ mod tests {
         assert_eq!(
             CursorAdapter.body_tool_name(&ToolFrontmatter::Skill),
             "Skill runner"
+        );
+    }
+
+    #[test]
+    fn test_matcher_tool_name_full_mapping() {
+        assert_eq!(
+            CursorAdapter.matcher_tool_name(&ToolFrontmatter::Read),
+            Some("Read")
+        );
+        assert_eq!(
+            CursorAdapter.matcher_tool_name(&ToolFrontmatter::Write),
+            Some("Write")
+        );
+        assert_eq!(
+            CursorAdapter.matcher_tool_name(&ToolFrontmatter::Edit),
+            Some("Edit")
+        );
+        assert_eq!(
+            CursorAdapter.matcher_tool_name(&ToolFrontmatter::Grep),
+            Some("Grep")
+        );
+        assert_eq!(
+            CursorAdapter.matcher_tool_name(&ToolFrontmatter::Shell),
+            Some("Shell")
+        );
+        assert_eq!(
+            CursorAdapter.matcher_tool_name(&ToolFrontmatter::WebSearch),
+            Some("WebSearch")
+        );
+        assert_eq!(
+            CursorAdapter.matcher_tool_name(&ToolFrontmatter::Subagent),
+            Some("Task")
+        );
+        assert_eq!(
+            CursorAdapter.matcher_tool_name(&ToolFrontmatter::Glob),
+            None
+        );
+        assert_eq!(
+            CursorAdapter.matcher_tool_name(&ToolFrontmatter::WebFetch),
+            None
+        );
+        assert_eq!(
+            CursorAdapter.matcher_tool_name(&ToolFrontmatter::Question),
+            None
+        );
+        assert_eq!(
+            CursorAdapter.matcher_tool_name(&ToolFrontmatter::Tasks),
+            None
+        );
+        assert_eq!(
+            CursorAdapter.matcher_tool_name(&ToolFrontmatter::Skill),
+            None
         );
     }
 

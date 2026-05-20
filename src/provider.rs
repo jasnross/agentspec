@@ -83,6 +83,24 @@ mod tests {
     }
 
     #[test]
+    fn test_matcher_tool_name_accessible_via_adapter() {
+        use crate::spec::ToolFrontmatter;
+        let shell = ToolFrontmatter::Shell;
+        assert_eq!(
+            Provider::Claude.adapter().matcher_tool_name(&shell),
+            Some("Bash")
+        );
+        assert_eq!(
+            Provider::Cursor.adapter().matcher_tool_name(&shell),
+            Some("Shell")
+        );
+        assert_eq!(
+            Provider::OpenCode.adapter().matcher_tool_name(&shell),
+            Some("bash")
+        );
+    }
+
+    #[test]
     fn test_supports_path_scoped_rules_capability() {
         assert!(Provider::Claude.adapter().supports_path_scoped_rules());
         assert!(Provider::Cursor.adapter().supports_path_scoped_rules());
