@@ -256,7 +256,7 @@ pub enum ToolFrontmatter {
     Edit,
     Grep,
     Glob,
-    Bash,
+    Shell,
     WebFetch,
     WebSearch,
     Question,

@@ -144,7 +144,7 @@ impl Adapter for CursorAdapter {
             ToolFrontmatter::Read => "Read files",
             ToolFrontmatter::Write | ToolFrontmatter::Edit => "Edit files",
             ToolFrontmatter::Grep | ToolFrontmatter::Glob => "Search files and folders",
-            ToolFrontmatter::Bash => "Run shell commands",
+            ToolFrontmatter::Shell => "Run shell commands",
             ToolFrontmatter::WebSearch => "Web",
             ToolFrontmatter::WebFetch => "URL fetcher", // descriptive: Cursor docs name no URL-fetch tool
             ToolFrontmatter::Question => "Ask questions",
@@ -799,7 +799,7 @@ mod tests {
             "Search files and folders"
         );
         assert_eq!(
-            CursorAdapter.body_tool_name(&ToolFrontmatter::Bash),
+            CursorAdapter.body_tool_name(&ToolFrontmatter::Shell),
             "Run shell commands"
         );
         assert_eq!(

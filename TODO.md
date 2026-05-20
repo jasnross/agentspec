@@ -6,12 +6,7 @@
    - The open question is whether callers ever legitimately want the output filename to differ from the source filename; if so, `id` (or a rename field) remains useful as an override
 2. Allow specifying path to configuration file
 3. Cleanup: Refactor methods with clippy::too_many_lines
-4. Establish a canonical shell-tool concept and apply it consistently across all surfaces (agent `tools:` field AND hook matchers)
-   - `ToolFrontmatter::Bash` currently maps to `Bash` in Claude but Claude supports both `PowerShell` and `Bash`
-   - Expanding the `shell` canonical tool to both `Bash` and `PowerShell` for Claude would help cover both
-   - **Hook matchers are affected by the same gap:** `HookFrontmatter::matcher` (`src/spec.rs:162`) is currently a pass-through `Option<String>` cloned verbatim to both providers (`src/adapters/hook_compile.rs:131`; emitted at `cursor.rs:181` and `claude.rs:279`). A user writing `matcher = "Bash"` in `hooks.toml` gets `Bash` emitted to Claude (correct) and Cursor (silently wrong — Cursor's matcher for the shell tool is `Shell`, empirically confirmed against Cursor 3.2.21). The hook fires under Claude and never fires under Cursor, with no error message to the user.
-   - The same canonical-tool concept that fixes the `tools:` field divergence would naturally fix this: adapters map canonical `shell` → `Bash` (Claude) / `Shell` (Cursor) at emit time for both `tools:` and `matcher`. Strings that aren't canonical tool names (e.g., regex-style values like `Bash|Read|Edit`) must pass through unchanged.
-   - Surfaced during Phase 0 verification of `thoughts/ideas/2026-05-10-agentspec-hook-payload-translation-shim.md`
+4. ~~Establish a canonical shell-tool concept and apply it consistently across all surfaces (agent `tools:` field AND hook matchers)~~ — RESOLVED: `ToolFrontmatter::Bash` renamed to `Shell`; hook matcher translation via `matcher_tool_name` and `translate_matcher` maps canonical tokens per provider at emit time
 5. Support executing skills in forked subagents
    - Claude supports running skills in forked subprocesses via frontmatter fields
    - OpenCode has a similar concept for command execution

@@ -195,7 +195,7 @@ impl Adapter for ClaudeAdapter {
             ToolFrontmatter::Edit => "Edit",
             ToolFrontmatter::Grep => "Grep",
             ToolFrontmatter::Glob => "Glob",
-            ToolFrontmatter::Bash => "Bash",
+            ToolFrontmatter::Shell => "Bash",
             ToolFrontmatter::WebFetch => "WebFetch",
             ToolFrontmatter::WebSearch => "WebSearch",
             ToolFrontmatter::Question => "AskUserQuestion",
@@ -729,7 +729,7 @@ fn adapt_tool(tool: &ToolFrontmatter) -> Vec<ClaudeTool> {
         ToolFrontmatter::Edit => vec![ClaudeTool::Edit],
         ToolFrontmatter::Grep => vec![ClaudeTool::Grep],
         ToolFrontmatter::Glob => vec![ClaudeTool::Glob],
-        ToolFrontmatter::Bash => vec![ClaudeTool::Bash],
+        ToolFrontmatter::Shell => vec![ClaudeTool::Bash],
         ToolFrontmatter::WebFetch => vec![ClaudeTool::WebFetch],
         ToolFrontmatter::WebSearch => vec![ClaudeTool::WebSearch],
         ToolFrontmatter::Question => vec![ClaudeTool::AskUserQuestion],
@@ -853,7 +853,7 @@ mod tests {
                 tools: Some(vec![
                     ToolFrontmatter::Write,
                     ToolFrontmatter::Read,
-                    ToolFrontmatter::Bash,
+                    ToolFrontmatter::Shell,
                 ]),
             }),
         );

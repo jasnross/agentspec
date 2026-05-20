@@ -144,7 +144,7 @@ impl Adapter for OpenCodeAdapter {
             ToolFrontmatter::Edit => "edit",
             ToolFrontmatter::Grep => "grep",
             ToolFrontmatter::Glob => "glob",
-            ToolFrontmatter::Bash => "bash",
+            ToolFrontmatter::Shell => "bash",
             ToolFrontmatter::WebFetch => "webfetch",
             ToolFrontmatter::WebSearch => "websearch",
             ToolFrontmatter::Question => "question",
