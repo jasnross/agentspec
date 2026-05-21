@@ -4433,3 +4433,214 @@ fn test_validate_surfaces_config_errors() {
         "stderr should contain the config validation error, got: {stderr}"
     );
 }
+
+#[test]
+fn test_hook_test_success_path() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+
+    let output = std::process::Command::new(agentspec())
+        .args(["hook", "test", "audit-bash", "--event", "pre_tool_use"])
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec hook test");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "hook test failed:\n{stderr}");
+    assert!(
+        stderr.contains("Provider Input"),
+        "stderr missing 'Provider Input': {stderr}"
+    );
+    assert!(
+        stderr.contains("Canonical Input"),
+        "stderr missing 'Canonical Input': {stderr}"
+    );
+    assert!(
+        stderr.contains("Script Output"),
+        "stderr missing 'Script Output': {stderr}"
+    );
+    assert!(
+        stderr.contains("Exit Code"),
+        "stderr missing 'Exit Code': {stderr}"
+    );
+}
+
+#[test]
+fn test_hook_test_nonexistent_hook_errors() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+
+    let output = std::process::Command::new(agentspec())
+        .args([
+            "hook",
+            "test",
+            "nonexistent-hook",
+            "--event",
+            "pre_tool_use",
+        ])
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec hook test");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("nonexistent-hook"),
+        "error should mention the missing hook ID: {stderr}"
+    );
+}
+
+#[test]
+fn test_hook_test_multi_event_no_flag_errors() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let hooks_dir = dir.join("spec/hooks");
+    let scripts_dir = hooks_dir.join("scripts");
+    let r = std::fs::create_dir_all(&scripts_dir);
+    assert!(r.is_ok(), "create hooks dir: {r:?}");
+    let r = std::fs::write(
+        hooks_dir.join("hooks.toml"),
+        r#"
+[hooks.multi-event]
+events = ["pre_tool_use", "post_tool_use"]
+script = "scripts/multi.sh"
+"#,
+    );
+    assert!(r.is_ok(), "write hooks.toml: {r:?}");
+    let r = std::fs::write(scripts_dir.join("multi.sh"), "#!/bin/sh\nexit 0\n");
+    assert!(r.is_ok(), "write multi.sh: {r:?}");
+    set_script_permissions(&scripts_dir);
+
+    let output = std::process::Command::new(agentspec())
+        .args(["hook", "test", "multi-event"])
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec hook test");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("multiple events"),
+        "error should mention multiple events: {stderr}"
+    );
+    assert!(
+        stderr.contains("pre_tool_use"),
+        "error should list available events: {stderr}"
+    );
+}
+
+#[test]
+fn test_hook_test_single_event_no_flag_uses_it() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+
+    let output = std::process::Command::new(agentspec())
+        .args(["hook", "test", "audit-bash"])
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec hook test");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "single-event hook should auto-select: {stderr}"
+    );
+    assert!(
+        stderr.contains("pre_tool_use"),
+        "should use the only event: {stderr}"
+    );
+}
+
+#[test]
+fn test_hook_test_opencode_provider_errors() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+
+    let output = std::process::Command::new(agentspec())
+        .args([
+            "hook",
+            "test",
+            "audit-bash",
+            "--event",
+            "pre_tool_use",
+            "--provider",
+            "opencode",
+        ])
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec hook test");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("invalid value") || stderr.contains("opencode"),
+        "should reject opencode provider: {stderr}"
+    );
+}
+
+#[test]
+fn test_hook_test_payload_inline() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+
+    let custom_payload = r#"{"session_id":"custom-sess","cwd":"/tmp","tool_name":"Bash","tool_input":{"command":"echo hello"}}"#;
+    let output = std::process::Command::new(agentspec())
+        .args([
+            "hook",
+            "test",
+            "audit-bash",
+            "--event",
+            "pre_tool_use",
+            "--payload",
+            custom_payload,
+        ])
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec hook test");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "hook test with payload failed:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("custom-sess"),
+        "output should contain the custom payload: {stderr}"
+    );
+}
+
+#[test]
+fn test_hook_test_payload_file() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+
+    let payload_path = tmp.path().join("payload.json");
+    let r = std::fs::write(
+        &payload_path,
+        r#"{"session_id":"file-sess","cwd":"/tmp","tool_name":"Bash","tool_input":{"command":"ls"}}"#,
+    );
+    assert!(r.is_ok(), "write payload file: {r:?}");
+
+    let output = std::process::Command::new(agentspec())
+        .args([
+            "hook",
+            "test",
+            "audit-bash",
+            "--event",
+            "pre_tool_use",
+            "--payload-file",
+            &payload_path.to_string_lossy(),
+        ])
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec hook test");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "hook test with payload-file failed:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("file-sess"),
+        "output should contain the file payload: {stderr}"
+    );
+}

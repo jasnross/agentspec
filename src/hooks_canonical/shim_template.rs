@@ -978,36 +978,7 @@ printf '%s' '{"permission_decision":"deny","decision_reason":"blocked"}'
     }
 
     fn fixture_for(provider: ProviderName, event: HookEvent) -> &'static str {
-        match (provider, event) {
-            (ProviderName::Claude, HookEvent::PreToolUse) => {
-                r#"{"session_id":"sess","agent_id":null,"cwd":"/p","transcript_path":"/t","tool_name":"Bash","tool_use_id":"t1","tool_input":{"command":"ls"}}"#
-            }
-            (ProviderName::Claude, HookEvent::PostToolUse) => {
-                r#"{"session_id":"sess","cwd":"/p","tool_name":"Bash","tool_use_id":"t1","tool_input":{"command":"ls"},"tool_response":{"stdout":"hi"}}"#
-            }
-            (ProviderName::Claude, HookEvent::PostToolUseFailure) => {
-                r#"{"session_id":"sess","cwd":"/p","tool_name":"Bash","tool_use_id":"t1","tool_input":{"command":"ls"},"tool_response":{"error":"boom"}}"#
-            }
-            (ProviderName::Claude, HookEvent::UserPromptSubmit) => {
-                r#"{"session_id":"sess","cwd":"/p","prompt":"hello"}"#
-            }
-            (ProviderName::Claude, _) => r#"{"session_id":"sess","cwd":"/p"}"#,
-            (ProviderName::Cursor, HookEvent::PreToolUse) => {
-                r#"{"cursor_version":"3.2","conversation_id":"conv","workspace_roots":["/p"],"tool_name":"shell","tool_use_id":"t1","tool_input":{"command":"ls"}}"#
-            }
-            (ProviderName::Cursor, HookEvent::PostToolUse) => {
-                r#"{"cursor_version":"3.2","conversation_id":"conv","workspace_roots":["/p"],"tool_name":"shell","tool_use_id":"t1","tool_input":{"command":"ls"},"tool_output":"{\"stdout\":\"hi\"}"}"#
-            }
-            (ProviderName::Cursor, HookEvent::PostToolUseFailure) => {
-                r#"{"cursor_version":"3.2","conversation_id":"conv","workspace_roots":["/p"],"tool_name":"shell","tool_use_id":"t1","tool_input":{"command":"ls"},"tool_output":"{\"error\":\"boom\"}"}"#
-            }
-            (ProviderName::Cursor, HookEvent::UserPromptSubmit) => {
-                r#"{"cursor_version":"3.2","conversation_id":"conv","workspace_roots":["/p"],"prompt":"hello"}"#
-            }
-            (ProviderName::Cursor, _) => {
-                r#"{"cursor_version":"3.2","conversation_id":"conv","workspace_roots":["/p"]}"#
-            }
-        }
+        crate::hooks_canonical::provider_fixture(provider, event)
     }
 
     fn all_pairs() -> Vec<(ProviderName, HookEvent)> {

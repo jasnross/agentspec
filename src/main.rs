@@ -1,6 +1,7 @@
 mod cli;
 mod config;
 mod emit;
+mod hook;
 mod remove;
 mod sync;
 
@@ -168,6 +169,12 @@ fn main() -> Result<()> {
                 output_dir.display()
             );
         }
+        Command::Hook(hook_cmd) => match &hook_cmd.command {
+            cli::HookSubcommand::Test(test_args) => {
+                let (validated, _report) = load_and_validate(&config, &dirs)?;
+                hook::run_hook_test(test_args, &dirs, &validated)?;
+            }
+        },
         Command::Completions { .. } => unreachable!("handled above"),
     }
 

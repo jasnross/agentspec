@@ -176,7 +176,8 @@ pub struct HookFrontmatter {
 /// Variants map to provider-specific event names inside each adapter
 /// (`ClaudeAdapter::event_name` / `CursorAdapter::event_name`); the enum
 /// itself only expresses semantic identity, not naming.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, clap::ValueEnum)]
+#[clap(rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum HookEvent {
     PreToolUse,

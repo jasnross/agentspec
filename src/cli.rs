@@ -1,4 +1,8 @@
+use std::path::PathBuf;
+
+use agentspec::hooks_canonical::ProviderName;
 use agentspec::provider::Provider;
+use agentspec::spec::HookEvent;
 use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 
@@ -28,6 +32,9 @@ pub enum Command {
 
     /// Remove agentspec-managed files and config entries from each tool's config directory
     Remove(RemoveArgs),
+
+    /// Hook development and debugging tools
+    Hook(HookCommand),
 
     /// Print shell completion script to stdout
     Completions {
@@ -98,4 +105,38 @@ pub struct RemoveArgs {
     /// Specify which sync mode to reverse
     #[arg(long, value_enum)]
     pub mode: Option<SyncMode>,
+}
+
+#[derive(Debug, Parser)]
+pub struct HookCommand {
+    #[command(subcommand)]
+    pub command: HookSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum HookSubcommand {
+    /// Run a hook script through the shim and display each pipeline stage
+    Test(HookTestArgs),
+}
+
+#[derive(Debug, Parser)]
+pub struct HookTestArgs {
+    /// Hook ID to test (must match a [hooks.<id>] entry in hooks.toml)
+    pub hook_id: String,
+
+    /// Event to simulate (must be one the hook is registered for)
+    #[arg(long)]
+    pub event: Option<HookEvent>,
+
+    /// Provider to simulate (determines the native JSON format)
+    #[arg(long, default_value = "claude")]
+    pub provider: ProviderName,
+
+    /// Provider-native JSON payload (inline)
+    #[arg(long, conflicts_with = "payload_file")]
+    pub payload: Option<String>,
+
+    /// Provider-native JSON payload (from file)
+    #[arg(long, conflicts_with = "payload")]
+    pub payload_file: Option<PathBuf>,
 }

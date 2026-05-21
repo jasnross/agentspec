@@ -48,7 +48,20 @@ fn default_schema_version() -> String {
 /// hook-emitting providers (Claude and Cursor) are representable —
 /// `Provider::OpenCode` has no canonical wire form because its adapter
 /// doesn't emit hooks.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Serialize,
+    clap::ValueEnum,
+)]
+#[clap(rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderName {
     Claude,
@@ -419,6 +432,46 @@ fn cursor_event_body(value: &Value, event: HookEvent) -> Result<CanonicalInputBo
         HookEvent::SubagentStart => CanonicalInputBody::SubagentStart {},
         HookEvent::SubagentStop => CanonicalInputBody::SubagentStop {},
     })
+}
+
+/// Minimal valid provider-native JSON payload for the given (`provider`,
+/// `event`) pair.
+///
+/// Returns a `&'static str` containing compact JSON with just enough
+/// fields to pass through the shim's jq translation pipeline. Used by
+/// `agentspec hook test` as the default payload when the user doesn't
+/// supply one, and by unit tests to exercise `CanonicalInput::from_provider_stdin`.
+pub fn provider_fixture(provider: ProviderName, event: HookEvent) -> &'static str {
+    match (provider, event) {
+        (ProviderName::Claude, HookEvent::PreToolUse) => {
+            r#"{"session_id":"sess","agent_id":null,"cwd":"/p","transcript_path":"/t","tool_name":"Bash","tool_use_id":"t1","tool_input":{"command":"ls"}}"#
+        }
+        (ProviderName::Claude, HookEvent::PostToolUse) => {
+            r#"{"session_id":"sess","cwd":"/p","tool_name":"Bash","tool_use_id":"t1","tool_input":{"command":"ls"},"tool_response":{"stdout":"hi"}}"#
+        }
+        (ProviderName::Claude, HookEvent::PostToolUseFailure) => {
+            r#"{"session_id":"sess","cwd":"/p","tool_name":"Bash","tool_use_id":"t1","tool_input":{"command":"ls"},"tool_response":{"error":"boom"}}"#
+        }
+        (ProviderName::Claude, HookEvent::UserPromptSubmit) => {
+            r#"{"session_id":"sess","cwd":"/p","prompt":"hello"}"#
+        }
+        (ProviderName::Claude, _) => r#"{"session_id":"sess","cwd":"/p"}"#,
+        (ProviderName::Cursor, HookEvent::PreToolUse) => {
+            r#"{"cursor_version":"3.2","conversation_id":"conv","workspace_roots":["/p"],"tool_name":"shell","tool_use_id":"t1","tool_input":{"command":"ls"}}"#
+        }
+        (ProviderName::Cursor, HookEvent::PostToolUse) => {
+            r#"{"cursor_version":"3.2","conversation_id":"conv","workspace_roots":["/p"],"tool_name":"shell","tool_use_id":"t1","tool_input":{"command":"ls"},"tool_output":"{\"stdout\":\"hi\"}"}"#
+        }
+        (ProviderName::Cursor, HookEvent::PostToolUseFailure) => {
+            r#"{"cursor_version":"3.2","conversation_id":"conv","workspace_roots":["/p"],"tool_name":"shell","tool_use_id":"t1","tool_input":{"command":"ls"},"tool_output":"{\"error\":\"boom\"}"}"#
+        }
+        (ProviderName::Cursor, HookEvent::UserPromptSubmit) => {
+            r#"{"cursor_version":"3.2","conversation_id":"conv","workspace_roots":["/p"],"prompt":"hello"}"#
+        }
+        (ProviderName::Cursor, _) => {
+            r#"{"cursor_version":"3.2","conversation_id":"conv","workspace_roots":["/p"]}"#
+        }
+    }
 }
 
 fn require_str<'a>(value: &'a Value, key: &str, ctx: &str) -> Result<&'a str> {
@@ -992,5 +1045,35 @@ mod tests {
             msg.contains("permmission_decision"),
             "expected error to name the unknown field, got: {msg}"
         );
+    }
+
+    #[test]
+    fn provider_fixture_returns_parseable_json_for_all_pairs() {
+        let events = [
+            HookEvent::PreToolUse,
+            HookEvent::PostToolUse,
+            HookEvent::PostToolUseFailure,
+            HookEvent::SessionStart,
+            HookEvent::SessionEnd,
+            HookEvent::Stop,
+            HookEvent::PreCompact,
+            HookEvent::SubagentStart,
+            HookEvent::SubagentStop,
+            HookEvent::UserPromptSubmit,
+        ];
+        for provider in [ProviderName::Claude, ProviderName::Cursor] {
+            for event in events {
+                let fixture = super::provider_fixture(provider, event);
+                let parsed: serde_json::Value = serde_json::from_str(fixture).unwrap_or_else(|e| {
+                    panic!("fixture for {provider:?}/{event:?} is not valid JSON: {e}")
+                });
+                assert!(parsed.is_object(), "fixture must be a JSON object");
+                let canonical = CanonicalInput::from_provider_stdin(provider, fixture, event);
+                assert!(
+                    canonical.is_ok(),
+                    "fixture for {provider:?}/{event:?} should parse as canonical input: {canonical:?}",
+                );
+            }
+        }
     }
 }
