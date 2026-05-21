@@ -90,6 +90,13 @@ const SHIM_TEMPLATE: &str = r#"#!/usr/bin/env sh
 HOOK_ID="${2:-}"
 __LOG_TAG_INIT__
 
+_ALOG="${AGENTSPEC_HOOK_LOG:-}"
+_alog() {
+    if [ -n "$_ALOG" ]; then
+        printf '[%s] %s: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$LOG_TAG" "$1" >> "$_ALOG"
+    fi
+}
+
 if ! command -v jq >/dev/null 2>&1; then
     printf '%s: jq is required for canonical hook translation but was not found on PATH. Install jq (e.g., `brew install jq`, `apt install jq`) and reload the hook host.\n' "$LOG_TAG" >&2
     exit 1
@@ -106,34 +113,47 @@ if [ ! -x "$1" ]; then
 fi
 
 RAW=$(cat)
+_alog "raw_input"
+_alog "$RAW"
 
 if printf '%s' "$RAW" | jq -e '.cursor_version' >/dev/null 2>&1; then
+    _detected=cursor
     INPUT_JQ='__CURSOR_INPUT_JQ__'
     OUTPUT_JQ='__CURSOR_OUTPUT_JQ__'
 else
+    _detected=claude
     INPUT_JQ='__CLAUDE_INPUT_JQ__'
     OUTPUT_JQ='__CLAUDE_OUTPUT_JQ__'
 fi
+_alog "event=__EVENT_SNAKE__ provider=$_detected"
 
 CANONICAL=$(printf '%s' "$RAW" | jq -c "$INPUT_JQ")
 JQ_INPUT_EXIT=$?
 if [ "$JQ_INPUT_EXIT" -ne 0 ]; then
+    _alog "error: input translation failed"
     printf '%s: input translation failed (jq exited %s); provider stdin is not valid JSON or did not match the expected shape\n' "$LOG_TAG" "$JQ_INPUT_EXIT" >&2
     exit 1
 fi
+_alog "canonical_input"
+_alog "$CANONICAL"
 
 USER_OUTPUT=$(printf '%s' "$CANONICAL" | "$1")
 USER_EXIT=$?
+_alog "user_stdout"
+_alog "$USER_OUTPUT"
+_alog "user_exit=$USER_EXIT"
 
 if [ -n "$USER_OUTPUT" ]; then
-    exec 9>&1
-    JQ_ERR=$(printf '%s' "$USER_OUTPUT" | jq -c "$OUTPUT_JQ" 2>&1 1>&9)
+    PROVIDER_OUTPUT=$(printf '%s' "$USER_OUTPUT" | jq -c "$OUTPUT_JQ" 2>&1)
     JQ_OUTPUT_EXIT=$?
-    exec 9>&-
     if [ "$JQ_OUTPUT_EXIT" -ne 0 ]; then
-        printf '%s: output translation failed (jq exited %s): %s\n' "$LOG_TAG" "$JQ_OUTPUT_EXIT" "$JQ_ERR" >&2
+        _alog "error: output translation failed: $PROVIDER_OUTPUT"
+        printf '%s: output translation failed (jq exited %s): %s\n' "$LOG_TAG" "$JQ_OUTPUT_EXIT" "$PROVIDER_OUTPUT" >&2
         exit 1
     fi
+    _alog "provider_output"
+    _alog "$PROVIDER_OUTPUT"
+    printf '%s\n' "$PROVIDER_OUTPUT"
 fi
 
 exit "$USER_EXIT"
@@ -689,14 +709,25 @@ mod tests {
         user_script: &std::path::Path,
         stdin: &str,
     ) -> (i32, String, String) {
-        let mut child = Command::new("sh")
-            .arg(shim)
+        exec_shim_with_env(shim, user_script, stdin, &[])
+    }
+
+    fn exec_shim_with_env(
+        shim: &std::path::Path,
+        user_script: &std::path::Path,
+        stdin: &str,
+        env: &[(&str, &str)],
+    ) -> (i32, String, String) {
+        let mut cmd = Command::new("sh");
+        cmd.arg(shim)
             .arg(user_script)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn shim");
+            .stderr(Stdio::piped());
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        let mut child = cmd.spawn().expect("spawn shim");
         {
             use std::io::Write;
             let mut child_stdin = child.stdin.take().expect("child stdin");
@@ -1487,5 +1518,162 @@ printf '%s' '{"permission_decision":"deny","decision_reason":"test"}'
                 }
             }
         }
+    }
+
+    #[test]
+    fn shim_contains_logging_primitives() {
+        let s = shim_script(ProviderName::Claude, HookEvent::PreToolUse);
+        assert!(s.contains("AGENTSPEC_HOOK_LOG"), "missing env var capture");
+        assert!(s.contains("_alog"), "missing _alog helper");
+        assert!(s.contains("_ALOG"), "missing _ALOG variable");
+    }
+
+    #[test]
+    fn e2e_no_log_file_created_when_env_unset() {
+        if !jq_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shim = write_shim(dir.path(), ProviderName::Claude, HookEvent::PreToolUse);
+        let user = write_user_script(
+            dir.path(),
+            "user.sh",
+            r#"#!/usr/bin/env sh
+cat > /dev/null
+printf '%s' '{"permission_decision":"allow"}'
+"#,
+        );
+        let log_path = dir.path().join("hooks.log");
+        let provider_stdin = r#"{"session_id":"s","cwd":"/p","tool_name":"Bash","tool_input":{}}"#;
+        let (code, stdout, stderr) = exec_shim_with_stdin(&shim, &user, provider_stdin);
+        assert_eq!(code, 0, "stderr={stderr}");
+        assert!(
+            !log_path.exists(),
+            "log file should not be created when AGENTSPEC_HOOK_LOG is unset"
+        );
+        let parsed: Value = serde_json::from_str(stdout.trim()).expect("parse output");
+        assert_eq!(parsed["hookSpecificOutput"]["permissionDecision"], "allow");
+    }
+
+    #[test]
+    fn e2e_log_file_captures_all_pipeline_stages() {
+        if !jq_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shim = write_shim(dir.path(), ProviderName::Claude, HookEvent::PreToolUse);
+        let user = write_user_script(
+            dir.path(),
+            "user.sh",
+            r#"#!/usr/bin/env sh
+cat > /dev/null
+printf '%s' '{"permission_decision":"allow"}'
+"#,
+        );
+        let log_path = dir.path().join("hooks.log");
+        let provider_stdin = r#"{"session_id":"test-sess","cwd":"/p","tool_name":"Bash","tool_input":{"command":"ls"}}"#;
+        let (code, stdout, stderr) = exec_shim_with_env(
+            &shim,
+            &user,
+            provider_stdin,
+            &[("AGENTSPEC_HOOK_LOG", &log_path.to_string_lossy())],
+        );
+        assert_eq!(code, 0, "stderr={stderr}");
+
+        assert!(log_path.exists(), "log file should be created");
+        let log = std::fs::read_to_string(&log_path).expect("read log");
+
+        assert!(log.contains("raw_input"), "log missing raw_input label");
+        assert!(log.contains("test-sess"), "log missing raw input payload");
+        assert!(
+            log.contains("canonical_input"),
+            "log missing canonical_input label"
+        );
+        assert!(
+            log.contains("schema_version"),
+            "log missing canonical fields"
+        );
+        assert!(
+            log.contains("\"provider\""),
+            "log missing provider in canonical"
+        );
+        assert!(log.contains("\"event\""), "log missing event in canonical");
+        assert!(log.contains("user_stdout"), "log missing user_stdout label");
+        assert!(log.contains("user_exit=0"), "log missing user_exit");
+        assert!(
+            log.contains("provider_output"),
+            "log missing provider_output label"
+        );
+        assert!(
+            log.contains("hookSpecificOutput"),
+            "log missing provider-shaped output"
+        );
+
+        let parsed: Value = serde_json::from_str(stdout.trim()).expect("parse output");
+        assert_eq!(
+            parsed["hookSpecificOutput"]["permissionDecision"], "allow",
+            "logging must not interfere with stdout"
+        );
+    }
+
+    #[test]
+    fn e2e_log_empty_user_stdout() {
+        if !jq_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shim = write_shim(dir.path(), ProviderName::Claude, HookEvent::PreToolUse);
+        let user = write_user_script(
+            dir.path(),
+            "user.sh",
+            "#!/usr/bin/env sh\ncat > /dev/null\n",
+        );
+        let log_path = dir.path().join("hooks.log");
+        let provider_stdin = r#"{"session_id":"s","cwd":"/p","tool_name":"Bash","tool_input":{}}"#;
+        let (code, stdout, stderr) = exec_shim_with_env(
+            &shim,
+            &user,
+            provider_stdin,
+            &[("AGENTSPEC_HOOK_LOG", &log_path.to_string_lossy())],
+        );
+        assert_eq!(code, 0, "stderr={stderr}");
+        assert!(stdout.is_empty(), "stdout should be empty");
+
+        let log = std::fs::read_to_string(&log_path).expect("read log");
+        assert!(log.contains("user_stdout"), "log missing user_stdout label");
+        assert!(log.contains("user_exit=0"), "log missing user_exit");
+        assert!(
+            !log.contains("provider_output"),
+            "provider_output should not appear when user output is empty"
+        );
+    }
+
+    #[test]
+    fn e2e_log_nonzero_exit() {
+        if !jq_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shim = write_shim(dir.path(), ProviderName::Claude, HookEvent::PreToolUse);
+        let user = write_user_script(
+            dir.path(),
+            "user.sh",
+            "#!/usr/bin/env sh\ncat > /dev/null\nexit 3\n",
+        );
+        let log_path = dir.path().join("hooks.log");
+        let provider_stdin = r#"{"session_id":"s","cwd":"/p","tool_name":"Bash","tool_input":{}}"#;
+        let (code, _stdout, _stderr) = exec_shim_with_env(
+            &shim,
+            &user,
+            provider_stdin,
+            &[("AGENTSPEC_HOOK_LOG", &log_path.to_string_lossy())],
+        );
+        assert_eq!(code, 3);
+
+        let log = std::fs::read_to_string(&log_path).expect("read log");
+        assert!(
+            log.contains("user_exit=3"),
+            "log should capture non-zero exit code"
+        );
     }
 }

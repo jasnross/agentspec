@@ -6,6 +6,13 @@
 HOOK_ID="${2:-}"
 LOG_TAG="agentspec [$HOOK_ID]"
 
+_ALOG="${AGENTSPEC_HOOK_LOG:-}"
+_alog() {
+    if [ -n "$_ALOG" ]; then
+        printf '[%s] %s: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$LOG_TAG" "$1" >> "$_ALOG"
+    fi
+}
+
 if ! command -v jq >/dev/null 2>&1; then
     printf '%s: jq is required for canonical hook translation but was not found on PATH. Install jq (e.g., `brew install jq`, `apt install jq`) and reload the hook host.\n' "$LOG_TAG" >&2
     exit 1
@@ -22,8 +29,11 @@ if [ ! -x "$1" ]; then
 fi
 
 RAW=$(cat)
+_alog "raw_input"
+_alog "$RAW"
 
 if printf '%s' "$RAW" | jq -e '.cursor_version' >/dev/null 2>&1; then
+    _detected=cursor
     INPUT_JQ='{
   schema_version: "1.0.0",
   provider: "cursor",
@@ -42,6 +52,7 @@ if printf '%s' "$RAW" | jq -e '.cursor_version' >/dev/null 2>&1; then
   updated_input: .updated_input
 } | with_entries(select(.value != null))'
 else
+    _detected=claude
     INPUT_JQ='{
   schema_version: "1.0.0",
   provider: "claude",
@@ -62,26 +73,35 @@ else
   } | with_entries(select(.value != null)))
 }'
 fi
+_alog "event=pre_compact provider=$_detected"
 
 CANONICAL=$(printf '%s' "$RAW" | jq -c "$INPUT_JQ")
 JQ_INPUT_EXIT=$?
 if [ "$JQ_INPUT_EXIT" -ne 0 ]; then
+    _alog "error: input translation failed"
     printf '%s: input translation failed (jq exited %s); provider stdin is not valid JSON or did not match the expected shape\n' "$LOG_TAG" "$JQ_INPUT_EXIT" >&2
     exit 1
 fi
+_alog "canonical_input"
+_alog "$CANONICAL"
 
 USER_OUTPUT=$(printf '%s' "$CANONICAL" | "$1")
 USER_EXIT=$?
+_alog "user_stdout"
+_alog "$USER_OUTPUT"
+_alog "user_exit=$USER_EXIT"
 
 if [ -n "$USER_OUTPUT" ]; then
-    exec 9>&1
-    JQ_ERR=$(printf '%s' "$USER_OUTPUT" | jq -c "$OUTPUT_JQ" 2>&1 1>&9)
+    PROVIDER_OUTPUT=$(printf '%s' "$USER_OUTPUT" | jq -c "$OUTPUT_JQ" 2>&1)
     JQ_OUTPUT_EXIT=$?
-    exec 9>&-
     if [ "$JQ_OUTPUT_EXIT" -ne 0 ]; then
-        printf '%s: output translation failed (jq exited %s): %s\n' "$LOG_TAG" "$JQ_OUTPUT_EXIT" "$JQ_ERR" >&2
+        _alog "error: output translation failed: $PROVIDER_OUTPUT"
+        printf '%s: output translation failed (jq exited %s): %s\n' "$LOG_TAG" "$JQ_OUTPUT_EXIT" "$PROVIDER_OUTPUT" >&2
         exit 1
     fi
+    _alog "provider_output"
+    _alog "$PROVIDER_OUTPUT"
+    printf '%s\n' "$PROVIDER_OUTPUT"
 fi
 
 exit "$USER_EXIT"
