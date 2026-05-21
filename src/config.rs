@@ -267,6 +267,13 @@ pub struct SpecConfig {
     /// patterns match only top-level entries — use `**/pattern` to match at
     /// any depth. Defaults to an empty list.
     pub ignore: Vec<String>,
+
+    /// Additional directories to search for `{% include %}` fragments.
+    ///
+    /// Paths are resolved relative to the config file's directory; leading
+    /// `~/` is expanded to `$HOME`. Fragment name collisions across any
+    /// combination of local and extra dirs produce a load-time error.
+    pub extra_fragment_dirs: Vec<PathBuf>,
 }
 
 impl Default for SpecConfig {
@@ -274,6 +281,7 @@ impl Default for SpecConfig {
         Self {
             sources_dir: PathBuf::from("spec"),
             ignore: Vec::new(),
+            extra_fragment_dirs: Vec::new(),
         }
     }
 }
@@ -933,6 +941,7 @@ ignore = [42]
         let spec = SpecConfig {
             sources_dir: PathBuf::from("spec"),
             ignore: vec!["[".to_string()],
+            extra_fragment_dirs: Vec::new(),
         };
         let err = spec
             .compile_ignore_matcher()
@@ -1206,5 +1215,32 @@ dir = "plugin-claude"
             2,
             "expected two errors (one per misconfigured provider), got: {errors:?}"
         );
+    }
+
+    #[test]
+    fn test_spec_extra_fragment_dirs_parses() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[spec]
+extra_fragment_dirs = ["~/shared", "../common"]
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+        assert_eq!(
+            config.spec.extra_fragment_dirs,
+            vec![PathBuf::from("~/shared"), PathBuf::from("../common")],
+        );
+    }
+
+    #[test]
+    fn test_spec_extra_fragment_dirs_defaults_empty() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[spec]
+sources_dir = "spec"
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+        assert!(config.spec.extra_fragment_dirs.is_empty());
     }
 }

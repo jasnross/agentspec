@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use minijinja::Value;
 use walkdir::WalkDir;
 
@@ -84,6 +84,55 @@ pub fn load_fragments(fragments_dir: &Path) -> Result<HashMap<String, String>> {
     }
 
     Ok(fragments)
+}
+
+/// Load and merge fragments from the local directory plus zero or more extra
+/// directories. Returns a flat `HashMap<String, String>` (fragment name →
+/// content) suitable for registering into a `MiniJinja` environment.
+///
+/// The local `fragments/` dir may not exist (returns empty — this is the
+/// existing behaviour for projects that don't use fragments). Extra dirs that
+/// don't exist produce an error (explicit config implies intent, so a missing
+/// dir is likely a typo). Fragment name collisions across any pair of sources
+/// (local↔extra, extra↔extra) are reported with both source paths.
+pub fn load_all_fragments(
+    local_dir: &Path,
+    extra_dirs: &[PathBuf],
+) -> Result<HashMap<String, String>> {
+    let mut merged = HashMap::new();
+    let mut provenance: HashMap<String, PathBuf> = HashMap::new();
+
+    let local = load_fragments(local_dir)?;
+    for (name, content) in local {
+        provenance.insert(name.clone(), local_dir.to_path_buf());
+        merged.insert(name, content);
+    }
+
+    for extra_dir in extra_dirs {
+        if !extra_dir.is_dir() {
+            bail!(
+                "extra fragment directory does not exist: {}",
+                extra_dir.display()
+            );
+        }
+        let extra = load_fragments(extra_dir)?;
+        for (name, content) in extra {
+            if let Some(existing_dir) = provenance.get(&name) {
+                bail!(
+                    "fragment name collision: \"{name}\"\n  \
+                     --> {}\n  \
+                     --> {}\n  \
+                     = both resolve to the same include name; rename one to disambiguate",
+                    existing_dir.join(&name).display(),
+                    extra_dir.join(&name).display(),
+                );
+            }
+            provenance.insert(name.clone(), extra_dir.clone());
+            merged.insert(name, content);
+        }
+    }
+
+    Ok(merged)
 }
 
 #[cfg(test)]
@@ -455,5 +504,115 @@ mod tests {
             msg.contains("script"),
             "expected 'script' in error, got: {msg}"
         );
+    }
+
+    #[test]
+    fn test_load_all_fragments_merges_extra_dirs() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let local = tmp.path().join("local");
+        let extra = tmp.path().join("extra");
+        fs::create_dir_all(&local).expect("expected value");
+        fs::create_dir_all(&extra).expect("expected value");
+        fs::write(local.join("local.md"), "local content").expect("expected value");
+        fs::write(extra.join("extra.md"), "extra content").expect("expected value");
+
+        let result = load_all_fragments(&local, &[extra]).expect("expected value");
+        assert_eq!(result.len(), 2);
+        assert_eq!(result["local.md"], "local content");
+        assert_eq!(result["extra.md"], "extra content");
+    }
+
+    #[test]
+    fn test_load_all_fragments_collision_local_vs_extra() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let local = tmp.path().join("local");
+        let extra = tmp.path().join("extra");
+        fs::create_dir_all(&local).expect("expected value");
+        fs::create_dir_all(&extra).expect("expected value");
+        fs::write(local.join("shared.md"), "from local").expect("expected value");
+        fs::write(extra.join("shared.md"), "from extra").expect("expected value");
+
+        let err = load_all_fragments(&local, std::slice::from_ref(&extra))
+            .expect_err("expected collision error");
+        let msg = err.to_string();
+        assert!(msg.contains("collision"), "error: {msg}");
+        assert!(
+            msg.contains(&local.join("shared.md").display().to_string()),
+            "error: {msg}"
+        );
+        assert!(
+            msg.contains(&extra.join("shared.md").display().to_string()),
+            "error: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_load_all_fragments_collision_extra_vs_extra() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let local = tmp.path().join("local");
+        let extra_a = tmp.path().join("extra_a");
+        let extra_b = tmp.path().join("extra_b");
+        fs::create_dir_all(&local).expect("expected value");
+        fs::create_dir_all(&extra_a).expect("expected value");
+        fs::create_dir_all(&extra_b).expect("expected value");
+        fs::write(extra_a.join("dup.md"), "from a").expect("expected value");
+        fs::write(extra_b.join("dup.md"), "from b").expect("expected value");
+
+        let err = load_all_fragments(&local, &[extra_a.clone(), extra_b.clone()])
+            .expect_err("expected collision error");
+        let msg = err.to_string();
+        assert!(msg.contains("collision"), "error: {msg}");
+        assert!(
+            msg.contains(&extra_a.join("dup.md").display().to_string()),
+            "error: {msg}"
+        );
+        assert!(
+            msg.contains(&extra_b.join("dup.md").display().to_string()),
+            "error: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_load_all_fragments_missing_extra_dir_errors() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let local = tmp.path().join("local");
+        fs::create_dir_all(&local).expect("expected value");
+        let missing = tmp.path().join("nonexistent");
+
+        let err = load_all_fragments(&local, &[missing]).expect_err("expected missing dir error");
+        let msg = err.to_string();
+        assert!(msg.contains("does not exist"), "error: {msg}");
+    }
+
+    #[test]
+    fn test_load_all_fragments_no_extras() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let local = tmp.path().join("local");
+        fs::create_dir_all(&local).expect("expected value");
+        fs::write(local.join("note.md"), "hello").expect("expected value");
+
+        let result = load_all_fragments(&local, &[]).expect("expected value");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result["note.md"], "hello");
+
+        let nonexistent = tmp.path().join("no-such-dir");
+        let empty = load_all_fragments(&nonexistent, &[]).expect("expected value");
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn test_load_all_fragments_nested_subdirs_in_extra() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let local = tmp.path().join("local");
+        let extra = tmp.path().join("extra");
+        fs::create_dir_all(&local).expect("expected value");
+        fs::create_dir_all(extra.join("sub")).expect("expected value");
+        fs::write(extra.join("top.md"), "top").expect("expected value");
+        fs::write(extra.join("sub/nested.md"), "nested").expect("expected value");
+
+        let result = load_all_fragments(&local, &[extra]).expect("expected value");
+        assert_eq!(result.len(), 2);
+        assert_eq!(result["top.md"], "top");
+        assert_eq!(result["sub/nested.md"], "nested");
     }
 }

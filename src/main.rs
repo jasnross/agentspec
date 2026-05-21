@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use agentspec::compile::{
     self, AdapterConfig, CompileDiagnostics, CompileResult, ProviderCompileTarget,
 };
-use agentspec::plan::compile_plan;
+use agentspec::plan::{compile_plan, expand_tilde};
 use agentspec::presets::ProviderPresetsMap;
 use agentspec::provider::Provider;
 use agentspec::specs::{IgnoreMatcher, LoadReport, SpecDirs, Specs, ValidatedSpecs};
@@ -274,7 +274,28 @@ fn load_and_validate(
 
 fn load_templating(config: &AgentspecConfig) -> Result<Templating> {
     let sources = config.resolve(&config.spec.sources_dir);
-    Templating::load(&sources.join("fragments"))
+    let extra_dirs = resolve_extra_fragment_dirs(config)?;
+    Templating::load(&sources.join("fragments"), &extra_dirs)
+}
+
+fn resolve_extra_fragment_dirs(config: &AgentspecConfig) -> Result<Vec<std::path::PathBuf>> {
+    if config.spec.extra_fragment_dirs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let home = home_dir()?;
+    Ok(config
+        .spec
+        .extra_fragment_dirs
+        .iter()
+        .map(|p| {
+            let expanded = expand_tilde(&p.to_string_lossy(), &home);
+            if expanded.is_relative() {
+                config.resolve(&expanded)
+            } else {
+                expanded
+            }
+        })
+        .collect())
 }
 
 /// Runs the compile step and reports the compiled file count. The compile

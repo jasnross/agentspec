@@ -4644,3 +4644,87 @@ fn test_hook_test_payload_file() {
         "output should contain the file payload: {stderr}"
     );
 }
+
+#[test]
+fn test_compile_resolves_extra_fragment_dir() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    // Create a sibling shared-fragments directory with an extra fragment
+    let extra_dir = dir.join("shared-fragments");
+    std::fs::create_dir_all(&extra_dir).expect("create extra dir");
+    std::fs::write(
+        extra_dir.join("extra-note.md"),
+        "Content from extra fragment.",
+    )
+    .expect("write extra fragment");
+
+    // Patch agentspec.toml to add extra_fragment_dirs
+    let toml_path = dir.join("agentspec.toml");
+    let toml_content = std::fs::read_to_string(&toml_path).expect("read toml");
+    let patched = toml_content.replace(
+        "[spec]\nsources_dir = \"spec\"",
+        "[spec]\nsources_dir = \"spec\"\nextra_fragment_dirs = [\"shared-fragments\"]",
+    );
+    std::fs::write(&toml_path, &patched).expect("write patched toml");
+
+    // Create a skill spec that includes the extra fragment
+    let skill_dir = dir.join("spec/skills/extra-user");
+    std::fs::create_dir_all(&skill_dir).expect("create skill dir");
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nid: extra-user\ndescription: Uses extra fragment\nuser_invocable: true\nagent_invocable: false\n---\n\n{% include \"extra-note.md\" %}\n",
+    )
+    .expect("write skill spec");
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    // Verify the extra fragment content appears in compiled output
+    let compiled = std::fs::read_to_string(dir.join("generated/claude/skills/extra-user/SKILL.md"))
+        .expect("read compiled skill");
+    assert!(
+        compiled.contains("Content from extra fragment."),
+        "extra fragment not resolved in compiled output: {compiled}"
+    );
+}
+
+#[test]
+fn test_compile_extra_fragment_dir_collision_errors() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    // Create a sibling directory with a fragment that collides with the local one
+    let colliding_dir = dir.join("colliding-fragments");
+    std::fs::create_dir_all(&colliding_dir).expect("create colliding dir");
+    std::fs::write(colliding_dir.join("shared-note.md"), "Colliding content.")
+        .expect("write colliding fragment");
+
+    // Patch agentspec.toml to add extra_fragment_dirs
+    let toml_path = dir.join("agentspec.toml");
+    let toml_content = std::fs::read_to_string(&toml_path).expect("read toml");
+    let patched = toml_content.replace(
+        "[spec]\nsources_dir = \"spec\"",
+        "[spec]\nsources_dir = \"spec\"\nextra_fragment_dirs = [\"colliding-fragments\"]",
+    );
+    std::fs::write(&toml_path, &patched).expect("write patched toml");
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+
+    assert!(!output.status.success(), "compile should fail on collision");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("collision"),
+        "stderr should mention collision: {stderr}"
+    );
+}

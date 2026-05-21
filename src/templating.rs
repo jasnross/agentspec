@@ -3,12 +3,12 @@ mod environment;
 mod fragments;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 pub use context::TemplateContext;
 use environment::build_environment;
-use fragments::load_fragments;
+use fragments::load_all_fragments;
 pub use fragments::resolve_fragments;
 use minijinja::Environment;
 
@@ -28,9 +28,9 @@ pub struct Templating {
 }
 
 impl Templating {
-    /// Load fragment files from the given directory.
-    pub fn load(fragments_dir: &Path) -> Result<Self> {
-        let fragment_map = load_fragments(fragments_dir)?;
+    /// Load fragment files from the local directory plus any extra directories.
+    pub fn load(fragments_dir: &Path, extra_fragment_dirs: &[PathBuf]) -> Result<Self> {
+        let fragment_map = load_all_fragments(fragments_dir, extra_fragment_dirs)?;
         Ok(Self { fragment_map })
     }
 
