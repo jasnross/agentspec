@@ -53,13 +53,7 @@
     - Likely shape: a `SessionStart` shim that follows the Claude Code docs' manifest-diff-and-reinstall pattern (compare a bundled `jq.sha256` manifest against a copy in the data directory; download + verify on mismatch). One bootstrap script per provider, parameterized by platform/arch via `uname -sm`. SHA256s are stamped into the generated bootstrap script by agentspec at sync time, sourced from upstream jq release attestations
     - Platform handling: linux-amd64, linux-arm64, darwin-amd64, darwin-arm64. macOS downloads must strip the `com.apple.quarantine` xattr (`xattr -d com.apple.quarantine "$JQ"`) before exec — without this, Gatekeeper silently fails the exec
     - Failure-mode design: if the download fails (offline, captive portal, firewall), the bootstrap exits non-zero with a clear stderr message pointing at the manual `brew install jq` / `apt install jq` fallback. Subsequent shim invocations in the same session see the missing `jq` and fail loudly per v1 behavior
-12. Update `ClaudeTool` and `ToolFrontmatter::Tasks` mapping to reflect `TodoWrite` deprecation
-    - Claude Code is deprecating `TodoWrite` in favor of the `Task*` tools (`TaskCreate`, `TaskGet`, `TaskList`, `TaskUpdate`, `TaskStop`) — see https://code.claude.com/docs/en/agent-sdk/todo-tracking#migrate-to-task-tools
-    - `body_tool_name` for Claude currently returns `"TodoWrite"` as the representative for `ToolFrontmatter::Tasks`; `adapt_tool` fans `Tasks` out to all 6 variants including `TodoWrite`
-    - `matcher_tool_name` for Claude inherits from `body_tool_name`, so `matcher = "tasks"` maps to `"TodoWrite"` — which may stop working if Claude removes the tool
-    - Likely changes: remove `ClaudeTool::TodoWrite` from the enum, update `body_tool_name` representative (e.g., `"TaskCreate"`), update `adapt_tool` to 5-variant fan-out
-    - Open question: is `TodoWrite` already non-functional, or just deprecated with a migration timeline? The timing affects urgency
-13. Support compiling a single spec (or subset) and emitting expanded output to stdout
+12. Support compiling a single spec (or subset) and emitting expanded output to stdout
     - Currently `agentspec compile` always runs the full pipeline across all specs and writes the entire `generated/` directory; there is no way to compile one spec in isolation or emit to stdout
     - Use case: the `review-spec` skill in `agentconfig` needs to feed compiled (fragment-expanded) spec content to a reviewer agent — today the workaround is a full `agentspec compile` followed by reading the relevant file from `generated/`, which is heavier than necessary
     - Likely shape: `agentspec compile --spec spec/skills/foo/ --stdout` (or similar) that runs the pipeline for a single spec and prints the compiled output to stdout instead of writing files. Provider selection (`--provider claude`) would be needed since output format varies per adapter

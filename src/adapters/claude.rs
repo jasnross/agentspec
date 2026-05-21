@@ -84,7 +84,6 @@ enum ClaudeTool {
     TaskOutput,
     TaskStop,
     TaskUpdate,
-    TodoWrite,
     ToolSearch,
     WebFetch,
     WebSearch,
@@ -200,7 +199,7 @@ impl Adapter for ClaudeAdapter {
             ToolFrontmatter::WebFetch => "WebFetch",
             ToolFrontmatter::WebSearch => "WebSearch",
             ToolFrontmatter::Question => "AskUserQuestion",
-            ToolFrontmatter::Tasks => "TodoWrite",
+            ToolFrontmatter::Tasks => "TaskCreate",
             ToolFrontmatter::Subagent => "Agent",
             ToolFrontmatter::Skill => "Skill",
         }
@@ -749,7 +748,6 @@ fn adapt_tool(tool: &ToolFrontmatter) -> Vec<ClaudeTool> {
             ClaudeTool::TaskList,
             ClaudeTool::TaskUpdate,
             ClaudeTool::TaskStop,
-            ClaudeTool::TodoWrite,
         ],
         ToolFrontmatter::Subagent => vec![ClaudeTool::Agent, ClaudeTool::SendMessage],
         ToolFrontmatter::Skill => vec![ClaudeTool::Skill],
@@ -997,10 +995,10 @@ mod tests {
     }
 
     #[test]
-    fn test_body_tool_name_tasks_maps_to_todo_write() {
+    fn test_body_tool_name_tasks_maps_to_task_create() {
         assert_eq!(
             ClaudeAdapter.body_tool_name(&ToolFrontmatter::Tasks),
-            "TodoWrite"
+            "TaskCreate"
         );
     }
 

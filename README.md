@@ -204,7 +204,7 @@ The optional `matcher` field filters which tool calls or subagent invocations a 
 | `webfetch`  | `WebFetch`        | `webfetch`  |
 | `websearch` | `WebSearch`       | `WebSearch` |
 | `question`  | `AskUserQuestion` | `question`  |
-| `tasks`     | `TodoWrite`       | `tasks`     |
+| `tasks`     | `TaskCreate`      | `tasks`     |
 | `subagent`  | `Agent`           | `Task`      |
 | `skill`     | `Skill`           | `skill`     |
 
