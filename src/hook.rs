@@ -203,7 +203,18 @@ fn resolve_payload(
         provider.wire_name(),
         event.snake_case(),
     );
-    Ok(provider_fixture(provider, event).to_string())
+    let cwd = std::env::current_dir().context("determining current directory")?;
+    let mut value: serde_json::Value =
+        serde_json::from_str(provider_fixture(provider, event)).context("parsing fixture")?;
+    match provider {
+        ProviderName::Claude => {
+            value["cwd"] = serde_json::Value::String(cwd.to_string_lossy().into_owned());
+        }
+        ProviderName::Cursor => {
+            value["workspace_roots"] = serde_json::json!([cwd.to_string_lossy()]);
+        }
+    }
+    serde_json::to_string(&value).context("serializing fixture with cwd")
 }
 
 fn write_temp_executable(content: &str, suffix: &str) -> Result<tempfile::NamedTempFile> {
