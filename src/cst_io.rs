@@ -101,7 +101,10 @@ pub(crate) fn finish(root: &CstRootNode, path: &Path) -> Result<()> {
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let prev = unsafe { libc::umask(0) };
                 unsafe { libc::umask(prev) };
-                0o666 & !(u32::from(prev))
+                // mode_t is u16 on macOS, u32 on Linux
+                #[allow(clippy::cast_lossless)]
+                let prev = prev as u32;
+                0o666 & !prev
             },
             |m| m.permissions().mode(),
         )
