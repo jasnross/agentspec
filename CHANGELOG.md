@@ -1,5 +1,146 @@
 # Changelog
 
+## [0.4.0](https://github.com/jasnross/agentspec/compare/v0.3.0...v0.4.0) (2026-05-22)
+
+
+### ⚠ BREAKING CHANGES
+
+* **validate:** `SemanticError` renamed to `ValidationError` in the public `validate` module.
+* **spec:** spec files using `tools: [bash]` and templates using `{{ tool("bash") }}` must update to `shell`. Compiled output is unchanged — adapters continue emitting provider-specific names (Claude "Bash", Cursor "Run shell commands", OpenCode "bash").
+* **plugin:** `plugin-author` now requires an inline table (`plugin-author = { name = "...", email = "..." }`) instead of a bare string. The `email` field is optional.
+* **spec:** `hooks.toml` entries must now use `events = ["..."]` (array) instead of `event = "..."`. A hook can now list multiple events and will emit one provider entry per event. Validation rejects an empty list, duplicates within the list, and matchers paired with non-tool events (reporting each offending event by name).
+* **sync:** \`mode = "path"\` no longer parses — migrate to \`mode = "plugin"\` and set \`plugin-name = "<id>"\`. Cursor hook commands now use \`\${CURSOR_PLUGIN_ROOT}\` instead of \`\${CLAUDE_PLUGIN_ROOT}\`; hook scripts that hardcode the Claude name need to reference Cursor's env var on Cursor (or use \`"\${CLAUDE_PLUGIN_ROOT:-\$CURSOR_PLUGIN_ROOT}"\` for provider-neutral scripts).
+* **adapters:** collapse ProviderAdapter+HookAdapter into single Adapter trait
+* **spec:** removes NormalizedSpec, NormalizedSpecs, NormalizedAgentSpec, NormalizedSkillSpec, NormalizedRuleSpec, NormalizedHookSpec, and their *Frontmatter mirrors from the agentspec library crate's public API. ProviderAdapter::adapt, ProviderAdapter::model_facing_name, and HookAdapter::synthesize_hooks now take Spec/&Spec/&[&HookSpec] instead of the Normalized* variants. Specs::normalize is gone; advance directly via Specs::validate.
+* **plan:** agentspec::plan::{FileWrite, WriteMode, WritePlan} are removed from the library API. The replacements are CleanSlateWrite, ManifestTrackedWrite, RemoveWrite, CompilePlan, SyncPlan, and RemovePlan. The agentspec binary is the only known external consumer today and updates in this same commit; pre-1.0 status means no stability guarantee to preserve. Plan: thoughts/plans/2026-05-07-filewrite-typestate-refactor.md
+
+### Features
+
+* **claude:** fan out Subagent to Agent + SendMessage ([759e050](https://github.com/jasnross/agentspec/commit/759e05072a03c854d6896f172d963bec773c1f9f))
+* **compile:** cross-provider hook portability warnings + shim manifest round-trip ([9d72624](https://github.com/jasnross/agentspec/commit/9d7262436f48e3c1b3e22a04742e41bd9a122cc4))
+* **hooks:** add --force override and honor umask for fresh-file creates ([2894280](https://github.com/jasnross/agentspec/commit/2894280d5b73aeb6863fe869efe896c9cc215662))
+* **hooks:** add `agentspec hook test` CLI subcommand ([5d3d1e9](https://github.com/jasnross/agentspec/commit/5d3d1e9299f85304777cc93913080fe149beeb45))
+* **hooks:** add AGENTSPEC_HOOK_LOG env-var-gated shim debug logging ([1fe96c3](https://github.com/jasnross/agentspec/commit/1fe96c3e2f128dc6f9bb98566473fc9d1f84e9e7))
+* **hooks:** add canonical hook payload schema types ([7b281be](https://github.com/jasnross/agentspec/commit/7b281be1c308c2781c31a6c13ad8cf3aaafe38d0))
+* **hooks:** add CST-aware merge for Project/User-scope sync (Phase 2) ([fcf0986](https://github.com/jasnross/agentspec/commit/fcf0986846bed923d4a1b050f70386a1422d39b0))
+* **hooks:** add deny_unknown_fields-equivalent validation to shim output jq ([b426d74](https://github.com/jasnross/agentspec/commit/b426d74bf90590f50a44be0195101664151561b3))
+* **hooks:** add provider-neutral hooks pipeline (Phase 1) ([65bf27e](https://github.com/jasnross/agentspec/commit/65bf27e58111096f537e22db1f8d90f1a6d20fe3))
+* **hooks:** add runtime cross-host detection to canonical shim ([8a2a1cb](https://github.com/jasnross/agentspec/commit/8a2a1cb653a9600c25576c5f1d83297e892226b6))
+* **hooks:** add subagent-type matcher translation ([5defa1b](https://github.com/jasnross/agentspec/commit/5defa1b06c6adce3f178784e6ba69b45cb53a1ea))
+* **hooks:** generate per-(provider, event) POSIX shell shims ([2934389](https://github.com/jasnross/agentspec/commit/2934389358afdd5e9b2a8085ba4323356423793d))
+* **hooks:** tag shim error messages with hook ID ([c7f50f9](https://github.com/jasnross/agentspec/commit/c7f50f99c9360496fbb6deb11fbba0f1f18cd9b9))
+* **hooks:** translate canonical matcher tokens per provider ([e848ab9](https://github.com/jasnross/agentspec/commit/e848ab91eaecb1a6c9eaa69a7ef0c882ed8549ae))
+* **hooks:** wire shim into adapter compile path ([fa69595](https://github.com/jasnross/agentspec/commit/fa69595a573935da241fc3f926eaf7ec02ba6013))
+* **load:** follow symlinks in skill and hook script walks ([def53ee](https://github.com/jasnross/agentspec/commit/def53eeb67706b19c2251495f11a9651c2c2999f))
+* **plugin:** add repository and license manifest fields ([d36f2a6](https://github.com/jasnross/agentspec/commit/d36f2a646d2586bc7afdce0ba6115c07d7a13ca1))
+* **plugin:** change plugin-author to inline table with email support ([ca18c2b](https://github.com/jasnross/agentspec/commit/ca18c2b721a1bddac2805d1cf33735d419608478))
+* preserve verbatim file modes for SupportingFile emission ([d3b0aee](https://github.com/jasnross/agentspec/commit/d3b0aeef779de38b78521f5ec8498dddb3cd549d))
+* **remove:** activate deletion pipeline behind `WriteMode::Remove` ([5bd98aa](https://github.com/jasnross/agentspec/commit/5bd98aad4ab9f23e91e09f5ffdc881099e4e0702))
+* **remove:** delete empty host config files ([4d50a87](https://github.com/jasnross/agentspec/commit/4d50a87a29cef59a8913c0c8806523f423472b18))
+* **remove:** predict dest-dir teardown in dry-run mode ([5f32a3b](https://github.com/jasnross/agentspec/commit/5f32a3b222ab0d9ed81417784250cc998e8955c5))
+* **remove:** scaffold `agentspec remove` subcommand ([ba83e83](https://github.com/jasnross/agentspec/commit/ba83e83c8051adc7c6cdf0b9e0863069b036f1b4))
+* **remove:** tag every dry-run stderr line with [dry-run] prefix ([cb04424](https://github.com/jasnross/agentspec/commit/cb044248d615d806dffc9c4589d4758c8760434a))
+* **remove:** tidy Claude/Cursor settings JSON via post-write hooks ([20f7cdd](https://github.com/jasnross/agentspec/commit/20f7cdda8fbf82dbeef895bb4a1772fde9dc8624))
+* **remove:** tidy OpenCode `instructions[]` via post-write hook ([2d4aeed](https://github.com/jasnross/agentspec/commit/2d4aeedbec73704f717d569e3ddbda28d33b2546))
+* **rules:** add path-scoped rule support via paths frontmatter field ([205877d](https://github.com/jasnross/agentspec/commit/205877d4dd796d325ef64c88a005d307019e58f1))
+* **spec:** rename canonical shell tool from `Bash` to `Shell` ([d9e68a0](https://github.com/jasnross/agentspec/commit/d9e68a090a5a10f0a5c82bd5864007b354751b9e))
+* **spec:** replace hook `event` with `events` array for multi-event targeting ([72488c5](https://github.com/jasnross/agentspec/commit/72488c5045923b824d17c34715c1d8a04ecf7aef))
+* **sync:** replace `mode = "path"` with first-class `mode = "plugin"` ([c93f655](https://github.com/jasnross/agentspec/commit/c93f655509294b1997c28d388d6568ef8f5e8dc0))
+* **templating:** add `extra_fragment_dirs` config for cross-directory fragment sharing ([b6b74b7](https://github.com/jasnross/agentspec/commit/b6b74b7b8fe7a72425e251f8d1a651056221f9b5))
+* **templating:** add script_path() and body_skill_root() adapter method ([c85b312](https://github.com/jasnross/agentspec/commit/c85b31212509b2ea6a9c43d368c0f14625a365aa))
+* **templating:** gate script_path() to skill bodies ([dfec2c3](https://github.com/jasnross/agentspec/commit/dfec2c3529ca439c44e23bc4789e6d9940aec823))
+* **validate:** hoist plugin-mode config validations to load time ([1fc0e64](https://github.com/jasnross/agentspec/commit/1fc0e642b48253dd2d65d7f0be3fc5f5a3c01adb))
+
+
+### Bug Fixes
+
+* **adapters:** always construct OpenCodeInstructionsPatch to preserve orphan cleanup ([2d993c7](https://github.com/jasnross/agentspec/commit/2d993c7f17fcd10195193106ccb662e3a38f3208))
+* **cst:** use platform-safe cast for mode_t to u32 conversion ([02bce70](https://github.com/jasnross/agentspec/commit/02bce70ee52879382788e1a6e1fe27789f4eb366))
+* **hooks:** address review findings across hooks pipeline ([20112ea](https://github.com/jasnross/agentspec/commit/20112eafd7b1808638350d16b943d14cec6eae72))
+* **hooks:** use real cwd in hook test default fixture ([bf430c4](https://github.com/jasnross/agentspec/commit/bf430c4bab4242006d21ef3aa05ea9529f87bdd7))
+* **sync:** restore error when path mode has no dir configured ([b478d1e](https://github.com/jasnross/agentspec/commit/b478d1e0c2af6c67ca619a06f1b027c551972e47))
+
+
+### Refactoring
+
+* **adapters:** add Adapter + ConfigPatch trait surface (bridge phase) ([150d45a](https://github.com/jasnross/agentspec/commit/150d45a450de32253417ebddbe75c0f213f62ce9))
+* **adapters:** bridge `impl Adapter` for all three providers ([b296853](https://github.com/jasnross/agentspec/commit/b29685395932a713c0dfe1b7a37d3c6ef0abe2c6))
+* **adapters:** collapse ProviderAdapter+HookAdapter into single Adapter trait ([a87fbe0](https://github.com/jasnross/agentspec/commit/a87fbe07469ec989499bca6704a36523c68ec0d6))
+* **adapters:** drop dead trait surface and AdapterConfig field ([d639932](https://github.com/jasnross/agentspec/commit/d63993257ff4a7bdc4652568a3fe9307f0b73f10))
+* **adapters:** drop hook_adapter dispatch, parameterize dotdir ([b88220b](https://github.com/jasnross/agentspec/commit/b88220b604ac1898478d1a2740a78957e6aa913b))
+* **adapters:** extract shared synthesize_hooks into hook_compile ([2b036af](https://github.com/jasnross/agentspec/commit/2b036af1005c7ff91ca32bfe555bec7f8ffb16a7))
+* **adapters:** relocate hook helpers from compile.rs into adapters subtree ([73f7aa0](https://github.com/jasnross/agentspec/commit/73f7aa071424aa667626610873eb5cf063d31676))
+* **adapters:** switch orchestrator + plans through `Adapter::compile` ([6f9c9da](https://github.com/jasnross/agentspec/commit/6f9c9da96cc9e88d2eab1110b218c0d62964857c))
+* **claude:** replace deprecated TodoWrite with TaskCreate as Tasks representative ([fbf325a](https://github.com/jasnross/agentspec/commit/fbf325a539a223efe23cd60ba820de5e4e770448))
+* **compile:** move skipped-hooks diagnostics into compile::run ([21184e4](https://github.com/jasnross/agentspec/commit/21184e44e2577473a5b3ca29e8e1a967593f87d1))
+* extract ProviderAdapter and HookAdapter traits ([b419b8d](https://github.com/jasnross/agentspec/commit/b419b8dfaa4f4dcb2df1fe5df2d0209c76f81bc5))
+* extract shared CST file I/O helpers into cst_io module ([15fa5ae](https://github.com/jasnross/agentspec/commit/15fa5ae5184eb8faa574e7433331f6eb31615c09))
+* lift hook-merge JSON shape into HookAdapter trait ([cf2c0ce](https://github.com/jasnross/agentspec/commit/cf2c0ce08222b3770ae922f2e25efa6f2d50a6a5))
+* **opencode:** migrate instructions tidy to CST-aware jsonc-parser ([6c52244](https://github.com/jasnross/agentspec/commit/6c522446b9eb07a00dd013196eca1dcec7ce20ad))
+* **plan:** split FileWrite into per-mode typed variants ([7d73bf5](https://github.com/jasnross/agentspec/commit/7d73bf5a20fbee6ac89691448d7c70ee01a86fa5))
+* **remove:** post-review polish ([be6b885](https://github.com/jasnross/agentspec/commit/be6b8855ebf4ee0c508cb03d696097d01e99673a))
+* **spec:** add Clone derives and accessor methods to Spec ([e3bc367](https://github.com/jasnross/agentspec/commit/e3bc3676facfecb832fe7ef1170760f2e3d875d4))
+* **spec:** delete Normalized* types and collapse normalize stage ([6768d40](https://github.com/jasnross/agentspec/commit/6768d40b8d678ff211763620eb4836134f24e9d0))
+* **spec:** key supporting_files by relative path in IndexMap ([341a0af](https://github.com/jasnross/agentspec/commit/341a0af2b2888f18a877fdb02d3a46485ebcd844))
+* **sync:** make Manifest::load strict-by-default ([9b6ba46](https://github.com/jasnross/agentspec/commit/9b6ba46f4c2ea0501565168b92a82d0778caedaa))
+* **templating:** address code review minors from script() rename ([6f5190f](https://github.com/jasnross/agentspec/commit/6f5190f428c6145cb62f1121a0196d307e79078d))
+* **templating:** move env construction into environment.rs ([e983bdf](https://github.com/jasnross/agentspec/commit/e983bdfa1007bd698fcbd026a5b1a560d5909bbe))
+* **templating:** rename script_path() to script(), auto-prefix scripts/ ([36c3463](https://github.com/jasnross/agentspec/commit/36c3463966462ac0fd45d38c3a04dfda0ff90014))
+* **test:** migrate inline TOML writes onto write_sync_config ([a5d72ed](https://github.com/jasnross/agentspec/commit/a5d72edcab9e62c8a74539b4fae9bf57a61086c3))
+* **test:** rename write_remove_config helper to write_sync_config ([a1cdf7b](https://github.com/jasnross/agentspec/commit/a1cdf7b2d6975082df9ccb0cd3029f9db53ee3ee))
+
+
+### Documentation
+
+* add TODO for shared spec directory support ([cc47445](https://github.com/jasnross/agentspec/commit/cc47445b1854b77ea5a886bbef896900978cd6a7))
+* capture jsonc-parser + manifest-version TODOs ([4e2cc54](https://github.com/jasnross/agentspec/commit/4e2cc547799fc7f1f350a02b81a587a65b023d4f))
+* clarify adapter-implementations vs shared-helpers distinction ([051111f](https://github.com/jasnross/agentspec/commit/051111fcf368cf8f33e28d1ec924723141e526b7))
+* **claude.md:** add pre-1.0 project status and design philosophy ([ad719d1](https://github.com/jasnross/agentspec/commit/ad719d190db61214d36c2d8575759cf6b61efe53))
+* **hooks:** add canonical schema reference for hook authors ([055f3be](https://github.com/jasnross/agentspec/commit/055f3be41fdfeef919ada8c5530070479d0c59af))
+* README cleanup ([3bac083](https://github.com/jasnross/agentspec/commit/3bac0838683aecaf169e3877e2cedc5551ee8026))
+* **readme:** document canonical matcher tokens ([bf2e4cc](https://github.com/jasnross/agentspec/commit/bf2e4cc1a633499617ec3ebcf2d83c0e791b845f))
+* **remove:** add `## Removing` section + cross-cutting round-trip test ([8b570ea](https://github.com/jasnross/agentspec/commit/8b570eae070e6d1bd5d3700ac573d37f3cb45272))
+* **rules:** drop stale code citations from provider-logic-in-adapters ([3cb8d62](https://github.com/jasnross/agentspec/commit/3cb8d62b9fdee9579dfced3b17aee6e9c51fafaa))
+* scrub Phase N milestone labels from hooks-pipeline doc comments ([8262b2a](https://github.com/jasnross/agentspec/commit/8262b2a494f9b4719cab1d32d73d8cf79ca5a437))
+* **todo:** add todo for supporting plugin and repository fields in plugins ([bdeef5b](https://github.com/jasnross/agentspec/commit/bdeef5b34b9d140759b27c101a81b13e4ee40c85))
+* **todo:** add todos for TodoWrite deprecation and single-spec stdout compile ([d55cfb4](https://github.com/jasnross/agentspec/commit/d55cfb45f2645866f170d51ee012772b2af83935))
+* **todo:** mark FileWrite typestate refactor done; track verbose-on-remove parity ([c489a3d](https://github.com/jasnross/agentspec/commit/c489a3d23901bc329267199e2130a37074f2ab79))
+* **todo:** track Phase N label scrub from doc comments ([a3d3be7](https://github.com/jasnross/agentspec/commit/a3d3be73a45b3b0d9eb806e085cb6cab09eb427b))
+
+
+### Tests
+
+* **adapters:** backfill cursor dest_dir tests, tidy discover_rules helper ([24aa727](https://github.com/jasnross/agentspec/commit/24aa727eefd6c16bd43aa03209c4ff0781059c86))
+* **pipeline:** add Project-mode hook sync integration test ([14d2273](https://github.com/jasnross/agentspec/commit/14d2273d5c4d2241d22b3ab8a8ad11292838089c))
+
+
+### Miscellaneous Chores
+
+* add Claude rules ([4c70661](https://github.com/jasnross/agentspec/commit/4c70661bb47327c5a445a58b976ab485a903e9d8))
+* add graphify and watch recipes to justfile ([e361b5c](https://github.com/jasnross/agentspec/commit/e361b5c3dcd9b0e86bc5fda87c74ac6ed872083f))
+* add prettier formatting for markdown ([44b2ed4](https://github.com/jasnross/agentspec/commit/44b2ed4a6790a057079ad93089cfd1e1cc2be86b))
+* add TODO for jq auto-install via plugin persistent-data dir ([e75703e](https://github.com/jasnross/agentspec/commit/e75703e99a155fdf2cdc46233b3542666c95cb77))
+* add TODO to clean up cli_sync_intent_sufficient ([4ac4915](https://github.com/jasnross/agentspec/commit/4ac49151b8d232db83ab15e9f7e028e3a58ed6b9))
+* **cargo:** sort dependencies alphabetically ([d67b9db](https://github.com/jasnross/agentspec/commit/d67b9db1cf041cad199548d284f200f2d84eaa85))
+* cleanup and backlog updates ([b6cb5ca](https://github.com/jasnross/agentspec/commit/b6cb5ca85ade3cf985f0488c1a92b88ade5893f2))
+* **experiments:** add session-id-resume, cursor-output-gates, and cursor-plugin-mode-probes probe suites ([68c41bd](https://github.com/jasnross/agentspec/commit/68c41bd2b7503f63308a927b6c7fb1590068a95a))
+* formatting ([b6bb611](https://github.com/jasnross/agentspec/commit/b6bb611edc13832fdc85389bc7e663b7318fbb21))
+* gitignore graphify-out/ entirely ([c55587b](https://github.com/jasnross/agentspec/commit/c55587bb8ead50789076c728ed3ddc6516eeb45a))
+* **justfile:** add graphify-watch recipe ([9fad849](https://github.com/jasnross/agentspec/commit/9fad849b1832013ae8a70a00761834845df82891))
+* **justfile:** update check recipe to run cargo check instead of build ([3e45711](https://github.com/jasnross/agentspec/commit/3e457119f0d86b876a88d0c40d8df574f1e0c0c9))
+* prettier format ([df8596b](https://github.com/jasnross/agentspec/commit/df8596bed94c2dee21a34d28ea22d9801e26ee0e))
+* reflow README markdown tables under prettier ([b6ef6cb](https://github.com/jasnross/agentspec/commit/b6ef6cbc8fa9c8a55f066cd0bd04385b9f02baa4))
+* remove completed TODOs ([e5cb6d5](https://github.com/jasnross/agentspec/commit/e5cb6d5f514a403e0e021f1b1f651ae61b40de87))
+* remove completed TODOs ([0ef4c4b](https://github.com/jasnross/agentspec/commit/0ef4c4b7c9981187c66b154547d47952c7eab23b))
+* remove outdated TODO item ([e48c1d0](https://github.com/jasnross/agentspec/commit/e48c1d0ddc1ab6db118ad367d6e2922ef8aae100))
+* remove stale TODO.md items ([39c015b](https://github.com/jasnross/agentspec/commit/39c015b538e1195d2a26d2c8c563189ac89e33c1))
+* run graphify ([0de7e2b](https://github.com/jasnross/agentspec/commit/0de7e2be67cd7ef2b2f529e3c2413f0df9a9861e))
+* **todos:** add follow-up items for Tasks tool fan-out ([c21056d](https://github.com/jasnross/agentspec/commit/c21056d27008cd67f7a86246b76ba6334b9944fb))
+* update graphify output ([70e73da](https://github.com/jasnross/agentspec/commit/70e73dadac81bb3bbd162ae3e393f7a38fb88fa9))
+* update graphify output ([afc15fe](https://github.com/jasnross/agentspec/commit/afc15fecb8b0f0dbf3658ad19d4ce58d4e9ba865))
+* update pre-commit instructions ([5b072bd](https://github.com/jasnross/agentspec/commit/5b072bd5f312dc368cf46fa0c4344a6509cd36c8))
+* update TODO with hook-matcher gap, provider-specific specs, and plugin-author email items ([315783c](https://github.com/jasnross/agentspec/commit/315783cc61c7ad312f6cb5765b09361f8cb76f91))
+
 ## [0.3.0](https://github.com/jasnross/agentspec/compare/v0.2.0...v0.3.0) (2026-04-23)
 
 
