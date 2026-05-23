@@ -84,10 +84,9 @@ impl AgentspecConfig {
 
         // Apply CLI overrides last (highest precedence)
         if let Some(mode) = cli.mode {
-            resolved.mode = mode;
+            resolved.mode = Some(mode);
         }
         if let Some(ref dest) = cli.dest {
-            resolved.mode = SyncMode::Plugin;
             resolved.dir = Some(dest.clone());
         }
         if cli.force {
@@ -198,28 +197,27 @@ impl AgentspecConfig {
             .collect()
     }
 
-    // TODO: It feels like cli_sync_intent_sufficient could be better expressed as just a validation error rather than a boolean check. E.g. if after merging all inputs we don't have everything we need then just print the validation errors.
     /// Returns whether CLI flags provide sufficient explicit intent for CLI-only sync.
     ///
     /// CLI-only sync always requires explicit provider selection via `--provider`.
+    /// `--dest` alone is not sufficient — `--mode` must be specified.
     fn cli_sync_intent_sufficient(cli: &SyncFlags, has_target_selection: bool) -> bool {
         if !has_target_selection {
             return false;
         }
-
-        if cli.dest.is_some() {
-            return true;
+        match cli.mode {
+            Some(SyncMode::User | SyncMode::Project) => true,
+            Some(SyncMode::Plugin) => cli.dest.is_some(),
+            None => false,
         }
-
-        matches!(cli.mode, Some(SyncMode::User | SyncMode::Project))
     }
 
     /// Resolves the effective sync target for a provider, returning an error if the
     /// invocation is not valid.
     ///
     /// Validation requires either explicit sync config in `agentspec.toml` for
-    /// the provider, or an explicit `--provider` selection combined with sufficient
-    /// CLI flags (`--mode user|project` or `--dest`).
+    /// the provider, or an explicit `--provider` selection combined with
+    /// `--mode` (and `--dest` for plugin mode).
     pub fn validated_sync_target(
         &self,
         provider: Provider,
@@ -232,7 +230,7 @@ impl AgentspecConfig {
 
         if !has_explicit_config && !cli_only_allowed {
             bail!(
-                "sync is not configured for {provider}. Configure [sync.{provider}] in agentspec.toml or specify additional arguments (--mode user|project or --dest <path>)"
+                "sync is not configured for {provider}. Configure [sync.{provider}] in agentspec.toml or specify --mode (user, project, or plugin with --dest)"
             );
         }
 
@@ -320,14 +318,17 @@ pub struct PluginAuthorConfig {
 /// Per-provider sync target configuration.
 ///
 /// Controls where and how generated files are distributed for a single provider.
-/// When `mode = Plugin`, the `dir` field supplies the explicit base directory
-/// (tilde-expanded at use site) and the `plugin-*` fields supply the plugin
-/// manifest metadata.
+/// `mode` selects the behavioral semantics (hook merging strategy, plugin
+/// manifest emission, command anchoring); `dir` optionally overrides the
+/// destination path. When `mode = Plugin`, both `dir` and `plugin-name` are
+/// required; when `mode = Project`, `dir` optionally targets a specific
+/// project root instead of `$CWD`.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct SyncTargetConfig {
-    /// Where to place synced files (user-level, project-local, or plugin tree).
-    pub mode: SyncMode,
+    /// Where to place synced files. `None` means "not explicitly set" —
+    /// callers should use `resolved_mode()` which defaults to `User`.
+    pub mode: Option<SyncMode>,
     /// Optional namespace prefix applied to synced file names.
     /// For Claude: filesystem dir uses `{prefix}-{name}`.
     /// For `OpenCode`: synced into a `{prefix}/` subdirectory.
@@ -340,9 +341,10 @@ pub struct SyncTargetConfig {
     /// Permit overwriting user-owned files at the destination.
     /// When false (default), sync errors on collision. Overridden by `--force`.
     pub overwrite: bool,
-    /// Base directory for synced output when `mode = Plugin`. Subdirectories
-    /// (`agents/`, `skills/`, `rules/`, `hooks/`, `.claude-plugin/`,
-    /// `.cursor-plugin/`) are derived automatically.
+    /// Base directory for synced output. For `Plugin` mode this is the plugin
+    /// tree root (required); for `Project` mode this is an alternative project
+    /// root instead of `$CWD` (optional); not valid for `User` mode.
+    /// Subdirectories (`agents/`, `skills/`, etc.) are derived automatically.
     pub dir: Option<String>,
     /// Plugin name (`plugin.json` `name` field). Required when `mode = Plugin`.
     /// Conventionally kebab-case; controls the Claude skill namespace
@@ -363,25 +365,42 @@ pub struct SyncTargetConfig {
 }
 
 impl SyncTargetConfig {
-    /// Validate plugin-mode invariants.
+    /// Returns the effective sync mode, defaulting to `User` when unset.
+    pub fn resolved_mode(&self) -> SyncMode {
+        self.mode.unwrap_or(SyncMode::User)
+    }
+
+    /// Validate mode and dir constraints.
     ///
-    /// In `Plugin` mode, both `plugin-name` and `dir` are required:
-    /// `plugin-name` is used for Claude skill namespacing and Cursor
-    /// marketplace classification; `dir` supplies the explicit base directory
-    /// for the plugin tree. Other `plugin-*` fields are optional
-    /// pass-throughs.
+    /// - `dir` present without an explicit `mode` → error (ambiguous intent)
+    /// - `mode = User` + `dir` → error (hook commands anchor at
+    ///   `$HOME/<dotdir>` and cannot follow a custom destination)
+    /// - `mode = Plugin` requires both `plugin-name` and `dir`
     ///
     /// Called from both `agentspec validate` (raw TOML config) and
     /// `validated_sync_target` (CLI-resolved config at sync/remove time).
     pub fn validate_for_provider(&self, provider: Provider) -> Result<()> {
-        if self.mode == SyncMode::Plugin && self.plugin_name.is_none() {
+        if self.mode.is_none() && self.dir.is_some() {
+            bail!(
+                "[sync.{provider}] has a destination directory but no `mode`; \
+                 set `mode` to \"project\" or \"plugin\" when specifying a custom destination"
+            );
+        }
+        if self.mode == Some(SyncMode::User) && self.dir.is_some() {
+            bail!(
+                "[sync.{provider}] has `mode = \"user\"` with `dir`; \
+                 user mode does not support `dir` because hook commands \
+                 anchor at `$HOME` and cannot follow a custom destination"
+            );
+        }
+        if self.mode == Some(SyncMode::Plugin) && self.plugin_name.is_none() {
             bail!(
                 "[sync.{provider}] has `mode = \"plugin\"` but no `plugin-name` configured; \
                  set `plugin-name` to the plugin's identifier \
                  (e.g., `plugin-name = \"my-plugin\"`)"
             );
         }
-        if self.mode == SyncMode::Plugin && self.dir.is_none() {
+        if self.mode == Some(SyncMode::Plugin) && self.dir.is_none() {
             bail!(
                 "[sync.{provider}] has `mode = \"plugin\"` but no `dir` configured; \
                  set `dir` to the plugin output directory \
@@ -393,11 +412,10 @@ impl SyncTargetConfig {
 }
 
 /// Where synced files should be placed.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, clap::ValueEnum)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum SyncMode {
     /// Sync to user-level config dirs (`~/.claude/`, `~/.config/opencode/`, etc.)
-    #[default]
     User,
     /// Sync to project-local config dirs (`.claude/`, `.cursor/`, etc.)
     Project,
@@ -434,7 +452,7 @@ impl SyncMode {
 pub struct SyncFlags {
     /// Allow overwriting user-owned files at sync destinations.
     pub force: bool,
-    /// Override destination root (implies `mode = Path`).
+    /// Override destination root. Requires an explicit `--mode`.
     pub dest: Option<String>,
     /// Override sync mode.
     pub mode: Option<SyncMode>,
@@ -599,7 +617,8 @@ cursor = { model = "fast" }
         let config = AgentspecConfig::default();
         let cli = SyncFlags::default();
         let result = config.resolve_sync_target(Provider::Claude, &cli);
-        assert_eq!(result.mode, SyncMode::User);
+        assert!(result.mode.is_none());
+        assert_eq!(result.resolved_mode(), SyncMode::User);
         assert!(result.prefix.is_none());
         assert!(!result.overwrite);
         assert!(result.dir.is_none());
@@ -619,7 +638,7 @@ prefix = "tw"
         let result = config.resolve_sync_target(Provider::Claude, &cli);
         assert_eq!(result.prefix.as_deref(), Some("tw"));
         assert!(!result.overwrite);
-        assert_eq!(result.mode, SyncMode::User); // default
+        assert!(result.mode.is_none()); // no explicit mode in TOML
     }
 
     #[test]
@@ -640,11 +659,11 @@ mode = "user"
         };
 
         let result = config.resolve_sync_target(Provider::Claude, &cli);
-        assert_eq!(result.mode, SyncMode::Project);
+        assert_eq!(result.mode, Some(SyncMode::Project));
     }
 
     #[test]
-    fn test_resolve_sync_target_cli_dest_implies_plugin_mode() {
+    fn test_resolve_sync_target_cli_dest_sets_dir_not_mode() {
         let config = AgentspecConfig::default();
         let cli = SyncFlags {
             mode: None,
@@ -654,7 +673,7 @@ mode = "user"
         };
 
         let result = config.resolve_sync_target(Provider::Claude, &cli);
-        assert_eq!(result.mode, SyncMode::Plugin);
+        assert!(result.mode.is_none());
         assert_eq!(result.dir.as_deref(), Some("/tmp/sync-test"));
     }
 
@@ -756,9 +775,31 @@ mode = "user"
     }
 
     #[test]
-    fn test_cli_sync_intent_dest_with_target_is_sufficient() {
+    fn test_cli_sync_intent_dest_alone_is_insufficient() {
         let cli = SyncFlags {
             dest: Some("/tmp/out".to_string()),
+            ..SyncFlags::default()
+        };
+
+        assert!(!AgentspecConfig::cli_sync_intent_sufficient(&cli, true));
+    }
+
+    #[test]
+    fn test_cli_sync_intent_dest_with_mode_project_is_sufficient() {
+        let cli = SyncFlags {
+            dest: Some("/tmp/out".to_string()),
+            mode: Some(SyncMode::Project),
+            ..SyncFlags::default()
+        };
+
+        assert!(AgentspecConfig::cli_sync_intent_sufficient(&cli, true));
+    }
+
+    #[test]
+    fn test_cli_sync_intent_dest_with_mode_plugin_is_sufficient() {
+        let cli = SyncFlags {
+            dest: Some("/tmp/out".to_string()),
+            mode: Some(SyncMode::Plugin),
             ..SyncFlags::default()
         };
 
@@ -808,7 +849,8 @@ mode = "user"
         let target = config
             .validated_sync_target(Provider::Cursor, &cli, true)
             .expect("cli-only sync should be allowed with explicit provider and mode");
-        assert_eq!(target.mode, SyncMode::Project);
+        assert_eq!(target.mode, Some(SyncMode::Project));
+        assert_eq!(target.resolved_mode(), SyncMode::Project);
     }
 
     #[test]
@@ -977,7 +1019,7 @@ plugin-license = "MIT"
         fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
         let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
         let target = config.resolve_sync_target(Provider::Claude, &SyncFlags::default());
-        assert_eq!(target.mode, SyncMode::Plugin);
+        assert_eq!(target.mode, Some(SyncMode::Plugin));
         assert_eq!(target.dir.as_deref(), Some("plugin-claude"));
         assert_eq!(target.plugin_name.as_deref(), Some("tw"));
         assert_eq!(target.plugin_version.as_deref(), Some("0.1.0"));
@@ -1050,7 +1092,7 @@ mode = "path"
     #[test]
     fn test_validate_for_provider_accepts_plugin_mode_with_plugin_name() {
         let target = SyncTargetConfig {
-            mode: SyncMode::Plugin,
+            mode: Some(SyncMode::Plugin),
             dir: Some("plugin-claude".to_string()),
             plugin_name: Some("tw".to_string()),
             ..SyncTargetConfig::default()
@@ -1063,7 +1105,7 @@ mode = "path"
     #[test]
     fn test_validate_for_provider_rejects_plugin_mode_without_plugin_name() {
         let target = SyncTargetConfig {
-            mode: SyncMode::Plugin,
+            mode: Some(SyncMode::Plugin),
             dir: Some("plugin-claude".to_string()),
             plugin_name: None,
             ..SyncTargetConfig::default()
@@ -1081,7 +1123,7 @@ mode = "path"
     fn test_validate_for_provider_accepts_user_mode_without_plugin_name() {
         // User/Project modes don't require plugin-name; only Plugin mode does.
         let target = SyncTargetConfig {
-            mode: SyncMode::User,
+            mode: Some(SyncMode::User),
             plugin_name: None,
             ..SyncTargetConfig::default()
         };
@@ -1093,7 +1135,7 @@ mode = "path"
     #[test]
     fn test_adapter_configs_builds_plugin_manifest_from_target() {
         let target = SyncTargetConfig {
-            mode: SyncMode::Plugin,
+            mode: Some(SyncMode::Plugin),
             dir: Some("plugin-claude".to_string()),
             plugin_name: Some("tw".to_string()),
             plugin_version: Some("0.1.0".to_string()),
@@ -1128,7 +1170,7 @@ mode = "path"
     #[test]
     fn test_adapter_configs_no_plugin_manifest_when_plugin_name_unset() {
         let target = SyncTargetConfig {
-            mode: SyncMode::User,
+            mode: Some(SyncMode::User),
             ..SyncTargetConfig::default()
         };
         let configs = AgentspecConfig::adapter_configs(&[(Provider::Claude, target)]);
@@ -1158,7 +1200,7 @@ dir = "plugin-claude"
     #[test]
     fn test_validate_for_provider_rejects_plugin_mode_without_dir() {
         let target = SyncTargetConfig {
-            mode: SyncMode::Plugin,
+            mode: Some(SyncMode::Plugin),
             plugin_name: Some("my-plugin".to_string()),
             dir: None,
             ..SyncTargetConfig::default()
@@ -1174,7 +1216,7 @@ dir = "plugin-claude"
     #[test]
     fn test_validate_for_provider_accepts_plugin_mode_with_dir_and_plugin_name() {
         let target = SyncTargetConfig {
-            mode: SyncMode::Plugin,
+            mode: Some(SyncMode::Plugin),
             plugin_name: Some("my-plugin".to_string()),
             dir: Some("path/to/plugin".to_string()),
             ..SyncTargetConfig::default()
@@ -1185,12 +1227,75 @@ dir = "plugin-claude"
     }
 
     #[test]
+    fn test_validate_for_provider_rejects_user_mode_with_dir() {
+        let target = SyncTargetConfig {
+            mode: Some(SyncMode::User),
+            dir: Some("/some/path".to_string()),
+            ..SyncTargetConfig::default()
+        };
+        let err = target
+            .validate_for_provider(Provider::Claude)
+            .expect_err("user mode with dir must error");
+        let msg = err.to_string();
+        assert!(msg.contains("[sync.claude]"), "error: {msg}");
+        assert!(msg.contains("user"), "error: {msg}");
+        assert!(msg.contains("dir"), "error: {msg}");
+    }
+
+    #[test]
+    fn test_validate_for_provider_rejects_unset_mode_with_dir() {
+        let target = SyncTargetConfig {
+            mode: None,
+            dir: Some("/some/path".to_string()),
+            ..SyncTargetConfig::default()
+        };
+        let err = target
+            .validate_for_provider(Provider::Claude)
+            .expect_err("unset mode with dir must error");
+        let msg = err.to_string();
+        assert!(msg.contains("[sync.claude]"), "error: {msg}");
+        assert!(msg.contains("mode"), "error: {msg}");
+    }
+
+    #[test]
+    fn test_validate_for_provider_accepts_project_mode_with_dir() {
+        let target = SyncTargetConfig {
+            mode: Some(SyncMode::Project),
+            dir: Some("/some/project".to_string()),
+            ..SyncTargetConfig::default()
+        };
+        target
+            .validate_for_provider(Provider::Claude)
+            .expect("project mode with dir should validate");
+    }
+
+    #[test]
+    fn test_resolve_sync_target_toml_mode_project_with_cli_dest() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[sync.claude]
+mode = "project"
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+
+        let cli = SyncFlags {
+            dest: Some("/tmp/projectA".to_string()),
+            ..SyncFlags::default()
+        };
+
+        let result = config.resolve_sync_target(Provider::Claude, &cli);
+        assert_eq!(result.mode, Some(SyncMode::Project));
+        assert_eq!(result.dir.as_deref(), Some("/tmp/projectA"));
+    }
+
+    #[test]
     fn test_validate_sync_config_collects_errors_from_multiple_providers() {
         let mut sync = HashMap::new();
         sync.insert(
             "claude".to_string(),
             SyncTargetConfig {
-                mode: SyncMode::Plugin,
+                mode: Some(SyncMode::Plugin),
                 plugin_name: None,
                 ..SyncTargetConfig::default()
             },
@@ -1198,7 +1303,7 @@ dir = "plugin-claude"
         sync.insert(
             "cursor".to_string(),
             SyncTargetConfig {
-                mode: SyncMode::Plugin,
+                mode: Some(SyncMode::Plugin),
                 plugin_name: Some("ok".to_string()),
                 dir: None,
                 ..SyncTargetConfig::default()

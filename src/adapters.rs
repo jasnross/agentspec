@@ -19,7 +19,7 @@ pub use cursor::CursorAdapter;
 pub use opencode::OpenCodeAdapter;
 
 use crate::compile::{AdapterConfig, GeneratedFile, HookEmitMode};
-use crate::plan::{ConfigPatch, FileKind};
+use crate::plan::{ConfigPatch, FileKind, expand_tilde};
 use crate::presets::ProviderPresetsMap;
 use crate::spec::{Spec, ToolFrontmatter};
 
@@ -46,6 +46,35 @@ pub enum SyncDestinationMode {
     /// to produce canonical provider-config-dir-agnostic output under
     /// `generated/<provider>/`. Not reachable from TOML.
     Compile,
+}
+
+pub(crate) fn resolve_config_dir(
+    mode: SyncDestinationMode,
+    target_dir: Option<&Path>,
+    home: &Path,
+    cwd: &Path,
+    home_dotdir: &Path,
+    project_dotdir: &Path,
+) -> PathBuf {
+    match mode {
+        SyncDestinationMode::User => home.join(home_dotdir),
+        SyncDestinationMode::Project => target_dir.map_or_else(
+            || cwd.join(project_dotdir),
+            |d| {
+                let base = d
+                    .to_str()
+                    .map_or_else(|| d.to_path_buf(), |s| expand_tilde(s, home));
+                base.join(project_dotdir)
+            },
+        ),
+        SyncDestinationMode::Plugin | SyncDestinationMode::Compile => target_dir.map_or_else(
+            || home.join(home_dotdir),
+            |d| {
+                d.to_str()
+                    .map_or_else(|| d.to_path_buf(), |s| expand_tilde(s, home))
+            },
+        ),
+    }
 }
 
 impl SyncDestinationMode {
@@ -95,9 +124,9 @@ pub struct CompileCtx<'a> {
     pub home: &'a Path,
     /// Effective current working directory (for Project-mode dest resolution).
     pub cwd: &'a Path,
-    /// Explicit destination directory when `mode` is `Plugin` or `Compile`;
-    /// `None` for User / Project modes (and for `compile`-command runs that
-    /// don't target a sync destination).
+    /// Explicit destination directory. Set when `mode` is `Plugin`, `Compile`,
+    /// or `Project` with a custom `dir`; `None` for `User` mode and default
+    /// `Project` mode.
     pub target_dir: Option<&'a Path>,
     /// Preset library — adapters consume per-provider presets when applying
     /// frontmatter transforms.

@@ -10,7 +10,7 @@ use strum::VariantArray as _;
 
 use super::{Adapter, AdapterOutput, CompileCtx, RemovalOutput, RemoveCtx, SyncDestinationMode};
 use crate::compile::{AdapterConfig, GeneratedFile};
-use crate::plan::{ConfigPatch, FileKind, RemovePatchReport, expand_tilde};
+use crate::plan::{ConfigPatch, FileKind, RemovePatchReport};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
 use crate::spec::{AgentSpec, RuleSpec, SkillSpec, Spec, ToolFrontmatter};
@@ -199,17 +199,14 @@ fn config_dir(
     home: &Path,
     cwd: &Path,
 ) -> PathBuf {
-    match mode {
-        SyncDestinationMode::User => home.join(".config").join("opencode"),
-        SyncDestinationMode::Project => cwd.join(".opencode"),
-        SyncDestinationMode::Plugin | SyncDestinationMode::Compile => target_dir.map_or_else(
-            || home.join(".config").join("opencode"),
-            |d| {
-                d.to_str()
-                    .map_or_else(|| d.to_path_buf(), |s| expand_tilde(s, home))
-            },
-        ),
-    }
+    super::resolve_config_dir(
+        mode,
+        target_dir,
+        home,
+        cwd,
+        Path::new(".config/opencode"),
+        Path::new(".opencode"),
+    )
 }
 
 fn adapt_agent_spec(

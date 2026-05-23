@@ -605,11 +605,7 @@ fn test_sync_provider_unconfigured_errors_without_dest() {
 }
 
 #[test]
-fn test_sync_provider_unconfigured_with_dest_requires_plugin_name() {
-    // Per the plan: `--dest <path>` implies `mode = "plugin"`. Plugin mode
-    // requires `plugin-name`. Since v1 ships no `--plugin-name` CLI flag,
-    // running `agentspec sync --provider X --dest <path>` without a TOML
-    // `plugin-name` errors with the validation message.
+fn test_sync_provider_unconfigured_with_dest_without_mode_errors() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     let home = dir.join("home");
@@ -630,12 +626,12 @@ fn test_sync_provider_unconfigured_with_dest_requires_plugin_name() {
 
     assert!(
         !output.status.success(),
-        "sync --dest without plugin-name must error"
+        "sync --dest without --mode must error"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("plugin-name"),
-        "error should mention plugin-name, got:\n{stderr}"
+        stderr.contains("--mode"),
+        "error should mention --mode, got:\n{stderr}"
     );
 }
 
@@ -680,6 +676,93 @@ fn test_sync_provider_unconfigured_with_mode_project_allowed() {
     assert!(
         dir.join(".claude/agents").exists(),
         "project-mode sync should write to .claude/agents: {stderr}"
+    );
+}
+
+#[test]
+fn test_sync_project_mode_with_dest_writes_to_target() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let home = dir.join("home");
+    let target_project = dir.join("target-project");
+    std::fs::create_dir_all(&target_project).expect("create target-project dir");
+
+    let output = std::process::Command::new(agentspec())
+        .args([
+            "sync",
+            "--provider",
+            "claude",
+            "--mode",
+            "project",
+            "--dest",
+            target_project
+                .to_str()
+                .expect("dest path should be valid utf-8"),
+        ])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync --mode project --dest");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "sync should succeed:\n{stderr}");
+    assert!(
+        target_project.join(".claude/agents").exists(),
+        "project-mode+dest should write to <dest>/.claude/agents: {stderr}"
+    );
+}
+
+#[test]
+fn test_sync_dest_without_mode_errors() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let home = dir.join("home");
+
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--provider", "claude", "--dest", "/tmp/test"])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync --dest without --mode");
+
+    assert!(!output.status.success(), "sync should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--mode"),
+        "error should mention --mode, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn test_sync_user_mode_with_dest_errors() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let home = dir.join("home");
+
+    let output = std::process::Command::new(agentspec())
+        .args([
+            "sync",
+            "--provider",
+            "claude",
+            "--mode",
+            "user",
+            "--dest",
+            "/tmp/test",
+        ])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync --mode user --dest");
+
+    assert!(!output.status.success(), "sync should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("user"),
+        "error should mention user mode, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("dir"),
+        "error should mention dir, got:\n{stderr}"
     );
 }
 
@@ -2261,6 +2344,61 @@ fn test_sync_claude_project_mode_merges_hooks_into_settings_json() {
     assert!(
         content.contains("CLAUDE_PLUGIN_ROOT=${CLAUDE_PROJECT_DIR}/.claude ${CLAUDE_PROJECT_DIR}/.claude/hooks/scripts/_wrappers/user_prompt_submit.sh ${CLAUDE_PROJECT_DIR}/.claude/hooks/scripts/init-thoughts.sh"),
         "command should set CLAUDE_PLUGIN_ROOT inline and invoke per-event shim under \\${{CLAUDE_PROJECT_DIR}} for Project mode, got:\n{content}"
+    );
+}
+
+#[test]
+fn test_sync_claude_project_mode_with_dest_anchors_hooks_at_project_dir() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+    let home = dir.join("home");
+    let target = dir.join("custom-dest");
+    std::fs::create_dir_all(&target).expect("create custom-dest dir");
+
+    let output = std::process::Command::new(agentspec())
+        .args([
+            "sync",
+            "--provider",
+            "claude",
+            "--mode",
+            "project",
+            "--dest",
+            target.to_str().expect("dest path should be valid utf-8"),
+        ])
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec sync --mode project --dest");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "sync (project mode + dest) should succeed:\n{stderr}"
+    );
+
+    for script in ["init-thoughts.sh", "audit-bash.sh", "_common.sh"] {
+        assert!(
+            target
+                .join(format!(".claude/hooks/scripts/{script}"))
+                .exists(),
+            "{script} should land under <dest>/.claude/hooks/scripts/"
+        );
+    }
+
+    let settings = target.join(".claude/settings.json");
+    assert!(
+        settings.exists(),
+        "settings.json should be at <dest>/.claude/"
+    );
+    let content = std::fs::read_to_string(&settings).expect("read settings.json");
+    assert!(
+        content.contains("\"_agentspec_id\""),
+        "settings.json should contain sentinel, got:\n{content}"
+    );
+    assert!(
+        content.contains("CLAUDE_PLUGIN_ROOT=${CLAUDE_PROJECT_DIR}/.claude ${CLAUDE_PROJECT_DIR}/.claude/hooks/scripts/_wrappers/user_prompt_submit.sh ${CLAUDE_PROJECT_DIR}/.claude/hooks/scripts/init-thoughts.sh"),
+        "command should anchor at ${{CLAUDE_PROJECT_DIR}} even with custom dest, got:\n{content}"
     );
 }
 

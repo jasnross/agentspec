@@ -78,13 +78,10 @@ pub fn remove_plan(
 
     for (provider, target) in targets {
         let adapter = provider.adapter();
-        let target_dir_buf = target
-            .dir
-            .as_deref()
-            .map(|d| agentspec::plan::expand_tilde(d, home));
+        let target_dir_buf = target.dir.as_deref().map(std::path::PathBuf::from);
 
         let ctx = RemoveCtx {
-            mode: target.mode.to_destination_mode(),
+            mode: target.resolved_mode().to_destination_mode(),
             home,
             cwd,
             target_dir: target_dir_buf.as_deref(),

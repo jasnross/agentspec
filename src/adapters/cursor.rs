@@ -18,7 +18,7 @@ use crate::compile::{
     PluginManifest as SpecPluginManifest,
 };
 use crate::hooks_merge::{merge_owned, remove_owned};
-use crate::plan::{ConfigPatch, FileKind, expand_tilde};
+use crate::plan::{ConfigPatch, FileKind};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
 use crate::spec::{AgentSpec, HookEvent, HookSpec, RuleSpec, SkillSpec, Spec, ToolFrontmatter};
@@ -418,17 +418,8 @@ fn config_dir(
     home: &Path,
     cwd: &Path,
 ) -> PathBuf {
-    match mode {
-        SyncDestinationMode::User => home.join(HOOK_DOTDIR),
-        SyncDestinationMode::Project => cwd.join(HOOK_DOTDIR),
-        SyncDestinationMode::Plugin | SyncDestinationMode::Compile => target_dir.map_or_else(
-            || home.join(HOOK_DOTDIR),
-            |d| {
-                d.to_str()
-                    .map_or_else(|| d.to_path_buf(), |s| expand_tilde(s, home))
-            },
-        ),
-    }
+    let dotdir = Path::new(HOOK_DOTDIR);
+    super::resolve_config_dir(mode, target_dir, home, cwd, dotdir, dotdir)
 }
 
 /// Forward-direction hooks.json patch.

@@ -3,12 +3,12 @@ pub(crate) mod manifest;
 use std::path::{Path, PathBuf};
 
 use agentspec::compile::{CompileResult, GeneratedFile};
-use agentspec::plan::{FileKind, ManifestTrackedWrite, SyncPlan, expand_tilde};
+use agentspec::plan::{FileKind, ManifestTrackedWrite, SyncPlan};
 use agentspec::provider::Provider;
 use anyhow::{Context, Result, bail};
 
 use crate::cli::SyncArgs;
-use crate::config::{AgentspecConfig, SyncFlags, SyncMode, SyncTargetConfig};
+use crate::config::{AgentspecConfig, SyncFlags, SyncTargetConfig};
 
 /// Builds a `SyncPlan` that writes compiled files directly to tool config destinations.
 ///
@@ -24,7 +24,6 @@ use crate::config::{AgentspecConfig, SyncFlags, SyncMode, SyncTargetConfig};
 pub fn sync_plan(
     result: &mut CompileResult,
     targets: &[(Provider, SyncTargetConfig)],
-    home: &Path,
 ) -> Result<SyncPlan> {
     // Invariant: `compile_specs` populates `dest_roots` for every provider it
     // dispatched to. A missing entry means the binary built `targets` from a
@@ -42,11 +41,9 @@ pub fn sync_plan(
     let mut post_write_patches = Vec::new();
 
     for (provider, target) in targets {
-        // `dest_root` was computed by the adapter during `compile_specs` and
-        // is the parent directory of every per-kind dest dir. Use it as the
-        // anchor when `mode == Path` so the explicit `--dest`/`dir` value
-        // wins over adapter defaults; for `User`/`Project` modes it matches
-        // what the adapter would compute again here.
+        // `dest_root` was computed by the adapter's `config_dir` during
+        // `compile_specs` and is the parent directory of every per-kind dest
+        // dir. It already incorporates any custom `dir` override.
         let dest_root = result
             .dest_root_for(*provider)
             .with_context(|| format!("compile_specs did not record a dest_root for {provider}"))?
@@ -62,7 +59,7 @@ pub fn sync_plan(
             // `None` here means this provider doesn't support `kind` (today:
             // only PluginManifest for `OpenCode`). Skip the `ManifestTrackedWrite`
             // entirely — there's nothing to write and nothing to track.
-            let Some(dest) = resolve_dest_dir(*provider, kind, target, &dest_root, home) else {
+            let Some(dest) = resolve_dest_dir(*provider, kind, &dest_root) else {
                 continue;
             };
             let files = files_for_kind(result, *provider, kind);
@@ -120,7 +117,7 @@ pub fn resolve_sync_targets(
 
     if providers.is_empty() {
         bail!(
-            "no sync providers are configured; add [sync.<provider>] in agentspec.toml, or run CLI-only sync with an explicit provider (for example: --provider claude --mode user|project or --provider claude --dest <path>)"
+            "no sync providers are configured; add [sync.<provider>] in agentspec.toml, or run CLI-only sync with an explicit provider (for example: --provider claude --mode user|project)"
         );
     }
 
@@ -136,42 +133,20 @@ pub fn resolve_sync_targets(
 /// Resolves the per-kind destination directory under a provider's sync root.
 ///
 /// `dest_root` is the per-provider sync destination root the adapter computed
-/// during `compile_specs` (e.g. `~/.claude` for User mode, `<cwd>/.claude`
-/// for Project mode, `<dir>` for Plugin mode). For Plugin mode we honour the
-/// explicit `dir` from `SyncTargetConfig` (tilde-expanded) so the
-/// `--dest`/TOML value wins; for User/Project modes the adapter's
-/// `dest_root` is canonical.
+/// during `compile_specs`. The adapter's `config_dir` already handles all
+/// mode-specific logic (User → `$HOME/<dotdir>`, Project → `<cwd or
+/// dir>/<dotdir>`, Plugin → `<dir>`), so this function simply joins the
+/// per-kind subdirectory name.
 ///
 /// Returns `None` when the provider doesn't support `kind` — today, only
 /// for [`FileKind::PluginManifest`] on providers whose
 /// `Adapter::plugin_manifest_dir()` returns `None` (i.e., `OpenCode`). The
 /// caller skips the write in that case.
-///
-/// The `mode = "plugin"` + `dir` constraint is validated at config load time
-/// by `SyncTargetConfig::validate_for_provider`; the `debug_assert!` here is
-/// defense-in-depth for debug builds only.
-fn resolve_dest_dir(
-    provider: Provider,
-    kind: FileKind,
-    config: &SyncTargetConfig,
-    dest_root: &Path,
-    home: &Path,
-) -> Option<PathBuf> {
-    let base = match config.mode {
-        SyncMode::Plugin => {
-            debug_assert!(
-                config.dir.is_some(),
-                "plugin mode requires `dir`; should have been caught by validate_for_provider"
-            );
-            let d = config.dir.as_deref()?;
-            expand_tilde(d, home)
-        }
-        SyncMode::User | SyncMode::Project => dest_root.to_path_buf(),
-    };
+fn resolve_dest_dir(provider: Provider, kind: FileKind, dest_root: &Path) -> Option<PathBuf> {
     provider
         .adapter()
         .dir_for_kind(kind)
-        .map(|dir| base.join(dir))
+        .map(|dir| dest_root.join(dir))
 }
 
 /// Extracts files from `result` that belong to the given provider and kind.
@@ -325,13 +300,13 @@ mod tests {
         );
 
         let claude_target = SyncTargetConfig {
-            mode: SyncMode::Plugin,
+            mode: Some(SyncMode::Plugin),
             dir: Some("/out/claude".to_string()),
             ..SyncTargetConfig::default()
         };
 
         let opencode_target = SyncTargetConfig {
-            mode: SyncMode::Plugin,
+            mode: Some(SyncMode::Plugin),
             dir: Some("/out/opencode".to_string()),
             ..SyncTargetConfig::default()
         };
@@ -341,8 +316,7 @@ mod tests {
             (Provider::OpenCode, opencode_target),
         ];
 
-        let home = Path::new("/tmp");
-        let plan = sync_plan(&mut result, &targets, home).expect("sync_plan should succeed");
+        let plan = sync_plan(&mut result, &targets).expect("sync_plan should succeed");
 
         // Every provider in the targets list gets one `ManifestTrackedWrite`
         // per `FileKind` variant the provider supports. Providers without
@@ -369,98 +343,34 @@ mod tests {
         assert!(claude_agents.files[0].path.starts_with("agents/"));
     }
 
-    fn home() -> PathBuf {
-        PathBuf::from("/home/user")
-    }
-
     #[test]
-    fn test_resolve_dest_user_appends_kind_dir_to_root() {
-        // User mode: the per-kind dest is `<dest_root>/<kind>`. The adapter
-        // already encoded the home-rooted `~/.claude` portion in `dest_root`
-        // during `compile_specs`; `resolve_dest_dir` just appends the kind.
-        let config = SyncTargetConfig::default(); // mode = User
+    fn test_resolve_dest_dir_joins_dest_root_with_kind_dir() {
         let result = resolve_dest_dir(
             Provider::Claude,
             FileKind::Agents,
-            &config,
             Path::new("/home/user/.claude"),
-            &home(),
         )
         .expect("kind supported by provider");
         assert_eq!(result, PathBuf::from("/home/user/.claude/agents"));
     }
 
     #[test]
-    fn test_resolve_dest_project_appends_kind_dir_to_root() {
-        let config = SyncTargetConfig {
-            mode: SyncMode::Project,
-            ..Default::default()
-        };
+    fn test_resolve_dest_dir_works_for_any_dest_root() {
         let result = resolve_dest_dir(
             Provider::Cursor,
             FileKind::Skills,
-            &config,
             Path::new("/work/project/.cursor"),
-            &home(),
         )
         .expect("kind supported by provider");
         assert_eq!(result, PathBuf::from("/work/project/.cursor/skills"));
     }
 
     #[test]
-    fn test_resolve_dest_plugin_explicit_dir_overrides_dest_root() {
-        let config = SyncTargetConfig {
-            mode: SyncMode::Plugin,
-            dir: Some("~/foo".to_string()),
-            ..Default::default()
-        };
-        let result = resolve_dest_dir(
-            Provider::Cursor,
-            FileKind::Skills,
-            &config,
-            Path::new("/should-be-ignored"),
-            &home(),
-        )
-        .expect("kind supported by provider");
-        assert_eq!(result, PathBuf::from("/home/user/foo/skills"));
-    }
-
-    #[test]
-    #[should_panic(expected = "validate_for_provider")]
-    fn test_resolve_dest_plugin_missing_dir_panics_in_debug() {
-        // Plugin mode without `dir`: the `debug_assert!` catches this wiring
-        // bug in debug/test builds. The constraint is validated at config load
-        // time by `validate_for_provider`; reaching `resolve_dest_dir` with
-        // `dir = None` + plugin mode means validation was bypassed.
-        let config = SyncTargetConfig {
-            mode: SyncMode::Plugin,
-            ..Default::default()
-        };
-        let _ = resolve_dest_dir(
-            Provider::OpenCode,
-            FileKind::Agents,
-            &config,
-            Path::new("/should-not-be-consulted"),
-            &home(),
-        );
-    }
-
-    #[test]
-    fn test_resolve_dest_plugin_manifest_dispatches_through_adapter() {
-        // Plugin manifest kind: Claude returns `.claude-plugin`, Cursor returns
-        // `.cursor-plugin`, `OpenCode` returns `None` (no plugin concept).
-        let config = SyncTargetConfig {
-            mode: SyncMode::Plugin,
-            dir: Some("/out".to_string()),
-            ..Default::default()
-        };
-
+    fn test_resolve_dest_dir_plugin_manifest_dispatches_through_adapter() {
         let claude = resolve_dest_dir(
             Provider::Claude,
             FileKind::PluginManifest,
-            &config,
-            Path::new("/should-be-ignored"),
-            &home(),
+            Path::new("/out"),
         )
         .expect("claude supports plugin manifest");
         assert_eq!(claude, PathBuf::from("/out/.claude-plugin"));
@@ -468,9 +378,7 @@ mod tests {
         let cursor = resolve_dest_dir(
             Provider::Cursor,
             FileKind::PluginManifest,
-            &config,
-            Path::new("/should-be-ignored"),
-            &home(),
+            Path::new("/out"),
         )
         .expect("cursor supports plugin manifest");
         assert_eq!(cursor, PathBuf::from("/out/.cursor-plugin"));
@@ -478,9 +386,7 @@ mod tests {
         let opencode = resolve_dest_dir(
             Provider::OpenCode,
             FileKind::PluginManifest,
-            &config,
-            Path::new("/should-be-ignored"),
-            &home(),
+            Path::new("/out"),
         );
         assert!(
             opencode.is_none(),

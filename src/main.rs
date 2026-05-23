@@ -108,7 +108,7 @@ fn main() -> Result<()> {
             )?;
             surface_compile_diagnostics(&diagnostics, display);
 
-            let plan = sync_plan(&mut result, &targets, &home)?;
+            let plan = sync_plan(&mut result, &targets)?;
             emit_sync(&plan, sync_args.dry_run, sync_args.common.verbose)?;
         }
         Command::Remove(remove_args) => {
@@ -345,7 +345,7 @@ fn compile_targets_from(
             (
                 *p,
                 ProviderCompileTarget {
-                    mode: t.mode.to_destination_mode(),
+                    mode: t.resolved_mode().to_destination_mode(),
                     target_dir: t.dir.as_deref().map(std::path::PathBuf::from),
                     overwrite: t.overwrite,
                 },
