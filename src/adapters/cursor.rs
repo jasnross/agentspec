@@ -18,7 +18,7 @@ use crate::compile::{
     PluginManifest as SpecPluginManifest,
 };
 use crate::hooks_merge::{merge_owned, remove_owned};
-use crate::plan::{ConfigPatch, FileKind};
+use crate::plan::{FileKind, ForwardPatch, ReversePatch};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
 use crate::spec::{AgentSpec, HookEvent, HookSpec, RuleSpec, SkillSpec, Spec, ToolFrontmatter};
@@ -105,7 +105,7 @@ impl Adapter for CursorAdapter {
 
         let dest_root = config_dir(ctx.mode, ctx.target_dir, ctx.home, ctx.cwd);
 
-        let mut patches: Vec<Box<dyn ConfigPatch>> = Vec::new();
+        let mut patches: Vec<Box<dyn ForwardPatch>> = Vec::new();
         if emit_mode.is_merged() {
             patches.push(Box::new(CursorHooksPatch {
                 host_path: dest_root.join(HOST_FILENAME),
@@ -124,7 +124,7 @@ impl Adapter for CursorAdapter {
     fn removal_patches(&self, ctx: &RemoveCtx<'_>) -> RemovalOutput {
         let dest_root = config_dir(ctx.mode, ctx.target_dir, ctx.home, ctx.cwd);
         let emit_mode = ctx.mode.to_hook_emit_mode();
-        let mut patches: Vec<Box<dyn ConfigPatch>> = Vec::new();
+        let mut patches: Vec<Box<dyn ReversePatch>> = Vec::new();
         if emit_mode.is_merged() {
             patches.push(Box::new(CursorRemoveHooksPatch {
                 host_path: dest_root.join(HOST_FILENAME),
@@ -430,7 +430,7 @@ pub(crate) struct CursorHooksPatch {
     force: bool,
 }
 
-impl ConfigPatch for CursorHooksPatch {
+impl ForwardPatch for CursorHooksPatch {
     fn run(&self, dry_run: bool) -> Result<()> {
         let entries = &self.owned_entries;
         let force = self.force;
@@ -442,12 +442,6 @@ impl ConfigPatch for CursorHooksPatch {
             dry_run,
         )
     }
-
-    fn run_remove(&self, _dry_run: bool) -> Result<()> {
-        unreachable!(
-            "CursorHooksPatch is forward-only; the remove pipeline constructs CursorRemoveHooksPatch"
-        )
-    }
 }
 
 /// Reverse-direction hooks.json patch.
@@ -456,13 +450,7 @@ pub(crate) struct CursorRemoveHooksPatch {
     host_path: PathBuf,
 }
 
-impl ConfigPatch for CursorRemoveHooksPatch {
-    fn run(&self, _dry_run: bool) -> Result<()> {
-        unreachable!(
-            "CursorRemoveHooksPatch is reverse-only; the sync pipeline constructs CursorHooksPatch"
-        )
-    }
-
+impl ReversePatch for CursorRemoveHooksPatch {
     fn run_remove(&self, dry_run: bool) -> Result<()> {
         let report = remove_owned(&self.host_path, CursorAdapter::tidy_hooks, dry_run)?;
         report.print_summary(dry_run);

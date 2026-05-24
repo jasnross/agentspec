@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use agentspec::adapters::RemoveCtx;
-use agentspec::plan::{ConfigPatch, FileKind, RemovePlan, RemoveWrite};
+use agentspec::plan::{FileKind, RemovePlan, RemoveWrite, ReversePatch};
 use agentspec::provider::Provider;
 use anyhow::{Result, bail};
 
@@ -54,7 +54,7 @@ pub fn resolve_remove_targets(
 /// Builds a `RemovePlan` that reverses a prior sync.
 ///
 /// One `RemoveWrite` is produced per `(provider, kind)` dest dir; one
-/// `ConfigPatch` per provider for any post-write tidy (Claude/Cursor settings
+/// `ReversePatch` per provider for any post-write tidy (Claude/Cursor settings
 /// strip, `OpenCode` instructions filter). The manifest at
 /// `destination/.agentspec-manifest.json` is the source of truth at execution
 /// time; no file content is carried because every tracked file is deleted.
@@ -74,7 +74,7 @@ pub fn remove_plan(
         "remove_plan must not be called with empty targets; main.rs should print 'nothing to remove' instead"
     );
     let mut writes = Vec::new();
-    let mut post_write_patches: Vec<Box<dyn ConfigPatch>> = Vec::new();
+    let mut post_write_patches: Vec<Box<dyn ReversePatch>> = Vec::new();
 
     for (provider, target) in targets {
         let adapter = provider.adapter();

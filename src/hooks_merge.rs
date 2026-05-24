@@ -7,9 +7,9 @@
 //! file I/O, CST parse, top-level open, atomic write, and the delete-on-empty
 //! tail. All provider-specific JSON-shape decisions (top-level extras,
 //! per-event nesting depth, owned-entry pruning, the delete predicate, host
-//! filename) live behind the per-adapter `ConfigPatch` impls in
-//! `src/adapters/*.rs`, which call into [`merge_owned`] / [`remove_owned`]
-//! supplying their own merge / tidy / no-op-skip closures.
+//! filename) live behind the per-adapter `ForwardPatch` / `ReversePatch`
+//! impls in `src/adapters/*.rs`, which call into [`merge_owned`] /
+//! [`remove_owned`] supplying their own merge / tidy / no-op-skip closures.
 //!
 //! Ownership is identified by the `_agentspec_id` sentinel field on each
 //! entry: agentspec-owned entries are replaced wholesale on each sync; entries
@@ -150,7 +150,7 @@ mod tests {
     use crate::compile::EmittedHookEntry;
     use crate::spec::HookEvent;
 
-    /// Test-only adapter shim that mirrors what each adapter's `ConfigPatch`
+    /// Test-only adapter shim that mirrors what each adapter's `ForwardPatch`
     /// impl supplies to `merge_owned`. Calls into the adapter's inherent
     /// `merge_into_settings` / `tidy_settings` helpers so tests exercise the
     /// real per-provider closures end-to-end (no parallel shape).

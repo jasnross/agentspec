@@ -19,7 +19,7 @@ pub use cursor::CursorAdapter;
 pub use opencode::OpenCodeAdapter;
 
 use crate::compile::{AdapterConfig, GeneratedFile, HookEmitMode};
-use crate::plan::{ConfigPatch, FileKind, expand_tilde};
+use crate::plan::{FileKind, ForwardPatch, ReversePatch, expand_tilde};
 use crate::presets::ProviderPresetsMap;
 use crate::spec::{Spec, ToolFrontmatter};
 
@@ -158,14 +158,15 @@ pub struct RemoveCtx<'a> {
 ///
 /// `files` carries every file the adapter produces (markdown specs plus any
 /// hook scripts and bundled `hooks.json` in Bundled mode). `patches` carries
-/// the post-write patches to apply after files land — Claude/Cursor settings
-/// merges, `OpenCode` instructions registration, etc. `dest_root` is the
-/// adapter-computed sync-mode destination root that downstream `sync_plan`
-/// uses to anchor each `(provider, kind)` `ManifestTrackedWrite`.
+/// the forward-direction post-write patches to apply after files land —
+/// Claude/Cursor settings merges, `OpenCode` instructions registration, etc.
+/// `dest_root` is the adapter-computed sync-mode destination root that
+/// downstream `sync_plan` uses to anchor each `(provider, kind)`
+/// `ManifestTrackedWrite`.
 #[derive(Debug)]
 pub struct AdapterOutput {
     pub files: Vec<GeneratedFile>,
-    pub patches: Vec<Box<dyn ConfigPatch>>,
+    pub patches: Vec<Box<dyn ForwardPatch>>,
     pub dest_root: PathBuf,
 }
 
@@ -175,11 +176,11 @@ pub struct AdapterOutput {
 /// pipeline. `dest_root` is the adapter-computed sync-mode destination root
 /// — same shape `compile` returns — so `remove_plan` can compute per-kind
 /// `RemoveWrite` destinations without re-deriving paths. `patches` carries
-/// the reverse-direction `ConfigPatch` impls; their `run_remove` is called
+/// the reverse-direction `ReversePatch` impls; their `run_remove` is called
 /// after manifest-tracked file deletions.
 #[derive(Debug)]
 pub struct RemovalOutput {
-    pub patches: Vec<Box<dyn ConfigPatch>>,
+    pub patches: Vec<Box<dyn ReversePatch>>,
     pub dest_root: PathBuf,
 }
 
@@ -199,9 +200,9 @@ pub struct RemovalOutput {
 ///
 /// `Send + Sync` mirrors today's adapter shape — every adapter is a
 /// zero-sized unit struct and trivially `Send + Sync` — and the bound
-/// future-proofs sub-paths where adapter-constructed `Box<dyn ConfigPatch>`
-/// instances may directly hold `&'static dyn Adapter` references
-/// (`ConfigPatch: Send + Sync` cascades the bound).
+/// future-proofs sub-paths where adapter-constructed `Box<dyn ForwardPatch>`
+/// / `Box<dyn ReversePatch>` instances may directly hold `&'static dyn
+/// Adapter` references (the patch traits' `Send + Sync` bounds cascade).
 pub trait Adapter: std::fmt::Debug + Send + Sync {
     /// Compile every spec for one provider into output files and post-write
     /// patches.

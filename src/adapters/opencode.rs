@@ -10,7 +10,7 @@ use strum::VariantArray as _;
 
 use super::{Adapter, AdapterOutput, CompileCtx, RemovalOutput, RemoveCtx, SyncDestinationMode};
 use crate::compile::{AdapterConfig, GeneratedFile};
-use crate::plan::{ConfigPatch, FileKind, RemovePatchReport};
+use crate::plan::{FileKind, ForwardPatch, RemovePatchReport, ReversePatch};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
 use crate::spec::{AgentSpec, RuleSpec, SkillSpec, Spec, ToolFrontmatter};
@@ -108,7 +108,7 @@ impl Adapter for OpenCodeAdapter {
         // `(provider, FileKind::Rules)` regardless of file count) ran this
         // cleanup on every sync; the patch's `run` short-circuits at line 598
         // when both the host file is absent AND `new_paths` is empty.
-        let patches: Vec<Box<dyn ConfigPatch>> = vec![Box::new(OpenCodeInstructionsPatch {
+        let patches: Vec<Box<dyn ForwardPatch>> = vec![Box::new(OpenCodeInstructionsPatch {
             rules_dest_dir,
             host_path: dest_root.join(HOST_FILENAME),
             instruction_paths,
@@ -123,12 +123,8 @@ impl Adapter for OpenCodeAdapter {
 
     fn removal_patches(&self, ctx: &RemoveCtx<'_>) -> RemovalOutput {
         let dest_root = config_dir(ctx.mode, ctx.target_dir, ctx.home, ctx.cwd);
-        // `FileKind::Rules` is statically known here; `dir_for_kind` only
-        // ever returns `None` for `PluginManifest` on providers without a
-        // plugin concept. The `unwrap_or` is a lint-safe fallback that
-        // matches the central registry — see `Adapter::dir_for_kind`.
         let rules_dest_dir = dest_root.join(self.dir_for_kind(FileKind::Rules).unwrap_or("rules"));
-        let patches: Vec<Box<dyn ConfigPatch>> = vec![Box::new(OpenCodeRemoveInstructionsPatch {
+        let patches: Vec<Box<dyn ReversePatch>> = vec![Box::new(OpenCodeRemoveInstructionsPatch {
             rules_dest_dir,
             host_path: dest_root.join(HOST_FILENAME),
         })];
@@ -379,19 +375,13 @@ pub(crate) struct OpenCodeInstructionsPatch {
     instruction_paths: Vec<String>,
 }
 
-impl ConfigPatch for OpenCodeInstructionsPatch {
+impl ForwardPatch for OpenCodeInstructionsPatch {
     fn run(&self, dry_run: bool) -> Result<()> {
         patch_opencode_instructions(
             &self.rules_dest_dir,
             &self.host_path,
             &self.instruction_paths,
             dry_run,
-        )
-    }
-
-    fn run_remove(&self, _dry_run: bool) -> Result<()> {
-        unreachable!(
-            "OpenCodeInstructionsPatch is forward-only; the remove pipeline constructs OpenCodeRemoveInstructionsPatch"
         )
     }
 }
@@ -407,13 +397,7 @@ pub(crate) struct OpenCodeRemoveInstructionsPatch {
     host_path: PathBuf,
 }
 
-impl ConfigPatch for OpenCodeRemoveInstructionsPatch {
-    fn run(&self, _dry_run: bool) -> Result<()> {
-        unreachable!(
-            "OpenCodeRemoveInstructionsPatch is reverse-only; the sync pipeline constructs OpenCodeInstructionsPatch"
-        )
-    }
-
+impl ReversePatch for OpenCodeRemoveInstructionsPatch {
     fn run_remove(&self, dry_run: bool) -> Result<()> {
         let report = remove_opencode_instructions(&self.rules_dest_dir, &self.host_path, dry_run)?;
         report.print_summary(dry_run);

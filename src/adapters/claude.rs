@@ -19,7 +19,7 @@ use crate::compile::{
     PluginManifest as SpecPluginManifest,
 };
 use crate::hooks_merge::{merge_owned, remove_owned};
-use crate::plan::{ConfigPatch, FileKind};
+use crate::plan::{FileKind, ForwardPatch, ReversePatch};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
 use crate::spec::{AgentSpec, HookEvent, HookSpec, RuleSpec, SkillSpec, Spec, ToolFrontmatter};
@@ -151,12 +151,8 @@ impl Adapter for ClaudeAdapter {
 
         let dest_root = config_dir(ctx.mode, ctx.target_dir, ctx.home, ctx.cwd);
 
-        let mut patches: Vec<Box<dyn ConfigPatch>> = Vec::new();
+        let mut patches: Vec<Box<dyn ForwardPatch>> = Vec::new();
         if emit_mode.is_merged() {
-            // Merged modes (User/Project): hand emission of the host file off
-            // to the post-write patcher, which surgically merges entries into
-            // `<config>/settings.json` while preserving user content. Bundled
-            // (Path) mode owns `hooks/hooks.json` outright — no patcher.
             patches.push(Box::new(ClaudeHooksPatch {
                 host_path: dest_root.join(HOST_FILENAME),
                 owned_entries,
@@ -174,7 +170,7 @@ impl Adapter for ClaudeAdapter {
     fn removal_patches(&self, ctx: &RemoveCtx<'_>) -> RemovalOutput {
         let dest_root = config_dir(ctx.mode, ctx.target_dir, ctx.home, ctx.cwd);
         let emit_mode = ctx.mode.to_hook_emit_mode();
-        let mut patches: Vec<Box<dyn ConfigPatch>> = Vec::new();
+        let mut patches: Vec<Box<dyn ReversePatch>> = Vec::new();
         if emit_mode.is_merged() {
             patches.push(Box::new(ClaudeRemoveHooksPatch {
                 host_path: dest_root.join(HOST_FILENAME),
@@ -447,8 +443,7 @@ fn config_dir(
 /// Forward-direction settings.json patch.
 ///
 /// Constructed by `ClaudeAdapter::compile` in Merged (User/Project) modes.
-/// `run` invokes the merge; `run_remove` is unreachable because the orchestrator
-/// routes forward patches only through the sync pipeline.
+/// Merges agentspec-owned hook entries into `settings.json`.
 #[derive(Debug)]
 pub(crate) struct ClaudeHooksPatch {
     host_path: PathBuf,
@@ -458,7 +453,7 @@ pub(crate) struct ClaudeHooksPatch {
     force: bool,
 }
 
-impl ConfigPatch for ClaudeHooksPatch {
+impl ForwardPatch for ClaudeHooksPatch {
     fn run(&self, dry_run: bool) -> Result<()> {
         let entries = &self.owned_entries;
         let force = self.force;
@@ -470,32 +465,18 @@ impl ConfigPatch for ClaudeHooksPatch {
             dry_run,
         )
     }
-
-    fn run_remove(&self, _dry_run: bool) -> Result<()> {
-        unreachable!(
-            "ClaudeHooksPatch is forward-only; the remove pipeline constructs ClaudeRemoveHooksPatch"
-        )
-    }
 }
 
 /// Reverse-direction settings.json patch.
 ///
-/// Constructed by `ClaudeAdapter::removal_patches` in Merged modes. `run_remove`
-/// strips agentspec-owned entries and tidies emptied containers; `run` is
-/// unreachable because the orchestrator routes reverse patches only through
-/// the remove pipeline.
+/// Constructed by `ClaudeAdapter::removal_patches` in Merged modes. Strips
+/// agentspec-owned entries and tidies emptied containers.
 #[derive(Debug)]
 pub(crate) struct ClaudeRemoveHooksPatch {
     host_path: PathBuf,
 }
 
-impl ConfigPatch for ClaudeRemoveHooksPatch {
-    fn run(&self, _dry_run: bool) -> Result<()> {
-        unreachable!(
-            "ClaudeRemoveHooksPatch is reverse-only; the sync pipeline constructs ClaudeHooksPatch"
-        )
-    }
-
+impl ReversePatch for ClaudeRemoveHooksPatch {
     fn run_remove(&self, dry_run: bool) -> Result<()> {
         let report = remove_owned(&self.host_path, ClaudeAdapter::tidy_settings, dry_run)?;
         report.print_summary(dry_run);

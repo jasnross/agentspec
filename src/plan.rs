@@ -155,25 +155,26 @@ pub fn delete_host_file_and_rmdir_parent(host_path: &Path, dry_run: bool) -> any
 
 // ── Plan types ──────────────────────────────────────────────────────────────
 
-/// Bidirectional post-write patch for the `Adapter` trait surface.
+/// Forward-direction post-write patch (sync pipeline).
 ///
-/// One `ConfigPatch` instance owns one direction of one host-config patch:
-/// `run` applies the forward (sync) direction and `run_remove` applies the
-/// reverse (remove) direction. Today's adapters use distinct structs for the
-/// two directions (e.g., `ClaudeHooksPatch` / `ClaudeRemoveHooksPatch`) and
-/// `unreachable!()` the inverse direction; the orchestrator routes forward
-/// patches only through `sync_plan` and reverse patches only through
-/// `remove_plan`. Either shape — a single bidirectional struct or a pair of
-/// directional structs — satisfies the trait.
+/// Applies agentspec-owned entries into a host config file (e.g., merging
+/// hook entries into `settings.json`). The sync pipeline constructs these
+/// via `Adapter::compile` and runs them after manifest-tracked file writes.
 ///
 /// `Send + Sync` future-proofs the trait for parallel emit.
-pub trait ConfigPatch: std::fmt::Debug + Send + Sync {
-    /// Apply the forward (sync) direction of the patch.
+pub trait ForwardPatch: std::fmt::Debug + Send + Sync {
     fn run(&self, dry_run: bool) -> anyhow::Result<()>;
+}
 
-    /// Apply the reverse (remove) direction of the patch — strip
-    /// agentspec-owned entries identified by on-disk `_agentspec_id`
-    /// sentinels.
+/// Reverse-direction post-write patch (remove/prune pipeline).
+///
+/// Strips agentspec-owned entries identified by on-disk `_agentspec_id`
+/// sentinels from a host config file. The remove pipeline constructs these
+/// via `Adapter::removal_patches` and runs them after manifest-tracked
+/// file deletions.
+///
+/// `Send + Sync` future-proofs the trait for parallel emit.
+pub trait ReversePatch: std::fmt::Debug + Send + Sync {
     fn run_remove(&self, dry_run: bool) -> anyhow::Result<()>;
 }
 
@@ -302,7 +303,7 @@ pub struct CompilePlan {
 #[derive(Debug)]
 pub struct SyncPlan {
     pub writes: Vec<ManifestTrackedWrite>,
-    pub post_write_patches: Vec<Box<dyn ConfigPatch>>,
+    pub post_write_patches: Vec<Box<dyn ForwardPatch>>,
 }
 
 /// Plan for the `remove` pipeline: manifest-driven removals followed by
@@ -311,7 +312,7 @@ pub struct SyncPlan {
 #[derive(Debug)]
 pub struct RemovePlan {
     pub writes: Vec<RemoveWrite>,
-    pub post_write_patches: Vec<Box<dyn ConfigPatch>>,
+    pub post_write_patches: Vec<Box<dyn ReversePatch>>,
 }
 
 #[cfg(test)]

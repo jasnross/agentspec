@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use crate::adapters::{CompileCtx, SyncDestinationMode};
-use crate::plan::{ConfigPatch, FileKind};
+use crate::plan::{FileKind, ForwardPatch};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
 use crate::spec::{HookEvent, Spec};
@@ -225,14 +225,14 @@ impl Default for ProviderCompileTarget {
 /// Result of compiling all specs for all target providers.
 ///
 /// `files` carries every emitted file across all providers; `patches` carries
-/// the per-provider post-write `ConfigPatch` instances that downstream
+/// the per-provider forward-direction `ForwardPatch` instances that downstream
 /// `sync_plan` drains; `dest_roots` records each provider's adapter-computed
 /// sync destination root so `sync_plan` can anchor `ManifestTrackedWrite`
 /// destinations without re-calling adapter path methods.
 #[derive(Debug, Default)]
 pub struct CompileResult {
     pub files: Vec<GeneratedFile>,
-    pub patches: HashMap<Provider, Vec<Box<dyn ConfigPatch>>>,
+    pub patches: HashMap<Provider, Vec<Box<dyn ForwardPatch>>>,
     pub dest_roots: HashMap<Provider, PathBuf>,
 }
 
@@ -394,7 +394,7 @@ pub(crate) fn compile_specs(
     cwd: &Path,
 ) -> Result<(CompileResult, CompileDiagnostics)> {
     let mut files: Vec<GeneratedFile> = Vec::new();
-    let mut patches: HashMap<Provider, Vec<Box<dyn ConfigPatch>>> = HashMap::new();
+    let mut patches: HashMap<Provider, Vec<Box<dyn ForwardPatch>>> = HashMap::new();
     let mut dest_roots: HashMap<Provider, PathBuf> = HashMap::new();
     let mut diagnostics = CompileDiagnostics::default();
 
