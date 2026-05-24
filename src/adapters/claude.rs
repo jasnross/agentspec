@@ -738,7 +738,6 @@ fn adapt_tool(tool: &ToolFrontmatter) -> Vec<ClaudeTool> {
             ClaudeTool::TaskGet,
             ClaudeTool::TaskList,
             ClaudeTool::TaskUpdate,
-            ClaudeTool::TaskStop,
         ],
         ToolFrontmatter::Subagent => vec![ClaudeTool::Agent, ClaudeTool::SendMessage],
         ToolFrontmatter::Skill => vec![ClaudeTool::Skill],
@@ -1039,6 +1038,13 @@ mod tests {
         let tools = adapt_tool(&ToolFrontmatter::Skill);
         let yaml = serde_yml::to_string(&tools).expect("expected value");
         assert_eq!(yaml, "- Skill\n");
+    }
+
+    #[test]
+    fn test_adapt_tool_tasks_maps_to_task_tracking_tools() {
+        let tools = adapt_tool(&ToolFrontmatter::Tasks);
+        let yaml = serde_yml::to_string(&tools).expect("expected value");
+        assert_eq!(yaml, "- TaskCreate\n- TaskGet\n- TaskList\n- TaskUpdate\n");
     }
 
     // -- Hook synthesis tests --
