@@ -15,6 +15,10 @@ use crate::config::SyncMode;
 )]
 #[command(version)]
 pub struct Cli {
+    /// Path to agentspec.toml (default: discovered by walking up from cwd)
+    #[arg(long, global = true)]
+    pub config: Option<PathBuf>,
+
     #[command(subcommand)]
     pub command: Command,
 }

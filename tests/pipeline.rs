@@ -4866,3 +4866,45 @@ fn test_compile_extra_fragment_dir_collision_errors() {
         "stderr should mention collision: {stderr}"
     );
 }
+
+#[test]
+fn test_config_flag_loads_specified_file() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let toml_path = dir.join("agentspec.toml");
+
+    let output = std::process::Command::new(agentspec())
+        .arg("--config")
+        .arg(&toml_path)
+        .arg("validate")
+        .current_dir(tmp.path())
+        .output()
+        .expect("failed to run agentspec --config validate");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "--config validate failed:\n{stderr}"
+    );
+    assert!(stderr.contains("validation complete"), "stderr: {stderr}");
+}
+
+#[test]
+fn test_config_flag_missing_file_errors() {
+    let output = std::process::Command::new(agentspec())
+        .arg("--config")
+        .arg("/tmp/nonexistent-agentspec.toml")
+        .arg("validate")
+        .output()
+        .expect("failed to run agentspec --config validate");
+
+    assert!(
+        !output.status.success(),
+        "--config with missing file should fail"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("failed to read"),
+        "stderr should mention failed read: {stderr}"
+    );
+}

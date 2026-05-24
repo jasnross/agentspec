@@ -33,6 +33,17 @@ pub struct AgentspecConfig {
 }
 
 impl AgentspecConfig {
+    /// Load a specific `agentspec.toml` file, deriving `root_dir` from the
+    /// file's parent directory. Unlike [`discover`](Self::discover), this does
+    /// not walk the filesystem — it reads the exact path given.
+    pub fn load(path: &Path) -> Result<Self> {
+        let root_dir = path
+            .parent()
+            .map(Path::to_path_buf)
+            .with_context(|| format!("{} has no parent directory", path.display()))?;
+        Self::read_and_parse(path, root_dir)
+    }
+
     /// Discover `agentspec.toml` by walking up from `start_dir`.
     /// If not found, returns a default config rooted at `start_dir`.
     pub fn discover(start_dir: &Path) -> Result<Self> {
@@ -40,21 +51,7 @@ impl AgentspecConfig {
         loop {
             let candidate = dir.join("agentspec.toml");
             if candidate.is_file() {
-                let content = std::fs::read_to_string(&candidate)
-                    .with_context(|| format!("failed to read {}", candidate.display()))?;
-                let mut config: AgentspecConfig =
-                    serde_path_to_error::deserialize(toml::de::Deserializer::new(&content))
-                        .map_err(|error| {
-                            let path = error.path().to_string();
-                            let location = if path.is_empty() { "<root>" } else { &path };
-                            anyhow!(
-                                "failed to parse {} at `{location}`: {}",
-                                candidate.display(),
-                                error.into_inner()
-                            )
-                        })?;
-                config.root_dir = dir;
-                return Ok(config);
+                return Self::read_and_parse(&candidate, dir);
             }
             if !dir.pop() {
                 break;
@@ -66,6 +63,29 @@ impl AgentspecConfig {
             root_dir: start_dir.to_path_buf(),
             ..Default::default()
         })
+    }
+
+    fn read_and_parse(path: &Path, root_dir: PathBuf) -> Result<Self> {
+        let content = std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        let mut config: AgentspecConfig = serde_path_to_error::deserialize(
+            toml::de::Deserializer::new(&content),
+        )
+        .map_err(|error| {
+            let field_path = error.path().to_string();
+            let location = if field_path.is_empty() {
+                "<root>"
+            } else {
+                &field_path
+            };
+            anyhow!(
+                "failed to parse {} at `{location}`: {}",
+                path.display(),
+                error.into_inner()
+            )
+        })?;
+        config.root_dir = root_dir;
+        Ok(config)
     }
 
     /// Resolve a config-relative path to an absolute path.
@@ -1347,5 +1367,64 @@ sources_dir = "spec"
         fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
         let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
         assert!(config.spec.extra_fragment_dirs.is_empty());
+    }
+
+    #[test]
+    fn test_load_reads_specific_file() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[spec]
+sources_dir = "my/specs"
+
+[compile]
+output_dir = "out"
+"#;
+        let toml_path = tmp.path().join("agentspec.toml");
+        fs::write(&toml_path, toml_content).expect("expected value");
+        let config = AgentspecConfig::load(&toml_path).expect("expected value");
+        assert_eq!(config.spec.sources_dir, PathBuf::from("my/specs"));
+        assert_eq!(config.compile.output_dir, PathBuf::from("out"));
+    }
+
+    #[test]
+    fn test_load_missing_file_errors() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let missing = tmp.path().join("nonexistent.toml");
+        let err = AgentspecConfig::load(&missing).expect_err("expected file-not-found error");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("failed to read"),
+            "error should mention reading: {msg}"
+        );
+        assert!(
+            msg.contains("nonexistent.toml"),
+            "error should contain the path: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_load_sets_root_dir_to_parent() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let subdir = tmp.path().join("nested").join("dir");
+        fs::create_dir_all(&subdir).expect("expected value");
+        let toml_path = subdir.join("agentspec.toml");
+        fs::write(&toml_path, "").expect("expected value");
+        let config = AgentspecConfig::load(&toml_path).expect("expected value");
+        assert_eq!(config.root_dir, subdir);
+    }
+
+    #[test]
+    fn test_load_parse_error_includes_path() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r"
+[presets.bad]
+claude = 42
+";
+        let toml_path = tmp.path().join("agentspec.toml");
+        fs::write(&toml_path, toml_content).expect("expected value");
+        let err = AgentspecConfig::load(&toml_path).expect_err("expected parse error");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("failed to parse"), "error: {msg}");
+        assert!(msg.contains("presets.bad.claude"), "error: {msg}");
     }
 }

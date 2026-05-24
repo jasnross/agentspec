@@ -41,7 +41,17 @@ fn main() -> Result<()> {
     }
 
     let cwd = std::env::current_dir().context("failed to determine current directory")?;
-    let config = AgentspecConfig::discover(&cwd)?;
+    let config = match &cli.config {
+        Some(path) => {
+            let abs = if path.is_relative() {
+                cwd.join(path)
+            } else {
+                path.clone()
+            };
+            AgentspecConfig::load(&abs)?
+        }
+        None => AgentspecConfig::discover(&cwd)?,
+    };
 
     let sources = config.resolve(&config.spec.sources_dir);
     let ignore = config.spec.compile_ignore_matcher()?;
