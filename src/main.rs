@@ -128,7 +128,7 @@ fn main() -> Result<()> {
             } else {
                 let home = home_dir()?;
                 let plan = remove::remove_plan(&targets, &home, &cwd);
-                emit_remove(&plan, remove_args.dry_run)?;
+                emit_remove(&plan, remove_args.dry_run, remove_args.common.verbose)?;
             }
         }
         Command::Compile(compile_args) => {

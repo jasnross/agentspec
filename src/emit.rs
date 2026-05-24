@@ -95,16 +95,19 @@ pub fn emit_sync(plan: &SyncPlan, dry_run: bool, verbose: bool) -> Result<()> {
 /// Execute a [`RemovePlan`]: delete every manifest-tracked file at each
 /// destination, render a remove report to stderr, then run reverse-direction
 /// post-write patches (settings/instructions tidy).
-pub fn emit_remove(plan: &RemovePlan, dry_run: bool) -> Result<()> {
+pub fn emit_remove(plan: &RemovePlan, dry_run: bool, verbose: bool) -> Result<()> {
     let mut remove_stats: Vec<RemoveStats> = Vec::new();
+    let mut skipped: Vec<&RemoveWrite> = Vec::new();
     for w in &plan.writes {
         if let Some(stats) = remove_manifest_tracked(w, dry_run)? {
             remove_stats.push(stats);
+        } else {
+            skipped.push(w);
         }
     }
-    if !remove_stats.is_empty() {
+    if !remove_stats.is_empty() || (verbose && !skipped.is_empty()) {
         let mut stderr = std::io::stderr();
-        let _ = render_remove_report(&mut stderr, &remove_stats, dry_run);
+        let _ = render_remove_report(&mut stderr, &remove_stats, &skipped, dry_run, verbose);
     }
     for patch in &plan.post_write_patches {
         patch.run_remove(dry_run)?;
@@ -283,7 +286,9 @@ fn render_table(
 fn render_remove_report(
     out: &mut dyn std::io::Write,
     stats: &[RemoveStats],
+    skipped: &[&RemoveWrite],
     dry_run: bool,
+    verbose: bool,
 ) -> std::io::Result<()> {
     let action = if dry_run { "would remove" } else { "removed" };
     let rmdir_phrase = if dry_run { "would rmdir" } else { "rmdir'd" };
@@ -313,6 +318,18 @@ fn render_remove_report(
         )?;
     }
 
+    if verbose {
+        for w in skipped {
+            writeln!(
+                out,
+                "{prefix}{} {} ({}): no manifest (nothing to remove)",
+                w.provider.display_name(),
+                w.kind.display_name(),
+                w.destination.display(),
+            )?;
+        }
+    }
+
     let total_files: usize = stats.iter().map(|s| s.files_removed).sum();
     let total_manifests: usize = stats.iter().filter(|s| s.manifest_removed).count();
     let total_dirs: usize = stats.iter().filter(|s| s.dir_rmdir).count();
@@ -328,6 +345,11 @@ fn render_remove_report(
         out,
         "{prefix}{n_dests} {dest_word}; {action} {total_files} file(s), {total_manifests} manifest(s), {total_dirs} dir(s) rmdir'd"
     )?;
+
+    if verbose && !skipped.is_empty() {
+        writeln!(out, "{prefix}{} skipped (no manifest)", skipped.len())?;
+    }
+
     Ok(())
 }
 
@@ -1381,5 +1403,120 @@ mod tests {
         emit_sync(&plan, true, false).expect("expected value");
 
         assert!(!dest.exists(), "dry-run must not create directory");
+    }
+
+    fn make_remove_stats(
+        provider: Provider,
+        kind: FileKind,
+        destination: &Path,
+        files_removed: usize,
+    ) -> RemoveStats {
+        RemoveStats {
+            provider,
+            kind,
+            destination: destination.to_path_buf(),
+            files_removed,
+            manifest_removed: true,
+            dir_rmdir: false,
+        }
+    }
+
+    fn make_remove_write(provider: Provider, kind: FileKind, destination: &Path) -> RemoveWrite {
+        RemoveWrite {
+            provider,
+            kind,
+            destination: destination.to_path_buf(),
+        }
+    }
+
+    #[test]
+    fn test_render_remove_report_non_verbose_hides_skipped() {
+        let skipped_write = make_remove_write(
+            Provider::Claude,
+            FileKind::Agents,
+            Path::new("/home/.claude/agents"),
+        );
+        let skipped: Vec<&RemoveWrite> = vec![&skipped_write];
+        let mut buf = Vec::new();
+        render_remove_report(&mut buf, &[], &skipped, false, false).expect("expected value");
+        let output = String::from_utf8(buf).expect("expected value");
+        assert!(
+            !output.contains("no manifest"),
+            "non-verbose should hide skipped: {output}"
+        );
+    }
+
+    #[test]
+    fn test_render_remove_report_verbose_shows_skipped() {
+        let skipped_write = make_remove_write(
+            Provider::Claude,
+            FileKind::Agents,
+            Path::new("/home/.claude/agents"),
+        );
+        let skipped: Vec<&RemoveWrite> = vec![&skipped_write];
+        let mut buf = Vec::new();
+        render_remove_report(&mut buf, &[], &skipped, false, true).expect("expected value");
+        let output = String::from_utf8(buf).expect("expected value");
+        assert!(
+            output.contains("no manifest"),
+            "verbose should show skipped: {output}"
+        );
+        assert!(
+            output.contains("Claude"),
+            "should include provider name: {output}"
+        );
+        assert!(output.contains("agents"), "should include kind: {output}");
+        assert!(
+            output.contains("/home/.claude/agents"),
+            "should include destination: {output}"
+        );
+    }
+
+    #[test]
+    fn test_render_remove_report_verbose_footer_includes_skipped_count() {
+        let skipped_write1 = make_remove_write(
+            Provider::Claude,
+            FileKind::Agents,
+            Path::new("/home/.claude/agents"),
+        );
+        let skipped_write2 = make_remove_write(
+            Provider::Claude,
+            FileKind::Skills,
+            Path::new("/home/.claude/skills"),
+        );
+        let skipped: Vec<&RemoveWrite> = vec![&skipped_write1, &skipped_write2];
+        let mut buf = Vec::new();
+        render_remove_report(&mut buf, &[], &skipped, false, true).expect("expected value");
+        let output = String::from_utf8(buf).expect("expected value");
+        assert!(
+            output.contains("2 skipped (no manifest)"),
+            "verbose footer should include skipped count: {output}"
+        );
+    }
+
+    #[test]
+    fn test_render_remove_report_stats_only_no_skipped() {
+        let stats = vec![make_remove_stats(
+            Provider::Claude,
+            FileKind::Skills,
+            Path::new("/home/.claude/skills"),
+            3,
+        )];
+        let skipped: Vec<&RemoveWrite> = vec![];
+        let mut buf = Vec::new();
+        render_remove_report(&mut buf, &stats, &skipped, false, false).expect("expected value");
+        let output = String::from_utf8(buf).expect("expected value");
+        assert!(
+            output.contains("removed 3 file(s)"),
+            "should show removal stats: {output}"
+        );
+        assert!(
+            !output.contains("no manifest"),
+            "should not mention skipped: {output}"
+        );
+        assert!(
+            !output.contains("skipped"),
+            "should not mention skipped in footer: {output}"
+        );
     }
 }
