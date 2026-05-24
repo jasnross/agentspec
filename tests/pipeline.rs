@@ -4908,3 +4908,173 @@ fn test_config_flag_missing_file_errors() {
         "stderr should mention failed read: {stderr}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// `agentspec prune` tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_prune_help_lists_subcommand() {
+    let output = std::process::Command::new(agentspec())
+        .args(["prune", "--help"])
+        .output()
+        .expect("failed to run agentspec prune --help");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success());
+    assert!(stdout.contains("--dry-run"));
+    assert!(stdout.contains("--provider"));
+    assert!(stdout.contains("--verbose"));
+}
+
+#[test]
+fn test_prune_with_no_orphaned_entries_reports_nothing() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = tmp.path();
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        "[spec]\nsources_dir = \"spec\"\n",
+    )
+    .expect("write config");
+    let home = dir.join("home");
+    std::fs::create_dir_all(&home).expect("mkdir home");
+
+    let output = run_agentspec(&["prune"], dir, &home).expect("agentspec spawn");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "prune should exit 0:\n{stderr}");
+    assert!(
+        stderr.contains("nothing to prune"),
+        "expected 'nothing to prune' in stderr, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn test_prune_strips_orphaned_agentspec_entries_from_settings_json() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = tmp.path();
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        "[spec]\nsources_dir = \"spec\"\n",
+    )
+    .expect("write config");
+    let home = dir.join("home");
+    let claude_dir = home.join(".claude");
+    std::fs::create_dir_all(&claude_dir).expect("mkdir .claude");
+
+    // Plant a settings.json with orphaned agentspec entries
+    std::fs::write(
+        claude_dir.join("settings.json"),
+        r#"{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "echo orphan", "_agentspec_id": "orphan-hook" }
+        ]
+      }
+    ]
+  }
+}"#,
+    )
+    .expect("write settings.json");
+
+    let output =
+        run_agentspec(&["prune", "--provider", "claude"], dir, &home).expect("agentspec spawn");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "prune should exit 0:\n{stderr}");
+
+    // The file had only agentspec entries — after prune, the delete-on-empty
+    // behavior removes the now-empty file entirely.
+    assert!(
+        !claude_dir.join("settings.json").exists(),
+        "settings.json should be deleted after pruning all entries"
+    );
+}
+
+#[test]
+fn test_prune_dry_run_does_not_modify_files() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = tmp.path();
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        "[spec]\nsources_dir = \"spec\"\n",
+    )
+    .expect("write config");
+    let home = dir.join("home");
+    let claude_dir = home.join(".claude");
+    std::fs::create_dir_all(&claude_dir).expect("mkdir .claude");
+
+    let original = r#"{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "echo orphan", "_agentspec_id": "orphan-hook" }
+        ]
+      }
+    ]
+  }
+}"#;
+    std::fs::write(claude_dir.join("settings.json"), original).expect("write settings.json");
+
+    let output = run_agentspec(&["prune", "--dry-run"], dir, &home).expect("agentspec spawn");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "prune --dry-run should exit 0:\n{stderr}"
+    );
+
+    let after = std::fs::read_to_string(claude_dir.join("settings.json"))
+        .expect("read settings.json after dry-run");
+    assert_eq!(after, original, "dry-run should not modify the file");
+}
+
+#[test]
+fn test_prune_with_provider_flag_only_checks_that_provider() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = tmp.path();
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        "[spec]\nsources_dir = \"spec\"\n",
+    )
+    .expect("write config");
+    let home = dir.join("home");
+
+    // Create orphaned entries for both Claude and Cursor
+    let claude_dir = home.join(".claude");
+    std::fs::create_dir_all(&claude_dir).expect("mkdir .claude");
+    std::fs::write(
+        claude_dir.join("settings.json"),
+        r#"{ "hooks": { "PreToolUse": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "echo", "_agentspec_id": "a" }] }] } }"#,
+    )
+    .expect("write claude settings");
+
+    let cursor_dir = home.join(".cursor");
+    std::fs::create_dir_all(&cursor_dir).expect("mkdir .cursor");
+    std::fs::write(
+        cursor_dir.join("hooks.json"),
+        r#"{ "hooks": { "PreToolUse": [{ "type": "command", "command": "echo", "_agentspec_id": "b" }] } }"#,
+    )
+    .expect("write cursor hooks");
+
+    // Prune only cursor
+    let output =
+        run_agentspec(&["prune", "--provider", "cursor"], dir, &home).expect("agentspec spawn");
+    assert!(output.status.success());
+
+    // Claude should be untouched
+    let claude_content =
+        std::fs::read_to_string(claude_dir.join("settings.json")).expect("read claude settings");
+    assert!(
+        claude_content.contains("_agentspec_id"),
+        "claude settings should be untouched"
+    );
+
+    // Cursor should be pruned — file only had agentspec entries, so
+    // delete-on-empty removes it entirely
+    assert!(
+        !cursor_dir.join("hooks.json").exists(),
+        "cursor hooks.json should be deleted after pruning all entries"
+    );
+}

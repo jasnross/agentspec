@@ -8,6 +8,7 @@ use jsonc_parser::cst::{CstInputValue, CstObject, CstRootNode};
 use serde::Serialize;
 use strum::VariantArray as _;
 
+use super::hooks_helpers::has_agentspec_entries;
 use super::{Adapter, AdapterOutput, CompileCtx, RemovalOutput, RemoveCtx, SyncDestinationMode};
 use crate::compile::{AdapterConfig, GeneratedFile};
 use crate::plan::{FileKind, ForwardPatch, RemovePatchReport, ReversePatch};
@@ -129,6 +130,30 @@ impl Adapter for OpenCodeAdapter {
             host_path: dest_root.join(HOST_FILENAME),
         })];
         RemovalOutput { patches, dest_root }
+    }
+
+    fn prune_patches(&self, home: &Path, cwd: &Path) -> Vec<Box<dyn ReversePatch>> {
+        let rules_dir_name = self.dir_for_kind(FileKind::Rules).unwrap_or("rules");
+        let candidates = [
+            (
+                home.join(".config/opencode"),
+                home.join(".config/opencode").join(rules_dir_name),
+            ),
+            (
+                cwd.join(".opencode"),
+                cwd.join(".opencode").join(rules_dir_name),
+            ),
+        ];
+        candidates
+            .into_iter()
+            .filter(|(dest_root, _)| has_agentspec_entries(&dest_root.join(HOST_FILENAME)))
+            .map(|(dest_root, rules_dest_dir)| -> Box<dyn ReversePatch> {
+                Box::new(OpenCodeRemoveInstructionsPatch {
+                    rules_dest_dir,
+                    host_path: dest_root.join(HOST_FILENAME),
+                })
+            })
+            .collect()
     }
 
     /// Resolve a canonical tool to the name an `OpenCode` spec body (or

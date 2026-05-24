@@ -41,6 +41,37 @@ fn main() -> Result<()> {
     }
 
     let cwd = std::env::current_dir().context("failed to determine current directory")?;
+
+    // Prune needs no config or spec loading — it discovers host files by
+    // scanning well-known paths relative to home/cwd.
+    if let Command::Prune(ref prune_args) = cli.command {
+        let home = home_dir()?;
+        let providers: Vec<Provider> = if prune_args.provider.is_empty() {
+            Provider::VARIANTS.to_vec()
+        } else {
+            prune_args.provider.clone()
+        };
+
+        let mut pruned_any = false;
+        for provider in &providers {
+            let patches = provider.adapter().prune_patches(&home, &cwd);
+            if patches.is_empty() {
+                if prune_args.verbose {
+                    eprintln!("{provider}: no host config files found");
+                }
+                continue;
+            }
+            for patch in patches {
+                patch.run_remove(prune_args.dry_run)?;
+                pruned_any = true;
+            }
+        }
+
+        if !pruned_any {
+            eprintln!("nothing to prune");
+        }
+        return Ok(());
+    }
     let config = match &cli.config {
         Some(path) => {
             let abs = if path.is_relative() {
@@ -185,7 +216,7 @@ fn main() -> Result<()> {
                 hook::run_hook_test(test_args, &dirs, &validated)?;
             }
         },
-        Command::Completions { .. } => unreachable!("handled above"),
+        Command::Prune(_) | Command::Completions { .. } => unreachable!("handled above"),
     }
 
     Ok(())

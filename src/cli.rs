@@ -37,6 +37,9 @@ pub enum Command {
     /// Remove agentspec-managed files and config entries from each tool's config directory
     Remove(RemoveArgs),
 
+    /// Strip orphaned agentspec entries from host config files (no sync config required)
+    Prune(PruneArgs),
+
     /// Hook development and debugging tools
     Hook(HookCommand),
 
@@ -109,6 +112,22 @@ pub struct RemoveArgs {
     /// Specify which sync mode to reverse
     #[arg(long, value_enum)]
     pub mode: Option<SyncMode>,
+}
+
+/// Arguments for the `prune` subcommand.
+#[derive(Debug, Parser)]
+pub struct PruneArgs {
+    /// Show what would be pruned without making changes
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Providers to prune (repeatable; default: all providers)
+    #[arg(long, value_delimiter = ',')]
+    pub provider: Vec<Provider>,
+
+    /// Show all checked paths, including those with no agentspec entries
+    #[arg(long)]
+    pub verbose: bool,
 }
 
 #[derive(Debug, Parser)]

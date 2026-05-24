@@ -114,6 +114,16 @@ pub(super) fn prune_empty_event_arrays(hooks_obj: &CstObject) {
     }
 }
 
+/// Quick heuristic: does the file at `path` contain `_agentspec_id`?
+///
+/// Used by `prune_patches` implementations to skip files that have no
+/// agentspec-owned entries, avoiding noisy "N user entries remain" messages
+/// for clean host configs. Falls back to `false` when the file is absent
+/// or unreadable.
+pub(super) fn has_agentspec_entries(path: &std::path::Path) -> bool {
+    std::fs::read_to_string(path).is_ok_and(|content| content.contains("_agentspec_id"))
+}
+
 #[cfg(test)]
 mod tests {
     use jsonc_parser::ParseOptions;

@@ -325,6 +325,14 @@ pub trait Adapter: std::fmt::Debug + Send + Sync {
         true
     }
 
+    /// Construct reverse patches for all discoverable host-config paths.
+    ///
+    /// Used by the `prune` command to strip orphaned `_agentspec_id`-tagged
+    /// entries without requiring sync configuration. Scans deterministic
+    /// user-mode and project-mode paths; skips any path that doesn't exist
+    /// on disk.
+    fn prune_patches(&self, home: &Path, cwd: &Path) -> Vec<Box<dyn ReversePatch>>;
+
     /// Subdirectory name under the destination root for `kind`.
     ///
     /// Single source of truth for the per-`FileKind` directory mapping. The

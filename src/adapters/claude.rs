@@ -8,8 +8,8 @@ use serde::Serialize;
 
 use super::hook_compile::{self, HookSynthesis};
 use super::hooks_helpers::{
-    is_owned_entry, node_as_object, open_or_create_array, open_or_create_object,
-    prune_empty_event_arrays, value_to_cst_input,
+    has_agentspec_entries, is_owned_entry, node_as_object, open_or_create_array,
+    open_or_create_object, prune_empty_event_arrays, value_to_cst_input,
 };
 use super::{
     Adapter, AdapterOutput, CompileCtx, RemovalOutput, RemoveCtx, SyncDestinationMode, TidyOutcome,
@@ -177,6 +177,20 @@ impl Adapter for ClaudeAdapter {
             }));
         }
         RemovalOutput { patches, dest_root }
+    }
+
+    fn prune_patches(&self, home: &Path, cwd: &Path) -> Vec<Box<dyn ReversePatch>> {
+        let candidates = [
+            home.join(HOOK_DOTDIR).join(HOST_FILENAME),
+            cwd.join(HOOK_DOTDIR).join(HOST_FILENAME),
+        ];
+        candidates
+            .into_iter()
+            .filter(|p| has_agentspec_entries(p))
+            .map(|host_path| -> Box<dyn ReversePatch> {
+                Box::new(ClaudeRemoveHooksPatch { host_path })
+            })
+            .collect()
     }
 
     /// Resolve a canonical tool to the name a Claude spec body should reference.
