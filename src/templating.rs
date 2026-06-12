@@ -1,6 +1,7 @@
 mod context;
 mod environment;
 mod fragments;
+mod validation;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -67,6 +68,10 @@ impl Templating {
         spec: &Spec,
     ) -> Result<Environment<'_>> {
         build_environment(&self.fragment_map, &self.template_map, provider, spec)
+    }
+
+    pub(crate) fn template_map(&self) -> &HashMap<String, String> {
+        &self.template_map
     }
 
     #[cfg(test)]

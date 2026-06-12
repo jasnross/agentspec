@@ -8,6 +8,7 @@ use walkdir::WalkDir;
 
 use super::Templating;
 use super::context::TemplateContext;
+use super::validation::validate_child_blocks;
 use crate::provider::Provider;
 use crate::spec::Spec;
 
@@ -28,6 +29,8 @@ pub fn resolve_fragments(
     let mut resolved = Vec::with_capacity(specs.len());
 
     for mut spec in specs {
+        validate_child_blocks(spec.body(), templating.template_map(), spec.path())?;
+
         let env = templating.build_environment(provider, &spec)?;
         let template = env
             .template_from_str(spec.body())
@@ -735,5 +738,39 @@ mod tests {
             panic!("expected Agent variant")
         };
         assert_eq!(s.body, "Header\ncustom body\nFooter");
+    }
+
+    #[test]
+    fn test_resolve_fragments_rejects_unrecognized_block() {
+        let templates = HashMap::from([(
+            "templates/base.md".to_string(),
+            "{% block title %}default{% endblock %}".to_string(),
+        )]);
+        let templating = Templating::from_fragments_and_templates(HashMap::new(), templates);
+
+        let specs = vec![Spec::Agent(AgentSpec {
+            path: "bad-spec.md".into(),
+            frontmatter: AgentFrontmatter {
+                id: "bad".to_string(),
+                description: "bad".to_string(),
+                tags: None,
+                execution: None,
+                capabilities: None,
+            },
+            body: concat!(
+                "{% extends \"templates/base.md\" %}",
+                "{% block typo %}oops{% endblock %}"
+            )
+            .to_string(),
+        })];
+
+        let err = resolve_fragments(specs, &templating, None, &empty_context())
+            .expect_err("expected error for unrecognized block");
+        let msg = err.to_string();
+        assert!(msg.contains("typo"), "error should name the block: {msg}");
+        assert!(
+            msg.contains("bad-spec.md"),
+            "error should name the spec: {msg}"
+        );
     }
 }
