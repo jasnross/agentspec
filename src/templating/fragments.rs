@@ -86,6 +86,40 @@ pub fn load_fragments(fragments_dir: &Path) -> Result<HashMap<String, String>> {
     Ok(fragments)
 }
 
+/// Load template files from a directory. Returns a map of template name to content.
+///
+/// Template names are prefixed with `templates/` to match the
+/// `{% extends "templates/<name>.md" %}` syntax used in spec bodies. A file at
+/// `templates/critique.md` keys as `templates/critique.md`.
+pub fn load_templates(templates_dir: &Path) -> Result<HashMap<String, String>> {
+    let mut templates = HashMap::new();
+
+    if !templates_dir.is_dir() {
+        return Ok(templates);
+    }
+
+    let entries = WalkDir::new(templates_dir)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file() && e.path().extension().is_some_and(|ext| ext == "md"));
+
+    for entry in entries {
+        let path = entry.path();
+        let relative = path
+            .strip_prefix(templates_dir)
+            .context("failed to compute relative path for template")?;
+
+        let name = format!("templates/{}", relative.to_string_lossy());
+
+        let content = fs::read_to_string(path)
+            .with_context(|| format!("failed to read template {}", path.display()))?;
+
+        templates.insert(name, content);
+    }
+
+    Ok(templates)
+}
+
 /// Load and merge fragments from the local directory plus zero or more extra
 /// directories. Returns a flat `HashMap<String, String>` (fragment name →
 /// content) suitable for registering into a `MiniJinja` environment.
@@ -614,5 +648,92 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert_eq!(result["top.md"], "top");
         assert_eq!(result["sub/nested.md"], "nested");
+    }
+
+    #[test]
+    fn test_load_templates_basic() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let tpl_dir = tmp.path().join("templates");
+        fs::create_dir_all(&tpl_dir).expect("expected value");
+        fs::write(tpl_dir.join("critique.md"), "template content").expect("expected value");
+
+        let templates = load_templates(&tpl_dir).expect("expected value");
+        assert_eq!(templates.len(), 1);
+        assert_eq!(templates["templates/critique.md"], "template content");
+    }
+
+    #[test]
+    fn test_load_templates_nested_subdir() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let tpl_dir = tmp.path().join("templates");
+        fs::create_dir_all(tpl_dir.join("review")).expect("expected value");
+        fs::write(tpl_dir.join("review/base.md"), "nested template").expect("expected value");
+
+        let templates = load_templates(&tpl_dir).expect("expected value");
+        assert_eq!(templates.len(), 1);
+        assert_eq!(templates["templates/review/base.md"], "nested template");
+    }
+
+    #[test]
+    fn test_load_templates_nonexistent_dir() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let templates = load_templates(&tmp.path().join("nonexistent")).expect("expected value");
+        assert!(templates.is_empty());
+    }
+
+    #[test]
+    fn test_template_fragment_collision_detected() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let frag_dir = tmp.path().join("fragments");
+        let tpl_dir = tmp.path().join("templates");
+
+        // A fragment at fragments/templates/x.md keys as "templates/x.md"
+        fs::create_dir_all(frag_dir.join("templates")).expect("expected value");
+        fs::write(frag_dir.join("templates/x.md"), "fragment content").expect("expected value");
+
+        // A template at templates/x.md also keys as "templates/x.md"
+        fs::create_dir_all(&tpl_dir).expect("expected value");
+        fs::write(tpl_dir.join("x.md"), "template content").expect("expected value");
+
+        let err = Templating::load(&frag_dir, &[], &tpl_dir).expect_err("expected collision error");
+        let msg = err.to_string();
+        assert!(msg.contains("collision"), "error: {msg}");
+        assert!(msg.contains("templates/x.md"), "error: {msg}");
+    }
+
+    #[test]
+    fn test_resolve_fragments_with_extends() {
+        let mut fragments = HashMap::new();
+        fragments.insert("note.md".to_string(), "a note".to_string());
+
+        let mut templates = HashMap::new();
+        templates.insert(
+            "templates/base.md".to_string(),
+            "Header\n{% block body %}default{% endblock %}\nFooter".to_string(),
+        );
+        let templating = Templating::from_fragments_and_templates(fragments, templates);
+
+        let specs = vec![Spec::Agent(AgentSpec {
+            path: "test.md".into(),
+            frontmatter: AgentFrontmatter {
+                id: "test".to_string(),
+                description: "test".to_string(),
+                tags: None,
+                execution: None,
+                capabilities: None,
+            },
+            body: concat!(
+                "{% extends \"templates/base.md\" %}",
+                "{% block body %}custom body{% endblock %}"
+            )
+            .to_string(),
+        })];
+
+        let resolved =
+            resolve_fragments(specs, &templating, None, &empty_context()).expect("expected value");
+        let Spec::Agent(ref s) = resolved[0] else {
+            panic!("expected Agent variant")
+        };
+        assert_eq!(s.body, "Header\ncustom body\nFooter");
     }
 }

@@ -316,7 +316,11 @@ fn load_and_validate(
 fn load_templating(config: &AgentspecConfig) -> Result<Templating> {
     let sources = config.resolve(&config.spec.sources_dir);
     let extra_dirs = resolve_extra_fragment_dirs(config)?;
-    Templating::load(&sources.join("fragments"), &extra_dirs)
+    Templating::load(
+        &sources.join("fragments"),
+        &extra_dirs,
+        &sources.join("templates"),
+    )
 }
 
 fn resolve_extra_fragment_dirs(config: &AgentspecConfig) -> Result<Vec<std::path::PathBuf>> {

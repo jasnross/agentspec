@@ -23,6 +23,7 @@ use crate::spec::{Spec, ToolFrontmatter};
 /// unknown function calls raise `UnknownFunction` regardless.)
 pub fn build_environment(
     fragments: &HashMap<String, String>,
+    templates: &HashMap<String, String>,
     provider: Option<Provider>,
     spec: &Spec,
 ) -> Result<Environment<'static>> {
@@ -34,6 +35,11 @@ pub fn build_environment(
     for (name, content) in fragments {
         env.add_template_owned(name.clone(), content.clone())
             .with_context(|| format!("failed to parse fragment '{name}'"))?;
+    }
+
+    for (name, content) in templates {
+        env.add_template_owned(name.clone(), content.clone())
+            .with_context(|| format!("failed to parse template '{name}'"))?;
     }
 
     env.add_function("tool", move |name: String| resolve_tool(&name, provider));
@@ -193,7 +199,8 @@ mod tests {
 
     fn render_body(body: &str, provider: Option<Provider>, spec: &Spec) -> String {
         let fragments = HashMap::new();
-        let env = build_environment(&fragments, provider, spec).expect("expected value");
+        let env =
+            build_environment(&fragments, &HashMap::new(), provider, spec).expect("expected value");
         let template = env.template_from_str(body).expect("expected value");
         template
             .render(minijinja::context! {})
@@ -205,7 +212,8 @@ mod tests {
         let mut fragments = HashMap::new();
         fragments.insert("greeting.md".to_string(), "Hello, world!".to_string());
 
-        let env = build_environment(&fragments, None, &dummy_skill_spec()).expect("expected value");
+        let env = build_environment(&fragments, &HashMap::new(), None, &dummy_skill_spec())
+            .expect("expected value");
         let template = env
             .template_from_str("Before.\n{% include \"greeting.md\" %}\nAfter.")
             .expect("expected value");
@@ -220,7 +228,8 @@ mod tests {
         let mut fragments = HashMap::new();
         fragments.insert("greeting.md".to_string(), "Hello, {{ name }}!".to_string());
 
-        let env = build_environment(&fragments, None, &dummy_skill_spec()).expect("expected value");
+        let env = build_environment(&fragments, &HashMap::new(), None, &dummy_skill_spec())
+            .expect("expected value");
         let template = env
             .template_from_str(
                 "{% with name = \"Alice\" %}{% include \"greeting.md\" %}{% endwith %}",
@@ -241,7 +250,8 @@ mod tests {
             "before {% include \"inner.md\" %} after".to_string(),
         );
 
-        let env = build_environment(&fragments, None, &dummy_skill_spec()).expect("expected value");
+        let env = build_environment(&fragments, &HashMap::new(), None, &dummy_skill_spec())
+            .expect("expected value");
         let template = env
             .template_from_str("start {% include \"outer.md\" %} end")
             .expect("expected value");
@@ -254,7 +264,8 @@ mod tests {
     #[test]
     fn test_missing_fragment_errors() {
         let fragments = HashMap::new();
-        let env = build_environment(&fragments, None, &dummy_skill_spec()).expect("expected value");
+        let env = build_environment(&fragments, &HashMap::new(), None, &dummy_skill_spec())
+            .expect("expected value");
         let template = env
             .template_from_str("{% include \"nonexistent.md\" %}")
             .expect("expected value");
@@ -267,7 +278,8 @@ mod tests {
         let mut fragments = HashMap::new();
         fragments.insert("rules.md".to_string(), "Rule 1\nRule 2\nRule 3".to_string());
 
-        let env = build_environment(&fragments, None, &dummy_skill_spec()).expect("expected value");
+        let env = build_environment(&fragments, &HashMap::new(), None, &dummy_skill_spec())
+            .expect("expected value");
         let template = env
             .template_from_str(
                 "Items:\n   {% filter indent(3, first=false) %}{% include \"rules.md\" %}{% endfilter %}",
@@ -287,7 +299,8 @@ mod tests {
             "Hello, {{ name }}!\nWelcome aboard.".to_string(),
         );
 
-        let env = build_environment(&fragments, None, &dummy_skill_spec()).expect("expected value");
+        let env = build_environment(&fragments, &HashMap::new(), None, &dummy_skill_spec())
+            .expect("expected value");
         let template = env
             .template_from_str(
                 "Message:\n    {% filter indent(4, first=false) %}{% with name = \"Alice\" %}{% include \"greeting.md\" %}{% endwith %}{% endfilter %}",
@@ -378,8 +391,13 @@ mod tests {
             "tool-ref.md".to_owned(),
             r#"Use {{ tool("question") }}."#.to_owned(),
         );
-        let env = build_environment(&fragments, Some(Provider::Claude), &dummy_skill_spec())
-            .expect("expected value");
+        let env = build_environment(
+            &fragments,
+            &HashMap::new(),
+            Some(Provider::Claude),
+            &dummy_skill_spec(),
+        )
+        .expect("expected value");
         let template = env
             .template_from_str(r#"{% include "tool-ref.md" %}"#)
             .expect("expected value");
@@ -392,8 +410,13 @@ mod tests {
     #[test]
     fn test_tool_unknown_name_errors() {
         let fragments = HashMap::new();
-        let env = build_environment(&fragments, Some(Provider::Claude), &dummy_skill_spec())
-            .expect("expected value");
+        let env = build_environment(
+            &fragments,
+            &HashMap::new(),
+            Some(Provider::Claude),
+            &dummy_skill_spec(),
+        )
+        .expect("expected value");
         let template = env
             .template_from_str(r#"{{ tool("nope") }}"#)
             .expect("expected value");
@@ -430,8 +453,13 @@ mod tests {
     #[test]
     fn test_script_not_registered_for_agent_body() {
         let fragments = HashMap::new();
-        let env = build_environment(&fragments, Some(Provider::Claude), &dummy_agent_spec())
-            .expect("expected value");
+        let env = build_environment(
+            &fragments,
+            &HashMap::new(),
+            Some(Provider::Claude),
+            &dummy_agent_spec(),
+        )
+        .expect("expected value");
         let template = env
             .template_from_str(r#"{{ script("foo.sh") }}"#)
             .expect("expected value");
@@ -452,8 +480,13 @@ mod tests {
     #[test]
     fn test_script_not_registered_for_rule_body() {
         let fragments = HashMap::new();
-        let env = build_environment(&fragments, Some(Provider::Claude), &dummy_rule_spec())
-            .expect("expected value");
+        let env = build_environment(
+            &fragments,
+            &HashMap::new(),
+            Some(Provider::Claude),
+            &dummy_rule_spec(),
+        )
+        .expect("expected value");
         let template = env
             .template_from_str(r#"{{ script("foo.sh") }}"#)
             .expect("expected value");
@@ -474,8 +507,13 @@ mod tests {
     #[test]
     fn test_script_not_registered_for_hook_body() {
         let fragments = HashMap::new();
-        let env = build_environment(&fragments, Some(Provider::Claude), &dummy_hook_spec())
-            .expect("expected value");
+        let env = build_environment(
+            &fragments,
+            &HashMap::new(),
+            Some(Provider::Claude),
+            &dummy_hook_spec(),
+        )
+        .expect("expected value");
         let template = env
             .template_from_str(r#"{{ script("foo.sh") }}"#)
             .expect("expected value");
@@ -502,7 +540,8 @@ mod tests {
     #[test]
     fn test_script_validate_mode_agent_errors() {
         let fragments = HashMap::new();
-        let env = build_environment(&fragments, None, &dummy_agent_spec()).expect("expected value");
+        let env = build_environment(&fragments, &HashMap::new(), None, &dummy_agent_spec())
+            .expect("expected value");
         let template = env
             .template_from_str(r#"{{ script("foo.sh") }}"#)
             .expect("expected value");
@@ -524,8 +563,8 @@ mod tests {
     fn test_script_missing_file_errors() {
         let spec = dummy_skill_spec_with_files(&["exists.sh"]);
         let fragments = HashMap::new();
-        let env =
-            build_environment(&fragments, Some(Provider::Claude), &spec).expect("expected value");
+        let env = build_environment(&fragments, &HashMap::new(), Some(Provider::Claude), &spec)
+            .expect("expected value");
         let template = env
             .template_from_str(r#"{{ script("missing.sh") }}"#)
             .expect("expected value");
@@ -547,7 +586,8 @@ mod tests {
     fn test_script_missing_file_errors_in_validate_mode() {
         let spec = dummy_skill_spec_with_files(&["exists.sh"]);
         let fragments = HashMap::new();
-        let env = build_environment(&fragments, None, &spec).expect("expected value");
+        let env =
+            build_environment(&fragments, &HashMap::new(), None, &spec).expect("expected value");
         let template = env
             .template_from_str(r#"{{ script("missing.sh") }}"#)
             .expect("expected value");
@@ -585,8 +625,13 @@ mod tests {
     #[test]
     fn test_script_rejects_parent_traversal() {
         let fragments = HashMap::new();
-        let env = build_environment(&fragments, Some(Provider::Claude), &dummy_skill_spec())
-            .expect("expected value");
+        let env = build_environment(
+            &fragments,
+            &HashMap::new(),
+            Some(Provider::Claude),
+            &dummy_skill_spec(),
+        )
+        .expect("expected value");
         let template = env
             .template_from_str(r#"{{ script("../foo.sh") }}"#)
             .expect("expected value");
@@ -600,8 +645,13 @@ mod tests {
     #[test]
     fn test_script_rejects_absolute_path() {
         let fragments = HashMap::new();
-        let env = build_environment(&fragments, Some(Provider::Claude), &dummy_skill_spec())
-            .expect("expected value");
+        let env = build_environment(
+            &fragments,
+            &HashMap::new(),
+            Some(Provider::Claude),
+            &dummy_skill_spec(),
+        )
+        .expect("expected value");
         let template = env
             .template_from_str(r#"{{ script("/etc/foo.sh") }}"#)
             .expect("expected value");
@@ -623,7 +673,7 @@ mod tests {
         let rule = dummy_rule_spec();
         let hook = dummy_hook_spec();
         for spec in [&agent, &skill, &rule, &hook] {
-            let env = build_environment(&fragments, Some(Provider::Claude), spec)
+            let env = build_environment(&fragments, &HashMap::new(), Some(Provider::Claude), spec)
                 .expect("expected value");
             let template = env
                 .template_from_str(r#"{{ tool("question") }}"#)
@@ -636,5 +686,233 @@ mod tests {
                 "tool() should resolve for all spec types"
             );
         }
+    }
+
+    fn render_with_templates(
+        body: &str,
+        fragments: &HashMap<String, String>,
+        templates: &HashMap<String, String>,
+        provider: Option<Provider>,
+        spec: &Spec,
+    ) -> Result<String, String> {
+        let env = build_environment(fragments, templates, provider, spec)
+            .map_err(|e| format!("{e:#}"))?;
+        let template = env.template_from_str(body).map_err(|e| format!("{e:#}"))?;
+        template
+            .render(minijinja::context! {})
+            .map_err(|e| format!("{e:#}"))
+    }
+
+    #[test]
+    fn test_extends_basic_block_override() {
+        let templates = HashMap::from([(
+            "templates/base.md".to_string(),
+            "Header\n{% block title %}Default Title{% endblock %}\nFooter".to_string(),
+        )]);
+        let out = render_with_templates(
+            "{% extends \"templates/base.md\" %}{% block title %}My Title{% endblock %}",
+            &HashMap::new(),
+            &templates,
+            None,
+            &dummy_agent_spec(),
+        )
+        .expect("expected value");
+        assert_eq!(out, "Header\nMy Title\nFooter");
+    }
+
+    #[test]
+    fn test_extends_optional_block_default() {
+        let templates = HashMap::from([(
+            "templates/base.md".to_string(),
+            "Before\n{% block optional %}fallback content{% endblock %}\nAfter".to_string(),
+        )]);
+        let out = render_with_templates(
+            "{% extends \"templates/base.md\" %}",
+            &HashMap::new(),
+            &templates,
+            None,
+            &dummy_agent_spec(),
+        )
+        .expect("expected value");
+        assert_eq!(out, "Before\nfallback content\nAfter");
+    }
+
+    #[test]
+    fn test_extends_with_fragment_include_in_block() {
+        let fragments = HashMap::from([("note.md".to_string(), "included note".to_string())]);
+        let templates = HashMap::from([(
+            "templates/base.md".to_string(),
+            "Start\n{% block body %}default{% endblock %}\nEnd".to_string(),
+        )]);
+        let out = render_with_templates(
+            "{% extends \"templates/base.md\" %}{% block body %}{% include \"note.md\" %}{% endblock %}",
+            &fragments,
+            &templates,
+            None,
+            &dummy_agent_spec(),
+        )
+        .expect("expected value");
+        assert_eq!(out, "Start\nincluded note\nEnd");
+    }
+
+    #[test]
+    fn test_extends_with_variable_threading() {
+        let fragments =
+            HashMap::from([("frag.md".to_string(), "Hello, {{ subject }}!".to_string())]);
+        let templates = HashMap::from([(
+            "templates/base.md".to_string(),
+            concat!(
+                "{% block greeting %}",
+                "{% with subject = \"default\" %}{% include \"frag.md\" %}{% endwith %}",
+                "{% endblock %}"
+            )
+            .to_string(),
+        )]);
+        let out = render_with_templates(
+            concat!(
+                "{% extends \"templates/base.md\" %}",
+                "{% block greeting %}",
+                "{% with subject = \"world\" %}{% include \"frag.md\" %}{% endwith %}",
+                "{% endblock %}"
+            ),
+            &fragments,
+            &templates,
+            None,
+            &dummy_agent_spec(),
+        )
+        .expect("expected value");
+        assert_eq!(out, "Hello, world!");
+    }
+
+    #[test]
+    fn test_extends_missing_template_errors() {
+        let result = render_with_templates(
+            "{% extends \"templates/nonexistent.md\" %}{% block x %}y{% endblock %}",
+            &HashMap::new(),
+            &HashMap::new(),
+            None,
+            &dummy_agent_spec(),
+        );
+        assert!(result.is_err());
+        let msg = result.expect_err("expected render error");
+        assert!(
+            msg.contains("nonexistent"),
+            "expected template name in error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_extends_multi_level_chain() {
+        let templates = HashMap::from([
+            (
+                "templates/grandparent.md".to_string(),
+                "GP-start\n{% block a %}gp-a{% endblock %}\n{% block b %}gp-b{% endblock %}\nGP-end"
+                    .to_string(),
+            ),
+            (
+                "templates/parent.md".to_string(),
+                concat!(
+                    "{% extends \"templates/grandparent.md\" %}",
+                    "{% block a %}parent-a{% endblock %}"
+                )
+                .to_string(),
+            ),
+        ]);
+        let out = render_with_templates(
+            concat!(
+                "{% extends \"templates/parent.md\" %}",
+                "{% block b %}child-b{% endblock %}"
+            ),
+            &HashMap::new(),
+            &templates,
+            None,
+            &dummy_agent_spec(),
+        )
+        .expect("expected value");
+        assert_eq!(out, "GP-start\nparent-a\nchild-b\nGP-end");
+    }
+
+    #[test]
+    fn test_extends_super_call() {
+        let templates = HashMap::from([(
+            "templates/base.md".to_string(),
+            "{% block content %}base content{% endblock %}".to_string(),
+        )]);
+        let out = render_with_templates(
+            concat!(
+                "{% extends \"templates/base.md\" %}",
+                "{% block content %}{{ super() }} + child content{% endblock %}"
+            ),
+            &HashMap::new(),
+            &templates,
+            None,
+            &dummy_agent_spec(),
+        )
+        .expect("expected value");
+        assert_eq!(out, "base content + child content");
+    }
+
+    #[test]
+    fn test_extends_script_function_works_in_derived_skill() {
+        let templates = HashMap::from([(
+            "templates/skill-base.md".to_string(),
+            "{% block run %}default{% endblock %}".to_string(),
+        )]);
+        let out = render_with_templates(
+            concat!(
+                "{% extends \"templates/skill-base.md\" %}",
+                "{% block run %}{{ script(\"foo.sh\") }}{% endblock %}"
+            ),
+            &HashMap::new(),
+            &templates,
+            Some(Provider::Claude),
+            &dummy_skill_spec(),
+        )
+        .expect("expected value");
+        assert_eq!(out, "${CLAUDE_SKILL_DIR}/scripts/foo.sh");
+    }
+
+    #[test]
+    fn test_extends_script_not_registered_for_derived_rule() {
+        let templates = HashMap::from([(
+            "templates/base.md".to_string(),
+            "{% block body %}default{% endblock %}".to_string(),
+        )]);
+        let result = render_with_templates(
+            concat!(
+                "{% extends \"templates/base.md\" %}",
+                "{% block body %}{{ script(\"foo.sh\") }}{% endblock %}"
+            ),
+            &HashMap::new(),
+            &templates,
+            Some(Provider::Claude),
+            &dummy_rule_spec(),
+        );
+        assert!(result.is_err());
+        let msg = result.expect_err("expected render error");
+        assert!(
+            msg.contains("unknown"),
+            "expected 'unknown' in error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_extends_tool_function_works_in_derived_spec() {
+        let templates = HashMap::from([(
+            "templates/base.md".to_string(),
+            "{% block body %}default{% endblock %}".to_string(),
+        )]);
+        let out = render_with_templates(
+            concat!(
+                "{% extends \"templates/base.md\" %}",
+                "{% block body %}{{ tool(\"question\") }}{% endblock %}"
+            ),
+            &HashMap::new(),
+            &templates,
+            Some(Provider::Claude),
+            &dummy_agent_spec(),
+        )
+        .expect("expected value");
+        assert_eq!(out, "AskUserQuestion");
     }
 }
