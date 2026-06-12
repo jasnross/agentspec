@@ -263,6 +263,74 @@ If your spec set contains hooks and `[sync.opencode]` is configured, agents/skil
 
 Spec bodies support [MiniJinja](https://docs.rs/minijinja/latest/minijinja/syntax/index.html) template syntax. This is primarily useful for including shared fragments across specs, but the full syntax is available (`{% if %}`, `{% for %}`, filters, etc.).
 
+#### Templates
+
+Templates are structural skeletons that define a layout with named slots. Specs derive from a template with `{% extends %}` and override specific slots, keeping the surrounding structure consistent across a family of specs.
+
+Templates are `.md` files stored in `spec/templates/`:
+
+```
+spec/templates/
+├── critique.md
+└── script-contract.md
+```
+
+A template defines slots with `{% block %}`:
+
+```markdown
+# Code Review
+
+{% block purpose required %}{% endblock %}
+
+## Guidelines
+
+{% block guidelines %} Follow standard review practices. {% endblock %}
+
+## Output Format
+
+{% block output required %}{% endblock %}
+```
+
+- `{% block name required %}{% endblock %}` — mandatory slot; derived specs must override it or compilation fails
+- `{% block name %}...{% endblock %}` — optional slot with default content; derived specs can override or keep the default
+
+A spec derives from a template by starting with `{% extends %}` and overriding blocks:
+
+```markdown
+---
+id: security-review
+description: Security-focused code review
+---
+
+{% extends "templates/critique.md" %} {% block purpose %}Review code for security vulnerabilities.{% endblock %} {% block output %} Return findings as a numbered list with severity ratings. {% endblock %}
+```
+
+The optional `guidelines` block keeps its default content since the derived spec doesn't override it.
+
+**`{{ super() }}`** augments rather than replaces a parent block's content:
+
+```
+{% block guidelines %}{{ super() }}
+Additionally, check for OWASP Top 10 vulnerabilities.
+{% endblock %}
+```
+
+**Multi-level inheritance** works natively — a template can extend another template. Block overrides accumulate through the chain.
+
+**Fragments inside blocks** compose with templates using the same `{% include %}` and `{% with %}` syntax:
+
+```
+{% block details %}
+{% with scope = "security" %}{% include "review/checklist.md" %}{% endwith %}
+{% endblock %}
+```
+
+**Error behavior**:
+
+- Missing template (`{% extends "templates/nonexistent.md" %}`) — compile error naming the spec and template
+- Missing required override — compile error from MiniJinja identifying the required block
+- Unrecognized block name (typo) — compile error listing the block name(s) and spec path
+
 #### Fragments
 
 Fragments are reusable Markdown snippets stored in `spec/fragments/`. They help avoid duplicating instructions across multiple skills or agents.

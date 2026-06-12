@@ -915,4 +915,100 @@ mod tests {
         .expect("expected value");
         assert_eq!(out, "AskUserQuestion");
     }
+
+    #[test]
+    fn test_required_block_enforced() {
+        let templates = HashMap::from([(
+            "templates/strict.md".to_string(),
+            "Preamble\n{% block title required %}{% endblock %}\nEnd".to_string(),
+        )]);
+        let result = render_with_templates(
+            "{% extends \"templates/strict.md\" %}",
+            &HashMap::new(),
+            &templates,
+            None,
+            &dummy_agent_spec(),
+        );
+        assert!(result.is_err());
+        let msg = result.expect_err("expected render error");
+        assert!(
+            msg.contains("required"),
+            "expected 'required' in error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_required_block_satisfied() {
+        let templates = HashMap::from([(
+            "templates/strict.md".to_string(),
+            "Preamble\n{% block title required %}{% endblock %}\nEnd".to_string(),
+        )]);
+        let out = render_with_templates(
+            concat!(
+                "{% extends \"templates/strict.md\" %}",
+                "{% block title %}My Title{% endblock %}"
+            ),
+            &HashMap::new(),
+            &templates,
+            None,
+            &dummy_agent_spec(),
+        )
+        .expect("expected value");
+        assert_eq!(out, "Preamble\nMy Title\nEnd");
+    }
+
+    #[test]
+    fn test_required_block_error_includes_spec_path() {
+        let mut templates = HashMap::new();
+        templates.insert(
+            "templates/strict.md".to_string(),
+            "{% block title required %}{% endblock %}".to_string(),
+        );
+        let templating =
+            crate::templating::Templating::from_fragments_and_templates(HashMap::new(), templates);
+        let specs = vec![Spec::Agent(AgentSpec {
+            path: "skills/my-spec.md".into(),
+            frontmatter: AgentFrontmatter {
+                id: "test".to_string(),
+                description: "test".to_string(),
+                tags: None,
+                execution: None,
+                capabilities: None,
+            },
+            body: "{% extends \"templates/strict.md\" %}".to_string(),
+        })];
+
+        let ctx = crate::templating::TemplateContext::from_specs(&[]);
+        let err = crate::templating::resolve_fragments(specs, &templating, None, &ctx)
+            .expect_err("expected error for missing required block");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("skills/my-spec.md"),
+            "error should include spec path, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_optional_and_required_blocks_mixed() {
+        let templates = HashMap::from([(
+            "templates/mixed.md".to_string(),
+            concat!(
+                "{% block optional %}default content{% endblock %}\n",
+                "{% block mandatory required %}{% endblock %}"
+            )
+            .to_string(),
+        )]);
+        let out = render_with_templates(
+            concat!(
+                "{% extends \"templates/mixed.md\" %}",
+                "{% block mandatory %}filled in{% endblock %}"
+            ),
+            &HashMap::new(),
+            &templates,
+            None,
+            &dummy_agent_spec(),
+        )
+        .expect("expected value");
+        assert_eq!(out, "default content\nfilled in");
+    }
 }
