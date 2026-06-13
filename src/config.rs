@@ -286,12 +286,12 @@ pub struct SpecConfig {
     /// any depth. Defaults to an empty list.
     pub ignore: Vec<String>,
 
-    /// Additional directories to search for `{% include %}` fragments.
+    /// Additional named directories to search for `{% include %}` content.
     ///
-    /// Paths are resolved relative to the config file's directory; leading
-    /// `~/` is expanded to `$HOME`. Fragment name collisions across any
-    /// combination of local and extra dirs produce a load-time error.
-    pub extra_fragment_dirs: Vec<PathBuf>,
+    /// Each entry has a `name` (used as the path prefix in includes) and a
+    /// `path` (resolved relative to the config file's directory; leading
+    /// `~/` is expanded to `$HOME`).
+    pub extra_include_dirs: Vec<agentspec::templating::ExtraIncludeDir>,
 }
 
 impl Default for SpecConfig {
@@ -299,7 +299,7 @@ impl Default for SpecConfig {
         Self {
             sources_dir: PathBuf::from("spec"),
             ignore: Vec::new(),
-            extra_fragment_dirs: Vec::new(),
+            extra_include_dirs: Vec::new(),
         }
     }
 }
@@ -1003,7 +1003,7 @@ ignore = [42]
         let spec = SpecConfig {
             sources_dir: PathBuf::from("spec"),
             ignore: vec!["[".to_string()],
-            extra_fragment_dirs: Vec::new(),
+            extra_include_dirs: Vec::new(),
         };
         let err = spec
             .compile_ignore_matcher()
@@ -1343,22 +1343,32 @@ mode = "project"
     }
 
     #[test]
-    fn test_spec_extra_fragment_dirs_parses() {
+    fn test_spec_extra_include_dirs_parses() {
         let tmp = tempfile::tempdir().expect("expected value");
         let toml_content = r#"
 [spec]
-extra_fragment_dirs = ["~/shared", "../common"]
+extra_include_dirs = [
+    { name = "shared", path = "~/shared" },
+    { name = "common", path = "../common" },
+]
 "#;
         fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
         let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+        assert_eq!(config.spec.extra_include_dirs.len(), 2);
+        assert_eq!(config.spec.extra_include_dirs[0].name, "shared");
         assert_eq!(
-            config.spec.extra_fragment_dirs,
-            vec![PathBuf::from("~/shared"), PathBuf::from("../common")],
+            config.spec.extra_include_dirs[0].path,
+            PathBuf::from("~/shared")
+        );
+        assert_eq!(config.spec.extra_include_dirs[1].name, "common");
+        assert_eq!(
+            config.spec.extra_include_dirs[1].path,
+            PathBuf::from("../common")
         );
     }
 
     #[test]
-    fn test_spec_extra_fragment_dirs_defaults_empty() {
+    fn test_spec_extra_include_dirs_defaults_empty() {
         let tmp = tempfile::tempdir().expect("expected value");
         let toml_content = r#"
 [spec]
@@ -1366,7 +1376,20 @@ sources_dir = "spec"
 "#;
         fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
         let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
-        assert!(config.spec.extra_fragment_dirs.is_empty());
+        assert!(config.spec.extra_include_dirs.is_empty());
+    }
+
+    #[test]
+    fn test_spec_extra_include_dirs_bare_string_rejected() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[spec]
+extra_include_dirs = ["~/shared"]
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let err = AgentspecConfig::discover(tmp.path()).expect_err("expected parse error");
+        let full = format!("{err:#}");
+        assert!(full.contains("failed to parse"), "error: {full}");
     }
 
     #[test]

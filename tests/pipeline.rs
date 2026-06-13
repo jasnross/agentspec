@@ -4784,11 +4784,10 @@ fn test_hook_test_payload_file() {
 }
 
 #[test]
-fn test_compile_resolves_extra_fragment_dir() {
+fn test_compile_resolves_extra_include_dir() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
 
-    // Create a sibling shared-fragments directory with an extra fragment
     let extra_dir = dir.join("shared-fragments");
     std::fs::create_dir_all(&extra_dir).expect("create extra dir");
     std::fs::write(
@@ -4797,21 +4796,19 @@ fn test_compile_resolves_extra_fragment_dir() {
     )
     .expect("write extra fragment");
 
-    // Patch agentspec.toml to add extra_fragment_dirs
     let toml_path = dir.join("agentspec.toml");
     let toml_content = std::fs::read_to_string(&toml_path).expect("read toml");
     let patched = toml_content.replace(
         "[spec]\nsources_dir = \"spec\"",
-        "[spec]\nsources_dir = \"spec\"\nextra_fragment_dirs = [\"shared-fragments\"]",
+        "[spec]\nsources_dir = \"spec\"\nextra_include_dirs = [{ name = \"shared\", path = \"shared-fragments\" }]",
     );
     std::fs::write(&toml_path, &patched).expect("write patched toml");
 
-    // Create a skill spec that includes the extra fragment
     let skill_dir = dir.join("spec/skills/extra-user");
     std::fs::create_dir_all(&skill_dir).expect("create skill dir");
     std::fs::write(
         skill_dir.join("SKILL.md"),
-        "---\nid: extra-user\ndescription: Uses extra fragment\nuser_invocable: true\nagent_invocable: false\n---\n\n{% include \"extra-note.md\" %}\n",
+        "---\nid: extra-user\ndescription: Uses extra fragment\nuser_invocable: true\nagent_invocable: false\n---\n\n{% include \"shared/extra-note.md\" %}\n",
     )
     .expect("write skill spec");
 
@@ -4824,7 +4821,6 @@ fn test_compile_resolves_extra_fragment_dir() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "compile failed:\n{stderr}");
 
-    // Verify the extra fragment content appears in compiled output
     let compiled = std::fs::read_to_string(dir.join("generated/claude/skills/extra-user/SKILL.md"))
         .expect("read compiled skill");
     assert!(
@@ -4834,22 +4830,20 @@ fn test_compile_resolves_extra_fragment_dir() {
 }
 
 #[test]
-fn test_compile_extra_fragment_dir_collision_errors() {
+fn test_compile_extra_include_dir_duplicate_names_errors() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
 
-    // Create a sibling directory with a fragment that collides with the local one
-    let colliding_dir = dir.join("colliding-fragments");
-    std::fs::create_dir_all(&colliding_dir).expect("create colliding dir");
-    std::fs::write(colliding_dir.join("shared-note.md"), "Colliding content.")
-        .expect("write colliding fragment");
+    let extra_a = dir.join("extra-a");
+    let extra_b = dir.join("extra-b");
+    std::fs::create_dir_all(&extra_a).expect("create extra-a dir");
+    std::fs::create_dir_all(&extra_b).expect("create extra-b dir");
 
-    // Patch agentspec.toml to add extra_fragment_dirs
     let toml_path = dir.join("agentspec.toml");
     let toml_content = std::fs::read_to_string(&toml_path).expect("read toml");
     let patched = toml_content.replace(
         "[spec]\nsources_dir = \"spec\"",
-        "[spec]\nsources_dir = \"spec\"\nextra_fragment_dirs = [\"colliding-fragments\"]",
+        "[spec]\nsources_dir = \"spec\"\nextra_include_dirs = [\n  { name = \"shared\", path = \"extra-a\" },\n  { name = \"shared\", path = \"extra-b\" },\n]",
     );
     std::fs::write(&toml_path, &patched).expect("write patched toml");
 
@@ -4859,10 +4853,110 @@ fn test_compile_extra_fragment_dir_collision_errors() {
         .output()
         .expect("failed to run agentspec compile");
 
-    assert!(!output.status.success(), "compile should fail on collision");
+    assert!(
+        !output.status.success(),
+        "compile should fail on duplicate names"
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("collision"),
+        stderr.contains("duplicate"),
+        "stderr should mention duplicate: {stderr}"
+    );
+}
+
+#[test]
+fn test_compile_resolves_colocated_include() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    let skill_dir = dir.join("spec/skills/colocated-test");
+    std::fs::create_dir_all(&skill_dir).expect("create skill dir");
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nid: colocated-test\ndescription: Colocated include test\nuser_invocable: true\nagent_invocable: false\n---\n\n{% include \"./detail.md\" %}\n",
+    )
+    .expect("write skill spec");
+    std::fs::write(skill_dir.join("detail.md"), "Colocated detail content.").expect("write detail");
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    let compiled =
+        std::fs::read_to_string(dir.join("generated/claude/skills/colocated-test/SKILL.md"))
+            .expect("read compiled skill");
+    assert!(
+        compiled.contains("Colocated detail content."),
+        "colocated content not resolved: {compiled}"
+    );
+}
+
+#[test]
+fn test_compile_resolves_colocated_include_full_path() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    let skill_dir = dir.join("spec/skills/colocated-test");
+    std::fs::create_dir_all(&skill_dir).expect("create skill dir");
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nid: colocated-test\ndescription: Full-path colocated include\nuser_invocable: true\nagent_invocable: false\n---\n\n{% include \"skills/colocated-test/detail.md\" %}\n",
+    )
+    .expect("write skill spec");
+    std::fs::write(skill_dir.join("detail.md"), "Full path detail content.").expect("write detail");
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    let compiled =
+        std::fs::read_to_string(dir.join("generated/claude/skills/colocated-test/SKILL.md"))
+            .expect("read compiled skill");
+    assert!(
+        compiled.contains("Full path detail content."),
+        "full-path colocated content not resolved: {compiled}"
+    );
+}
+
+#[test]
+fn test_compile_extra_include_dir_name_collision_with_spec_tree() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    let extra = dir.join("extra-skills");
+    std::fs::create_dir_all(&extra).expect("create extra dir");
+
+    let toml_path = dir.join("agentspec.toml");
+    let toml_content = std::fs::read_to_string(&toml_path).expect("read toml");
+    let patched = toml_content.replace(
+        "[spec]\nsources_dir = \"spec\"",
+        "[spec]\nsources_dir = \"spec\"\nextra_include_dirs = [{ name = \"skills\", path = \"extra-skills\" }]",
+    );
+    std::fs::write(&toml_path, &patched).expect("write patched toml");
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+
+    assert!(
+        !output.status.success(),
+        "compile should fail on name collision with spec tree"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("collides"),
         "stderr should mention collision: {stderr}"
     );
 }

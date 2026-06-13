@@ -315,29 +315,31 @@ fn load_and_validate(
 
 fn load_templating(config: &AgentspecConfig) -> Result<Templating> {
     let sources = config.resolve(&config.spec.sources_dir);
-    let extra_dirs = resolve_extra_fragment_dirs(config)?;
-    Templating::load(
-        &sources.join("fragments"),
-        &extra_dirs,
-        &sources.join("templates"),
-    )
+    let extra_dirs = resolve_extra_include_dirs(config)?;
+    Templating::load(&sources, &extra_dirs)
 }
 
-fn resolve_extra_fragment_dirs(config: &AgentspecConfig) -> Result<Vec<std::path::PathBuf>> {
-    if config.spec.extra_fragment_dirs.is_empty() {
+fn resolve_extra_include_dirs(
+    config: &AgentspecConfig,
+) -> Result<Vec<agentspec::templating::ExtraIncludeDir>> {
+    if config.spec.extra_include_dirs.is_empty() {
         return Ok(Vec::new());
     }
     let home = home_dir()?;
     Ok(config
         .spec
-        .extra_fragment_dirs
+        .extra_include_dirs
         .iter()
-        .map(|p| {
-            let expanded = expand_tilde(&p.to_string_lossy(), &home);
-            if expanded.is_relative() {
+        .map(|extra| {
+            let expanded = expand_tilde(&extra.path.to_string_lossy(), &home);
+            let resolved = if expanded.is_relative() {
                 config.resolve(&expanded)
             } else {
                 expanded
+            };
+            agentspec::templating::ExtraIncludeDir {
+                name: extra.name.clone(),
+                path: resolved,
             }
         })
         .collect())

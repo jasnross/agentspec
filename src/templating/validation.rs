@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::LazyLock;
 
@@ -30,7 +30,7 @@ fn extract_extends_target(source: &str) -> Option<String> {
 /// template chain. Returns `Ok(())` for specs that don't use `{% extends %}`.
 pub(super) fn validate_child_blocks(
     child_source: &str,
-    templates: &HashMap<String, String>,
+    resolve_template: &dyn Fn(&str) -> Result<Option<String>>,
     spec_path: &Path,
 ) -> Result<()> {
     let Some(parent_name) = extract_extends_target(child_source) else {
@@ -56,14 +56,14 @@ pub(super) fn validate_child_blocks(
             );
         }
 
-        let Some(parent_source) = templates.get(name) else {
+        let Some(parent_source) = resolve_template(name)? else {
             // Template not found — let MiniJinja surface its own
             // "template not found" error during render.
             return Ok(());
         };
 
-        parent_blocks.extend(extract_block_names(parent_source));
-        current = extract_extends_target(parent_source);
+        parent_blocks.extend(extract_block_names(&parent_source));
+        current = extract_extends_target(&parent_source);
     }
 
     let unrecognized: Vec<&str> = child_blocks
@@ -92,7 +92,13 @@ pub(super) fn validate_child_blocks(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
+
+    fn resolver(map: &HashMap<String, String>) -> impl Fn(&str) -> Result<Option<String>> + '_ {
+        move |name: &str| Ok(map.get(name).cloned())
+    }
 
     #[test]
     fn test_extract_block_names_basic() {
@@ -160,7 +166,7 @@ mod tests {
             "{% extends \"templates/base.md\" %}",
             "{% block title %}override{% endblock %}"
         );
-        validate_child_blocks(child, &templates, Path::new("spec.md"))
+        validate_child_blocks(child, &resolver(&templates), Path::new("spec.md"))
             .expect("expected Ok for known blocks");
     }
 
@@ -174,7 +180,7 @@ mod tests {
             "{% extends \"templates/base.md\" %}",
             "{% block typo %}override{% endblock %}"
         );
-        let err = validate_child_blocks(child, &templates, Path::new("skill.md"))
+        let err = validate_child_blocks(child, &resolver(&templates), Path::new("skill.md"))
             .expect_err("expected error for unrecognized block");
         let msg = err.to_string();
         assert!(msg.contains("typo"), "error: {msg}");
@@ -201,7 +207,7 @@ mod tests {
             "{% extends \"templates/parent.md\" %}",
             "{% block deep %}child{% endblock %}"
         );
-        validate_child_blocks(child, &templates, Path::new("spec.md"))
+        validate_child_blocks(child, &resolver(&templates), Path::new("spec.md"))
             .expect("expected Ok — block defined in grandparent");
     }
 
@@ -221,7 +227,7 @@ mod tests {
             "{% extends \"templates/parent.md\" %}",
             "{% block fake %}child{% endblock %}"
         );
-        let err = validate_child_blocks(child, &templates, Path::new("spec.md"))
+        let err = validate_child_blocks(child, &resolver(&templates), Path::new("spec.md"))
             .expect_err("expected error for unrecognized block");
         let msg = err.to_string();
         assert!(msg.contains("fake"), "error: {msg}");
@@ -229,9 +235,9 @@ mod tests {
 
     #[test]
     fn test_validate_child_blocks_non_template_spec() {
-        let templates = HashMap::new();
+        let resolver = |_name: &str| -> Result<Option<String>> { Ok(None) };
         let child = "Plain body with no extends.";
-        validate_child_blocks(child, &templates, Path::new("spec.md"))
+        validate_child_blocks(child, &resolver, Path::new("spec.md"))
             .expect("expected Ok for non-template spec");
     }
 
@@ -251,7 +257,7 @@ mod tests {
             "{% extends \"templates/a.md\" %}",
             "{% block x %}child{% endblock %}"
         );
-        let err = validate_child_blocks(child, &templates, Path::new("spec.md"))
+        let err = validate_child_blocks(child, &resolver(&templates), Path::new("spec.md"))
             .expect_err("expected error for circular chain");
         let msg = err.to_string();
         assert!(msg.contains("circular"), "error: {msg}");

@@ -1,46 +1,51 @@
-use std::collections::{HashMap, HashSet};
+use std::borrow::Cow;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use minijinja::Environment;
 
+use super::ExtraIncludeDir;
 use crate::provider::Provider;
 use crate::spec::{Spec, ToolFrontmatter};
 
-/// Build a `MiniJinja` environment for `spec` with all fragments available as
-/// templates and the `tool()` function registered for canonical-to-provider
-/// tool name resolution.
+/// Build a `MiniJinja` environment for `spec` with a lazy loader that
+/// resolves include paths relative to `sources_dir`, plus named extra dirs.
 ///
-/// Enables `{% include "review/prompt-contract.md" %}` syntax and
-/// `{{ tool("<canonical>") }}` calls in all specs. When `provider` is `Some`,
-/// `tool()` returns the provider-specific body-level name. When `None`
-/// (e.g., during `agentspec validate`), `tool()` passes the canonical name
-/// through unchanged after verifying it is a known tool.
+/// Enables `{% include "fragments/shared.md" %}`, `{% include "./detail.md" %}`
+/// (self-relative), and `{{ tool("<canonical>") }}` calls in all specs.
 ///
 /// `script()` is additionally registered when `spec` is `Spec::Skill(_)`.
-/// Calling it from an agent, rule, or hook body produces an `UnknownFunction`
-/// render error. (`Lenient` undefined behavior applies to variable lookups only;
-/// unknown function calls raise `UnknownFunction` regardless.)
 pub fn build_environment(
-    fragments: &HashMap<String, String>,
-    templates: &HashMap<String, String>,
+    sources_dir: &Path,
+    extra_dirs: &[ExtraIncludeDir],
     provider: Option<Provider>,
     spec: &Spec,
-) -> Result<Environment<'static>> {
+) -> Environment<'static> {
     let mut env = Environment::new();
-    // Lenient: undefined variables evaluate as falsy rather than erroring,
-    // which is useful for optional boolean flags in templates.
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
 
-    for (name, content) in fragments {
-        env.add_template_owned(name.clone(), content.clone())
-            .with_context(|| format!("failed to parse fragment '{name}'"))?;
-    }
+    env.set_path_join_callback(|name: &str, parent: &str| -> Cow<'_, str> {
+        if !name.starts_with("./") {
+            return Cow::Borrowed(name);
+        }
+        debug_assert!(
+            !parent.is_empty(),
+            "parent should not be empty with template_from_named_str"
+        );
+        let mut segments: Vec<&str> = parent.split('/').collect();
+        segments.pop();
+        for part in name.split('/') {
+            if part != "." {
+                segments.push(part);
+            }
+        }
+        segments.join("/").into()
+    });
 
-    for (name, content) in templates {
-        env.add_template_owned(name.clone(), content.clone())
-            .with_context(|| format!("failed to parse template '{name}'"))?;
-    }
+    let sources_owned = sources_dir.to_path_buf();
+    let extra_owned = extra_dirs.to_vec();
+    env.set_loader(move |name: &str| resolve_include(name, &sources_owned, &extra_owned));
 
     env.add_function("tool", move |name: String| resolve_tool(&name, provider));
 
@@ -50,7 +55,79 @@ pub fn build_environment(
             resolve_script(&name, provider, &known_scripts)
         });
     }
-    Ok(env)
+    env
+}
+
+/// Resolve an include path to file content, with two-tier error handling:
+/// author mistakes return `Err` (actionable); security boundaries return
+/// `Ok(None)` (silent).
+pub(super) fn resolve_include(
+    name: &str,
+    sources_dir: &Path,
+    extra_dirs: &[ExtraIncludeDir],
+) -> Result<Option<String>, minijinja::Error> {
+    if Path::new(name).has_root() {
+        return Ok(None);
+    }
+
+    if Path::new(name)
+        .components()
+        .any(|c| c == std::path::Component::ParentDir)
+    {
+        return Err(minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!("parent directory traversal (..) is not allowed in include paths: \"{name}\""),
+        ));
+    }
+
+    if !std::path::Path::new(name)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+    {
+        return Err(minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!("include paths must use .md extension, got \"{name}\""),
+        ));
+    }
+
+    let full = sources_dir.join(name);
+    if let Some(content) = read_if_within(sources_dir, &full)? {
+        return Ok(Some(content));
+    }
+
+    for extra in extra_dirs {
+        let prefix = format!("{}/", extra.name);
+        if let Some(rest) = name.strip_prefix(&prefix) {
+            let full = extra.path.join(rest);
+            if let Some(content) = read_if_within(&extra.path, &full)? {
+                return Ok(Some(content));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+fn read_if_within(root: &Path, full: &Path) -> Result<Option<String>, minijinja::Error> {
+    let Ok(canonical_root) = std::fs::canonicalize(root) else {
+        return Ok(None);
+    };
+    let Ok(canonical_full) = std::fs::canonicalize(full) else {
+        return Ok(None);
+    };
+
+    if !canonical_full.starts_with(&canonical_root) {
+        return Ok(None);
+    }
+
+    match std::fs::read_to_string(&canonical_full) {
+        Ok(content) => Ok(Some(content)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!("failed to read include file: {e}"),
+        )),
+    }
 }
 
 fn resolve_script(
@@ -121,6 +198,16 @@ mod tests {
         AgentFrontmatter, AgentSpec, HookEvent, HookFrontmatter, HookSpec, RuleFrontmatter,
         RuleSpec, SkillFrontmatter, SkillSpec, SupportingFile,
     };
+
+    fn write_source_files(dir: &std::path::Path, files: &HashMap<String, String>) {
+        for (name, content) in files {
+            let path = dir.join(name);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).expect("expected value");
+            }
+            std::fs::write(&path, content).expect("expected value");
+        }
+    }
 
     fn dummy_agent_spec() -> Spec {
         Spec::Agent(AgentSpec {
@@ -198,22 +285,35 @@ mod tests {
     }
 
     fn render_body(body: &str, provider: Option<Provider>, spec: &Spec) -> String {
-        let fragments = HashMap::new();
-        let env =
-            build_environment(&fragments, &HashMap::new(), provider, spec).expect("expected value");
+        let tmp = tempfile::tempdir().expect("expected value");
+        let env = build_environment(tmp.path(), &[], provider, spec);
         let template = env.template_from_str(body).expect("expected value");
         template
             .render(minijinja::context! {})
             .expect("expected value")
     }
 
+    fn render_with_templates(
+        body: &str,
+        files: &HashMap<String, String>,
+        provider: Option<Provider>,
+        spec: &Spec,
+    ) -> Result<String, String> {
+        let tmp = tempfile::tempdir().map_err(|e| format!("{e:#}"))?;
+        write_source_files(tmp.path(), files);
+        let env = build_environment(tmp.path(), &[], provider, spec);
+        let template = env.template_from_str(body).map_err(|e| format!("{e:#}"))?;
+        template
+            .render(minijinja::context! {})
+            .map_err(|e| format!("{e:#}"))
+    }
+
     #[test]
     fn test_simple_include() {
-        let mut fragments = HashMap::new();
-        fragments.insert("greeting.md".to_string(), "Hello, world!".to_string());
+        let tmp = tempfile::tempdir().expect("expected value");
+        std::fs::write(tmp.path().join("greeting.md"), "Hello, world!").expect("expected value");
 
-        let env = build_environment(&fragments, &HashMap::new(), None, &dummy_skill_spec())
-            .expect("expected value");
+        let env = build_environment(tmp.path(), &[], None, &dummy_skill_spec());
         let template = env
             .template_from_str("Before.\n{% include \"greeting.md\" %}\nAfter.")
             .expect("expected value");
@@ -225,11 +325,11 @@ mod tests {
 
     #[test]
     fn test_include_with_variables() {
-        let mut fragments = HashMap::new();
-        fragments.insert("greeting.md".to_string(), "Hello, {{ name }}!".to_string());
-
-        let env = build_environment(&fragments, &HashMap::new(), None, &dummy_skill_spec())
+        let tmp = tempfile::tempdir().expect("expected value");
+        std::fs::write(tmp.path().join("greeting.md"), "Hello, {{ name }}!")
             .expect("expected value");
+
+        let env = build_environment(tmp.path(), &[], None, &dummy_skill_spec());
         let template = env
             .template_from_str(
                 "{% with name = \"Alice\" %}{% include \"greeting.md\" %}{% endwith %}",
@@ -243,15 +343,15 @@ mod tests {
 
     #[test]
     fn test_nested_includes() {
-        let mut fragments = HashMap::new();
-        fragments.insert("inner.md".to_string(), "inner content".to_string());
-        fragments.insert(
-            "outer.md".to_string(),
-            "before {% include \"inner.md\" %} after".to_string(),
-        );
+        let tmp = tempfile::tempdir().expect("expected value");
+        std::fs::write(tmp.path().join("inner.md"), "inner content").expect("expected value");
+        std::fs::write(
+            tmp.path().join("outer.md"),
+            "before {% include \"inner.md\" %} after",
+        )
+        .expect("expected value");
 
-        let env = build_environment(&fragments, &HashMap::new(), None, &dummy_skill_spec())
-            .expect("expected value");
+        let env = build_environment(tmp.path(), &[], None, &dummy_skill_spec());
         let template = env
             .template_from_str("start {% include \"outer.md\" %} end")
             .expect("expected value");
@@ -263,9 +363,8 @@ mod tests {
 
     #[test]
     fn test_missing_fragment_errors() {
-        let fragments = HashMap::new();
-        let env = build_environment(&fragments, &HashMap::new(), None, &dummy_skill_spec())
-            .expect("expected value");
+        let tmp = tempfile::tempdir().expect("expected value");
+        let env = build_environment(tmp.path(), &[], None, &dummy_skill_spec());
         let template = env
             .template_from_str("{% include \"nonexistent.md\" %}")
             .expect("expected value");
@@ -275,11 +374,11 @@ mod tests {
 
     #[test]
     fn test_filter_indent_with_include() {
-        let mut fragments = HashMap::new();
-        fragments.insert("rules.md".to_string(), "Rule 1\nRule 2\nRule 3".to_string());
-
-        let env = build_environment(&fragments, &HashMap::new(), None, &dummy_skill_spec())
+        let tmp = tempfile::tempdir().expect("expected value");
+        std::fs::write(tmp.path().join("rules.md"), "Rule 1\nRule 2\nRule 3")
             .expect("expected value");
+
+        let env = build_environment(tmp.path(), &[], None, &dummy_skill_spec());
         let template = env
             .template_from_str(
                 "Items:\n   {% filter indent(3, first=false) %}{% include \"rules.md\" %}{% endfilter %}",
@@ -293,14 +392,14 @@ mod tests {
 
     #[test]
     fn test_filter_indent_with_variables() {
-        let mut fragments = HashMap::new();
-        fragments.insert(
-            "greeting.md".to_string(),
-            "Hello, {{ name }}!\nWelcome aboard.".to_string(),
-        );
+        let tmp = tempfile::tempdir().expect("expected value");
+        std::fs::write(
+            tmp.path().join("greeting.md"),
+            "Hello, {{ name }}!\nWelcome aboard.",
+        )
+        .expect("expected value");
 
-        let env = build_environment(&fragments, &HashMap::new(), None, &dummy_skill_spec())
-            .expect("expected value");
+        let env = build_environment(tmp.path(), &[], None, &dummy_skill_spec());
         let template = env
             .template_from_str(
                 "Message:\n    {% filter indent(4, first=false) %}{% with name = \"Alice\" %}{% include \"greeting.md\" %}{% endwith %}{% endfilter %}",
@@ -386,18 +485,13 @@ mod tests {
 
     #[test]
     fn test_tool_resolves_inside_included_fragment() {
-        let mut fragments = HashMap::new();
-        fragments.insert(
-            "tool-ref.md".to_owned(),
-            r#"Use {{ tool("question") }}."#.to_owned(),
-        );
-        let env = build_environment(
-            &fragments,
-            &HashMap::new(),
-            Some(Provider::Claude),
-            &dummy_skill_spec(),
+        let tmp = tempfile::tempdir().expect("expected value");
+        std::fs::write(
+            tmp.path().join("tool-ref.md"),
+            r#"Use {{ tool("question") }}."#,
         )
         .expect("expected value");
+        let env = build_environment(tmp.path(), &[], Some(Provider::Claude), &dummy_skill_spec());
         let template = env
             .template_from_str(r#"{% include "tool-ref.md" %}"#)
             .expect("expected value");
@@ -409,14 +503,8 @@ mod tests {
 
     #[test]
     fn test_tool_unknown_name_errors() {
-        let fragments = HashMap::new();
-        let env = build_environment(
-            &fragments,
-            &HashMap::new(),
-            Some(Provider::Claude),
-            &dummy_skill_spec(),
-        )
-        .expect("expected value");
+        let tmp = tempfile::tempdir().expect("expected value");
+        let env = build_environment(tmp.path(), &[], Some(Provider::Claude), &dummy_skill_spec());
         let template = env
             .template_from_str(r#"{{ tool("nope") }}"#)
             .expect("expected value");
@@ -452,14 +540,8 @@ mod tests {
 
     #[test]
     fn test_script_not_registered_for_agent_body() {
-        let fragments = HashMap::new();
-        let env = build_environment(
-            &fragments,
-            &HashMap::new(),
-            Some(Provider::Claude),
-            &dummy_agent_spec(),
-        )
-        .expect("expected value");
+        let tmp = tempfile::tempdir().expect("expected value");
+        let env = build_environment(tmp.path(), &[], Some(Provider::Claude), &dummy_agent_spec());
         let template = env
             .template_from_str(r#"{{ script("foo.sh") }}"#)
             .expect("expected value");
@@ -479,14 +561,8 @@ mod tests {
 
     #[test]
     fn test_script_not_registered_for_rule_body() {
-        let fragments = HashMap::new();
-        let env = build_environment(
-            &fragments,
-            &HashMap::new(),
-            Some(Provider::Claude),
-            &dummy_rule_spec(),
-        )
-        .expect("expected value");
+        let tmp = tempfile::tempdir().expect("expected value");
+        let env = build_environment(tmp.path(), &[], Some(Provider::Claude), &dummy_rule_spec());
         let template = env
             .template_from_str(r#"{{ script("foo.sh") }}"#)
             .expect("expected value");
@@ -506,14 +582,8 @@ mod tests {
 
     #[test]
     fn test_script_not_registered_for_hook_body() {
-        let fragments = HashMap::new();
-        let env = build_environment(
-            &fragments,
-            &HashMap::new(),
-            Some(Provider::Claude),
-            &dummy_hook_spec(),
-        )
-        .expect("expected value");
+        let tmp = tempfile::tempdir().expect("expected value");
+        let env = build_environment(tmp.path(), &[], Some(Provider::Claude), &dummy_hook_spec());
         let template = env
             .template_from_str(r#"{{ script("foo.sh") }}"#)
             .expect("expected value");
@@ -539,9 +609,8 @@ mod tests {
 
     #[test]
     fn test_script_validate_mode_agent_errors() {
-        let fragments = HashMap::new();
-        let env = build_environment(&fragments, &HashMap::new(), None, &dummy_agent_spec())
-            .expect("expected value");
+        let tmp = tempfile::tempdir().expect("expected value");
+        let env = build_environment(tmp.path(), &[], None, &dummy_agent_spec());
         let template = env
             .template_from_str(r#"{{ script("foo.sh") }}"#)
             .expect("expected value");
@@ -562,9 +631,8 @@ mod tests {
     #[test]
     fn test_script_missing_file_errors() {
         let spec = dummy_skill_spec_with_files(&["exists.sh"]);
-        let fragments = HashMap::new();
-        let env = build_environment(&fragments, &HashMap::new(), Some(Provider::Claude), &spec)
-            .expect("expected value");
+        let tmp = tempfile::tempdir().expect("expected value");
+        let env = build_environment(tmp.path(), &[], Some(Provider::Claude), &spec);
         let template = env
             .template_from_str(r#"{{ script("missing.sh") }}"#)
             .expect("expected value");
@@ -585,9 +653,8 @@ mod tests {
     #[test]
     fn test_script_missing_file_errors_in_validate_mode() {
         let spec = dummy_skill_spec_with_files(&["exists.sh"]);
-        let fragments = HashMap::new();
-        let env =
-            build_environment(&fragments, &HashMap::new(), None, &spec).expect("expected value");
+        let tmp = tempfile::tempdir().expect("expected value");
+        let env = build_environment(tmp.path(), &[], None, &spec);
         let template = env
             .template_from_str(r#"{{ script("missing.sh") }}"#)
             .expect("expected value");
@@ -624,14 +691,8 @@ mod tests {
 
     #[test]
     fn test_script_rejects_parent_traversal() {
-        let fragments = HashMap::new();
-        let env = build_environment(
-            &fragments,
-            &HashMap::new(),
-            Some(Provider::Claude),
-            &dummy_skill_spec(),
-        )
-        .expect("expected value");
+        let tmp = tempfile::tempdir().expect("expected value");
+        let env = build_environment(tmp.path(), &[], Some(Provider::Claude), &dummy_skill_spec());
         let template = env
             .template_from_str(r#"{{ script("../foo.sh") }}"#)
             .expect("expected value");
@@ -644,14 +705,8 @@ mod tests {
 
     #[test]
     fn test_script_rejects_absolute_path() {
-        let fragments = HashMap::new();
-        let env = build_environment(
-            &fragments,
-            &HashMap::new(),
-            Some(Provider::Claude),
-            &dummy_skill_spec(),
-        )
-        .expect("expected value");
+        let tmp = tempfile::tempdir().expect("expected value");
+        let env = build_environment(tmp.path(), &[], Some(Provider::Claude), &dummy_skill_spec());
         let template = env
             .template_from_str(r#"{{ script("/etc/foo.sh") }}"#)
             .expect("expected value");
@@ -667,14 +722,13 @@ mod tests {
 
     #[test]
     fn test_tool_remains_registered_for_all_spec_types() {
-        let fragments = HashMap::new();
+        let tmp = tempfile::tempdir().expect("expected value");
         let agent = dummy_agent_spec();
         let skill = dummy_skill_spec();
         let rule = dummy_rule_spec();
         let hook = dummy_hook_spec();
         for spec in [&agent, &skill, &rule, &hook] {
-            let env = build_environment(&fragments, &HashMap::new(), Some(Provider::Claude), spec)
-                .expect("expected value");
+            let env = build_environment(tmp.path(), &[], Some(Provider::Claude), spec);
             let template = env
                 .template_from_str(r#"{{ tool("question") }}"#)
                 .expect("expected value");
@@ -688,31 +742,15 @@ mod tests {
         }
     }
 
-    fn render_with_templates(
-        body: &str,
-        fragments: &HashMap<String, String>,
-        templates: &HashMap<String, String>,
-        provider: Option<Provider>,
-        spec: &Spec,
-    ) -> Result<String, String> {
-        let env = build_environment(fragments, templates, provider, spec)
-            .map_err(|e| format!("{e:#}"))?;
-        let template = env.template_from_str(body).map_err(|e| format!("{e:#}"))?;
-        template
-            .render(minijinja::context! {})
-            .map_err(|e| format!("{e:#}"))
-    }
-
     #[test]
     fn test_extends_basic_block_override() {
-        let templates = HashMap::from([(
+        let files = HashMap::from([(
             "templates/base.md".to_string(),
             "Header\n{% block title %}Default Title{% endblock %}\nFooter".to_string(),
         )]);
         let out = render_with_templates(
             "{% extends \"templates/base.md\" %}{% block title %}My Title{% endblock %}",
-            &HashMap::new(),
-            &templates,
+            &files,
             None,
             &dummy_agent_spec(),
         )
@@ -722,14 +760,13 @@ mod tests {
 
     #[test]
     fn test_extends_optional_block_default() {
-        let templates = HashMap::from([(
+        let files = HashMap::from([(
             "templates/base.md".to_string(),
             "Before\n{% block optional %}fallback content{% endblock %}\nAfter".to_string(),
         )]);
         let out = render_with_templates(
             "{% extends \"templates/base.md\" %}",
-            &HashMap::new(),
-            &templates,
+            &files,
             None,
             &dummy_agent_spec(),
         )
@@ -739,15 +776,16 @@ mod tests {
 
     #[test]
     fn test_extends_with_fragment_include_in_block() {
-        let fragments = HashMap::from([("note.md".to_string(), "included note".to_string())]);
-        let templates = HashMap::from([(
-            "templates/base.md".to_string(),
-            "Start\n{% block body %}default{% endblock %}\nEnd".to_string(),
-        )]);
+        let files = HashMap::from([
+            ("note.md".to_string(), "included note".to_string()),
+            (
+                "templates/base.md".to_string(),
+                "Start\n{% block body %}default{% endblock %}\nEnd".to_string(),
+            ),
+        ]);
         let out = render_with_templates(
             "{% extends \"templates/base.md\" %}{% block body %}{% include \"note.md\" %}{% endblock %}",
-            &fragments,
-            &templates,
+            &files,
             None,
             &dummy_agent_spec(),
         )
@@ -757,17 +795,18 @@ mod tests {
 
     #[test]
     fn test_extends_with_variable_threading() {
-        let fragments =
-            HashMap::from([("frag.md".to_string(), "Hello, {{ subject }}!".to_string())]);
-        let templates = HashMap::from([(
-            "templates/base.md".to_string(),
-            concat!(
-                "{% block greeting %}",
-                "{% with subject = \"default\" %}{% include \"frag.md\" %}{% endwith %}",
-                "{% endblock %}"
-            )
-            .to_string(),
-        )]);
+        let files = HashMap::from([
+            ("frag.md".to_string(), "Hello, {{ subject }}!".to_string()),
+            (
+                "templates/base.md".to_string(),
+                concat!(
+                    "{% block greeting %}",
+                    "{% with subject = \"default\" %}{% include \"frag.md\" %}{% endwith %}",
+                    "{% endblock %}"
+                )
+                .to_string(),
+            ),
+        ]);
         let out = render_with_templates(
             concat!(
                 "{% extends \"templates/base.md\" %}",
@@ -775,8 +814,7 @@ mod tests {
                 "{% with subject = \"world\" %}{% include \"frag.md\" %}{% endwith %}",
                 "{% endblock %}"
             ),
-            &fragments,
-            &templates,
+            &files,
             None,
             &dummy_agent_spec(),
         )
@@ -788,7 +826,6 @@ mod tests {
     fn test_extends_missing_template_errors() {
         let result = render_with_templates(
             "{% extends \"templates/nonexistent.md\" %}{% block x %}y{% endblock %}",
-            &HashMap::new(),
             &HashMap::new(),
             None,
             &dummy_agent_spec(),
@@ -803,7 +840,7 @@ mod tests {
 
     #[test]
     fn test_extends_multi_level_chain() {
-        let templates = HashMap::from([
+        let files = HashMap::from([
             (
                 "templates/grandparent.md".to_string(),
                 "GP-start\n{% block a %}gp-a{% endblock %}\n{% block b %}gp-b{% endblock %}\nGP-end"
@@ -823,8 +860,7 @@ mod tests {
                 "{% extends \"templates/parent.md\" %}",
                 "{% block b %}child-b{% endblock %}"
             ),
-            &HashMap::new(),
-            &templates,
+            &files,
             None,
             &dummy_agent_spec(),
         )
@@ -834,7 +870,7 @@ mod tests {
 
     #[test]
     fn test_extends_super_call() {
-        let templates = HashMap::from([(
+        let files = HashMap::from([(
             "templates/base.md".to_string(),
             "{% block content %}base content{% endblock %}".to_string(),
         )]);
@@ -843,8 +879,7 @@ mod tests {
                 "{% extends \"templates/base.md\" %}",
                 "{% block content %}{{ super() }} + child content{% endblock %}"
             ),
-            &HashMap::new(),
-            &templates,
+            &files,
             None,
             &dummy_agent_spec(),
         )
@@ -854,7 +889,7 @@ mod tests {
 
     #[test]
     fn test_extends_script_function_works_in_derived_skill() {
-        let templates = HashMap::from([(
+        let files = HashMap::from([(
             "templates/skill-base.md".to_string(),
             "{% block run %}default{% endblock %}".to_string(),
         )]);
@@ -863,8 +898,7 @@ mod tests {
                 "{% extends \"templates/skill-base.md\" %}",
                 "{% block run %}{{ script(\"foo.sh\") }}{% endblock %}"
             ),
-            &HashMap::new(),
-            &templates,
+            &files,
             Some(Provider::Claude),
             &dummy_skill_spec(),
         )
@@ -874,7 +908,7 @@ mod tests {
 
     #[test]
     fn test_extends_script_not_registered_for_derived_rule() {
-        let templates = HashMap::from([(
+        let files = HashMap::from([(
             "templates/base.md".to_string(),
             "{% block body %}default{% endblock %}".to_string(),
         )]);
@@ -883,8 +917,7 @@ mod tests {
                 "{% extends \"templates/base.md\" %}",
                 "{% block body %}{{ script(\"foo.sh\") }}{% endblock %}"
             ),
-            &HashMap::new(),
-            &templates,
+            &files,
             Some(Provider::Claude),
             &dummy_rule_spec(),
         );
@@ -898,7 +931,7 @@ mod tests {
 
     #[test]
     fn test_extends_tool_function_works_in_derived_spec() {
-        let templates = HashMap::from([(
+        let files = HashMap::from([(
             "templates/base.md".to_string(),
             "{% block body %}default{% endblock %}".to_string(),
         )]);
@@ -907,8 +940,7 @@ mod tests {
                 "{% extends \"templates/base.md\" %}",
                 "{% block body %}{{ tool(\"question\") }}{% endblock %}"
             ),
-            &HashMap::new(),
-            &templates,
+            &files,
             Some(Provider::Claude),
             &dummy_agent_spec(),
         )
@@ -918,14 +950,13 @@ mod tests {
 
     #[test]
     fn test_required_block_enforced() {
-        let templates = HashMap::from([(
+        let files = HashMap::from([(
             "templates/strict.md".to_string(),
             "Preamble\n{% block title required %}{% endblock %}\nEnd".to_string(),
         )]);
         let result = render_with_templates(
             "{% extends \"templates/strict.md\" %}",
-            &HashMap::new(),
-            &templates,
+            &files,
             None,
             &dummy_agent_spec(),
         );
@@ -939,7 +970,7 @@ mod tests {
 
     #[test]
     fn test_required_block_satisfied() {
-        let templates = HashMap::from([(
+        let files = HashMap::from([(
             "templates/strict.md".to_string(),
             "Preamble\n{% block title required %}{% endblock %}\nEnd".to_string(),
         )]);
@@ -948,8 +979,7 @@ mod tests {
                 "{% extends \"templates/strict.md\" %}",
                 "{% block title %}My Title{% endblock %}"
             ),
-            &HashMap::new(),
-            &templates,
+            &files,
             None,
             &dummy_agent_spec(),
         )
@@ -959,15 +989,18 @@ mod tests {
 
     #[test]
     fn test_required_block_error_includes_spec_path() {
-        let mut templates = HashMap::new();
-        templates.insert(
-            "templates/strict.md".to_string(),
-            "{% block title required %}{% endblock %}".to_string(),
-        );
+        let tmp = tempfile::tempdir().expect("expected value");
+        std::fs::create_dir_all(tmp.path().join("templates")).expect("expected value");
+        std::fs::write(
+            tmp.path().join("templates/strict.md"),
+            "{% block title required %}{% endblock %}",
+        )
+        .expect("expected value");
+
         let templating =
-            crate::templating::Templating::from_fragments_and_templates(HashMap::new(), templates);
+            crate::templating::Templating::from_sources(tmp.path().to_path_buf(), vec![]);
         let specs = vec![Spec::Agent(AgentSpec {
-            path: "skills/my-spec.md".into(),
+            path: tmp.path().join("skills/my-spec.md"),
             frontmatter: AgentFrontmatter {
                 id: "test".to_string(),
                 description: "test".to_string(),
@@ -990,7 +1023,7 @@ mod tests {
 
     #[test]
     fn test_optional_and_required_blocks_mixed() {
-        let templates = HashMap::from([(
+        let files = HashMap::from([(
             "templates/mixed.md".to_string(),
             concat!(
                 "{% block optional %}default content{% endblock %}\n",
@@ -1003,12 +1036,263 @@ mod tests {
                 "{% extends \"templates/mixed.md\" %}",
                 "{% block mandatory %}filled in{% endblock %}"
             ),
-            &HashMap::new(),
-            &templates,
+            &files,
             None,
             &dummy_agent_spec(),
         )
         .expect("expected value");
         assert_eq!(out, "default content\nfilled in");
+    }
+
+    #[test]
+    fn test_colocated_include_full_path() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        std::fs::create_dir_all(tmp.path().join("skills/my-skill")).expect("expected value");
+        std::fs::write(
+            tmp.path().join("skills/my-skill/detail.md"),
+            "colocated content",
+        )
+        .expect("expected value");
+
+        let env = build_environment(tmp.path(), &[], None, &dummy_skill_spec());
+        let template = env
+            .template_from_str("{% include \"skills/my-skill/detail.md\" %}")
+            .expect("expected value");
+        let result = template
+            .render(minijinja::context! {})
+            .expect("expected value");
+        assert_eq!(result, "colocated content");
+    }
+
+    #[test]
+    fn test_colocated_include_self_relative() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        std::fs::create_dir_all(tmp.path().join("skills/my-skill")).expect("expected value");
+        std::fs::write(
+            tmp.path().join("skills/my-skill/detail.md"),
+            "self-relative content",
+        )
+        .expect("expected value");
+
+        let env = build_environment(tmp.path(), &[], None, &dummy_skill_spec());
+        let template = env
+            .template_from_named_str("skills/my-skill/SKILL.md", "{% include \"./detail.md\" %}")
+            .expect("expected value");
+        let result = template
+            .render(minijinja::context! {})
+            .expect("expected value");
+        assert_eq!(result, "self-relative content");
+    }
+
+    #[test]
+    fn test_self_relative_nested() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        std::fs::create_dir_all(tmp.path().join("skills/my-skill")).expect("expected value");
+        std::fs::write(
+            tmp.path().join("skills/my-skill/subsection.md"),
+            "nested content",
+        )
+        .expect("expected value");
+        std::fs::write(
+            tmp.path().join("skills/my-skill/detail.md"),
+            "detail: {% include \"./subsection.md\" %}",
+        )
+        .expect("expected value");
+
+        let env = build_environment(tmp.path(), &[], None, &dummy_skill_spec());
+        let template = env
+            .template_from_named_str("skills/my-skill/SKILL.md", "{% include \"./detail.md\" %}")
+            .expect("expected value");
+        let result = template
+            .render(minijinja::context! {})
+            .expect("expected value");
+        assert_eq!(result, "detail: nested content");
+    }
+
+    #[test]
+    fn test_self_relative_with_subdirectory() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        std::fs::create_dir_all(tmp.path().join("skills/my-skill/sub")).expect("expected value");
+        std::fs::write(tmp.path().join("skills/my-skill/sub/part.md"), "sub part")
+            .expect("expected value");
+
+        let env = build_environment(tmp.path(), &[], None, &dummy_skill_spec());
+        let template = env
+            .template_from_named_str(
+                "skills/my-skill/SKILL.md",
+                "{% include \"./sub/part.md\" %}",
+            )
+            .expect("expected value");
+        let result = template
+            .render(minijinja::context! {})
+            .expect("expected value");
+        assert_eq!(result, "sub part");
+    }
+
+    #[test]
+    fn test_non_self_relative_bypasses_path_join() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        std::fs::create_dir_all(tmp.path().join("fragments")).expect("expected value");
+        std::fs::write(tmp.path().join("fragments/shared.md"), "shared content")
+            .expect("expected value");
+
+        let env = build_environment(tmp.path(), &[], None, &dummy_skill_spec());
+        let template = env
+            .template_from_named_str(
+                "skills/my-skill/SKILL.md",
+                "{% include \"fragments/shared.md\" %}",
+            )
+            .expect("expected value");
+        let result = template
+            .render(minijinja::context! {})
+            .expect("expected value");
+        assert_eq!(result, "shared content");
+    }
+
+    #[test]
+    fn test_extra_dir_resolution() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let extra = tmp.path().join("external");
+        std::fs::create_dir_all(&extra).expect("expected value");
+        std::fs::write(extra.join("note.md"), "extra dir content").expect("expected value");
+
+        let extra_dirs = vec![super::ExtraIncludeDir {
+            name: "ext".to_string(),
+            path: extra,
+        }];
+        let env = build_environment(tmp.path(), &extra_dirs, None, &dummy_skill_spec());
+        let template = env
+            .template_from_str("{% include \"ext/note.md\" %}")
+            .expect("expected value");
+        let result = template
+            .render(minijinja::context! {})
+            .expect("expected value");
+        assert_eq!(result, "extra dir content");
+    }
+
+    #[test]
+    fn test_extra_dir_name_collision_with_spec_tree() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let extra = tmp.path().join("external");
+        std::fs::create_dir_all(&extra).expect("expected value");
+        std::fs::create_dir_all(tmp.path().join("skills")).expect("expected value");
+
+        let extra_dirs = vec![super::ExtraIncludeDir {
+            name: "skills".to_string(),
+            path: extra,
+        }];
+        let err = crate::templating::Templating::load(tmp.path(), &extra_dirs)
+            .expect_err("expected collision error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("collides"),
+            "error should mention collision: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_duplicate_extra_dir_names() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let extra_a = tmp.path().join("a");
+        let extra_b = tmp.path().join("b");
+        std::fs::create_dir_all(&extra_a).expect("expected value");
+        std::fs::create_dir_all(&extra_b).expect("expected value");
+
+        let extra_dirs = vec![
+            super::ExtraIncludeDir {
+                name: "shared".to_string(),
+                path: extra_a,
+            },
+            super::ExtraIncludeDir {
+                name: "shared".to_string(),
+                path: extra_b,
+            },
+        ];
+        let err = crate::templating::Templating::load(tmp.path(), &extra_dirs)
+            .expect_err("expected duplicate error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("duplicate"),
+            "error should mention duplicate: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_missing_extra_dir_path() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let extra_dirs = vec![super::ExtraIncludeDir {
+            name: "missing".to_string(),
+            path: tmp.path().join("nonexistent"),
+        }];
+        let err = crate::templating::Templating::load(tmp.path(), &extra_dirs)
+            .expect_err("expected missing dir error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("does not exist"),
+            "error should mention missing: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_path_traversal_rejection() {
+        let result = resolve_include("../secret.md", Path::new("/tmp"), &[]);
+        let err = result.expect_err("expected traversal error");
+        let msg = err.to_string();
+        assert!(msg.contains("parent directory traversal"), "error: {msg}");
+    }
+
+    #[test]
+    fn test_self_relative_parent_traversal_rejection() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        std::fs::create_dir_all(tmp.path().join("skills/my-skill")).expect("expected value");
+
+        let env = build_environment(tmp.path(), &[], None, &dummy_skill_spec());
+        let template = env
+            .template_from_named_str("skills/my-skill/SKILL.md", "{% include \"../secret.md\" %}")
+            .expect("expected value");
+        let err = template
+            .render(minijinja::context! {})
+            .expect_err("expected error for ../ include");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("parent directory traversal"), "error: {msg}");
+    }
+
+    #[test]
+    fn test_absolute_path_rejection() {
+        let result = resolve_include("/etc/passwd", Path::new("/tmp"), &[]);
+        assert!(
+            result.expect("should return Ok").is_none(),
+            "absolute path should be silently rejected"
+        );
+    }
+
+    #[test]
+    fn test_non_md_extension_rejection() {
+        let result = resolve_include("data.json", Path::new("/tmp"), &[]);
+        let err = result.expect_err("expected extension error");
+        let msg = err.to_string();
+        assert!(msg.contains("must use .md extension"), "error: {msg}");
+    }
+
+    #[test]
+    fn test_symlink_containment() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let outside = tempfile::tempdir().expect("expected value");
+        std::fs::write(outside.path().join("secret.md"), "secret").expect("expected value");
+
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(
+                outside.path().join("secret.md"),
+                tmp.path().join("escape.md"),
+            )
+            .expect("expected value");
+
+            let result = resolve_include("escape.md", tmp.path(), &[]).expect("should return Ok");
+            assert!(
+                result.is_none(),
+                "symlink escape should be silently rejected"
+            );
+        }
     }
 }

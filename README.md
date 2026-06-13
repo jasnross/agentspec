@@ -335,20 +335,39 @@ Additionally, check for OWASP Top 10 vulnerabilities.
 
 Fragments are reusable Markdown snippets stored in `spec/fragments/`. They help avoid duplicating instructions across multiple skills or agents.
 
-A fragment is a `.md` file referenced by its path relative to `spec/fragments/`:
+All include paths are relative to `sources_dir` (default: `spec/`). Fragments use the `fragments/` prefix:
 
 ```
 spec/fragments/
-├── review-guidelines.md          → {% include "review-guidelines.md" %}
+├── review-guidelines.md          → {% include "fragments/review-guidelines.md" %}
 └── review/
-    └── prompt-contract.md        → {% include "review/prompt-contract.md" %}
+    └── prompt-contract.md        → {% include "fragments/review/prompt-contract.md" %}
 ```
 
 Include a fragment in any spec body with:
 
 ```
-{% include "review-guidelines.md" %}
+{% include "fragments/review-guidelines.md" %}
 ```
+
+#### Colocated content
+
+`.md` files placed alongside a spec can be included using `./` self-relative syntax (preferred — survives directory renames) or the full spec-relative path:
+
+```
+spec/skills/code-review/
+├── SKILL.md                      ← the spec
+└── review-contract.md            ← colocated content
+```
+
+```
+{% include "./review-contract.md" %}
+{% include "skills/code-review/review-contract.md" %}
+```
+
+Both syntaxes resolve to the same file. `./` includes can nest — a colocated file that itself uses `{% include "./subsection.md" %}` resolves relative to its own directory.
+
+`../` is not supported — use full paths for cross-directory references.
 
 #### Variables
 
@@ -366,7 +385,7 @@ Spec body:
 
 ```
 {% with scope = "changes against main", base_reference = "main" %}
-{% include "review/prompt-contract.md" %}
+{% include "fragments/review/prompt-contract.md" %}
 {% endwith %}
 ```
 
@@ -380,7 +399,7 @@ When including a fragment inside an indented context (e.g., a numbered list), us
 2. Review the changes:
 
    {% filter indent(3, first=false) %}
-   {%- include "review-guidelines.md" %}
+   {%- include "fragments/review-guidelines.md" %}
    {%- endfilter %}
 
 3. Next step
@@ -389,6 +408,20 @@ When including a fragment inside an indented context (e.g., a numbered list), us
 The `first=false` parameter skips indenting the first line (since it's already at the correct indentation from the call site). The `{%-` trim markers prevent extra whitespace around the included content.
 
 Fragments can include other fragments (nesting is supported).
+
+#### Migration from pre-0.5
+
+- **Include paths**: Add the `fragments/` prefix to all `{% include %}` paths that reference files in `spec/fragments/`. Before: `{% include "shared-rules.md" %}`. After: `{% include "fragments/shared-rules.md" %}`.
+- **Extra include dirs**: `extra_fragment_dirs` (a list of paths) is replaced by `extra_include_dirs` (a list of `{ name, path }` entries). The `name` becomes the path prefix in includes:
+
+  ```toml
+  # Before
+  extra_fragment_dirs = ["../shared-fragments"]
+
+  # After
+  extra_include_dirs = [{ name = "shared", path = "../shared-fragments" }]
+  # Include via: {% include "shared/note.md" %}
+  ```
 
 #### Built-in variables
 

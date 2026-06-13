@@ -7,7 +7,7 @@ agent_invocable: false
 
 # Basic Skill
 
-{% include "shared-note.md" %}
+{% include "fragments/shared-note.md" %}
 
 Skill instructions here.
 

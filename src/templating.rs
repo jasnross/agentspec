@@ -3,93 +3,112 @@ mod environment;
 mod fragments;
 mod validation;
 
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 pub use context::TemplateContext;
 use environment::build_environment;
 pub use fragments::resolve_fragments;
-use fragments::{load_all_fragments, load_templates};
 use minijinja::Environment;
+use serde::Deserialize;
 
 use crate::provider::Provider;
 use crate::spec::Spec;
 
-/// Reusable templating infrastructure: owns the fragment map and builds
-/// `MiniJinja` environments on demand.
+/// Named external include directory: `{ name = "shared", path = "path/to/dir" }`.
 ///
-/// This replaces the former `TemplatingConfig` struct. Unlike `TemplatingConfig`,
-/// which bundled fragments with a pre-built context, `TemplatingResources` owns
-/// only the reusable fragment data. The `TemplateContext` is built at the point
-/// of use (inside the compile loop) where provider-specific information is
-/// available.
+/// The `name` becomes the path prefix in includes — a file `foo.md` in the
+/// directory is included via `{% include "shared/foo.md" %}`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtraIncludeDir {
+    pub name: String,
+    pub path: PathBuf,
+}
+
+/// Reusable templating infrastructure: owns the source directory path and
+/// extra include dirs, building `MiniJinja` environments on demand with a
+/// lazy loader.
 #[derive(Debug)]
 pub struct Templating {
-    fragment_map: HashMap<String, String>,
-    template_map: HashMap<String, String>,
+    sources_dir: PathBuf,
+    extra_dirs: Vec<ExtraIncludeDir>,
 }
 
 impl Templating {
-    /// Load fragment and template files, detecting name collisions between them.
-    pub fn load(
-        fragments_dir: &Path,
-        extra_fragment_dirs: &[PathBuf],
-        templates_dir: &Path,
-    ) -> Result<Self> {
-        let fragment_map = load_all_fragments(fragments_dir, extra_fragment_dirs)?;
-        let template_map = load_templates(templates_dir)?;
-
-        for key in template_map.keys() {
-            if fragment_map.contains_key(key) {
-                let rel = key.strip_prefix("templates/").unwrap_or(key);
+    /// Validate configuration for the templating system.
+    ///
+    /// Checks that extra dir paths exist and are directories, that extra dir
+    /// names are unique, and that no extra dir name collides with a top-level
+    /// directory under `sources_dir`.
+    pub fn load(sources_dir: &Path, extra_dirs: &[ExtraIncludeDir]) -> Result<Self> {
+        for extra in extra_dirs {
+            if !extra.path.is_dir() {
                 bail!(
-                    "template-fragment name collision: \"{key}\"\n  \
-                     --> template at {}\n  \
-                     --> a fragment also resolves to the key \"{key}\"\n  \
-                     = rename one to disambiguate",
-                    templates_dir.join(rel).display(),
+                    "extra include directory does not exist: {} (name: \"{}\")",
+                    extra.path.display(),
+                    extra.name,
+                );
+            }
+        }
+
+        let mut seen_names = HashSet::new();
+        for extra in extra_dirs {
+            if !seen_names.insert(&extra.name) {
+                bail!("duplicate extra include directory name: \"{}\"", extra.name);
+            }
+        }
+
+        let top_level = collect_top_level_dirs(sources_dir);
+        for extra in extra_dirs {
+            if top_level.contains(&extra.name) {
+                bail!(
+                    "extra include directory name \"{}\" collides with top-level \
+                     directory under {}",
+                    extra.name,
+                    sources_dir.display(),
                 );
             }
         }
 
         Ok(Self {
-            fragment_map,
-            template_map,
+            sources_dir: sources_dir.to_path_buf(),
+            extra_dirs: extra_dirs.to_vec(),
         })
     }
 
-    /// Build a `MiniJinja` environment for `spec` with all loaded fragments
-    /// and templates available. See [`environment::build_environment`] for the
+    /// Build a `MiniJinja` environment for `spec` with all includes resolved
+    /// lazily via the loader. See [`environment::build_environment`] for the
     /// full contract, including `script()` gating.
-    pub fn build_environment(
-        &self,
-        provider: Option<Provider>,
-        spec: &Spec,
-    ) -> Result<Environment<'_>> {
-        build_environment(&self.fragment_map, &self.template_map, provider, spec)
+    pub fn build_environment(&self, provider: Option<Provider>, spec: &Spec) -> Environment<'_> {
+        build_environment(&self.sources_dir, &self.extra_dirs, provider, spec)
     }
 
-    pub(crate) fn template_map(&self) -> &HashMap<String, String> {
-        &self.template_map
+    pub fn sources_dir(&self) -> &Path {
+        &self.sources_dir
     }
 
-    #[cfg(test)]
-    pub(crate) fn from_fragments(fragment_map: HashMap<String, String>) -> Self {
-        Self {
-            fragment_map,
-            template_map: HashMap::new(),
-        }
+    pub fn extra_dirs(&self) -> &[ExtraIncludeDir] {
+        &self.extra_dirs
     }
 
     #[cfg(test)]
-    pub(crate) fn from_fragments_and_templates(
-        fragment_map: HashMap<String, String>,
-        template_map: HashMap<String, String>,
-    ) -> Self {
+    pub(crate) fn from_sources(sources_dir: PathBuf, extra_dirs: Vec<ExtraIncludeDir>) -> Self {
         Self {
-            fragment_map,
-            template_map,
+            sources_dir,
+            extra_dirs,
         }
     }
+}
+
+fn collect_top_level_dirs(sources_dir: &Path) -> HashSet<String> {
+    let Ok(entries) = std::fs::read_dir(sources_dir) else {
+        return HashSet::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_ok_and(|ft| ft.is_dir()))
+        .filter_map(|e| e.file_name().to_str().map(String::from))
+        .collect()
 }

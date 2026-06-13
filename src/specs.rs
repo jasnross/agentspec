@@ -576,8 +576,17 @@ fn select_spec_md(
         );
     }
     if md_files.len() > 1 {
+        // Colocated .md content: prefer SKILL.md as the primary spec file.
+        let skill_md = md_files.iter().find(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .eq_ignore_ascii_case("skill.md")
+        });
+        if let Some(entry) = skill_md {
+            return Ok(Some(entry.path()));
+        }
         bail!(
-            "skill directory {} contains multiple .md files (expected exactly one)",
+            "skill directory {} contains multiple .md files and none is named SKILL.md",
             skill_dir.display()
         );
     }
@@ -1175,22 +1184,36 @@ Agent body.
     }
 
     #[test]
-    fn test_load_skill_specs_multiple_md_files() {
+    fn test_load_skill_specs_multiple_md_prefers_skill_md() {
         let tmp = tempfile::tempdir().expect("expected value");
         let skills_dir = tmp.path().join("skills");
         let skill_dir = skills_dir.join("multi-md");
         fs::create_dir_all(&skill_dir).expect("expected value");
-        fs::write(skill_dir.join("SKILL.md"), "---\nid: a\n---\nbody").expect("expected value");
-        fs::write(skill_dir.join("OTHER.md"), "---\nid: b\n---\nbody").expect("expected value");
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nid: a\ndescription: test\nuser_invocable: false\nagent_invocable: false\n---\nbody",
+        )
+        .expect("expected value");
+        fs::write(skill_dir.join("detail.md"), "colocated content").expect("expected value");
 
-        let result = load_skills_no_ignore(&skills_dir);
-        assert!(result.is_err());
-        assert!(
-            result
-                .expect_err("expected error")
-                .to_string()
-                .contains("multiple .md files")
-        );
+        let result = load_skills_no_ignore(&skills_dir).expect("expected value");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id(), "a");
+    }
+
+    #[test]
+    fn test_load_skill_specs_multiple_md_no_skill_md_errors() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let skills_dir = tmp.path().join("skills");
+        let skill_dir = skills_dir.join("multi-md");
+        fs::create_dir_all(&skill_dir).expect("expected value");
+        fs::write(skill_dir.join("one.md"), "---\nid: a\n---\nbody").expect("expected value");
+        fs::write(skill_dir.join("two.md"), "---\nid: b\n---\nbody").expect("expected value");
+
+        let err = load_skills_no_ignore(&skills_dir).expect_err("expected error");
+        let msg = err.to_string();
+        assert!(msg.contains("multiple .md files"), "error: {msg}");
+        assert!(msg.contains("SKILL.md"), "error: {msg}");
     }
 
     #[test]
