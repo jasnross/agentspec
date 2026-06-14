@@ -316,7 +316,7 @@ fn load_and_validate(
 fn load_templating(config: &AgentspecConfig) -> Result<Templating> {
     let sources = config.resolve(&config.spec.sources_dir);
     let extra_dirs = resolve_extra_include_dirs(config)?;
-    Templating::load(&sources, &extra_dirs)
+    Templating::new(&sources, &extra_dirs)
 }
 
 fn resolve_extra_include_dirs(

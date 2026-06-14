@@ -12,7 +12,7 @@ static BLOCK_RE: LazyLock<Regex> = LazyLock::new(|| {
 
 #[allow(clippy::expect_used)] // literal regex pattern; failure is a programmer error
 static EXTENDS_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"\{%-?\s*extends\s+"(templates/[^"]+)"\s*-?%\}"#).expect("expected valid regex")
+    Regex::new(r#"\{%-?\s*extends\s+"([^"]+)"\s*-?%\}"#).expect("expected valid regex")
 });
 
 fn extract_block_names(source: &str) -> HashSet<String> {
@@ -37,9 +37,12 @@ pub(super) fn validate_child_blocks(
         return Ok(());
     };
 
-    let child_blocks = extract_block_names(child_source);
-    if child_blocks.is_empty() {
-        return Ok(());
+    if !parent_name.starts_with("templates/") {
+        bail!(
+            "{} extends \"{parent_name}\" which is outside the templates/ directory; \
+             extends targets must start with \"templates/\"",
+            spec_path.display(),
+        );
     }
 
     let mut parent_blocks = HashSet::new();
@@ -64,6 +67,11 @@ pub(super) fn validate_child_blocks(
 
         parent_blocks.extend(extract_block_names(&parent_source));
         current = extract_extends_target(&parent_source);
+    }
+
+    let child_blocks = extract_block_names(child_source);
+    if child_blocks.is_empty() {
+        return Ok(());
     }
 
     let unrecognized: Vec<&str> = child_blocks
@@ -153,7 +161,27 @@ mod tests {
     #[test]
     fn test_extract_extends_target_non_template() {
         let source = "{% extends \"not-a-template.md\" %}";
-        assert_eq!(extract_extends_target(source), None);
+        assert_eq!(
+            extract_extends_target(source),
+            Some("not-a-template.md".to_string()),
+        );
+    }
+
+    #[test]
+    fn test_validate_child_blocks_rejects_non_template_extends() {
+        let templates = HashMap::new();
+        let child = concat!(
+            "{% extends \"other/base.md\" %}",
+            "{% block x %}y{% endblock %}"
+        );
+        let err = validate_child_blocks(child, &resolver(&templates), Path::new("spec.md"))
+            .expect_err("expected error for non-templates/ extends target");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("outside the templates/ directory"),
+            "error: {msg}"
+        );
+        assert!(msg.contains("other/base.md"), "error: {msg}");
     }
 
     #[test]

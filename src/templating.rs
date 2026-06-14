@@ -37,12 +37,30 @@ pub struct Templating {
 }
 
 impl Templating {
-    /// Validate configuration for the templating system.
+    /// Validate configuration and construct a [`Templating`] instance.
     ///
     /// Checks that extra dir paths exist and are directories, that extra dir
     /// names are unique, and that no extra dir name collides with a top-level
     /// directory under `sources_dir`.
-    pub fn load(sources_dir: &Path, extra_dirs: &[ExtraIncludeDir]) -> Result<Self> {
+    pub fn new(sources_dir: &Path, extra_dirs: &[ExtraIncludeDir]) -> Result<Self> {
+        for extra in extra_dirs {
+            if extra.name.trim().is_empty() {
+                bail!("extra include directory name must not be empty or whitespace-only");
+            }
+            if extra.name.contains('/') || extra.name.contains('\\') {
+                bail!(
+                    "extra include directory name must not contain path separators: \"{}\"",
+                    extra.name,
+                );
+            }
+            if extra.name == ".." || extra.name == "." {
+                bail!(
+                    "extra include directory name must not be \".\" or \"..\": \"{}\"",
+                    extra.name,
+                );
+            }
+        }
+
         for extra in extra_dirs {
             if !extra.path.is_dir() {
                 bail!(

@@ -2,7 +2,6 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
 use minijinja::Environment;
 
 use super::ExtraIncludeDir;
@@ -36,7 +35,10 @@ pub fn build_environment(
         let mut segments: Vec<&str> = parent.split('/').collect();
         segments.pop();
         for part in name.split('/') {
-            if part != "." {
+            if part == ".." {
+                return Cow::Borrowed(name);
+            }
+            if part != "." && !part.is_empty() {
                 segments.push(part);
             }
         }
@@ -109,11 +111,25 @@ pub(super) fn resolve_include(
 }
 
 fn read_if_within(root: &Path, full: &Path) -> Result<Option<String>, minijinja::Error> {
-    let Ok(canonical_root) = std::fs::canonicalize(root) else {
-        return Ok(None);
+    let canonical_root = match std::fs::canonicalize(root) {
+        Ok(p) => p,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => {
+            return Err(minijinja::Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                format!("failed to resolve include root directory: {e}"),
+            ));
+        }
     };
-    let Ok(canonical_full) = std::fs::canonicalize(full) else {
-        return Ok(None);
+    let canonical_full = match std::fs::canonicalize(full) {
+        Ok(p) => p,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => {
+            return Err(minijinja::Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                format!("failed to resolve include path: {e}"),
+            ));
+        }
     };
 
     if !canonical_full.starts_with(&canonical_root) {
@@ -1181,7 +1197,7 @@ mod tests {
             name: "skills".to_string(),
             path: extra,
         }];
-        let err = crate::templating::Templating::load(tmp.path(), &extra_dirs)
+        let err = crate::templating::Templating::new(tmp.path(), &extra_dirs)
             .expect_err("expected collision error");
         let msg = err.to_string();
         assert!(
@@ -1208,7 +1224,7 @@ mod tests {
                 path: extra_b,
             },
         ];
-        let err = crate::templating::Templating::load(tmp.path(), &extra_dirs)
+        let err = crate::templating::Templating::new(tmp.path(), &extra_dirs)
             .expect_err("expected duplicate error");
         let msg = err.to_string();
         assert!(
@@ -1218,13 +1234,116 @@ mod tests {
     }
 
     #[test]
+    fn test_empty_extra_dir_name() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let extra = tmp.path().join("external");
+        std::fs::create_dir_all(&extra).expect("expected value");
+
+        let extra_dirs = vec![super::ExtraIncludeDir {
+            name: String::new(),
+            path: extra,
+        }];
+        let err = crate::templating::Templating::new(tmp.path(), &extra_dirs)
+            .expect_err("expected empty name error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("empty or whitespace"),
+            "error should mention empty: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_whitespace_only_extra_dir_name() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let extra = tmp.path().join("external");
+        std::fs::create_dir_all(&extra).expect("expected value");
+
+        let extra_dirs = vec![super::ExtraIncludeDir {
+            name: "  ".to_string(),
+            path: extra,
+        }];
+        let err = crate::templating::Templating::new(tmp.path(), &extra_dirs)
+            .expect_err("expected whitespace name error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("empty or whitespace"),
+            "error should mention whitespace: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_slash_in_extra_dir_name() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let extra = tmp.path().join("external");
+        std::fs::create_dir_all(&extra).expect("expected value");
+
+        let extra_dirs = vec![super::ExtraIncludeDir {
+            name: "a/b".to_string(),
+            path: extra,
+        }];
+        let err = crate::templating::Templating::new(tmp.path(), &extra_dirs)
+            .expect_err("expected slash error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("path separators"),
+            "error should mention separators: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_dotdot_extra_dir_name() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let extra = tmp.path().join("external");
+        std::fs::create_dir_all(&extra).expect("expected value");
+
+        let extra_dirs = vec![super::ExtraIncludeDir {
+            name: "..".to_string(),
+            path: extra,
+        }];
+        let err = crate::templating::Templating::new(tmp.path(), &extra_dirs)
+            .expect_err("expected dotdot error");
+        let msg = err.to_string();
+        assert!(msg.contains("must not be \".\" or \"..\""), "error: {msg}");
+    }
+
+    #[test]
+    fn test_dot_extra_dir_name() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let extra = tmp.path().join("external");
+        std::fs::create_dir_all(&extra).expect("expected value");
+
+        let extra_dirs = vec![super::ExtraIncludeDir {
+            name: ".".to_string(),
+            path: extra,
+        }];
+        let err = crate::templating::Templating::new(tmp.path(), &extra_dirs)
+            .expect_err("expected dot error");
+        let msg = err.to_string();
+        assert!(msg.contains("must not be \".\" or \"..\""), "error: {msg}");
+    }
+
+    #[test]
+    fn test_dotdot_substring_in_extra_dir_name_allowed() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let extra = tmp.path().join("external");
+        std::fs::create_dir_all(&extra).expect("expected value");
+
+        let extra_dirs = vec![super::ExtraIncludeDir {
+            name: "foo..bar".to_string(),
+            path: extra,
+        }];
+        crate::templating::Templating::new(tmp.path(), &extra_dirs)
+            .expect("foo..bar should be accepted — not a path traversal");
+    }
+
+    #[test]
     fn test_missing_extra_dir_path() {
         let tmp = tempfile::tempdir().expect("expected value");
         let extra_dirs = vec![super::ExtraIncludeDir {
             name: "missing".to_string(),
             path: tmp.path().join("nonexistent"),
         }];
-        let err = crate::templating::Templating::load(tmp.path(), &extra_dirs)
+        let err = crate::templating::Templating::new(tmp.path(), &extra_dirs)
             .expect_err("expected missing dir error");
         let msg = err.to_string();
         assert!(
