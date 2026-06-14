@@ -39,3 +39,10 @@
    - Use case: the `review-spec` skill in `agentconfig` needs to feed compiled (fragment-expanded) spec content to a reviewer agent — today the workaround is a full `agentspec compile` followed by reading the relevant file from `generated/`, which is heavier than necessary
    - Likely shape: `agentspec compile --spec spec/skills/foo/ --stdout` (or similar) that runs the pipeline for a single spec and prints the compiled output to stdout instead of writing files. Provider selection (`--provider claude`) would be needed since output format varies per adapter
    - Open questions: should this support multiple specs in one invocation (`--spec a --spec b`)? Should it emit raw expanded markdown or the full adapter-formatted output (with frontmatter transformations)? How does this interact with fragments that reference sibling specs (e.g., cross-spec `{% include %}`)?
+9. Validate template-to-template inheritance chains, not just spec-to-template
+   - `validate_child_blocks` currently runs only for specs (via `resolve_fragments`), not for templates themselves
+   - A mid-level template with a typo in a block override against its parent won't be caught until a spec that transitively extends it hits a MiniJinja render error
+   - Likely shape: walk `templates/` at validation time and run `validate_child_blocks` for each template that uses `{% extends %}`
+10. Consider caching template reads between validation and rendering
+    - `validate_child_blocks` reads template files from disk to walk the parent chain; MiniJinja's loader reads the same files again during render
+    - Negligible for small template sets but duplicated I/O worth awareness as template usage grows

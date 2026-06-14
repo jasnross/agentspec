@@ -302,7 +302,15 @@ id: security-review
 description: Security-focused code review
 ---
 
-{% extends "templates/critique.md" %} {% block purpose %}Review code for security vulnerabilities.{% endblock %} {% block output %} Return findings as a numbered list with severity ratings. {% endblock %}
+{% extends "templates/critique.md" %}
+
+{% block purpose %}
+Review code for security vulnerabilities.
+{% endblock %}
+
+{% block output %}
+Return findings as a numbered list with severity ratings.
+{% endblock %}
 ```
 
 The optional `guidelines` block keeps its default content since the derived spec doesn't override it.
@@ -410,6 +418,8 @@ The `first=false` parameter skips indenting the first line (since it's already a
 Fragments can include other fragments (nesting is supported).
 
 #### Migration from pre-0.5
+
+> **Note:** agentspec is currently at v0.4.x. This section documents upcoming breaking changes planned for v0.5. If you are already on v0.5+, these changes have been applied.
 
 - **Include paths**: Add the `fragments/` prefix to all `{% include %}` paths that reference files in `spec/fragments/`. Before: `{% include "shared-rules.md" %}`. After: `{% include "fragments/shared-rules.md" %}`.
 - **Extra include dirs**: `extra_fragment_dirs` (a list of paths) is replaced by `extra_include_dirs` (a list of `{ name, path }` entries). The `name` becomes the path prefix in includes:
