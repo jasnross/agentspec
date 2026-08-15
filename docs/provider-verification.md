@@ -38,11 +38,15 @@ Probes verify the *provider's* contract, so they use hand-authored provider conf
 
 ## OpenCode
 
-**Verified.** opencode 1.18.15; source `anomalyco/opencode` @ `cc4b456`. Probed 2026-08-12.
+**Verified.** opencode 1.18.15; source `anomalyco/opencode` @ `cc4b456`. Probed 2026-08-12 and 2026-08-15.
 
 ### Procedure
 
-`opencode debug agent <name>` resolves an agent and prints its resolved record. It makes no model request, needs no network and no credentials, and is deterministic — the cheapest oracle of the three.
+`opencode debug agent <name>` resolves an agent and prints its resolved record; `opencode debug skill` prints every resolved skill as JSON. Both make no model request, need no network and no credentials, and are deterministic — the cheapest oracle of the three.
+
+```sh
+opencode debug skill --pure | jq '.[] | select(.name=="<name>") | keys'
+```
 
 ### Results
 
@@ -51,15 +55,17 @@ Probes verify the *provider's* contract, so they use hand-authored provider conf
 | Agent, sibling key | `model: anthropic/claude-sonnet-4-5` + `variant: high` | `"model": {"providerID":"anthropic","modelID":"claude-sonnet-4-5"}, "variant": "high"` ✅ |
 | Agent, `#` suffix | `model: anthropic/claude-sonnet-4-5#high` | `"modelID": "claude-sonnet-4-5#high"`, `"variant": null` ❌ |
 | Skill | `model:` + `variant:` | both absent from the resolved skill record ❌ |
+| Skill | `model:` + `variant:` + `tools:` | resolved record is exactly `{content, description, location, name}`; all three absent, `content` holds the body only ❌ |
 | Command | `model:` + `variant:` | `"model": "anthropic/claude-sonnet-4-5", "variant": "high"` ✅ |
 | Agent, `variant:` with no `model:` | `variant: high` | accepted silently, inert per OpenCode's schema annotation |
 
-All five probes wrote zero bytes to stderr.
+The five 2026-08-12 probes wrote zero bytes to stderr. The 2026-08-15 skill probe was run with stderr suppressed, so no such claim is made for it.
 
 ### What this establishes
 
 - agentspec's top-level `variant:` emission for **agents** is correct.
-- OpenCode's **skill** schema declares only `name`, `description`, `slash` (`packages/core/src/skill.ts:33-38`); `model` and `variant` are parsed as frontmatter and discarded.
+- OpenCode's **skill** schema declares only `name`, `description`, `slash` (`packages/core/src/skill.ts:33-38`); `model`, `variant`, **and `tools`** are parsed as frontmatter and discarded. `tools` matters most in practice: agentspec emits it as a non-`Option` map, so every generated OpenCode skill file carries a dead `tools:` block, whereas `model`/`variant` appear only when a preset applies.
+- Skills are discovered under **both** `.opencode/skill/` and `.opencode/skills/`, so agentspec's `skills` directory name resolves correctly.
 - OpenCode's **command** schema accepts `variant`.
 - `Provider.parseModel` splits on `/` only (`packages/opencode/src/provider/provider.ts:1997-2003`); no `#` parser exists anywhere in the repository, so a `#variant` suffix produces a well-formed model id that no catalog contains.
 
