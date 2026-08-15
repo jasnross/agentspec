@@ -1,1 +1,5 @@
 CHANGELOG.md
+
+# Probe result records are append-only and written solely by `experiments/lib/record.sh`.
+# A probe run must be the last thing that touches its own record.
+experiments/*/results/
