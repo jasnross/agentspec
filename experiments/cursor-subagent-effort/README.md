@@ -18,7 +18,46 @@ The workspace is a throwaway temp directory, never a real project. `agentspec sy
 
 ## The oracle
 
-Cursor exposes no offline introspection command. The oracle is its hook system: `subagentStart` carries `subagent_model`, the model id Cursor resolved for the subagent. Only `subagentStart` is registered — a narrower registration means less capture noise to project over.
+Cursor exposes no offline introspection command. The oracle is its hook system: a hook that dumps raw stdin, plus hand-authored subagent definitions in a throwaway workspace. `subagentStart` carries `subagent_model`, the model id Cursor resolved for the subagent. Only `subagentStart` is registered — a narrower registration means less capture noise to project over.
+
+Each arm is a `.cursor/agents/<name>.md` differing only in its `model:` line. The resolved model per arm is read with:
+
+```sh
+jq -r 'select(.hook_event_name=="subagentStart") | "\(.subagent_type)\t\(.subagent_model)"' payloads.jsonl
+```
+
+That expression is where the two field names this package's `wait_for` filter and projection both depend on — `subagent_type` and `subagent_model` — were first read off a real payload. Nothing else in this repository records where they came from.
+
+**It is a hand-run read of a capture file, not a manifest expression.** Manifest expressions are evaluated slurped (`jq -s`), so a `wait_for` filter or projection copied from this shape would never match — see the contract's note on array-shaped input. Compare this package's own manifest, which wraps the same selection in `[…] | first`.
+
+## Two model-bearing surfaces, at different fidelities
+
+_Prior observation, from the same hook oracle but not from this probe: Cursor 3.15.19 and 3.16.17, 2026-08-14 and 2026-08-15. This package registers `subagentStart` only, so nothing below is measured by running it._
+
+| Surface | Field | Fidelity |
+| --- | --- | --- |
+| `beforeSubmitPrompt` (parent turns only) | `model_id` + `model_params` | **Structured** — `[{"id":"effort","value":"high"}]` |
+| `subagentStart` | `subagent_model` | **Flattened** — model id fused with resolved options |
+
+`model` on a parent turn is the flattened form of `model_id` + `model_params`: `composer-2.5` + `fast=true` renders as `composer-2.5-fast`; `grok-4.6` + `effort=high,fast=true` renders as `cursor-grok-4.6-high-fast`.
+
+**`model_params` is not available for subagents.** Subagent events expose only the flattened `subagent_model`, which is why this probe reads a fused string and must use non-default values to see anything at all.
+
+Independent corroboration of the key name, from a parent turn on a different model family:
+
+```json
+{
+  "hook_event_name": "beforeSubmitPrompt",
+  "model_id": "grok-4.6",
+  "model": "cursor-grok-4.6-high-fast",
+  "model_params": [
+    { "id": "effort", "value": "high" },
+    { "id": "fast", "value": "true" }
+  ]
+}
+```
+
+That payload also shows multiple options composing, which is the shape a general model-options map would render to.
 
 ## The assertion discriminates
 
@@ -32,6 +71,8 @@ Baseline for `claude-opus-5` with no bracket options is `claude-opus-5-thinking-
 | --- | --- | --- |
 | `claude-opus-5[effort=low]` | `claude-opus-5-thinking-low` | bracket options are parsed and applied |
 | `claude-opus-5[effort=nonsense]` | `claude-opus-5-thinking-high` | an invalid value degrades silently to the default |
+| `claude-opus-5[effort=high]` | `claude-opus-5-thinking-high` | **uninformative** — collides with the model's default |
+| `composer-2.5[fast=false]` | `composer-2.5` | **uninformative** — `fast=false` is the subagent default |
 
 Distinct inputs produce distinct values, so the projection discriminates.
 

@@ -17,13 +17,18 @@ This bias toward refactoring does not override scope discipline. Improve what yo
 ## Commands
 
 ```sh
-just check                      # format + lint + build + test + license check (the full suite)
-just fmt                        # format: cargo fix + cargo +nightly fmt
+just check                      # lint + cargo check + shell gates + test + licenses + format + probe summary
+just fmt                        # format: prettier + cargo fix + cargo +nightly fmt + cargo sort-derives
 just lint                       # clippy on all targets
 just test                       # run tests
 just build                      # build only
 just licenses                   # cargo deny check licenses
 just install                    # install binary locally
+
+just shellcheck                 # lint the probe shell under experiments/
+just bats-test                  # run the probe harness test suite
+just probe-run                  # run every script-driven probe; human-driven ones are listed as skipped
+just probe-status               # report on committed probe records; invokes no probe
 
 # Or without just:
 cargo build
@@ -113,7 +118,7 @@ Two pedantic lints are explicitly allowed: `similar_names` (flags unambiguous pa
 
 Any `#[allow(clippy::...)]` should include a nearby comment explaining why it's needed and keep scope as narrow as possible (item-level over module-level).
 
-Run `just check` before committing to ensure linting, tests, and formatting pass; CI enforces this.
+Run `just check` before committing to ensure linting, tests, and formatting pass. CI enforces the cargo gates — it invokes `cargo fmt --check`, `cargo clippy`, `cargo test`, and `cargo deny check licenses` directly rather than going through `just`. The shell gates `just check` adds (`shellcheck` and `bats-test`) are therefore **local-only**, as is the probe summary.
 
 ## Serde
 
@@ -137,6 +142,16 @@ src/plan.rs              ← CompilePlan/SyncPlan/RemovePlan + per-mode write st
 ```
 
 `mod.rs` files are harder to navigate in editors (multiple open tabs all named `mod.rs`) and are the older convention. The exception is `main.rs` and `lib.rs`, which are standard entry points.
+
+## Probe Before You Implement
+
+When adding a rendering agentspec will emit, check `experiments/` for a probe covering it, write and run one if not, and design against the measurement. Probes verify the _provider's_ contract using hand-authored provider config, so a probe can precede the feature it de-risks rather than gating it afterward.
+
+**Probe first when the outcome could change the design; defer when it can only confirm.** agentspec's tests compare emitted bytes against agentspec's own belief about what each provider reads, and that belief has been wrong — a design revision once asserted an OpenCode `provider/model#variant` suffix no parser would have accepted.
+
+All three providers degrade silently on a rendering they do not understand, so a probe asserts on a positive signal in the provider's own resolved view, never on absence of an error. The full contract is `experiments/README.md`.
+
+Probes are explicitly invoked and **never run in CI** — what goes stale is the third-party tool, not any file in this repository.
 
 ## Design Principles
 
