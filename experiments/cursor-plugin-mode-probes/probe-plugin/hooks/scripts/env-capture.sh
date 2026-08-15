@@ -43,6 +43,7 @@ ts="$(date -u +%Y-%m-%dT%H:%M:%S%z)"
       if [ -d "$CURSOR_PLUGIN_DATA" ]; then
         printf 'directory exists on disk: yes\n'
         printf 'contents (top-level):\n'
+        # shellcheck disable=SC2012 # `ls -la` output is the diagnostic this probe captures; `find` would defeat the purpose
         ls -la "$CURSOR_PLUGIN_DATA" 2>&1 | head -20
       else
         printf 'directory exists on disk: no (likely lazy-created on first write)\n'
@@ -55,6 +56,7 @@ ts="$(date -u +%Y-%m-%dT%H:%M:%S%z)"
     if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
       printf 'CURSOR_PLUGIN_ROOT=%s\n' "$CURSOR_PLUGIN_ROOT"
       printf 'contents (top-level):\n'
+      # shellcheck disable=SC2012 # `ls -la` output is the diagnostic this probe captures; `find` would defeat the purpose
       ls -la "$CURSOR_PLUGIN_ROOT" 2>&1 | head -20
     else
       printf '(unset)\n'

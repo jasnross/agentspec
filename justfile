@@ -33,8 +33,28 @@ lint:
 licenses:
     cargo deny check licenses
 
-# Format + lint + cargo check + test + licenses
-check: lint && test licenses fmt
+# Lint the probe shell (scoped to experiments/; see experiments/README.md)
+shellcheck:
+    find experiments -name '*.sh' -exec shellcheck {} +
+
+# Run the probe harness test suite
+bats-test:
+    bats experiments/lib/tests
+
+# Run every script-driven probe; human-driven ones are listed as skipped
+probe-run:
+    experiments/lib/probe-run.sh
+
+# Report on committed probe records; invokes no probe
+probe-status:
+    experiments/lib/probe-status.sh
+
+# One line of probe status; can never fail the build
+probe-summary:
+    -@experiments/lib/probe-status.sh --summary
+
+# lint, cargo check, shell gates, test, licenses, format, then the probe summary
+check: lint && shellcheck bats-test test licenses fmt probe-summary
   cargo check
 
 # Install binary locally

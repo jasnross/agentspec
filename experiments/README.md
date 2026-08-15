@@ -113,6 +113,8 @@ The only hand-authored file in the contract.
 | `capture` | `jq`        | Apply the expression to the capture payload. |
 | `none`    | —           | Record `null`.                               |
 
+**A `command` is split on whitespace and exec'd directly — never through a shell.** So `opencode --version` works and `sh -c "…; …"` does not: `;`, `|`, `>`, `$()`, and quoting are not interpreted. `just probe-status` runs these commands on every `just check`, and a manifest is reviewed as data rather than as code, so it must not be able to express arbitrary code. The command also runs with stdin closed and under a timeout, because a version command that blocks would wedge the build — which is worse than failing it.
+
 **A Cursor probe declares `kind: "capture"` and never a CLI command.** The probe exercises the IDE, whose version arrives in the hook payload as `cursor_version` — the field agentspec itself trusts for host detection (`src/hooks_canonical.rs:250-256`). `cursor-agent --version` reports a different artifact on a different versioning scheme (`2026.05.28-a70ca7c`), so comparing against it would produce a drift signal about something no probe touched.
 
 ### Every jq expression reads slurped, array-shaped input
@@ -157,6 +159,33 @@ Fields that would merely restate a derivable fact — the probe's name, its driv
 **`blocked` is not a status.** A probe that cannot run makes its runner exit nonzero with a diagnostic, which produces no record at all. Recording "this could not run" would mean writing a record for a run that never happened. A blocked probe's state lives in its package README, where a process note belongs.
 
 The filename carries a UTC time component because date plus version does not disambiguate a same-day re-run at the same provider version — and re-running to confirm a `refuted` result is the first thing anyone would do. The full name also sorts lexicographically in run order, which is how `probe-status` finds the newest.
+
+## Running probes and reading the report
+
+```sh
+just probe-run      # run every script-driven probe; human-driven ones are listed as skipped
+just probe-status   # report on the committed records; invokes no probe
+just bats-test      # the harness test suite
+just shellcheck     # lint the probe shell
+```
+
+`just check` ends with a one-line probe summary. That line can never fail the build.
+
+**`probe-run` cannot drive a human-driven probe.** A `human-act` or `human-judge` package needs a live provider session, so `probe-run` lists it as skipped and points at its README; run its `probe.sh` directly.
+
+### What the summary line can and cannot see
+
+```
+probes: 6 recorded · 0 refuted · 0 inconclusive · 1 version drift
+```
+
+The drift count is **not** a claim that everything else is current. Every Cursor probe declares `version_source.kind: "capture"`, and a captured version is knowable only by running the probe — which `probe-status` never does. So no drift is computable for those packages, and they contribute nothing to that count. Read `0 version drift` as "nothing computable drifted," not as "everything is current."
+
+### The two drift signals are not equally strong
+
+**Version drift** — the recorded `tool_version` differs from the installed one — is weak. It means only that the result has not been reconfirmed against the version you are running.
+
+**Assertion drift** — a re-run produced a different `observed` — is strong. It means provider behavior changed. Since `probe-status` invokes no probe, it cannot produce assertion drift itself; it surfaces `refuted` records, which are assertion drift already recorded.
 
 ## Re-verification
 

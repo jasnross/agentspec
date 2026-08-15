@@ -1,5 +1,8 @@
 [tools]
 "cargo:cargo-sort-derives" = "latest"
+bats = "latest"
+jq = "latest"
 just = "latest"
 prettier = "latest"
 rust = "latest"
+shellcheck = "latest"

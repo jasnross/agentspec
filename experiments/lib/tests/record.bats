@@ -315,14 +315,16 @@ the_record() {
 }
 
 @test "a path-hostile version string is sanitized in the record filename" {
-	write_manifest <<-'JSON'
-		{
-		  "schema_version": 1, "provider": "opencode", "driver": "script", "depth": null,
-		  "question": "q",
-		  "version_source": { "kind": "command", "command": "printf '1.0/../etc x\\n'" },
-		  "assertion": { "projection": ".", "expected": {} }
-		}
-	JSON
+	# The version command is exec'd as argv, not through a shell, so the
+	# hostile string comes from a stub binary rather than shell quoting.
+	stub="$BATS_TEST_TMPDIR/hostile-version"
+	printf '#!/usr/bin/env bash\nprintf "1.0/../etc x\\n"\n' >"$stub"
+	chmod +x "$stub"
+
+	jq -n --arg cmd "$stub" \
+		'{schema_version: 1, provider: "opencode", driver: "script", depth: null,
+		  question: "q", version_source: {kind: "command", command: $cmd},
+		  assertion: {projection: ".", expected: {}}}' >"$PKG/probe.json"
 	write_view <<<'{}'
 
 	run "$RECORD" --manifest "$PKG/probe.json" --view "$BATS_TEST_TMPDIR/view.json"
