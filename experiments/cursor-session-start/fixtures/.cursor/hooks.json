@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [{ "type": "command", "command": "{{CAPTURE_SCRIPT}}" }],
+    "beforeSubmitPrompt": [
+      { "type": "command", "command": "{{CAPTURE_SCRIPT}}" }
+    ]
+  }
+}

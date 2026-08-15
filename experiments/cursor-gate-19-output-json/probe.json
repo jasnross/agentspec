@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "provider": "cursor",
+  "driver": "human-judge",
+  "depth": null,
+  "question": "When a preToolUse hook exits 2 AND emits deny JSON, which of its marker strings does Cursor surface?",
+  "version_source": {
+    "kind": "capture",
+    "jq": "[.[] | .cursor_version] | map(select(. != null)) | first"
+  },
+  "wait_for": "length > 0",
+  "assertion": {
+    "options": [
+      {
+        "id": "both-markers",
+        "text": "Both markers appeared — the user_message in Cursor's UI, and the agent quoted the agent_message back"
+      },
+      {
+        "id": "user-only",
+        "text": "Only the user_message marker appeared in the UI; the agent did not see the agent_message"
+      },
+      {
+        "id": "neither",
+        "text": "Neither marker appeared — Cursor showed only a generic denial"
+      },
+      {
+        "id": "couldnt-tell",
+        "text": "Could not determine",
+        "status": "inconclusive"
+      }
+    ],
+    "expected": "neither"
+  }
+}

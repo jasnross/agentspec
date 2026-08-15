@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "provider": "claude",
+  "driver": "human-act",
+  "depth": null,
+  "question": "Does Claude Code's SessionStart hook fire again when a session is resumed?",
+  "version_source": { "kind": "command", "command": "claude --version" },
+  "wait_for": "any(.[]; .hook_event_name == \"SessionStart\" and .source == \"resume\")",
+  "assertion": {
+    "projection": "[.[] | .hook_event_name] as $n | ($n | index(\"UserPromptSubmit\")) as $i | [.[$i + 1:][] | select(.hook_event_name == \"SessionStart\") | .source]",
+    "expected": ["resume"]
+  }
+}
