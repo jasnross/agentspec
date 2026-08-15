@@ -84,6 +84,8 @@ experiments/
 
 **A package never depends on another package.** A fixture two probes both need is copied, not shared.
 
+**A package with no runnable assertion may shape its fixtures however its apparatus requires.** `fixtures/` is the layout the shared runner materializes from, so it is mandatory only for packages that have a runner. The two blocked plugin gates ship `probe-plugin/` and `manifest-variants/` at the package root instead, because a Cursor plugin has to be installed where Cursor looks for plugins rather than copied into a temp workspace. Whoever writes their runners moves those trees under `fixtures/` at that point.
+
 ## The manifest (`probe.json`)
 
 The only hand-authored file in the contract.

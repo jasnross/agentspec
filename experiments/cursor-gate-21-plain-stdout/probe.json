@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "provider": "cursor",
+  "driver": "human-judge",
+  "depth": null,
+  "question": "If a Cursor sessionStart hook emits plain text to stdout and exits 0, does Cursor inject that text into the agent's context?",
+  "version_source": {
+    "kind": "capture",
+    "jq": "[.[] | .cursor_version] | map(select(. != null)) | first"
+  },
+  "wait_for": "length > 0",
+  "assertion": {
+    "options": [
+      {
+        "id": "injected",
+        "text": "The agent knew about the hamster — it quoted the marker phrase, so plain stdout was injected as context"
+      },
+      {
+        "id": "not-injected",
+        "text": "The agent did not know — plain stdout was not injected"
+      },
+      {
+        "id": "couldnt-tell",
+        "text": "Could not determine",
+        "status": "inconclusive"
+      }
+    ],
+    "expected": "not-injected"
+  }
+}

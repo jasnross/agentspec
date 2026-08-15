@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "{{CAPTURE_SCRIPT}}" }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "{{CAPTURE_SCRIPT}}" }] }
+    ]
+  }
+}

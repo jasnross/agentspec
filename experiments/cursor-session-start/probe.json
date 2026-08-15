@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "provider": "cursor",
+  "driver": "human-act",
+  "depth": null,
+  "question": "Does Cursor's sessionStart hook fire again when a conversation is resumed?",
+  "version_source": {
+    "kind": "capture",
+    "jq": "[.[] | .cursor_version] | map(select(. != null)) | first"
+  },
+  "wait_for": "([.[] | select(.hook_event_name == \"beforeSubmitPrompt\")] | length) >= 2",
+  "assertion": {
+    "projection": "[.[] | .hook_event_name] as $n | ($n | index(\"beforeSubmitPrompt\")) as $i | [$n[$i + 1:][] | select(. == \"sessionStart\")] | length",
+    "expected": 0
+  }
+}

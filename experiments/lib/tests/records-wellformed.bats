@@ -23,6 +23,93 @@ setup() {
 	done
 }
 
+@test "every committed manifest parses and declares its required fields" {
+	# Scoped to packages that have a manifest — absence is legitimate, and is
+	# how a package with fixtures but no validated assertion is represented.
+	for manifest in "$EXPERIMENTS"/*/probe.json; do
+		[ -e "$manifest" ] || continue
+
+		run jq -e . "$manifest"
+		if [ "$status" -ne 0 ]; then
+			printf 'manifest is not valid JSON: %s\n' "$manifest" >&2
+			return 1
+		fi
+
+		run jq -e '
+			(.question | type == "string" and (. | length) > 0)
+			and (.provider | . == "claude" or . == "cursor" or . == "opencode")
+			and (.driver | . == "script" or . == "human-act" or . == "human-judge")
+			and (.assertion | type == "object" and has("expected")
+			     and (has("projection") != has("options")))
+		' "$manifest"
+		if [ "$status" -ne 0 ]; then
+			printf 'manifest missing a required field: %s\n' "$manifest" >&2
+			return 1
+		fi
+	done
+}
+
+@test "every human-judge manifest carries exactly one inconclusive option" {
+	# Without a "couldn't tell" option a probe forces a binary, and a tired
+	# operator picking the first plausible answer manufactures a pass.
+	for manifest in "$EXPERIMENTS"/*/probe.json; do
+		[ -e "$manifest" ] || continue
+		[ "$(jq -r '.driver' "$manifest")" = "human-judge" ] || continue
+
+		run jq -e '[.assertion.options[] | select(.status == "inconclusive")] | length == 1' "$manifest"
+		if [ "$status" -ne 0 ]; then
+			printf 'human-judge manifest lacks exactly one inconclusive option: %s\n' "$manifest" >&2
+			return 1
+		fi
+	done
+}
+
+@test "every human-judge manifest's expected names one of its own option ids" {
+	# A typo here would make the probe permanently unpassable, and it would
+	# only surface during a live session — the most expensive place to find it.
+	#
+	# Scoped to human-judge on purpose: a machine-read manifest's `expected` is
+	# an arbitrary JSON value with no `options` to name.
+	for manifest in "$EXPERIMENTS"/*/probe.json; do
+		[ -e "$manifest" ] || continue
+		[ "$(jq -r '.driver' "$manifest")" = "human-judge" ] || continue
+
+		run jq -e '.assertion.expected as $e | any(.assertion.options[]; .id == $e)' "$manifest"
+		if [ "$status" -ne 0 ]; then
+			printf 'human-judge manifest expected names no existing option id: %s\n' "$manifest" >&2
+			return 1
+		fi
+	done
+}
+
+@test "every human-driven manifest declares a wait_for filter" {
+	# The runner polls against it; without one the run burns its full timeout.
+	for manifest in "$EXPERIMENTS"/*/probe.json; do
+		[ -e "$manifest" ] || continue
+		case "$(jq -r '.driver' "$manifest")" in
+		human-act | human-judge) ;;
+		*) continue ;;
+		esac
+
+		run jq -e '.wait_for | type == "string" and (. | length) > 0' "$manifest"
+		if [ "$status" -ne 0 ]; then
+			printf 'human-driven manifest declares no wait_for: %s\n' "$manifest" >&2
+			return 1
+		fi
+	done
+}
+
+@test "every package with a manifest has an executable runner" {
+	for manifest in "$EXPERIMENTS"/*/probe.json; do
+		[ -e "$manifest" ] || continue
+		package=$(dirname "$manifest")
+		if [ ! -x "$package/probe.sh" ]; then
+			printf 'package has a manifest but no executable probe.sh: %s\n' "$package" >&2
+			return 1
+		fi
+	done
+}
+
 @test "no committed record carries a field removed during planning" {
 	for record in "$EXPERIMENTS"/*/results/*.json; do
 		[ -e "$record" ] || continue
