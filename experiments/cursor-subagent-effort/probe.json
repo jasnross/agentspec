@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "provider": "cursor",
+  "driver": "human-act",
+  "depth": "resolved-config",
+  "question": "Does Cursor parse a `[effort=…]` bracket option in subagent frontmatter and apply it to the resolved model?",
+  "version_source": {
+    "kind": "capture",
+    "jq": "[.[] | .cursor_version] | map(select(. != null)) | first"
+  },
+  "wait_for": "any(.[]; .hook_event_name == \"subagentStart\" and .subagent_type == \"arm-effort-low\")",
+  "assertion": {
+    "projection": "[.[] | select(.hook_event_name == \"subagentStart\" and .subagent_type == \"arm-effort-low\") | .subagent_model] | first",
+    "expected": "claude-opus-5-thinking-low"
+  }
+}

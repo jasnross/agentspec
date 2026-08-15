@@ -163,6 +163,126 @@ write_driver() {
 	[ "$output" = "timedout" ]
 }
 
+@test "probe_template_file substitutes every placeholder and keeps JSON valid" {
+	src="$BATS_TEST_TMPDIR/hooks.json.tmpl"
+	printf '{"version":1,"hooks":{"subagentStart":[{"command":"{{CAPTURE_SCRIPT}}"}]}}\n' >"$src"
+
+	driver=$(write_driver <<-'SH'
+		probe_template_file "$1" "$2" "CAPTURE_SCRIPT=/tmp/probe ws/dump-hook.sh"
+	SH
+	)
+
+	run "$driver" "$src" "$BATS_TEST_TMPDIR/out/hooks.json"
+	[ "$status" -eq 0 ]
+	run jq -e . "$BATS_TEST_TMPDIR/out/hooks.json"
+	[ "$status" -eq 0 ]
+	[ "$(jq -r '.hooks.subagentStart[0].command' "$BATS_TEST_TMPDIR/out/hooks.json")" = "/tmp/probe ws/dump-hook.sh" ]
+}
+
+@test "probe_template_file substitutes several placeholders in one pass" {
+	src="$BATS_TEST_TMPDIR/multi.tmpl"
+	printf 'a={{ONE}} b={{TWO}} a-again={{ONE}}\n' >"$src"
+
+	driver=$(write_driver <<-'SH'
+		probe_template_file "$1" "$2" "ONE=first" "TWO=second"
+	SH
+	)
+
+	run "$driver" "$src" "$BATS_TEST_TMPDIR/multi.out"
+	[ "$status" -eq 0 ]
+	[ "$(cat "$BATS_TEST_TMPDIR/multi.out")" = "a=first b=second a-again=first" ]
+}
+
+@test "probe_template_file fails rather than emitting an unsubstituted placeholder" {
+	# An unsubstituted path is exactly the silent-never-fires failure this
+	# helper exists to prevent.
+	src="$BATS_TEST_TMPDIR/partial.tmpl"
+	printf 'script={{CAPTURE_SCRIPT}} payloads={{PAYLOADS}}\n' >"$src"
+
+	driver=$(write_driver <<-'SH'
+		probe_template_file "$1" "$2" "CAPTURE_SCRIPT=/tmp/x"
+	SH
+	)
+
+	run "$driver" "$src" "$BATS_TEST_TMPDIR/partial.out"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"unsubstituted placeholder"* ]]
+	[[ "$output" == *"{{PAYLOADS}}"* ]]
+	[ ! -f "$BATS_TEST_TMPDIR/partial.out" ]
+}
+
+@test "probe_template_file substitutes a value containing an ampersand literally" {
+	# bash >= 5.2 expands `&` in a `${x//a/b}` replacement to the matched text
+	# while 3.2 does not, and macOS ships both — so this would substitute
+	# correctly on one machine and reinsert the placeholder on another.
+	src="$BATS_TEST_TMPDIR/amp.tmpl"
+	printf 'path={{P}}\n' >"$src"
+
+	driver=$(write_driver <<-'SH'
+		probe_template_file "$1" "$2" 'P=/tmp/a&b/dump.sh'
+	SH
+	)
+
+	run "$driver" "$src" "$BATS_TEST_TMPDIR/amp.out"
+	[ "$status" -eq 0 ]
+	[ "$(cat "$BATS_TEST_TMPDIR/amp.out")" = "path=/tmp/a&b/dump.sh" ]
+}
+
+@test "probe_template_file substitutes a value containing shell and glob metacharacters" {
+	src="$BATS_TEST_TMPDIR/meta.tmpl"
+	printf 'path={{P}}\n' >"$src"
+
+	driver=$(write_driver <<-'SH'
+		probe_template_file "$1" "$2" 'P=/tmp/a$b*c?d[e]/dump.sh'
+	SH
+	)
+
+	run "$driver" "$src" "$BATS_TEST_TMPDIR/meta.out"
+	[ "$status" -eq 0 ]
+	[ "$(cat "$BATS_TEST_TMPDIR/meta.out")" = 'path=/tmp/a$b*c?d[e]/dump.sh' ]
+}
+
+@test "probe_template_file rejects a key containing metacharacters" {
+	# A key is interpolated into a glob pattern, so `P*` would match every
+	# placeholder beginning with P.
+	src="$BATS_TEST_TMPDIR/badkey.tmpl"
+	printf 'a={{PX}} b={{P}}\n' >"$src"
+
+	driver=$(write_driver <<-'SH'
+		probe_template_file "$1" "$2" 'P*=Z'
+	SH
+	)
+
+	run "$driver" "$src" "$BATS_TEST_TMPDIR/badkey.out"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"invalid template key"* ]]
+}
+
+@test "probe_template_file rejects an empty key" {
+	src="$BATS_TEST_TMPDIR/emptykey.tmpl"
+	printf 'a={{K}}\n' >"$src"
+
+	driver=$(write_driver <<-'SH'
+		probe_template_file "$1" "$2" '=value'
+	SH
+	)
+
+	run "$driver" "$src" "$BATS_TEST_TMPDIR/emptykey.out"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"invalid template key"* ]]
+}
+
+@test "probe_template_file fails on a missing source" {
+	driver=$(write_driver <<-'SH'
+		probe_template_file "$1" "$2" "KEY=value"
+	SH
+	)
+
+	run "$driver" "$BATS_TEST_TMPDIR/does-not-exist" "$BATS_TEST_TMPDIR/out"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"template source not found"* ]]
+}
+
 @test "probe_prompt_selection exits 2 without blocking when stdin is not a tty" {
 	# The guard that keeps a human-judged probe from hanging `probe-run` forever.
 	driver=$(write_driver <<-'SH'

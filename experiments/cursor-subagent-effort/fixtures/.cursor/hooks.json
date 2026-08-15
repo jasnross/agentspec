@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "hooks": {
+    "subagentStart": [{ "type": "command", "command": "{{CAPTURE_SCRIPT}}" }]
+  }
+}

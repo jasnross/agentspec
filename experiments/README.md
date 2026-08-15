@@ -187,6 +187,16 @@ The drift count is **not** a claim that everything else is current. Every Cursor
 
 **Assertion drift** — a re-run produced a different `observed` — is strong. It means provider behavior changed. Since `probe-status` invokes no probe, it cannot produce assertion drift itself; it surfaces `refuted` records, which are assertion drift already recorded.
 
+## What the freshness checks do and do not prove
+
+A human-driven runner is one blocking invocation: it materializes the workspace, waits, and records. That is what makes a stale capture unreachable on the normal path — the workspace was created by the invocation still running, so there is no earlier run to point at.
+
+`probe.sh --capture <workspace>` is the fallback for a terminal that closed mid-run, and it is the only path where an older workspace is reachable at all. There, `record.sh` requires four things: a run stamp exists, `payloads.jsonl` exists and is non-empty, the stamp's token appears in the payloads, and the payloads' mtime is at or after the stamp's epoch.
+
+**Those checks prove the capture belongs to its own workspace and postdates it. They do not prove it came from today.** `record.sh` reads the stamp from the capture directory it is validating, so a self-consistent workspace from last week satisfies all four. What they do catch is a capture crossed with a different workspace's payloads, a truncated or empty capture, and payloads predating the workspace.
+
+This is a deliberate limit, not an oversight: closing it would mean carrying an invocation token outside the capture, which buys nothing on the path everyone actually uses. **Resume promptly, or re-run the probe.** A re-run costs one live session; a wrong record costs more.
+
 ## Re-verification
 
 When a captured result goes stale, the thing that aged is the third-party tool, not any file in this repository — so nothing here can be checked by CI, and no probe ever runs there. Re-verification is triggered by judgment: a provider version bump, a changed rendering, or a new provider surface.

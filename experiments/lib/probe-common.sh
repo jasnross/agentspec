@@ -137,3 +137,74 @@ probe_read_selection() {
 probe_render_options() {
 	jq -r '.[] | "  \(.id)  —  \(.text)"' <<<"$1"
 }
+
+# Copy <src> to <dst>, substituting {{KEY}} placeholders from key=value pairs.
+#
+# This is what removes the hand-edited absolute path from a probe's setup: the
+# runner knows its own temp workspace, so a generated hooks.json gets the real
+# path filled in. An operator asked to replace /ABSOLUTE/PATH/TO/... by hand
+# eventually forgets, and the result is a hook that silently never fires.
+#
+# Fails rather than emitting an unsubstituted placeholder — a leftover {{KEY}}
+# is exactly that silent failure.
+probe_template_file() {
+	local src="$1" dst="$2"
+	shift 2
+
+	[ -f "$src" ] || {
+		printf 'probe: template source not found: %s\n' "$src" >&2
+		exit 1
+	}
+
+	# `$(cat)` strips every trailing newline and the write below restores exactly
+	# one. Fine for the config templates this handles; worth knowing before
+	# pointing it at a file whose trailing whitespace matters.
+	local content pair key value
+	content=$(cat "$src")
+	for pair in "$@"; do
+		key=${pair%%=*}
+		value=${pair#*=}
+
+		# The key is interpolated into a glob pattern, so a metacharacter in it
+		# would match far more than intended, and an empty key would substitute
+		# every `{{}}`.
+		case "$key" in
+		'' | *[!A-Za-z0-9_]*)
+			printf 'probe: invalid template key %s (want [A-Za-z0-9_]+)\n' "${key:-<empty>}" >&2
+			exit 1
+			;;
+		esac
+
+		# Deliberately not `${content//pat/$value}`. bash >= 5.2 expands `&` in
+		# the replacement to the matched text while 3.2 does not, and macOS
+		# ships both — so a path containing `&` would substitute correctly on
+		# one machine and reinsert the placeholder on another. Escaping `&`
+		# just inverts which shell breaks. Splitting on the literal placeholder
+		# has the same meaning everywhere.
+		local head tail out=""
+		tail="$content"
+		while [ -n "$tail" ]; do
+			case "$tail" in
+			*"{{$key}}"*)
+				head=${tail%%"{{$key}}"*}
+				out="${out}${head}${value}"
+				tail=${tail#*"{{$key}}"}
+				;;
+			*)
+				out="${out}${tail}"
+				tail=""
+				;;
+			esac
+		done
+		content="$out"
+	done
+
+	if printf '%s' "$content" | grep -q '{{'; then
+		printf 'probe: unsubstituted placeholder left in %s: %s\n' \
+			"$dst" "$(printf '%s' "$content" | grep -o '{{[^}]*}}' | sort -u | tr '\n' ' ')" >&2
+		exit 1
+	fi
+
+	mkdir -p "$(dirname "$dst")"
+	printf '%s\n' "$content" >"$dst"
+}
