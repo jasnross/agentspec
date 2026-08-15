@@ -187,9 +187,14 @@ version_kind=$(jq -r '.version_source.kind // "none"' "$manifest")
 case "$version_kind" in
 command)
 	version_command=$(jq -r '.version_source.command' "$manifest")
+	# Split into argv and exec directly rather than through a shell: a manifest
+	# is reviewed as data, so it must not be able to express arbitrary code.
+	# A version command therefore cannot use shell quoting or metacharacters.
+	read -r -a version_argv <<<"$version_command"
+	[ "${#version_argv[@]}" -gt 0 ] || record_fail "version_source declares an empty command"
 	# `sed -n 1p` rather than `head -1`: sed reads its input to the end, so it
 	# cannot SIGPIPE the producer out from under `pipefail`.
-	tool_version=$(eval "$version_command" 2>/dev/null | sed -n '1p' || true)
+	tool_version=$("${version_argv[@]}" </dev/null 2>/dev/null | sed -n '1p' || true)
 	;;
 capture)
 	[ -n "$capture" ] || record_fail 'version_source.kind "capture" requires --capture'
