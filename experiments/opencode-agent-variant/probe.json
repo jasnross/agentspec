@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "provider": "opencode",
+  "driver": "script",
+  "depth": "resolved-config",
+  "question": "Does OpenCode read a top-level `variant:` key in agent frontmatter, sibling to `model:`?",
+  "version_source": { "kind": "command", "command": "opencode --version" },
+  "assertion": {
+    "projection": "{model, variant}",
+    "expected": {
+      "model": { "providerID": "anthropic", "modelID": "claude-sonnet-4-5" },
+      "variant": "high"
+    }
+  }
+}
