@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "provider": "cursor",
+  "status": "confirmed",
+  "depth": null,
+  "date": "2026-08-16",
+  "tool_version": "3.16.17",
+  "assertion": {
+    "projection": "[.[] | select(.hook_event_name == \"beforeSubmitPrompt\") | .conversation_id] as $pc | ($pc | unique) as $u | ($u | first) as $target | ([.[] | .hook_event_name] | index(\"beforeSubmitPrompt\")) as $i | {resumed: (($pc | length) >= 2 and ($u | length) == 1), fired: (([.[] | select(.hook_event_name == \"sessionStart\" and .conversation_id == $target)] | length) > 0), after_resume: ([.[$i + 1:][] | select(.hook_event_name == \"sessionStart\" and .conversation_id == $target)] | length)}",
+    "expected": {
+      "resumed": true,
+      "fired": true,
+      "after_resume": 0
+    },
+    "observed": {
+      "resumed": true,
+      "fired": true,
+      "after_resume": 0
+    }
+  }
+}

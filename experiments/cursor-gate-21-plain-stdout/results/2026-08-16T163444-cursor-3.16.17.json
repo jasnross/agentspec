@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "provider": "cursor",
+  "status": "confirmed",
+  "depth": null,
+  "date": "2026-08-16",
+  "tool_version": "3.16.17",
+  "assertion": {
+    "options": [
+      {
+        "id": "injected",
+        "text": "The agent knew about the hamster — it quoted the marker phrase, so plain stdout was injected as context"
+      },
+      {
+        "id": "not-injected",
+        "text": "The agent did not know — plain stdout was not injected"
+      },
+      {
+        "id": "couldnt-tell",
+        "text": "Could not determine",
+        "status": "inconclusive"
+      }
+    ],
+    "expected": "not-injected",
+    "observed": "not-injected"
+  }
+}

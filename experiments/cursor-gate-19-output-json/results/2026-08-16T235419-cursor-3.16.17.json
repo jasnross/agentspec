@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "provider": "cursor",
+  "status": "refuted",
+  "depth": null,
+  "date": "2026-08-16",
+  "tool_version": "3.16.17",
+  "assertion": {
+    "options": [
+      {
+        "id": "both-markers",
+        "text": "Cursor rendered the user_message marker in its UI as a message to you, AND the agent could quote the agent_message marker back"
+      },
+      {
+        "id": "user-only",
+        "text": "Cursor rendered the user_message marker in its UI, but the agent could not quote the agent_message marker back"
+      },
+      {
+        "id": "agent-raw-json",
+        "text": "Cursor rendered neither marker in its UI, but the agent could quote the raw JSON back — both markers verbatim, unparsed (hook stdout reaches the agent, but Cursor routes no field itself)"
+      },
+      {
+        "id": "neither",
+        "text": "Neither marker appeared anywhere — Cursor showed only a generic denial and the agent could not quote anything back"
+      },
+      {
+        "id": "couldnt-tell",
+        "text": "Could not determine",
+        "status": "inconclusive"
+      }
+    ],
+    "expected": "neither",
+    "observed": "agent-raw-json"
+  }
+}

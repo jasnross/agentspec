@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "provider": "cursor",
+  "status": "inconclusive",
+  "depth": null,
+  "date": "2026-08-16",
+  "tool_version": "3.16.17",
+  "assertion": {
+    "options": [
+      {
+        "id": "both-markers",
+        "text": "Both markers appeared — the user_message in Cursor's UI, and the agent quoted the agent_message back"
+      },
+      {
+        "id": "user-only",
+        "text": "Only the user_message marker appeared in the UI; the agent did not see the agent_message"
+      },
+      {
+        "id": "neither",
+        "text": "Neither marker appeared — Cursor showed only a generic denial"
+      },
+      {
+        "id": "couldnt-tell",
+        "text": "Could not determine",
+        "status": "inconclusive"
+      }
+    ],
+    "expected": "neither",
+    "observed": "couldnt-tell"
+  }
+}
