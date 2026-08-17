@@ -219,10 +219,13 @@ impl Adapter for CursorAdapter {
     }
 
     fn fully_implements_canonical_output(&self) -> bool {
-        // Cursor 3.2.21 only partially implements `user_message`,
-        // `agent_message`, and `additional_context` from hook stdout —
-        // those fields don't surface in the UI or agent context as of
-        // that version. Documented at `docs/hooks-canonical.md#cursor-known-limitations`.
+        // `user_message` does not render in the Cursor UI — a denial shows a
+        // generic message instead. That alone is why this is `false`.
+        //
+        // `agent_message` *does* reach the agent context, measured against
+        // Cursor 3.16.17 by `experiments/cursor-gate-19-output-json`. An
+        // earlier note here claimed otherwise; that claim was refuted.
+        // Documented at `docs/hooks-canonical.md#cursor-known-limitations`.
         false
     }
 

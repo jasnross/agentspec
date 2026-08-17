@@ -151,11 +151,17 @@ Hook scripts do not need to be aware of cross-host detection — the canonical s
 
 ### Cursor known limitations
 
-Cursor 3.2.21 has a partial implementation of three canonical output fields:
+Cursor has a partial implementation of three canonical output fields. Each row states the version it was last measured against and the probe that measured it — the probes are re-runnable, so a reader can check whether a row is still true rather than trusting its date.
 
-- **`user_message`** — does not surface in the Cursor UI.
-- **`agent_message`** — does not surface in the agent context.
-- **`additional_context`** — partial routing; see Cursor forum threads for the latest status.
+| Field | Status | Last measured |
+| --- | --- | --- |
+| **`user_message`** | Does not surface in the Cursor UI. A denial shows a generic message. | Cursor 3.16.17, 2026-08-16 — [`cursor-gate-19-output-json`](../experiments/cursor-gate-19-output-json/) |
+| **`agent_message`** | **Does reach the agent context.** The agent can quote it back and identifies it as the hook's message to it. | Cursor 3.16.17, 2026-08-16 — [`cursor-gate-19-output-json`](../experiments/cursor-gate-19-output-json/) |
+| **`additional_context`** | Required for context injection: plain stdout is not injected, so the JSON envelope is not optional. | Cursor 3.16.17, 2026-08-16 — [`cursor-gate-21-plain-stdout`](../experiments/cursor-gate-21-plain-stdout/) |
+
+The `agent_message` row previously read "does not surface in the agent context," asserted against Cursor 3.2.21. That is **refuted** on 3.16.17: with the probe's capture apparatus placed outside the workspace and the agent's only tool call blocked by the hook under test, the agent still quoted both markers back — so the content reached its context rather than being read off disk. Whether the behavior changed between versions or the original observation was mistaken is not determinable from the records.
+
+`Adapter::fully_implements_canonical_output` remains `false` for Cursor, but now on one ground rather than two: `user_message` still does not render.
 
 agentspec emits a sync-time warning whenever a provider with partial canonical-output routing (today: Cursor) is in the active provider list AND any hook spec exists. The warning is generic on Cursor version — version-specific status is tracked here.
 
@@ -367,6 +373,6 @@ The user sees the deny + reason in Claude's UI, and the model sees the reason in
 }
 ```
 
-The user sees the deny in Cursor's UI. On Cursor 3.2.21 the `agent_message` and `user_message` may not surface depending on the host runtime version — see [Cursor known limitations](#cursor-known-limitations). The deny itself is honored regardless.
+The user sees the deny in Cursor's UI, though as a generic message: `user_message` does not render there. `agent_message` does reach the agent. Both were measured against Cursor 3.16.17 — see [Cursor known limitations](#cursor-known-limitations) for the versions and the probes. The deny itself is honored regardless.
 
 **Under both providers**, the identical script with identical canonical output achieves the same semantic effect — the migration friction that existed before the canonical schema is eliminated.
