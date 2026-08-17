@@ -298,6 +298,15 @@ pub trait Adapter: std::fmt::Debug + Send + Sync {
     /// Capability accessor — keeps the warning-firing gate provider-opaque
     /// at the orchestrator level (no `match provider { ... }` in
     /// `compile_specs`).
+    ///
+    /// This value is a claim about a provider's runtime, so it is probe-backed
+    /// rather than inferred. Cursor's `false` is measured by
+    /// `experiments/cursor-gate-19-output-json` (what a deny JSON surfaces
+    /// alongside `exit 2`) and `experiments/cursor-gate-21-plain-stdout`
+    /// (whether plain stdout injects as context). Before changing this for any
+    /// provider, run or write the probe — and see
+    /// `experiments/README.md#the-life-of-a-refutation` for keeping the
+    /// manifests and this accessor from drifting apart.
     fn fully_implements_canonical_output(&self) -> bool {
         true
     }
@@ -311,6 +320,12 @@ pub trait Adapter: std::fmt::Debug + Send + Sync {
     ///
     /// Capability accessor — keeps the cross-provider parity gate from
     /// naming any specific provider in `compile_specs`.
+    ///
+    /// Both sides of the asymmetry are probe-backed: the `true` default is
+    /// measured for Claude by `experiments/claude-session-start`, and Cursor's
+    /// `false` override by `experiments/cursor-session-start`. Note that the
+    /// default is *inherited* by providers with no probe of their own —
+    /// `OpenCode`'s `true` is untested, not measured.
     fn session_start_fires_on_resume(&self) -> bool {
         true
     }

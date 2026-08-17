@@ -145,7 +145,11 @@ src/plan.rs              ← CompilePlan/SyncPlan/RemovePlan + per-mode write st
 
 ## Probe Before You Implement
 
-When adding a rendering agentspec will emit, check `experiments/` for a probe covering it, write and run one if not, and design against the measurement. Probes verify the _provider's_ contract using hand-authored provider config, so a probe can precede the feature it de-risks rather than gating it afterward.
+When adding a rendering agentspec will emit, start at the coverage table in [`experiments/README.md`](experiments/README.md) — it lists every provider behavior with a package, including the two blocked ones a `probe.json` grep cannot see. Write and run a probe if nothing covers it, then design against the measurement. Probes verify the _provider's_ contract using hand-authored provider config, so a probe can precede the feature it de-risks rather than gating it afterward.
+
+**Read a record's `depth` before designing on it.** `resolved-config` proves the provider _read_ the field, not that it acts on it — OpenCode collapses an unrecognized variant at request-build time, well after `opencode debug agent` has printed it. Only `outbound-request` reaches the model, and no Cursor probe can ever get there. The contract's Depth section states what each value licenses.
+
+**A capability accessor is a claim about a provider, so it should cite the probe that measured it.** `fully_implements_canonical_output` and `session_start_fires_on_resume` do. When a probe refutes one, correct the accessor _and_ the manifest's `expected` — see the contract's "life of a refutation," which exists because leaving them disagreeing is the drift this harness was built to stop.
 
 **Probe first when the outcome could change the design; defer when it can only confirm.** agentspec's tests compare emitted bytes against agentspec's own belief about what each provider reads, and that belief has been wrong — a design revision once asserted an OpenCode `provider/model#variant` suffix no parser would have accepted.
 

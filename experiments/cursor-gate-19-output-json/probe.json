@@ -33,6 +33,6 @@
         "status": "inconclusive"
       }
     ],
-    "expected": "neither"
+    "expected": "agent-raw-json"
   }
 }

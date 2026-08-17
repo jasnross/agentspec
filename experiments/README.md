@@ -4,13 +4,32 @@ A **probe** measures what a provider actually does with a rendering, in that pro
 
 This directory is where that check lives. Each package holds one probe: its fixtures, its runner, and its results.
 
+## What is covered today
+
+Start here when you are about to make agentspec emit something. This table is the entry point on purpose: `jq -r '.question' experiments/*/probe.json` lists the questions but silently omits packages with no manifest, so a blocked probe looks like no probe at all.
+
+| Provider behavior agentspec depends on | Package | State |
+| --- | --- | --- |
+| OpenCode reads top-level `variant:` on **agents** | [`opencode-agent-variant`](opencode-agent-variant/) | measured |
+| Cursor honors `[effort=…]` bracket options on **subagents** | [`cursor-subagent-effort`](cursor-subagent-effort/) | measured |
+| Claude's `SessionStart` fires again on **resume** | [`claude-session-start`](claude-session-start/) | measured |
+| Cursor's `sessionStart` does **not** fire on resume | [`cursor-session-start`](cursor-session-start/) | measured |
+| What Cursor surfaces from hook deny JSON alongside `exit 2` | [`cursor-gate-19-output-json`](cursor-gate-19-output-json/) | measured |
+| Whether Cursor injects plain hook stdout as context | [`cursor-gate-21-plain-stdout`](cursor-gate-21-plain-stdout/) | measured |
+| Cursor injects `${CURSOR_PLUGIN_DATA}` into plugin hooks | [`cursor-plugin-env-injection`](cursor-plugin-env-injection/) | **blocked upstream** — fixtures only, no manifest, no records |
+| Which `plugin.json` fields Cursor accepts and surfaces | [`cursor-plugin-manifest-fields`](cursor-plugin-manifest-fields/) | **runnability unconfirmed** — fixtures only, no manifest, no records |
+
+Run `just probe-status` for the current records. "Measured" means a package has a manifest and a runner — read its README for what its oracle can and cannot see, and its record for what was actually observed and when.
+
+**Absent from this table means nobody has measured it**, not that it works. OpenCode's _skill_ surface is the standing example of why that matters: `variant:`, `model:`, and `tools:` are all parsed and discarded there, while the agent surface honors them.
+
 ## The workflow: probe before you implement
 
 When you are about to make agentspec emit a new rendering:
 
-1. Check whether a probe already answers whether the provider honors it. Grep the `question` field of every manifest: `jq -r '.question' experiments/*/probe.json`.
-2. If none does, write one and run it.
-3. Design against the measurement.
+1. Check the coverage table above, then the `question` field of each manifest for detail.
+2. If nothing covers it, write a probe and run it.
+3. Design against the measurement — and against what its `depth` licenses you to conclude.
 
 Probes verify the _provider's_ contract, so they use hand-authored provider config files rather than `agentspec compile` output. Nothing here requires an agentspec feature to exist first, which is why a probe can precede the change it de-risks instead of gating it afterward.
 
@@ -63,6 +82,20 @@ preset config → emitted bytes → provider parses file → provider's resolved
 ```
 
 agentspec's own tests cover the first hop only. Each record states how far along the chain its evidence actually reached — or `null`, when the finding is not on this chain at all.
+
+**What each depth licenses you to conclude**, which is the part that matters when designing against a record:
+
+| Depth | Proves | Does **not** prove |
+| --- | --- | --- |
+| `emitted-bytes` | agentspec wrote what it intended | that any provider can parse it |
+| `provider-parses` | the provider read the file without error | that it retained or understood the field — all three degrade silently |
+| `resolved-config` | the field reached the provider's own resolved view | that the provider **acts** on it; the value can still be dropped at request-build time |
+| `outbound-request` | the setting reached the model provider | nothing further — this is the end of the chain |
+| `null` | the finding is off this chain entirely (output handling, hook firing) | any position on it |
+
+The gap between `resolved-config` and `outbound-request` is the one that bites. `opencode debug agent` prints the _declared_ variant; OpenCode collapses an unrecognized one to `{}` later, when it builds the request. So a `confirmed` at `resolved-config` says the provider **read** your field — design on that, but do not claim the model saw it.
+
+For Cursor that gap is permanent: all traffic including BYOK terminates in Cursor's own backend, so no Cursor probe can ever exceed `resolved-config`.
 
 ## Package layout
 
@@ -205,4 +238,19 @@ This is a deliberate limit, not an oversight: closing it would mean carrying an 
 
 When a captured result goes stale, the thing that aged is the third-party tool, not any file in this repository — so nothing here can be checked by CI, and no probe ever runs there. Re-verification is triggered by judgment: a provider version bump, a changed rendering, or a new provider surface.
 
-A re-run that produces a different `observed` is **assertion drift**, and it is the strong signal — it means provider behavior changed. Treat it as a finding, not a failure: record it and raise it, rather than adjusting `expected` to match.
+A re-run that produces a different `observed` is **assertion drift**, and it is the strong signal — it means provider behavior changed. Treat it as a finding, not a failure.
+
+### The life of a refutation
+
+`expected` is **agentspec's current belief about the provider**, not a historical record. That distinction decides what to do at each stage, and getting it wrong in either direction breaks the harness:
+
+1. **A run records `refuted`.** Do not touch `expected`. Adjusting it here erases the drift the harness exists to surface, and the record is the only evidence anything changed.
+2. **Investigate.** Read the capture, not just the record. Rule out apparatus artifacts — a procedure not followed, an option set that did not cover the outcome, an agent that reached the probe's own files. Most early refutations are the probe being wrong, not the provider.
+3. **Act on it** if the provider really did change: correct whatever encoded the old belief — documentation, a capability accessor, an adapter's emission.
+4. **Then update `expected` to the measured value**, and record the history in the package README: what the old answer was, what the new one is, and what could not be determined between them.
+
+**Step 4 is not optional.** A refutation that has been investigated and acted on but left with a stale `expected` makes the probe report `refuted` on every future run, forever, for a question that is settled. `just check` then prints a permanent alarm, and a permanent alarm is a muted one. The record of the original refutation stays — records are append-only — so nothing is lost by moving the belief forward.
+
+**Updating `expected` does not clear the report — the next run does.** A record stores the status computed when it was written, and records are never edited. So after step 4 the newest record still reads `refuted` until the probe runs again under the corrected belief. That is honest: the belief moved, but nothing has yet confirmed it. Re-run when convenient; a human-driven probe may reasonably wait for the next session.
+
+The failure this guards against is the one that motivated the whole harness: a belief about a provider living in two places that can drift apart. A manifest's `expected` and an adapter's capability accessor are both assertions about provider behavior. Keep them agreeing, and cite the probe from the accessor so the next person finds the evidence.

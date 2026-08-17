@@ -231,7 +231,8 @@ impl Adapter for CursorAdapter {
 
     fn session_start_fires_on_resume(&self) -> bool {
         // Cursor's `sessionStart` fires only on initial conversation
-        // creation, not on resume. Documented at
+        // creation, not on resume. Measured against Cursor 3.16.17 by
+        // `experiments/cursor-session-start`; documented at
         // `docs/hooks-canonical.md#session-start-asymmetry`.
         false
     }
