@@ -8,9 +8,9 @@
     "kind": "capture",
     "jq": "[.[] | .cursor_version] | map(select(. != null)) | first"
   },
-  "wait_for": "([.[] | select(.hook_event_name == \"beforeSubmitPrompt\")] | length) >= 2",
+  "wait_for": "([.[] | select(.hook_event_name == \"beforeSubmitPrompt\") | .conversation_id] | unique) as $u | ([.[] | select(.hook_event_name == \"beforeSubmitPrompt\")] | length) >= 2 and ($u | length) == 1 and any(.[]; .hook_event_name == \"sessionStart\" and .conversation_id == ($u | first))",
   "assertion": {
-    "projection": "[.[] | .hook_event_name] as $n | ($n | index(\"beforeSubmitPrompt\")) as $i | [$n[$i + 1:][] | select(. == \"sessionStart\")] | length",
-    "expected": 0
+    "projection": "[.[] | select(.hook_event_name == \"beforeSubmitPrompt\") | .conversation_id] as $pc | ($pc | unique) as $u | ($u | first) as $target | ([.[] | .hook_event_name] | index(\"beforeSubmitPrompt\")) as $i | {resumed: (($pc | length) >= 2 and ($u | length) == 1), fired: (([.[] | select(.hook_event_name == \"sessionStart\" and .conversation_id == $target)] | length) > 0), after_resume: ([.[$i + 1:][] | select(.hook_event_name == \"sessionStart\" and .conversation_id == $target)] | length)}",
+    "expected": { "resumed": true, "fired": true, "after_resume": 0 }
   }
 }

@@ -3,7 +3,7 @@
   "provider": "cursor",
   "driver": "human-judge",
   "depth": null,
-  "question": "When a preToolUse hook exits 2 AND emits deny JSON, which of its marker strings does Cursor surface?",
+  "question": "When a preToolUse hook exits 2 AND emits deny JSON, which of its marker strings does Cursor surface, and where?",
   "version_source": {
     "kind": "capture",
     "jq": "[.[] | .cursor_version] | map(select(. != null)) | first"
@@ -13,15 +13,19 @@
     "options": [
       {
         "id": "both-markers",
-        "text": "Both markers appeared — the user_message in Cursor's UI, and the agent quoted the agent_message back"
+        "text": "Cursor rendered the user_message marker in its UI as a message to you, AND the agent could quote the agent_message marker back"
       },
       {
         "id": "user-only",
-        "text": "Only the user_message marker appeared in the UI; the agent did not see the agent_message"
+        "text": "Cursor rendered the user_message marker in its UI, but the agent could not quote the agent_message marker back"
+      },
+      {
+        "id": "agent-raw-json",
+        "text": "Cursor rendered neither marker in its UI, but the agent could quote the raw JSON back — both markers verbatim, unparsed (hook stdout reaches the agent, but Cursor routes no field itself)"
       },
       {
         "id": "neither",
-        "text": "Neither marker appeared — Cursor showed only a generic denial"
+        "text": "Neither marker appeared anywhere — Cursor showed only a generic denial and the agent could not quote anything back"
       },
       {
         "id": "couldnt-tell",

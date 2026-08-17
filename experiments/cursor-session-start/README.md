@@ -18,20 +18,27 @@ experiments/cursor-session-start/probe.sh
 4. Fully quit Cursor, reopen it, and **resume that same conversation** from the conversation list
 5. Submit another prompt in the resumed conversation
 
-## The assertion is a count, scoped to after the first prompt
+## The assertion has three parts, and all three must hold
 
 ```json
-"projection": "[.[] | .hook_event_name] as $n | ($n | index(\"beforeSubmitPrompt\")) as $i | [$n[$i + 1:][] | select(. == \"sessionStart\")] | length",
-"expected": 0
+"expected": { "resumed": true, "fired": true, "after_resume": 0 }
 ```
 
-The finding is that **no second `sessionStart` arrives**. Counting is how an absence becomes machine-checkable — it saves a human from having to attest to a negative.
+- **`resumed`** — both `beforeSubmitPrompt` payloads carry the same `conversation_id`. This is the machine check that the operator actually resumed rather than starting a second conversation.
+- **`fired`** — `sessionStart` fired at least once _for that conversation_. The positive signal: the event demonstrably works here.
+- **`after_resume`** — `sessionStart` fired zero times for that conversation after the first prompt. The finding itself.
 
-**The window matters as much as the count.** The procedure launches Cursor three times, and Cursor may open a conversation at launch on its own. Counting `sessionStart` across the whole capture would then see two legitimate firings and record `refuted` — the harness's _strong_ signal, raised against a finding that is true and shipped. Scoping to everything after the operator's first prompt asks exactly the question the probe is about: once you were in a conversation, did resuming start another one?
+Every part was added because a run without it produced a misleading verdict.
 
-**`wait_for` counts prompts, not session starts.** A poll cannot wait for a payload that never comes, so waiting on `sessionStart` would hang until timeout precisely when the finding holds. Two `beforeSubmitPrompt` payloads mean the operator submitted before quitting and again after resuming, which is the procedure's completion signal.
+**Why `fired` exists.** A first run recorded `confirmed` from a capture containing _zero_ `sessionStart` payloads. The absence was satisfied, but the capture could not distinguish "resume does not fire it" from "the event never fires, or is misregistered" — a typo in the `hooks.json` event name yields a byte-identical capture, since `beforeSubmitPrompt` still fires and still proves the file loaded. That is the trap the contract opens with: assert on a positive signal, never on absence of an error.
 
-That is also why `beforeSubmitPrompt` is registered alongside `sessionStart`: it is what makes this probe possible at all.
+**Why `resumed` exists.** A second run recorded `refuted` — and `refuted` is the harness's _strong_ signal, meaning shipped behavior changed. It had not. The capture showed the two prompts in different conversations (`064d52e7` and `095153f3`): two fresh conversations had been created and the second prompt went into a new one. Cursor behaved exactly as documented; the probe simply never observed a resume. The evidence was in the capture all along — `conversation_id` is on every payload — so the probe now reads it instead of trusting the procedure.
+
+**Why both `fired` and `after_resume` are scoped to that conversation.** Cursor may open a conversation of its own on relaunch, firing a legitimate `sessionStart` for a different id. Counting unscoped would read that as the resume firing and record a false `refuted`.
+
+**`wait_for` blocks recording until the procedure is genuinely complete:** two prompts, sharing one `conversation_id`, with a `sessionStart` seen for it. A procedure slip therefore makes the runner keep polling rather than manufacture a verdict — which is the right failure, because a false `refuted` against `src/adapters/cursor.rs:229` costs a real investigation.
+
+If the runner times out, inspect the capture before assuming anything: differing `conversation_id`s on the two prompts mean the resume did not happen. To record a partial capture deliberately, resume with `probe.sh --capture <workspace>` — `record.sh` does not consult `wait_for`.
 
 ## Prior context, not a current result
 
@@ -53,9 +60,11 @@ Distinct values for distinct inputs, and the contaminating case projects the sam
 
 The counting form matters for a second reason: a probe asserting "no second firing" against a provider that _did_ fire sees `1`, an observable value, rather than a silence indistinguishable from a broken hook. That is what keeps this from being an assertion on absence of error.
 
-## The one assumption
+## The assumption that used to be here
 
-**It trusts the operator followed the quit-and-resume procedure.** Two prompts in a single unresumed session would produce an identical capture. Every human-driven probe rests on its procedure being followed; this one just depends on it more visibly, because the evidence for "a resume happened" is the operator's word rather than a field in the payload.
+This package once documented an assumption — that it trusted the operator to have resumed, since the evidence was "the operator's word rather than a field in the payload." That was wrong on the facts: `conversation_id` is a field in the payload, and the `resumed` term now checks it.
+
+What remains unverifiable is narrower: that the operator _quit_ Cursor between the two prompts rather than staying in one continuous session. Two prompts in a single unresumed session share a `conversation_id` too. But that capture also contains no second `sessionStart`, which is the answer the probe reports — so the residual risk is confirming a true finding for a slightly wrong reason, not recording a false one.
 
 ## Depth
 

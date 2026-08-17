@@ -16,21 +16,38 @@ One blocking invocation. It generates a workspace, prints the procedure, waits u
 
 ## The option set discriminates
 
-The three substantive options are mutually exclusive and exhaust what this probe can produce:
-
 | Option | Meaning |
 | --- | --- |
 | `both-markers` | Cursor consumes JSON on exit 2 — the canonical schema can pair `permission: deny` with a user-facing message and have both honored |
 | `user-only` | Partial consumption; `agent_message` routing is silently dropped under exit 2 |
+| `agent-raw-json` | Cursor routes no field itself, but hook stdout reaches the agent unparsed |
 | `neither` | Exit 2 short-circuits JSON entirely; the shim must choose exit 0 **with** deny JSON or exit 2 **without** it |
 
-Plus the mandatory `couldnt-tell`, recording `inconclusive`. Without it, a tired operator picking the first plausible option manufactures a false pass.
+Plus the mandatory `couldnt-tell`, recording `inconclusive`.
+
+**`agent-raw-json` was added after the first run, and how it got there is the point.** The original four options rested on an unexamined assumption: that the two markers travel by different routes, `user_message` to the UI and `agent_message` to the agent. The 2026-08-16 run against Cursor 3.16.17 produced neither of those — nothing rendered in the UI, but the agent quoted the entire JSON body back verbatim, both markers included. No option described it, so the operator selected `couldnt-tell` and the run recorded `inconclusive`.
+
+The contract justifies the mandatory "couldn't tell" option as protection against a tired operator forcing a plausible answer. Here the hazard was an author who did not imagine the outcome — the same failure mode, caught by the same escape hatch. Without it the operator would have been pushed toward `neither`, which is plainly wrong: the markers did appear.
+
+**The distinction `agent-raw-json` draws matters for shim design.** An agent quoting raw JSON is not Cursor parsing `agent_message` and routing it as a message; it reads as hook stdout reaching the agent unparsed. A shim cannot rely on field semantics it does not control.
 
 ## Prior context, not a current result
 
-The 2026-05-10 run answered **`neither`**, against Cursor 3.2.21. That answer lives here as the manifest's `expected` value — as the hypothesis this probe tests, not as an assertion that it still holds. What is current is whatever `results/` contains.
+The 2026-05-10 run answered **`neither`**, against Cursor 3.2.21. That answer remains the manifest's `expected` value — the hypothesis this probe tests, not an assertion that it still holds.
 
-If a re-run answers differently, that is assertion drift and a real finding: record it and raise it rather than adjusting `expected` to match.
+**It is deliberately left as `neither` even though the 2026-08-16 observation differs**, so a re-run records `refuted` rather than a manufactured `confirmed`. Adjusting `expected` to match a new observation erases exactly the drift this harness exists to surface.
+
+One caveat a reader should carry: it is not knowable whether behavior _changed_ between 3.2.21 and 3.16.17, or whether the 2026-05-10 observation was itself under-resolved because the `agent-raw-json` option did not exist to be chosen. The records distinguish what was observed; they cannot distinguish those two explanations.
+
+## What this contradicts
+
+The 2026-08-16 observation sits against a shipped claim. `docs/hooks-canonical.md:157` states:
+
+> **`agent_message`** — does not surface in the agent context.
+
+The agent quoted both markers back verbatim, so on 3.16.17 that content plainly reached its context. `src/adapters/cursor.rs:222` cites that doc section as justification for `fully_implements_canonical_output()` returning `false` — a verdict still supported by `user_message` genuinely not rendering in the UI, but supported by one stated reason rather than two.
+
+Resolving that is out of this package's scope: a probe reports what it measured, and changing a shipped capability accessor is a separate decision needing its own reasoning.
 
 ## Marker strings
 
