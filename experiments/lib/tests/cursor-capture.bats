@@ -53,13 +53,17 @@ start_runner() {
 	PROBE_TIMEOUT_SECONDS="$timeout" "$PROBE" >"$outfile" 2>&1 &
 	probe_pid=$!
 
+	project=""
 	ws=""
 	local _
 	for _ in $(seq 1 40); do
-		ws=$(sed -n 's/^Workspace ready: //p' "$outfile" 2>/dev/null | head -n 1)
-		[ -n "$ws" ] && break
+		project=$(sed -n 's/^Workspace ready: //p' "$outfile" 2>/dev/null | head -n 1)
+		[ -n "$project" ] && break
 		sleep 0.25
 	done
+	# The runner prints the directory the operator opens; capture/ is its
+	# sibling, deliberately outside it.
+	[ -n "$project" ] && ws=$(dirname "$project")
 }
 
 @test "--capture records confirmed with the version taken from the capture" {
@@ -150,7 +154,10 @@ start_runner() {
 	start_runner "$outfile" 30
 	leaked_ws="$ws"
 	[ -n "$ws" ]
-	[ -f "$ws/.cursor/hooks.json" ]
+	[ -f "$project/.cursor/hooks.json" ]
+	# The apparatus must not be reachable from inside the opened project.
+	[ ! -e "$project/capture" ]
+	[ -d "$ws/capture" ]
 
 	token=$(cut -d' ' -f1 <"$ws/capture/.run_stamp")
 	jq -nc --arg t "$token" \
@@ -168,23 +175,42 @@ start_runner() {
 @test "the generated workspace has no unsubstituted placeholder anywhere" {
 	outfile="$BATS_TEST_TMPDIR/probe-tmpl.out"
 	PROBE_TIMEOUT_SECONDS=1 run "$PROBE"
-	ws=$(printf '%s\n' "$output" | sed -n 's/^Workspace ready: //p' | head -n 1)
+	project=$(printf '%s\n' "$output" | sed -n 's/^Workspace ready: //p' | head -n 1)
+	[ -n "$project" ]
+	ws=$(dirname "$project")
 	leaked_ws="$ws"
-	[ -n "$ws" ]
 
-	[ -f "$ws/.cursor/hooks.json" ]
-	run grep -c '{{' "$ws/.cursor/hooks.json"
+	[ -f "$project/.cursor/hooks.json" ]
+	run grep -c '{{' "$project/.cursor/hooks.json"
 	[ "$output" = "0" ]
 	run grep -c '{{' "$ws/capture/dump-hook.sh"
 	[ "$output" = "0" ]
 
 	# The generated hooks.json is valid JSON pointing at an executable hook
 	# that writes into this workspace.
-	run jq -e . "$ws/.cursor/hooks.json"
+	run jq -e . "$project/.cursor/hooks.json"
 	[ "$status" -eq 0 ]
 	[ -x "$ws/capture/dump-hook.sh" ]
 	grep -q "$ws/capture/payloads.jsonl" "$ws/capture/dump-hook.sh"
-	[ -f "$ws/.cursor/agents/arm-effort-low.md" ]
+	[ -f "$project/.cursor/agents/arm-effort-low.md" ]
+}
+
+@test "the capture apparatus is not reachable from inside the opened project" {
+	# A probe whose oracle is the agent's answer is defeated if the agent can
+	# read the apparatus: a marker string findable by filesystem search makes
+	# "the hook injected it" and "the agent grepped for it" indistinguishable.
+	PROBE_TIMEOUT_SECONDS=1 run "$PROBE"
+	project=$(printf '%s\n' "$output" | sed -n 's/^Workspace ready: //p' | head -n 1)
+	[ -n "$project" ]
+	ws=$(dirname "$project")
+	leaked_ws="$ws"
+
+	[ -d "$ws/capture" ]
+	[ ! -e "$project/capture" ]
+	# Nothing under the opened project may contain the payloads file or the
+	# hook script body.
+	run bash -c "find '$project' -type f -exec grep -l 'payloads.jsonl' {} + 2>/dev/null | grep -v hooks.json"
+	[ -z "$output" ]
 }
 
 @test "a timeout leaves the workspace intact and prints a resume command naming it" {
@@ -193,10 +219,14 @@ start_runner() {
 	PROBE_TIMEOUT_SECONDS=1 run "$PROBE"
 	[ "$status" -ne 0 ]
 
-	ws=$(printf '%s\n' "$output" | sed -n 's/^Workspace ready: //p' | head -n 1)
+	project=$(printf '%s\n' "$output" | sed -n 's/^Workspace ready: //p' | head -n 1)
+	[ -n "$project" ]
+	ws=$(dirname "$project")
 	leaked_ws="$ws"
-	[ -n "$ws" ]
 	[ -d "$ws" ]
+	[ -d "$project" ]
+	# The resume command names the workspace root, since that is where
+	# capture/ lives — not the project directory the operator opened.
 	[[ "$output" == *"--capture $ws"* ]]
 }
 

@@ -36,6 +36,8 @@ There is no control arm in this harness. Two rules do its work instead.
 
 **An assertion must be shown to discriminate, once, at authoring time.** For a projection, show it returns distinct values for two different inputs; for an option set, show the options are mutually exclusive and exhaust the outcomes the probe can produce. Paste the evidence into the package README. Without this, a misspelled jq path returns `null` forever and nobody notices.
 
+**The apparatus must be unreachable from what the provider can read.** A human-driven probe generates two sibling directories: `<ws>/project/`, which the operator opens the provider on, and `<ws>/capture/`, which holds the hook script and its payloads. The separation is not tidiness. When a probe's oracle is the agent's _answer_, a marker string sitting in a capture script inside the opened project is findable by filesystem search — and "the hook injected it" becomes indistinguishable from "the agent grepped for it." That is a control-arm failure, and it cost two live sessions before it was noticed: an agent asked whether it knew a planted fact answered correctly, having found the fact in the hook script rather than in its context.
+
 **Every human-judged option set includes an explicit "couldn't tell" option** mapping to `status: "inconclusive"`. It is the same principle applied to a human oracle: without it, a tired operator picking the first plausible option produces a false pass. The runner also machine-checks whatever it can _before_ asking, so the human answers only the question no machine can.
 
 ## Why absence of error proves nothing

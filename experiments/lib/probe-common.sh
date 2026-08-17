@@ -226,19 +226,31 @@ probe_template_file() {
 # from a person. That shared shape lives here rather than being written out
 # five times.
 
-# Materialize a human-driven probe's workspace and print its path.
+# Materialize a human-driven probe's workspace and print the path the operator
+# opens the provider on.
 #
-# Copies `fixtures/` into a fresh workspace, templating the capture hook with
-# jq's absolute path, this workspace's payloads path, and this run's stamp —
-# then templating {{CAPTURE_SCRIPT}} into every other fixture. Nothing is ever
-# written outside the workspace, which is what makes a collision with a real
+# The layout separates the two halves deliberately:
+#
+#   <ws>/project/   provider config only — this is what the operator opens
+#   <ws>/capture/   the hook script, its payloads, and the run stamp
+#
+# The capture directory sits *outside* the opened project because a probe whose
+# oracle is the agent's answer can otherwise be defeated by the agent reading
+# the apparatus. A marker string in a capture script inside the project is
+# findable with a filesystem search, which makes "the hook injected it" and
+# "the agent grepped for it" indistinguishable — a control-arm failure that
+# cost two live sessions before it was noticed.
+#
+# Nothing is written outside <ws>, which is what makes a collision with a real
 # `agentspec sync` target structurally impossible rather than merely warned
 # against.
 probe_arrange_human_workspace() {
 	local package="$1" name="$2"
-	local ws capture_script src rel dst
+	local ws project capture_script src rel dst
 
 	ws=$(probe_workspace_create "$name")
+	project="$ws/project"
+	mkdir -p "$project"
 
 	capture_script="$ws/capture/dump-hook.sh"
 	probe_template_file "$package/fixtures/capture/dump-hook.sh" "$capture_script" \
@@ -255,7 +267,7 @@ probe_arrange_human_workspace() {
 		case "$rel" in
 		capture/*) continue ;;
 		esac
-		dst="$ws/$rel"
+		dst="$project/$rel"
 		probe_template_file "$src" "$dst" "CAPTURE_SCRIPT=$capture_script"
 
 		# `probe_template_file` writes with `printf >`, so the mode is always
@@ -277,6 +289,8 @@ probe_arrange_human_workspace() {
 		esac
 	done < <(find "$package/fixtures" -type f)
 
+	# The project path is what the operator opens; the workspace root is what
+	# `--capture` takes, since that is where capture/ lives.
 	printf '%s\n' "$ws"
 }
 
@@ -347,7 +361,8 @@ probe_human_run() {
 
 	ws=$(probe_arrange_human_workspace "$package" "$name")
 
-	printf '\nWorkspace ready: %s\n%s\n' "$ws" "$instructions" >&2
+	printf '\nWorkspace ready: %s\n' "$ws/project" >&2
+	printf '(capture lives outside it, at %s)\n%s\n' "$ws/capture" "$instructions" >&2
 
 	if probe_wait_for_manifest "$package" "$ws" "$timeout"; then
 		probe_record_capture "$package" "$ws"
