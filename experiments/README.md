@@ -70,11 +70,11 @@ agentspec's own tests cover the first hop only. Each record states how far along
 
 | Depth | Proves | Does **not** prove |
 | --- | --- | --- |
-| `emitted-bytes` | agentspec wrote what it intended | that any provider can parse it |
-| `provider-parses` | the provider read the file without error | that it retained or understood the field — all three degrade silently |
 | `resolved-config` | the field reached the provider's own resolved view | that the provider **acts** on it; the value can still be dropped at request-build time |
 | `outbound-request` | the setting reached the model provider | nothing further — this is the end of the chain |
 | `null` | the finding is off this chain entirely (output handling, hook firing) | any position on it |
+
+**The enum is shorter than the chain, deliberately.** `emitted-bytes` is the hop agentspec's own tests already cover, and `provider-parses` would be an assertion that no error occurred — which the rule above forbids. Naming either as a depth would invite a record claiming evidence the contract prohibits gathering, so `record.sh` and the bats suite both reject them.
 
 The gap between `resolved-config` and `outbound-request` is the one that bites. `opencode debug agent` prints the _declared_ variant; OpenCode collapses an unrecognized one to `{}` later, when it builds the request. So a `confirmed` at `resolved-config` says the provider **read** your field — design on that, but do not claim the model saw it.
 
@@ -87,6 +87,7 @@ experiments/
   README.md                   # this file — the probe contract
   lib/
     probe-common.sh           # Arrange helpers: workspace, polling, prompting
+    manifest-contract.sh      # the manifest's enums, shared by record.sh and the tests
     record.sh                 # Assert & record — the single record writer
     probe-status.sh           # reads records, derives the report; invokes no probe
     tests/*.bats              # bats coverage for the three above
@@ -113,7 +114,7 @@ The only hand-authored file in the contract.
 | `schema_version` | `1`. |
 | `provider` | `claude`, `cursor`, or `opencode`. |
 | `driver` | `script`, `human-act`, or `human-judge`. Read only by `probe-run`, which is why it lives here and never on a record. |
-| `depth` | `emitted-bytes`, `provider-parses`, `resolved-config`, `outbound-request`, or `null`. |
+| `depth` | `resolved-config`, `outbound-request`, or `null`. |
 | `question` | Required. What this probe answers, in one sentence. |
 | `version_source` | Where the tool version comes from. See below. |
 | `wait_for` | Optional jq filter the runner polls the capture against. Present on every `human-act` and `human-judge` manifest. |
@@ -131,7 +132,8 @@ The only hand-authored file in the contract.
 | --------- | ----------- | -------------------------------------------- |
 | `command` | `command`   | Run it; take the first line.                 |
 | `capture` | `jq`        | Apply the expression to the capture payload. |
-| `none`    | —           | Record `null`.                               |
+
+**`kind: "none"` is deliberately absent from that table, but still accepted.** `record.sh` records a `null` version for it, and an omitted `version_source` falls back to it; the harness's own test fixtures declare it, which is how they avoid running a version command. It is unlisted rather than rejected because no committed manifest uses it, and adding a gate for a value nothing uses would be machinery earning nothing. The reason not to reach for it: a result carrying no tool version cannot drift, so `probe-status` has nothing to compare and the result is never reconfirmed against anything. If a version is genuinely unobtainable, say so in the package README.
 
 **A `command` is split on whitespace and exec'd directly — never through a shell.** So `opencode --version` works and `sh -c "…; …"` does not: `;`, `|`, `>`, `$()`, and quoting are not interpreted. `just probe-status` runs these commands on every `just check`, and a manifest is reviewed as data rather than as code, so it must not be able to express arbitrary code. The command also runs with stdin closed and under a timeout, because a version command that blocks would wedge the build — which is worse than failing it.
 
@@ -157,6 +159,8 @@ A projection over a capture must reduce the array to the shape `expected` is wri
   "expected": "neither"
 }
 ```
+
+**An option may declare `status`, and `inconclusive` is the only legitimate value.** A declared status replaces the comparison against `expected` — that is how the couldn't-tell option yields `inconclusive` rather than `refuted`. Any other value would let a manifest fix the verdict in advance, which is the caller-supplied status the record contract exists to prevent; it would simply arrive through the manifest instead of the command line. Both `record.sh` and the bats suite reject it, so a committed manifest cannot carry one.
 
 ## The record (`results/<date>T<HHMMSS>-<provider>-<version>.json`)
 

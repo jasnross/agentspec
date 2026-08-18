@@ -47,6 +47,30 @@ setup() {
 			printf 'manifest missing a required field: %s\n' "$manifest" >&2
 			return 1
 		fi
+
+		# Its own check rather than a clause in the conjunction above: a retired
+		# depth is a present, well-typed field, so the missing-field diagnostic
+		# would send the reader looking for an absent key.
+		run jq -e ".depth | $MANIFEST_DEPTH_JQ" "$manifest"
+		if [ "$status" -ne 0 ]; then
+			printf 'manifest declares a depth the contract cannot gather: %s (%s)\n' \
+				"$manifest" "$(jq -c .depth "$manifest")" >&2
+			return 1
+		fi
+	done
+}
+
+@test "no option declares a status other than inconclusive" {
+	# A declared status replaces the comparison. Only `inconclusive` is a
+	# legitimate use of that; anything else fixes the verdict in advance.
+	for manifest in "$EXPERIMENTS"/*/probe.json; do
+		[ -e "$manifest" ] || continue
+
+		run jq -e "$MANIFEST_OPTION_STATUS_JQ" "$manifest"
+		if [ "$status" -ne 0 ]; then
+			printf 'manifest declares an option status other than inconclusive: %s\n' "$manifest" >&2
+			return 1
+		fi
 	done
 }
 

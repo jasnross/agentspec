@@ -14,6 +14,8 @@ set -euo pipefail
 lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=experiments/lib/probe-common.sh
 . "$lib_dir/probe-common.sh"
+# shellcheck source=experiments/lib/manifest-contract.sh
+. "$lib_dir/manifest-contract.sh"
 
 probe_require_tools jq
 
@@ -69,9 +71,17 @@ manifest_check '.assertion | has("expected")' 'manifest assertion declares no ex
 manifest_check '.assertion | (has("projection") != has("options"))' \
 	'manifest assertion must declare exactly one of projection or options'
 
-# There is no `--status` override. Status is always computed from the
-# comparison, because a caller that could assert a status could assert one the
-# evidence does not support.
+# Both enums live in `manifest-contract.sh` so this gate and the bats suite
+# cannot drift apart; the reasoning for each is there.
+manifest_check "$MANIFEST_OPTION_STATUS_JQ" \
+	'an option may declare only status "inconclusive"'
+manifest_check ".depth | $MANIFEST_DEPTH_JQ" \
+	'manifest depth must be resolved-config, outbound-request, or null'
+
+# Status is always computed from the comparison, because a caller that could
+# assert a status could assert one the evidence does not support. There is no
+# `--status` override. The single exception is above: a selected option may
+# declare `inconclusive`, and the gate narrows a declared status to that.
 if [ -n "$view" ] && [ -n "$selection" ]; then
 	record_fail "--view and --selection are mutually exclusive"
 fi

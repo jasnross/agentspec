@@ -155,6 +155,84 @@ the_record() {
 	[ "$(the_record | jq -r .status)" = "inconclusive" ]
 }
 
+@test "an option declaring a status other than inconclusive is refused" {
+	# A declared status replaces the comparison, so any value but `inconclusive`
+	# is the caller-supplied verdict the no-`--status` rule exists to prevent —
+	# smuggled in through the manifest instead of the command line.
+	write_manifest <<-'JSON'
+		{
+		  "schema_version": 1, "provider": "cursor", "driver": "human-judge", "depth": null,
+		  "question": "q", "version_source": { "kind": "none" },
+		  "assertion": {
+		    "options": [
+		      { "id": "yes", "text": "yes", "status": "confirmed" },
+		      { "id": "couldnt-tell", "text": "Could not determine", "status": "inconclusive" }
+		    ],
+		    "expected": "yes"
+		  }
+		}
+	JSON
+	ws=$(fresh_capture)
+
+	run "$RECORD" --manifest "$PKG/probe.json" --selection yes --capture "$ws"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"only status \"inconclusive\""* ]]
+}
+
+@test "several options may each declare inconclusive" {
+	# The narrowing rejects a *value*, not the presence of a status, so more
+	# than one `inconclusive` is legal. `all/2` is what makes this pass;
+	# a gate written as "at most one option declares a status" would not.
+	write_manifest <<-'JSON'
+		{
+		  "schema_version": 1, "provider": "cursor", "driver": "human-judge", "depth": null,
+		  "question": "q", "version_source": { "kind": "none" },
+		  "assertion": {
+		    "options": [
+		      { "id": "neither", "text": "Neither marker was visible" },
+		      { "id": "couldnt-tell", "text": "Could not determine", "status": "inconclusive" },
+		      { "id": "not-reached", "text": "The command never ran", "status": "inconclusive" }
+		    ],
+		    "expected": "neither"
+		  }
+		}
+	JSON
+	ws=$(fresh_capture)
+
+	run "$RECORD" --manifest "$PKG/probe.json" --selection neither --capture "$ws"
+	[ "$status" -eq 0 ]
+	[ "$(the_record | jq -r .status)" = "confirmed" ]
+
+	run "$RECORD" --manifest "$PKG/probe.json" --selection not-reached --capture "$ws"
+	[ "$status" -eq 0 ]
+	[ "$(the_record | jq -r .status)" = "inconclusive" ]
+}
+
+@test "a manifest declaring a retired depth is refused" {
+	# `provider-parses` would be an assertion on the absence of an error, which
+	# the contract forbids. A record copies `depth` from its manifest, so a
+	# value gathered nowhere would become a claim on a record.
+	write_manifest <<-'JSON'
+		{
+		  "schema_version": 1,
+		  "provider": "opencode",
+		  "driver": "script",
+		  "depth": "provider-parses",
+		  "question": "Test manifest.",
+		  "version_source": { "kind": "none" },
+		  "assertion": {
+		    "projection": "{model, variant}",
+		    "expected": { "model": "m", "variant": "high" }
+		  }
+		}
+	JSON
+	write_view <<<'{"model":"m","variant":"high"}'
+
+	run "$RECORD" --manifest "$PKG/probe.json" --view "$BATS_TEST_TMPDIR/view.json"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"depth must be"* ]]
+}
+
 @test "a selection absent from the option set is refused" {
 	judge_manifest
 	ws=$(fresh_capture)

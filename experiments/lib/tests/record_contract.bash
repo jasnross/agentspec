@@ -2,6 +2,11 @@
 # The record contract, in one place, so `record.bats` and
 # `records-wellformed.bats` assert against the same definition.
 
+# The manifest enums come from the same file `record.sh` gates on, so a record
+# and the manifest that produced it can never disagree about what a depth is.
+# shellcheck source=experiments/lib/manifest-contract.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/manifest-contract.sh"
+
 # Exactly these seven keys. No more, no fewer.
 RECORD_KEYS='["assertion","date","depth","provider","schema_version","status","tool_version"]'
 
@@ -33,6 +38,13 @@ assert_record_wellformed() {
 
 	if ! jq -e '.status | . == "confirmed" or . == "refuted" or . == "inconclusive"' "$file" >/dev/null; then
 		printf 'status not one of confirmed/refuted/inconclusive in %s\n' "$file" >&2
+		return 1
+	fi
+
+	# `record.sh` gates this at the manifest, but a record is a file on disk and
+	# this suite is what makes hand-editing one a detected defect.
+	if ! jq -e ".depth | $MANIFEST_DEPTH_JQ" "$file" >/dev/null; then
+		printf 'depth not one of resolved-config/outbound-request/null in %s\n' "$file" >&2
 		return 1
 	fi
 
