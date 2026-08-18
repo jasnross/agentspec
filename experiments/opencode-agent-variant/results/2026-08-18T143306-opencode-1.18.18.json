@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "provider": "opencode",
+  "status": "confirmed",
+  "depth": "resolved-config",
+  "date": "2026-08-18",
+  "tool_version": "1.18.18",
+  "assertion": {
+    "projection": "{model, variant}",
+    "expected": {
+      "model": {
+        "providerID": "anthropic",
+        "modelID": "claude-sonnet-4-5"
+      },
+      "variant": "high"
+    },
+    "observed": {
+      "model": {
+        "providerID": "anthropic",
+        "modelID": "claude-sonnet-4-5"
+      },
+      "variant": "high"
+    }
+  }
+}

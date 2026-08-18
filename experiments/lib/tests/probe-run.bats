@@ -50,8 +50,11 @@ put_package() {
 }
 
 @test "a package with no manifest is passed over silently" {
+	# Defense-in-depth, not a sanctioned state: the contract says every probe
+	# package has a manifest. This pins that a half-authored one cannot break a
+	# batch run.
 	mkdir -p "$TREE/fixtures-only"
-	printf 'A blocked gate: fixtures and a README, no manifest.\n' >"$TREE/fixtures-only/README.md"
+	printf 'A directory mid-authoring: a README, no manifest yet.\n' >"$TREE/fixtures-only/README.md"
 	put_package alpha script
 
 	run "$RUN"

@@ -3,8 +3,9 @@
 #
 # Human-driven packages are listed as skipped with a pointer to their README —
 # they need a live provider session, so a batch runner cannot drive them. A
-# package with no `probe.json` is passed over silently: it has no runnable
-# assertion and nothing to run.
+# directory with no `probe.json` is passed over silently. Every probe package
+# carries one, so this guards a package being authored mid-session rather than
+# describing a supported state.
 #
 # Probes execute sequentially. At this scale, obvious ordering when something
 # breaks is worth more than the saved wall time.

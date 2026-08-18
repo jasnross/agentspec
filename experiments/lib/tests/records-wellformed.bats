@@ -11,8 +11,9 @@ setup() {
 }
 
 @test "every committed record satisfies the seven-key contract" {
-	# Deliberately vacuous on an empty glob: a package with no records is
-	# legitimate, and so is a checkout before the first probe run.
+	# Deliberately vacuous on an empty glob, which keeps the loop well-defined
+	# while a package is being authored. The contract requires every probe
+	# package to carry at least one record.
 	for record in "$EXPERIMENTS"/*/results/*.json; do
 		[ -e "$record" ] || continue
 		run assert_record_wellformed "$record"
@@ -24,8 +25,8 @@ setup() {
 }
 
 @test "every committed manifest parses and declares its required fields" {
-	# Scoped to packages that have a manifest — absence is legitimate, and is
-	# how a package with fixtures but no validated assertion is represented.
+	# Scoped to packages that have a manifest. Every probe package has one; the
+	# guard covers a package mid-authoring, before its manifest is written.
 	for manifest in "$EXPERIMENTS"/*/probe.json; do
 		[ -e "$manifest" ] || continue
 
@@ -94,6 +95,36 @@ setup() {
 		run jq -e '.wait_for | type == "string" and (. | length) > 0' "$manifest"
 		if [ "$status" -ne 0 ]; then
 			printf 'human-driven manifest declares no wait_for: %s\n' "$manifest" >&2
+			return 1
+		fi
+	done
+}
+
+@test "every probe package is a measurement" {
+	# The contract's discovery command is `jq -r '.question' experiments/*/probe.json`,
+	# and both READMEs call that list complete. Nothing else enforces it:
+	# `probe-run` and `probe-status` each pass over a manifest-less directory
+	# silently, so an unbacked package would be invisible to all three at once.
+	# Every other test here is scoped to packages that have a manifest; this is
+	# the one that says there are no others.
+	for package in "$EXPERIMENTS"/*/; do
+		package="${package%/}"
+		[ "$(basename "$package")" = lib ] && continue
+
+		if [ ! -f "$package/probe.json" ]; then
+			printf 'package has no manifest, so nothing discovers it: %s\n' "$package" >&2
+			return 1
+		fi
+		if [ ! -x "$package/probe.sh" ]; then
+			printf 'package has no executable runner: %s\n' "$package" >&2
+			return 1
+		fi
+
+		shopt -s nullglob
+		records=("$package"/results/*.json)
+		shopt -u nullglob
+		if [ "${#records[@]}" -eq 0 ]; then
+			printf 'package has never recorded a measurement: %s\n' "$package" >&2
 			return 1
 		fi
 	done

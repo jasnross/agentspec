@@ -207,6 +207,8 @@ put_version_stub() {
 }
 
 @test "a package with no manifest still has its records reported" {
+	# Defense-in-depth: the report is derived from records, so it does not
+	# depend on a manifest existing. Every probe package has one regardless.
 	put_record alpha 2026-06-01T000000 opencode confirmed 2.0.0
 
 	run "$STATUS"

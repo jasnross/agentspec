@@ -4,32 +4,15 @@ A **probe** measures what a provider actually does with a rendering, in that pro
 
 This directory is where that check lives. Each package holds one probe: its fixtures, its runner, and its results.
 
-## What is covered today
-
-Start here when you are about to make agentspec emit something. This table is the entry point on purpose: `jq -r '.question' experiments/*/probe.json` lists the questions but silently omits packages with no manifest, so a blocked probe looks like no probe at all.
-
-| Provider behavior agentspec depends on | Package | State |
-| --- | --- | --- |
-| OpenCode reads top-level `variant:` on **agents** | [`opencode-agent-variant`](opencode-agent-variant/) | measured |
-| Cursor honors `[effort=…]` bracket options on **subagents** | [`cursor-subagent-effort`](cursor-subagent-effort/) | measured |
-| Claude's `SessionStart` fires again on **resume** | [`claude-session-start`](claude-session-start/) | measured |
-| Cursor's `sessionStart` does **not** fire on resume | [`cursor-session-start`](cursor-session-start/) | measured |
-| What Cursor surfaces from hook deny JSON alongside `exit 2` | [`cursor-gate-19-output-json`](cursor-gate-19-output-json/) | measured |
-| Whether Cursor injects plain hook stdout as context | [`cursor-gate-21-plain-stdout`](cursor-gate-21-plain-stdout/) | measured |
-| Cursor injects `${CURSOR_PLUGIN_DATA}` into plugin hooks | [`cursor-plugin-env-injection`](cursor-plugin-env-injection/) | **blocked upstream** — fixtures only, no manifest, no records |
-| Which `plugin.json` fields Cursor accepts and surfaces | [`cursor-plugin-manifest-fields`](cursor-plugin-manifest-fields/) | **runnability unconfirmed** — fixtures only, no manifest, no records |
-
-Run `just probe-status` for the current records. "Measured" means a package has a manifest and a runner — read its README for what its oracle can and cannot see, and its record for what was actually observed and when.
-
-**Absent from this table means nobody has measured it**, not that it works. OpenCode's _skill_ surface is the standing example of why that matters: `variant:`, `model:`, and `tools:` are all parsed and discarded there, while the agent surface honors them.
-
 ## The workflow: probe before you implement
 
 When you are about to make agentspec emit a new rendering:
 
-1. Check the coverage table above, then the `question` field of each manifest for detail.
+1. Check whether a probe already answers it: `jq -r '.question' experiments/*/probe.json`. Every package has a manifest, so this list is complete.
 2. If nothing covers it, write a probe and run it.
 3. Design against the measurement — and against what its `depth` licenses you to conclude.
+
+**Absent from that list means nobody has measured it**, not that it works. OpenCode's _skill_ surface is the standing example of why that matters: `variant:`, `model:`, and `tools:` are all parsed and discarded there, while the agent surface honors them.
 
 Probes verify the _provider's_ contract, so they use hand-authored provider config files rather than `agentspec compile` output. Nothing here requires an agentspec feature to exist first, which is why a probe can precede the change it de-risks instead of gating it afterward.
 
@@ -45,7 +28,7 @@ Probes verify the _provider's_ contract, so they use hand-authored provider conf
 6. **Run it.** The runner writes the record.
 7. **Commit the fixtures, the manifest, the README, and the record.**
 
-A manifest is written only **once its assertion has been validated to discriminate**. No manifest is authored speculatively for a probe that has never run. A package with fixtures but no runnable assertion carries a README and its fixture tree and nothing else: `probe-run` skips any directory without a `probe.json`, and `probe-status` shows no row for a package with no records.
+A manifest is written only **once its assertion has been validated to discriminate**. No manifest is authored speculatively for a probe that has never run.
 
 ### The two rules that replace a control arm
 
@@ -119,7 +102,7 @@ experiments/
 
 **A package never depends on another package.** A fixture two probes both need is copied, not shared.
 
-**A package with no runnable assertion may shape its fixtures however its apparatus requires.** `fixtures/` is the layout the shared runner materializes from, so it is mandatory only for packages that have a runner. The two blocked plugin gates ship `probe-plugin/` and `manifest-variants/` at the package root instead, because a Cursor plugin has to be installed where Cursor looks for plugins rather than copied into a temp workspace. Whoever writes their runners moves those trees under `fixtures/` at that point.
+**A probe package has measured something.** Every directory here except `lib/` carries a manifest, a runner, and at least one record. A probe that cannot run, or that nobody has attempted, is intent rather than evidence: its question belongs in `TODO.md`, alongside every other unmeasured provider question.
 
 ## The manifest (`probe.json`)
 
@@ -193,7 +176,7 @@ Seven keys, every one consumed by `probe-status`:
 
 Fields that would merely restate a derivable fact — the probe's name, its driver, the capture's provenance — are absent, because storing a derivable fact means storing a way for it to disagree with its source.
 
-**`blocked` is not a status.** A probe that cannot run makes its runner exit nonzero with a diagnostic, which produces no record at all. Recording "this could not run" would mean writing a record for a run that never happened. A blocked probe's state lives in its package README, where a process note belongs.
+**`blocked` is not a status.** A probe that cannot run makes its runner exit nonzero with a diagnostic, which produces no record at all. Recording "this could not run" would mean writing a record for a run that never happened. Nor is there anywhere for such a status to live: a probe that cannot run has no package at all, so its question sits in `TODO.md` until someone can measure it.
 
 The filename carries a UTC time component because date plus version does not disambiguate a same-day re-run at the same provider version — and re-running to confirm a `refuted` result is the first thing anyone would do. The full name also sorts lexicographically in run order, which is how `probe-status` finds the newest.
 
