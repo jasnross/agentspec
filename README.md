@@ -304,13 +304,9 @@ description: Security-focused code review
 
 {% extends "templates/critique.md" %}
 
-{% block purpose %}
-Review code for security vulnerabilities.
-{% endblock %}
+{% block purpose %}Review code for security vulnerabilities.{% endblock %}
 
-{% block output %}
-Return findings as a numbered list with severity ratings.
-{% endblock %}
+{% block output %}Return findings as a numbered list with severity ratings.{% endblock %}
 ```
 
 The optional `guidelines` block keeps its default content since the derived spec doesn't override it.
