@@ -57,13 +57,12 @@ judge_manifest() {
 	JSON
 }
 
-# A workspace shaped the way `probe_workspace_create` shapes one, with a
-# capture that carries the run-stamp token.
+# A workspace shaped the way `probe_workspace_create` shapes one, carrying the
+# payload a Cursor hook would have appended.
 fresh_capture() {
 	local ws="$BATS_TEST_TMPDIR/ws"
 	mkdir -p "$ws/capture"
-	printf 'deadbeefcafe0001 %s\n' "$(date +%s)" >"$ws/capture/.run_stamp"
-	printf '{"run_stamp":"deadbeefcafe0001","cursor_version":"3.16.17","model":"m","variant":"high"}\n' \
+	printf '{"cursor_version":"3.16.17","model":"m","variant":"high"}\n' \
 		>"$ws/capture/payloads.jsonl"
 	printf '%s' "$ws"
 }
@@ -265,23 +264,11 @@ the_record() {
 	[ "$status" -eq 0 ]
 }
 
-@test "a capture with no run stamp is refused" {
-	script_manifest
-	write_view <<<'{"model":"m","variant":"high"}'
-	ws="$BATS_TEST_TMPDIR/bare"
-	mkdir -p "$ws/capture"
-
-	run "$RECORD" --manifest "$PKG/probe.json" --view "$BATS_TEST_TMPDIR/view.json" --capture "$ws"
-	[ "$status" -ne 0 ]
-	[[ "$output" == *"no run stamp"* ]]
-}
-
 @test "a capture with no payloads file is refused" {
 	script_manifest
 	write_view <<<'{"model":"m","variant":"high"}'
 	ws="$BATS_TEST_TMPDIR/nopayloads"
 	mkdir -p "$ws/capture"
-	printf 'tok %s\n' "$(date +%s)" >"$ws/capture/.run_stamp"
 
 	run "$RECORD" --manifest "$PKG/probe.json" --view "$BATS_TEST_TMPDIR/view.json" --capture "$ws"
 	[ "$status" -ne 0 ]
@@ -293,41 +280,11 @@ the_record() {
 	write_view <<<'{"model":"m","variant":"high"}'
 	ws="$BATS_TEST_TMPDIR/emptypayloads"
 	mkdir -p "$ws/capture"
-	printf 'tok %s\n' "$(date +%s)" >"$ws/capture/.run_stamp"
 	: >"$ws/capture/payloads.jsonl"
 
 	run "$RECORD" --manifest "$PKG/probe.json" --view "$BATS_TEST_TMPDIR/view.json" --capture "$ws"
 	[ "$status" -ne 0 ]
 	[[ "$output" == *"absent or empty"* ]]
-}
-
-@test "a capture missing this run's stamp token is refused as stale" {
-	# The stale-capture case, deliberately provoked.
-	script_manifest
-	write_view <<<'{"model":"m","variant":"high"}'
-	ws="$BATS_TEST_TMPDIR/stale"
-	mkdir -p "$ws/capture"
-	printf 'thisruntoken %s\n' "$(date +%s)" >"$ws/capture/.run_stamp"
-	printf '{"run_stamp":"lastweekstoken"}\n' >"$ws/capture/payloads.jsonl"
-
-	run "$RECORD" --manifest "$PKG/probe.json" --view "$BATS_TEST_TMPDIR/view.json" --capture "$ws"
-	[ "$status" -ne 0 ]
-	[[ "$output" == *"stale capture"* ]]
-}
-
-@test "a capture whose payloads predate the run stamp is refused as stale" {
-	script_manifest
-	write_view <<<'{"model":"m","variant":"high"}'
-	ws="$BATS_TEST_TMPDIR/old"
-	mkdir -p "$ws/capture"
-	printf 'thisruntoken %s\n' "$(date +%s)" >"$ws/capture/.run_stamp"
-	printf '{"run_stamp":"thisruntoken"}\n' >"$ws/capture/payloads.jsonl"
-	# Set the mtime explicitly so the test does not depend on wall-clock timing.
-	touch -t 202001010000 "$ws/capture/payloads.jsonl"
-
-	run "$RECORD" --manifest "$PKG/probe.json" --view "$BATS_TEST_TMPDIR/view.json" --capture "$ws"
-	[ "$status" -ne 0 ]
-	[[ "$output" == *"predate the run stamp"* ]]
 }
 
 @test "a fresh capture records successfully and stores nothing about the capture" {
@@ -529,37 +486,6 @@ the_record() {
 	run "$RECORD" --manifest "$PKG/probe.json" --view "$BATS_TEST_TMPDIR/view.json"
 	[ "$status" -ne 0 ]
 	[[ "$output" == *"exactly one JSON value"* ]]
-}
-
-@test "a run stamp with a blank token is refused rather than matching every line" {
-	# `grep -qF ""` matches everything, so a blank token would turn the
-	# stale-capture gate into a no-op.
-	script_manifest
-	write_view <<<'{"model":"m","variant":"high"}'
-	ws="$BATS_TEST_TMPDIR/blanktoken"
-	mkdir -p "$ws/capture"
-	printf ' %s\n' "$(date +%s)" >"$ws/capture/.run_stamp"
-	printf '{"run_stamp":"lastweek"}\n' >"$ws/capture/payloads.jsonl"
-
-	run "$RECORD" --manifest "$PKG/probe.json" --view "$BATS_TEST_TMPDIR/view.json" --capture "$ws"
-	[ "$status" -ne 0 ]
-	[[ "$output" == *"carries no token"* ]]
-}
-
-@test "a run stamp with a non-numeric epoch is refused with its own diagnostic" {
-	# Not the stale-capture message: the numeric comparison would otherwise
-	# fail and report the wrong cause.
-	script_manifest
-	write_view <<<'{"model":"m","variant":"high"}'
-	ws="$BATS_TEST_TMPDIR/badepoch"
-	mkdir -p "$ws/capture"
-	printf 'goodtoken notanumber\n' >"$ws/capture/.run_stamp"
-	printf '{"run_stamp":"goodtoken"}\n' >"$ws/capture/payloads.jsonl"
-
-	run "$RECORD" --manifest "$PKG/probe.json" --view "$BATS_TEST_TMPDIR/view.json" --capture "$ws"
-	[ "$status" -ne 0 ]
-	[[ "$output" == *"carries no epoch"* ]]
-	[[ "$output" != *"predate the run stamp"* ]]
 }
 
 @test "a duplicated option id is refused" {

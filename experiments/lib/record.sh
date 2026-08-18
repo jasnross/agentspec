@@ -111,44 +111,17 @@ human-act | human-judge)
 	;;
 esac
 
-# The capture payload path is fixed by convention. Every freshness check reads
-# this file and never `--view`: `view.json` is written by the runner moments
-# before this script runs, so checking its mtime would be vacuously true. The
-# checks must target the file the *provider* wrote.
+# The capture directory has two jobs left: it is the version source for a
+# manifest declaring `version_source.kind: "capture"`, and it is what the
+# non-empty check below reads. That check targets the file the *provider* wrote
+# and never `--view`, which the runner writes moments before this script runs.
+#
+# A hook that never fired is the failure this catches, and it needs no stamp:
+# a runner is one blocking invocation, so the workspace was created by the
+# invocation still running and there is no earlier run to point at.
 if [ -n "$capture" ]; then
-	stamp_file="$capture/capture/.run_stamp"
 	payloads="$capture/capture/payloads.jsonl"
-
-	# On the normal single-invocation path these checks are near-tautological:
-	# the workspace was created by the invocation still running. They earn their
-	# keep on the `--capture` fallback, where the operator resumes a run whose
-	# first half happened in a terminal that has since closed — the one place a
-	# workspace from last week can be pointed at.
-	[ -f "$stamp_file" ] || record_fail "no run stamp at $stamp_file"
 	[ -s "$payloads" ] || record_fail "capture payloads absent or empty: $payloads"
-
-	# A blank token would make the grep below match every line, turning the one
-	# check that catches a hand-pointed workspace into a no-op. Refuse instead.
-	stamp_token=$(probe_run_stamp_token "$capture")
-	[ -n "$stamp_token" ] || record_fail "run stamp carries no token: $stamp_file"
-	# `-e` so a token beginning with `-` is a pattern, not an option.
-	grep -qF -e "$stamp_token" "$payloads" ||
-		record_fail "capture does not carry this run's stamp token — stale capture: $payloads"
-
-	stamp_epoch=$(probe_run_stamp_epoch "$capture")
-	case "$stamp_epoch" in
-	'' | *[!0-9]*) record_fail "run stamp carries no epoch: $stamp_file" ;;
-	esac
-
-	payload_mtime=$(stat -f %m "$payloads" 2>/dev/null || stat -c %Y "$payloads" 2>/dev/null || true)
-	# Without this the numeric comparison below fails on an empty string and
-	# reports the stale-capture diagnostic for what is really a `stat` problem.
-	case "$payload_mtime" in
-	'' | *[!0-9]*) record_fail "could not read the mtime of $payloads" ;;
-	esac
-
-	[ "$payload_mtime" -ge "$stamp_epoch" ] ||
-		record_fail "capture payloads predate the run stamp — stale capture: $payloads"
 fi
 
 expected=$(jq -c '.assertion.expected' "$manifest")

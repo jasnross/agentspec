@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Shared *Arrange* helpers for provider probes: workspace creation, run stamps,
-# capture polling, and operator prompting.
+# Shared *Arrange* helpers for provider probes: workspace creation, capture
+# polling, and operator prompting.
 #
 # This file is meant to be sourced, not executed. Sourcing therefore sets
 # `errexit`, `nounset`, and `pipefail` in the caller's shell. That is harmless
@@ -16,39 +16,23 @@ PROBE_LIB_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # constant rather than a default repeated at each layer, where a change to
 # one copy would silently not take effect. `PROBE_TIMEOUT_SECONDS` overrides
 # it; the bats suite drives that to one second so the suite cannot hang.
-PROBE_DEFAULT_TIMEOUT=900
+#
+# It is generous because its job is diagnostic, not resource protection: an
+# expiry means the hook never fired, which is worth an hour of an operator's
+# patience to distinguish from a slow session. Nothing depends on it being
+# short, and with no resume path a premature expiry costs the live session
+# outright.
+PROBE_DEFAULT_TIMEOUT=3600
 
 # Create a throwaway workspace for a probe run and print its path on stdout.
-# The workspace always carries a `capture/` directory and a run stamp, so the
-# `--capture` fallback path works for every probe whether or not it needs one.
+# The workspace always carries a `capture/` directory, which is where the hook
+# script and its payloads live.
 probe_workspace_create() {
 	local probe_name="$1"
 	local ws
 	ws=$(mktemp -d "${TMPDIR:-/tmp}/probe-${probe_name}.XXXXXX")
 	mkdir -p "$ws/capture"
-	probe_run_stamp_write "$ws"
 	printf '%s\n' "$ws"
-}
-
-# Write `<token> <epoch-seconds>` to <workspace>/capture/.run_stamp.
-#
-# The token is opaque and per-invocation: a capture script templates it into
-# every payload it appends, which is how `record.sh` proves a capture came from
-# the invocation that is recording it rather than from a workspace left over
-# from a previous run.
-probe_run_stamp_write() {
-	local ws="$1"
-	local token
-	token=$(od -An -tx1 -N8 /dev/urandom | tr -d ' \n')
-	printf '%s %s\n' "$token" "$(date +%s)" >"$ws/capture/.run_stamp"
-}
-
-probe_run_stamp_token() {
-	cut -d' ' -f1 <"$1/capture/.run_stamp"
-}
-
-probe_run_stamp_epoch() {
-	cut -d' ' -f2 <"$1/capture/.run_stamp"
 }
 
 # Exit 1 naming every missing tool, so a contributor without `jq` gets one clear
@@ -232,7 +216,7 @@ probe_template_file() {
 # The layout separates the two halves deliberately:
 #
 #   <ws>/project/   provider config only — this is what the operator opens
-#   <ws>/capture/   the hook script, its payloads, and the run stamp
+#   <ws>/capture/   the hook script and its payloads
 #
 # The capture directory sits *outside* the opened project because a probe whose
 # oracle is the agent's answer can otherwise be defeated by the agent reading
@@ -255,8 +239,7 @@ probe_arrange_human_workspace() {
 	capture_script="$ws/capture/dump-hook.sh"
 	probe_template_file "$package/fixtures/capture/dump-hook.sh" "$capture_script" \
 		"JQ=$(command -v jq)" \
-		"PAYLOADS=$ws/capture/payloads.jsonl" \
-		"RUN_STAMP=$(probe_run_stamp_token "$ws")"
+		"PAYLOADS=$ws/capture/payloads.jsonl"
 	chmod +x "$capture_script"
 
 	# `-type f` deliberately: a fixture tree is repo-controlled and flat enough
@@ -369,40 +352,14 @@ probe_human_run() {
 		return 0
 	fi
 
-	# Never delete the workspace on timeout: the capture may still arrive, and
-	# discarding one the operator spent a live session on is the single
-	# unrecoverable mistake a runner could make.
+	# The run is over: a runner is one blocking invocation with no resume, so
+	# re-running the probe is the only way forward. The workspace is still never
+	# deleted — discarding one the operator spent a live session on is the
+	# single unrecoverable mistake a runner could make, and reading the capture
+	# is how they tell a hook that never fired from a procedure that went off
+	# the rails.
 	printf '\nprobe: timed out waiting for the capture.\n' >&2
-	printf 'The workspace has been kept. Finish the run later with:\n\n  %s --capture %s\n\n' \
-		"$package/probe.sh" "$ws" >&2
+	printf 'This run is over; re-run the probe to try again.\n' >&2
+	printf 'The workspace has been kept for inspection: %s\n\n' "$ws" >&2
 	return 1
-}
-
-# Shared argument handling for a human-driven runner: `--capture <ws>` resumes,
-# no arguments runs the blocking flow. Sets `probe_resume_workspace`.
-# shellcheck disable=SC2034 # set for the sourcing runner to read, not used here
-probe_parse_runner_args() {
-	probe_resume_workspace=""
-	while [ $# -gt 0 ]; do
-		case "$1" in
-		--capture)
-			# An empty value must not fall through to the blocking path: that
-			# would silently turn a resume into a fresh live-session run.
-			if [ $# -lt 2 ] || [ -z "$2" ]; then
-				printf 'probe: --capture requires a workspace path\n' >&2
-				exit 1
-			fi
-			[ -d "$2" ] || {
-				printf 'probe: no such workspace: %s\n' "$2" >&2
-				exit 1
-			}
-			probe_resume_workspace="$2"
-			shift 2
-			;;
-		*)
-			printf 'probe: unknown argument: %s\n' "$1" >&2
-			exit 1
-			;;
-		esac
-	done
 }

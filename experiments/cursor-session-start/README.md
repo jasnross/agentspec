@@ -38,7 +38,7 @@ Every part was added because a run without it produced a misleading verdict.
 
 **`wait_for` blocks recording until the procedure is genuinely complete:** two prompts, sharing one `conversation_id`, with a `sessionStart` seen for it. A procedure slip therefore makes the runner keep polling rather than manufacture a verdict — which is the right failure, because a false `refuted` against `src/adapters/cursor.rs:229` costs a real investigation.
 
-If the runner times out, inspect the capture before assuming anything: differing `conversation_id`s on the two prompts mean the resume did not happen. To record a partial capture deliberately, resume with `probe.sh --capture <workspace>` — `record.sh` does not consult `wait_for`.
+If the runner times out, inspect the capture before assuming anything: differing `conversation_id`s on the two prompts mean the resume did not happen. The run itself is over — the workspace is kept for that inspection, but finishing it means re-running the probe.
 
 ## Prior context, not a current result
 

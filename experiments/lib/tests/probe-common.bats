@@ -19,7 +19,9 @@ write_driver() {
 	printf '%s' "$script"
 }
 
-@test "probe_workspace_create returns a workspace carrying a run stamp" {
+@test "probe_workspace_create returns a workspace with a capture directory" {
+	# `capture/` is the whole contract now: the hook script and its payloads
+	# live there, and it is the sibling of the project the operator opens.
 	driver=$(write_driver <<-'SH'
 		probe_workspace_create unit-test
 	SH
@@ -28,16 +30,14 @@ write_driver() {
 	run "$driver"
 	[ "$status" -eq 0 ]
 	ws="$output"
+	[ -d "$ws" ]
 	[ -d "$ws/capture" ]
-	[ -s "$ws/capture/.run_stamp" ]
 	rm -rf "$ws"
 }
 
-@test "two workspaces carry different run-stamp tokens" {
+@test "two workspaces are distinct directories" {
 	driver=$(write_driver <<-'SH'
-		ws=$(probe_workspace_create unit-test)
-		probe_run_stamp_token "$ws"
-		rm -rf "$ws"
+		probe_workspace_create unit-test
 	SH
 	)
 
@@ -45,19 +45,7 @@ write_driver() {
 	second=$("$driver")
 	[ -n "$first" ]
 	[ "$first" != "$second" ]
-}
-
-@test "probe_run_stamp_epoch reads back the epoch that was written" {
-	driver=$(write_driver <<-'SH'
-		ws=$(probe_workspace_create unit-test)
-		probe_run_stamp_epoch "$ws"
-		rm -rf "$ws"
-	SH
-	)
-
-	run "$driver"
-	[ "$status" -eq 0 ]
-	[[ "$output" =~ ^[0-9]+$ ]]
+	rm -rf "$first" "$second"
 }
 
 @test "probe_require_tools names every missing tool" {

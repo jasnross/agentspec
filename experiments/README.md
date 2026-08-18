@@ -22,7 +22,7 @@ Probes verify the _provider's_ contract, so they use hand-authored provider conf
 
 1. **Pick the driver.** `script` if a command answers the question offline. `human-act` if a human must drive the provider but the answer lands in a file. `human-judge` if a human must drive the provider _and_ answer the question.
 2. **Create the package.** `experiments/<probe-name>/`, where the directory name is the probe's identity. No file restates it — `probe-status` reads records by path and already knows it.
-3. **Write the fixtures** under `fixtures/`. For a human-driven probe, that includes a capture hook that appends each payload as one JSON line to `capture/payloads.jsonl`. Use `{{PLACEHOLDER}}` for anything absolute; `probe_template_file` fills them in at _Arrange_ so no operator ever hand-edits a path.
+3. **Write the fixtures** under `fixtures/`. For a human-driven probe, that includes a capture hook that appends each payload as one JSON line to `capture/payloads.jsonl` — the payload as the provider sent it, with nothing added. Use `{{PLACEHOLDER}}` for anything absolute; `probe_template_file` fills them in at _Arrange_ so no operator ever hand-edits a path.
 4. **Author the assertion** — a jq projection with an expected value, or an option set with an expected id.
 5. **Validate that it discriminates** (see below). This is a required step, not a nicety.
 6. **Run it.** The runner writes the record.
@@ -211,15 +211,13 @@ The drift count is **not** a claim that everything else is current. Every Cursor
 
 **Assertion drift** — a re-run produced a different `observed` — is strong. It means provider behavior changed. Since `probe-status` invokes no probe, it cannot produce assertion drift itself; it surfaces `refuted` records, which are assertion drift already recorded.
 
-## What the freshness checks do and do not prove
+## A human-driven run is one invocation
 
-A human-driven runner is one blocking invocation: it materializes the workspace, waits, and records. That is what makes a stale capture unreachable on the normal path — the workspace was created by the invocation still running, so there is no earlier run to point at.
+A human-driven runner materializes the workspace, prints the procedure, polls, and records — one blocking invocation with no resume path. That is what makes a stale capture unreachable rather than merely discouraged: the workspace was created by the invocation still running, so there is no earlier run to point at and nothing for a freshness check to prove. `record.sh` asks only that `payloads.jsonl` exists and is non-empty, which catches the failure that actually happens — a hook that never fired.
 
-`probe.sh --capture <workspace>` is the fallback for a terminal that closed mid-run, and it is the only path where an older workspace is reachable at all. There, `record.sh` requires four things: a run stamp exists, `payloads.jsonl` exists and is non-empty, the stamp's token appears in the payloads, and the payloads' mtime is at or after the stamp's epoch.
+The cost is that an interrupt or a timeout ends the run. The workspace is kept either way, because discarding one an operator spent a live session on is the single unrecoverable mistake a runner could make, and reading the capture is how they tell a hook that never fired from a procedure that went off the rails. But finishing that run is not possible: **re-run the probe.** The poll timeout is generous for the same reason — an hour, overridable with `PROBE_TIMEOUT_SECONDS`. Its job is diagnostic, not resource protection, and a premature expiry would cost a session outright.
 
-**Those checks prove the capture belongs to its own workspace and postdates it. They do not prove it came from today.** `record.sh` reads the stamp from the capture directory it is validating, so a self-consistent workspace from last week satisfies all four. What they do catch is a capture crossed with a different workspace's payloads, a truncated or empty capture, and payloads predating the workspace.
-
-This is a deliberate limit, not an oversight: closing it would mean carrying an invocation token outside the capture, which buys nothing on the path everyone actually uses. **Resume promptly, or re-run the probe.** A re-run costs one live session; a wrong record costs more.
+`record.sh --capture` remains, because it is how the capture directory reaches version resolution for a manifest declaring `version_source.kind: "capture"` — which four of six manifests do. A runner itself takes no arguments.
 
 ## Re-verification
 

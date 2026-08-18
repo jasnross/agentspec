@@ -12,7 +12,7 @@
 experiments/cursor-subagent-effort/probe.sh
 ```
 
-One blocking invocation. It prints a workspace path and three instructions, then polls the capture and records automatically — no second command and no keypress. If your terminal closes before the capture arrives, the workspace is kept and `probe.sh --capture <workspace>` finishes the run.
+One blocking invocation. It prints a workspace path and three instructions, then polls the capture and records automatically — no second command and no keypress. If your terminal closes before the capture arrives, the workspace is kept for inspection, but the run is over: re-run the probe.
 
 The workspace is a throwaway temp directory, never a real project. `agentspec sync` owns `.cursor/hooks.json` through `_agentspec_id` tracking (`src/adapters/cursor.rs:272`, `src/adapters/cursor.rs:336`), so running this in a synced workspace could collide with that merge logic. Generating the workspace makes the collision structurally impossible rather than merely warned against.
 

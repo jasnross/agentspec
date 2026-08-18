@@ -12,11 +12,11 @@ package=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 probe_require_tools jq
 
-probe_parse_runner_args "$@"
-
-if [ -n "$probe_resume_workspace" ]; then
-	probe_record_capture "$package" "$probe_resume_workspace"
-	exit 0
+# A runner takes no arguments: it is one blocking invocation, so there is no
+# workspace for a second one to point at.
+if [ $# -ne 0 ]; then
+	printf '%s: unexpected argument: %s\n' "$(basename "${BASH_SOURCE[0]}")" "$1" >&2
+	exit 2
 fi
 
 probe_human_run "$package" cursor-gate-19-output-json "

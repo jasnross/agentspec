@@ -5,7 +5,7 @@
 # and always exit 0. A hook that stalls or fails turns a probe into a broken
 # editor. The trap below enforces that on every path, including the ones this
 # script does not anticipate — a failed capture is detected downstream, where
-# `record.sh` refuses an empty or unstamped capture rather than recording it.
+# `record.sh` refuses an empty capture rather than recording it.
 set -uo pipefail
 trap 'printf "{}\n"; exit 0' EXIT
 
@@ -17,29 +17,32 @@ trap 'printf "{}\n"; exit 0' EXIT
 # a live Cursor session: the most expensive failure mode in this harness.
 JQ="{{JQ}}"
 PAYLOADS="{{PAYLOADS}}"
-RUN_STAMP="{{RUN_STAMP}}"
 
 # Bounds the payload *size*, not the wait: `head -c` returns at N bytes or EOF,
 # so a host that holds stdin open holds this hook open too. Cursor closes the
 # pipe after writing, which is what makes this safe in practice.
 payload=$(head -c 1048576)
 
-# An empty read must not produce a blank line. `jq '. + {…}'` on empty input
-# exits 0 with no output, so the blank line would pass the non-empty check in
-# record.sh and then fail the stamp-token grep — sending the operator to hunt a
-# workspace mix-up that never happened.
+# An empty read must not produce a blank line. `jq` on empty input exits 0 with
+# no output, so a blank line would pass record.sh's non-empty check and then
+# break the slurp for every later reader of payloads.jsonl.
 if [ -n "$payload" ]; then
-	# Stamp the payload with this invocation's token so `record.sh` can tell a
-	# capture from this run apart from one an earlier run left in a workspace.
-	# shellcheck disable=SC2016 # jq programs are correctly single-quoted; $stamp and $raw are jq variables
-	if ! line=$(printf '%s' "$payload" | "$JQ" -c --arg stamp "$RUN_STAMP" '. + {run_stamp: $stamp}' 2>/dev/null) ||
+	# Two invariants in one filter. `-c` compacts to a single line, and
+	# `select(type == "object")` keeps every line an *object*: a scalar or array
+	# payload yields no output, so the fallback below wraps it instead. Without
+	# that guard a stray scalar lands verbatim, and every later `jq -s` filter
+	# indexing a field errors on it — which `probe_capture_matches` reads as "no
+	# match", polling to the full timeout on a capture that already arrived.
+	# shellcheck disable=SC2016 # the jq program is correctly single-quoted
+	if ! line=$(printf '%s' "$payload" | "$JQ" -c 'select(type == "object")' 2>/dev/null) ||
 		[ -z "$line" ]; then
-		# `-c` is load-bearing: payloads.jsonl is one JSON value per line, and
-		# jq -n pretty-prints by default, so an unparsable payload would break
-		# the slurp for every later reader.
-		# shellcheck disable=SC2016 # as above
-		line=$("$JQ" -nc --arg stamp "$RUN_STAMP" --arg raw "$payload" \
-			'{run_stamp: $stamp, unparsed: $raw}' 2>/dev/null) || line=""
+		# Reached by an unparsable payload and by a non-object one alike; both
+		# arrive as `{unparsed: …}` so the object invariant holds either way.
+		# `-c` is load-bearing here too: jq -n pretty-prints by default, and a
+		# multi-line value would break the slurp for every later reader.
+		# shellcheck disable=SC2016 # the jq program is correctly single-quoted; $raw is a jq variable
+		line=$("$JQ" -nc --arg raw "$payload" \
+			'{unparsed: $raw}' 2>/dev/null) || line=""
 	fi
 
 	# A single printf to a file opened in append mode is atomic below PIPE_BUF

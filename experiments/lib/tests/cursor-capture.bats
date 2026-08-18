@@ -33,12 +33,18 @@ teardown() {
 seed_workspace() {
 	local ws="$1" model="${2:-claude-opus-5-thinking-low}"
 	mkdir -p "$ws/capture"
-	local token=deadbeefcafe1234
-	printf '%s %s\n' "$token" "$(date +%s)" >"$ws/capture/.run_stamp"
-	jq -nc --arg t "$token" --arg m "$model" \
+	jq -nc --arg m "$model" \
 		'{hook_event_name: "subagentStart", subagent_type: "arm-effort-low",
-		  subagent_model: $m, cursor_version: "3.16.17", run_stamp: $t}' \
+		  subagent_model: $m, cursor_version: "3.16.17"}' \
 		>"$ws/capture/payloads.jsonl"
+}
+
+# Drive the Assert half against a seeded workspace. `probe_record_capture` is
+# the only remaining way a capture reaches `record.sh`: the runner calls it at
+# the end of its one blocking invocation, and there is no second entry point.
+record_capture() {
+	bash -c ". '$EXPERIMENTS/lib/probe-common.sh'
+		probe_record_capture '$TREE/cursor-subagent-effort' '$1'"
 }
 
 newest_record() {
@@ -66,11 +72,16 @@ start_runner() {
 	[ -n "$project" ] && ws=$(dirname "$project")
 }
 
-@test "--capture records confirmed with the version taken from the capture" {
+@test "a capture resolves tool_version from its own cursor_version" {
+	# The surviving job of `record.sh --capture`. Four of six manifests declare
+	# `version_source.kind: "capture"`, so this is the only path by which a
+	# Cursor record gets a version at all — and no CLI can supply it, since
+	# `cursor-agent --version` reports a different artifact on a different
+	# versioning scheme.
 	ws="$BATS_TEST_TMPDIR/ws"
 	seed_workspace "$ws"
 
-	run "$PROBE" --capture "$ws"
+	run record_capture "$ws"
 	[ "$status" -eq 0 ]
 
 	record=$(newest_record)
@@ -86,65 +97,43 @@ start_runner() {
 	ws="$BATS_TEST_TMPDIR/ws-default"
 	seed_workspace "$ws" claude-opus-5-thinking-high
 
-	run "$PROBE" --capture "$ws"
+	run record_capture "$ws"
 	[ "$status" -eq 0 ]
 	[ "$(jq -r .status "$(newest_record)")" = "refuted" ]
 }
 
-@test "the same capture with the run stamp removed is refused" {
-	ws="$BATS_TEST_TMPDIR/ws-nostamp"
-	seed_workspace "$ws"
-	rm "$ws/capture/.run_stamp"
-
-	run "$PROBE" --capture "$ws"
-	[ "$status" -ne 0 ]
-	[[ "$output" == *"run stamp"* ]]
-	[ -z "$(newest_record)" ]
-}
-
-@test "a capture whose payloads carry a different run stamp is refused" {
-	ws="$BATS_TEST_TMPDIR/ws-othertoken"
-	seed_workspace "$ws"
-	printf 'adifferenttoken %s\n' "$(date +%s)" >"$ws/capture/.run_stamp"
-
-	run "$PROBE" --capture "$ws"
-	[ "$status" -ne 0 ]
-	[[ "$output" == *"stale capture"* ]]
-	[ -z "$(newest_record)" ]
-}
-
-@test "--capture on a workspace with no payloads exits nonzero and writes no record" {
+@test "a workspace with no payloads is refused and writes no record" {
+	# The one failure a stamp was never needed to catch: the hook never fired.
 	ws="$BATS_TEST_TMPDIR/ws-empty"
 	mkdir -p "$ws/capture"
-	printf 'sometoken %s\n' "$(date +%s)" >"$ws/capture/.run_stamp"
 
-	run "$PROBE" --capture "$ws"
+	run record_capture "$ws"
 	[ "$status" -ne 0 ]
 	[[ "$output" == *"no captured payloads"* ]]
 	[ -z "$(newest_record)" ]
 }
 
-@test "--capture with an empty or missing path never starts a fresh run" {
-	# Falling through to Arrange would silently convert a resume into a new
-	# 15-minute live-session run.
-	run "$PROBE" --capture ""
-	[ "$status" -ne 0 ]
-	[[ "$output" == *"requires a workspace path"* ]]
-	[[ "$output" != *"Workspace ready"* ]]
-
-	run "$PROBE" --capture "$BATS_TEST_TMPDIR/nope"
-	[ "$status" -ne 0 ]
-	[[ "$output" == *"no such workspace"* ]]
-	[[ "$output" != *"Workspace ready"* ]]
-}
-
-@test "--capture on a directory that is not a probe workspace says so" {
+@test "a directory that is not a probe workspace is refused" {
 	ws="$BATS_TEST_TMPDIR/not-a-workspace"
 	mkdir -p "$ws"
 
-	run "$PROBE" --capture "$ws"
+	run record_capture "$ws"
 	[ "$status" -ne 0 ]
 	[[ "$output" == *"not a probe workspace"* ]]
+}
+
+@test "the runner takes no arguments" {
+	# There is no resume, so every argument is a mistake — including the
+	# `--capture <ws>` an operator may remember from the removed fallback.
+	# Silently starting a fresh run would cost them a live session.
+	run "$PROBE" --capture "$BATS_TEST_TMPDIR"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"unexpected argument: --capture"* ]]
+	[[ "$output" != *"Workspace ready"* ]]
+
+	run "$PROBE" --anything
+	[ "$status" -ne 0 ]
+	[[ "$output" != *"Workspace ready"* ]]
 }
 
 @test "the blocking path records without a second invocation" {
@@ -159,11 +148,9 @@ start_runner() {
 	[ ! -e "$project/capture" ]
 	[ -d "$ws/capture" ]
 
-	token=$(cut -d' ' -f1 <"$ws/capture/.run_stamp")
-	jq -nc --arg t "$token" \
-		'{hook_event_name: "subagentStart", subagent_type: "arm-effort-low",
-		  subagent_model: "claude-opus-5-thinking-low", cursor_version: "3.16.17",
-		  run_stamp: $t}' >>"$ws/capture/payloads.jsonl"
+	jq -nc '{hook_event_name: "subagentStart", subagent_type: "arm-effort-low",
+		  subagent_model: "claude-opus-5-thinking-low", cursor_version: "3.16.17"}' \
+		>>"$ws/capture/payloads.jsonl"
 
 	rc=0
 	wait "$probe_pid" || rc=$?
@@ -213,9 +200,10 @@ start_runner() {
 	[ -z "$output" ]
 }
 
-@test "a timeout leaves the workspace intact and prints a resume command naming it" {
+@test "a timeout leaves the workspace intact and says the run is over" {
 	# Losing a workspace after a live session is the one unrecoverable failure,
-	# so it gets its own test.
+	# so it gets its own test. With no resume path the message must not imply
+	# one: the workspace is kept for inspection, not for a second invocation.
 	PROBE_TIMEOUT_SECONDS=1 run "$PROBE"
 	[ "$status" -ne 0 ]
 
@@ -225,26 +213,29 @@ start_runner() {
 	leaked_ws="$ws"
 	[ -d "$ws" ]
 	[ -d "$project" ]
-	# The resume command names the workspace root, since that is where
-	# capture/ lives — not the project directory the operator opened.
-	[[ "$output" == *"--capture $ws"* ]]
+	# The message names the workspace root, since that is where capture/ lives
+	# — not the project directory the operator opened.
+	[[ "$output" == *"kept for inspection: $ws"* ]]
+	[[ "$output" == *"re-run the probe"* ]]
+	[[ "$output" != *"--capture"* ]]
 }
 
-@test "the capture hook appends a stamped JSON line and echoes {}" {
+@test "the capture hook appends one JSON line and echoes {}" {
 	ws="$BATS_TEST_TMPDIR/hookws"
 	mkdir -p "$ws/capture"
 	hook="$ws/capture/dump-hook.sh"
 	# Templated the same way probe.sh does, so this exercises the real path.
 	bash -c ". '$EXPERIMENTS/lib/probe-common.sh'
 		probe_template_file '$TREE/cursor-subagent-effort/fixtures/capture/dump-hook.sh' '$hook' \
-			'JQ=$(command -v jq)' 'PAYLOADS=$ws/capture/payloads.jsonl' 'RUN_STAMP=tok123'"
+			'JQ=$(command -v jq)' 'PAYLOADS=$ws/capture/payloads.jsonl'"
 	chmod +x "$hook"
 
 	run bash -c "printf '{\"hook_event_name\":\"subagentStart\"}' | '$hook'"
 	[ "$status" -eq 0 ]
 	[ "$(printf '%s' "$output" | jq -c .)" = "{}" ]
-	[ "$(jq -r .run_stamp "$ws/capture/payloads.jsonl")" = "tok123" ]
 	[ "$(jq -r .hook_event_name "$ws/capture/payloads.jsonl")" = "subagentStart" ]
+	# One line, one JSON value — what every later reader's `jq -s` depends on.
+	[ "$(wc -l <"$ws/capture/payloads.jsonl" | tr -d ' ')" -eq 1 ]
 }
 
 @test "the capture hook still echoes {} and exits 0 when jq is missing" {
@@ -256,7 +247,7 @@ start_runner() {
 	hook="$ws/capture/dump-hook.sh"
 	bash -c ". '$EXPERIMENTS/lib/probe-common.sh'
 		probe_template_file '$TREE/cursor-subagent-effort/fixtures/capture/dump-hook.sh' '$hook' \
-			'JQ=/nonexistent/jq' 'PAYLOADS=$ws/capture/payloads.jsonl' 'RUN_STAMP=tok123'"
+			'JQ=/nonexistent/jq' 'PAYLOADS=$ws/capture/payloads.jsonl'"
 	chmod +x "$hook"
 
 	run bash -c "printf '{\"a\":1}' | '$hook'"
@@ -273,7 +264,7 @@ start_runner() {
 	hook="$ws/capture/dump-hook.sh"
 	bash -c ". '$EXPERIMENTS/lib/probe-common.sh'
 		probe_template_file '$TREE/cursor-subagent-effort/fixtures/capture/dump-hook.sh' '$hook' \
-			'JQ=$(command -v jq)' 'PAYLOADS=$ws/capture/payloads.jsonl' 'RUN_STAMP=tok123'"
+			'JQ=$(command -v jq)' 'PAYLOADS=$ws/capture/payloads.jsonl'"
 	chmod +x "$hook"
 
 	run bash -c "printf '' | '$hook'"
@@ -290,14 +281,38 @@ start_runner() {
 	hook="$ws/capture/dump-hook.sh"
 	bash -c ". '$EXPERIMENTS/lib/probe-common.sh'
 		probe_template_file '$TREE/cursor-subagent-effort/fixtures/capture/dump-hook.sh' '$hook' \
-			'JQ=$(command -v jq)' 'PAYLOADS=$ws/capture/payloads.jsonl' 'RUN_STAMP=tok123'"
+			'JQ=$(command -v jq)' 'PAYLOADS=$ws/capture/payloads.jsonl'"
 	chmod +x "$hook"
 
 	run bash -c "printf 'not json at all' | '$hook'"
 	[ "$status" -eq 0 ]
 
 	[ "$(wc -l <"$ws/capture/payloads.jsonl" | tr -d ' ')" -eq 1 ]
-	run jq -s -e 'length == 1 and .[0].run_stamp == "tok123"' "$ws/capture/payloads.jsonl"
+	run jq -s -e 'length == 1 and (.[0].unparsed | type == "string")' "$ws/capture/payloads.jsonl"
+	[ "$status" -eq 0 ]
+}
+
+@test "a scalar payload is wrapped rather than appended verbatim" {
+	# Every line of payloads.jsonl must be an object. A bare scalar would be
+	# valid JSON and land verbatim, and then every later `jq -s` filter indexing
+	# a field errors on it — which `probe_capture_matches` reads as "no match",
+	# so the runner polls to the full timeout on a capture that already arrived.
+	ws="$BATS_TEST_TMPDIR/hookws-scalar"
+	mkdir -p "$ws/capture"
+	hook="$ws/capture/dump-hook.sh"
+	bash -c ". '$EXPERIMENTS/lib/probe-common.sh'
+		probe_template_file '$TREE/cursor-subagent-effort/fixtures/capture/dump-hook.sh' '$hook' \
+			'JQ=$(command -v jq)' 'PAYLOADS=$ws/capture/payloads.jsonl'"
+	chmod +x "$hook"
+
+	run bash -c "printf '\"just a string\"' | '$hook'"
+	[ "$status" -eq 0 ]
+
+	[ "$(wc -l <"$ws/capture/payloads.jsonl" | tr -d ' ')" -eq 1 ]
+	run jq -s -e 'length == 1 and (.[0] | type == "object")' "$ws/capture/payloads.jsonl"
+	[ "$status" -eq 0 ]
+	# A filter indexing a field must not error on it.
+	run jq -s -e 'any(.[]; .hook_event_name == "nope") | not' "$ws/capture/payloads.jsonl"
 	[ "$status" -eq 0 ]
 }
 
@@ -307,7 +322,7 @@ start_runner() {
 	hook="$ws/capture/dump-hook.sh"
 	bash -c ". '$EXPERIMENTS/lib/probe-common.sh'
 		probe_template_file '$TREE/cursor-subagent-effort/fixtures/capture/dump-hook.sh' '$hook' \
-			'JQ=$(command -v jq)' 'PAYLOADS=$ws/no/such/dir/payloads.jsonl' 'RUN_STAMP=tok123'"
+			'JQ=$(command -v jq)' 'PAYLOADS=$ws/no/such/dir/payloads.jsonl'"
 	chmod +x "$hook"
 
 	run bash -c "printf '{\"a\":1}' | '$hook'"
