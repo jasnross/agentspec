@@ -67,8 +67,11 @@ fresh_capture() {
 	printf '%s' "$ws"
 }
 
+# The newest record. Filenames sort lexicographically in run order, which is
+# what the filename's time component is for. `head` would return the oldest,
+# which is indistinguishable from the newest only while a test writes one.
 the_record() {
-	cat "$(ls "$PKG"/results/*.json | head -n 1)"
+	cat "$(ls "$PKG"/results/*.json | tail -n 1)"
 }
 
 @test "a matching observed value records confirmed" {
@@ -178,10 +181,11 @@ the_record() {
 	[[ "$output" == *"only status \"inconclusive\""* ]]
 }
 
-@test "several options may each declare inconclusive" {
-	# The narrowing rejects a *value*, not the presence of a status, so more
-	# than one `inconclusive` is legal. `all/2` is what makes this pass;
-	# a gate written as "at most one option declares a status" would not.
+# A manifest whose option set declares `inconclusive` more than once. The
+# narrowing rejects a *value*, not the presence of a status, so this must be
+# accepted — a gate written as "at most one option declares a status" would
+# refuse it, and both tests below would fail at the manifest check.
+multi_inconclusive_manifest() {
 	write_manifest <<-'JSON'
 		{
 		  "schema_version": 1, "provider": "cursor", "driver": "human-judge", "depth": null,
@@ -196,11 +200,22 @@ the_record() {
 		  }
 		}
 	JSON
+}
+
+@test "several inconclusive options do not stop the comparison" {
+	multi_inconclusive_manifest
 	ws=$(fresh_capture)
 
 	run "$RECORD" --manifest "$PKG/probe.json" --selection neither --capture "$ws"
 	[ "$status" -eq 0 ]
 	[ "$(the_record | jq -r .status)" = "confirmed" ]
+}
+
+@test "an inconclusive option yields inconclusive wherever it sits in the set" {
+	# `not-reached` is the second option declaring the status, so a gate reading
+	# only the first would miss it.
+	multi_inconclusive_manifest
+	ws=$(fresh_capture)
 
 	run "$RECORD" --manifest "$PKG/probe.json" --selection not-reached --capture "$ws"
 	[ "$status" -eq 0 ]
