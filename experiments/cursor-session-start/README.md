@@ -4,7 +4,7 @@
 
 **Why it matters.** It drives shipped adapter behavior — see `src/adapters/cursor.rs:229` and `src/compile.rs:498`. Cursor's answer differs from Claude's, which is why the two providers need separate handling and why this is a separate package from `claude-session-start`.
 
-**Driver:** `human-act`. A person drives Cursor; the answer is counted from the capture.
+**Driver:** `manual`. A person must drive Cursor for the probe to run. The answer is counted from the capture by a projection, so no person interprets it.
 
 ## Running it
 

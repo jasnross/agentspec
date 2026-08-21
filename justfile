@@ -41,9 +41,9 @@ shellcheck:
 bats-test:
     bats experiments/lib/tests
 
-# Run every script-driven probe; human-driven ones are listed as skipped
-probe-run:
-    experiments/lib/probe-run.sh
+# Run every probe; manual ones are listed as skipped, billed ones need --live
+probe-run *args:
+    experiments/lib/probe-run.sh {{args}}
 
 # Report on committed probe records; invokes no probe
 probe-status:

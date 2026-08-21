@@ -67,8 +67,6 @@ manifest_check() {
 manifest_check '.schema_version == 1' 'manifest schema_version must be 1'
 manifest_check '.provider | . == "claude" or . == "cursor" or . == "opencode"' \
 	'manifest provider must be claude, cursor, or opencode'
-manifest_check '.driver | . == "script" or . == "human-act" or . == "human-judge"' \
-	'manifest driver must be script, human-act, or human-judge'
 manifest_check '(.question | type) == "string" and (.question | length) > 0' \
 	'manifest must declare a non-empty question'
 manifest_check '.assertion | type == "object"' 'manifest must declare an assertion'
@@ -76,12 +74,21 @@ manifest_check '.assertion | has("expected")' 'manifest assertion declares no ex
 manifest_check '.assertion | (has("projection") != has("options"))' \
 	'manifest assertion must declare exactly one of projection or options'
 
-# Both enums live in `manifest-contract.sh` so this gate and the bats suite
-# cannot drift apart; the reasoning for each is there.
+# All three enums live in `manifest-contract.sh` so this gate and the bats
+# suite cannot drift apart; the reasoning for each is there.
+#
+# The driver enum is checked before the options correspondence, and the order
+# is load-bearing rather than alphabetical: the correspondence gate refuses any
+# driver that is not `manual`, so with it first, a manifest carrying a retired
+# or misspelled driver *and* an option set would be told it "requires a manual
+# driver" — implying it picked the wrong valid value when the value is not in
+# the enum at all. That is precisely the shape a stale checkout carries.
+manifest_check ".driver | $MANIFEST_DRIVER_JQ" \
+	'manifest driver must be unattended, billed, or manual'
 manifest_check "$MANIFEST_OPTION_STATUS_JQ" \
 	'an option may declare only status "inconclusive"'
 manifest_check "$MANIFEST_OPTIONS_DRIVER_JQ" \
-	'an options assertion requires a human-judged driver'
+	'an options assertion requires a manual driver'
 manifest_check ".depth | $MANIFEST_DEPTH_JQ" \
 	'manifest depth must be resolved-config, outbound-request, or null'
 
@@ -113,8 +120,8 @@ results_dir="$package/results"
 
 driver=$(jq -r '.driver // ""' "$manifest")
 case "$driver" in
-human-act | human-judge)
-	[ -n "$capture" ] || record_fail "driver \"$driver\" requires --capture"
+manual)
+	[ -n "$capture" ] || record_fail 'driver "manual" requires --capture'
 	;;
 esac
 

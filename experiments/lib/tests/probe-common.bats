@@ -321,7 +321,7 @@ put_capture_package() {
 	# options path was taken rather than the projection one.
 	put_capture_package <<-'JSON'
 		{
-		  "schema_version": 1, "provider": "cursor", "driver": "human-judge", "depth": null,
+		  "schema_version": 1, "provider": "cursor", "driver": "manual", "depth": null,
 		  "question": "Which markers appeared?", "version_source": { "kind": "none" },
 		  "assertion": {
 		    "options": [
@@ -344,12 +344,12 @@ put_capture_package() {
 }
 
 @test "probe_record_capture projects when the assertion declares a projection" {
-	# The other half of the same branch. A human-driven manifest may still be
+	# The other half of the same branch. A `manual` manifest may still be
 	# machine-answered — which is what `claude-session-start` is — so the
 	# driver alone cannot decide this.
 	put_capture_package <<-'JSON'
 		{
-		  "schema_version": 1, "provider": "cursor", "driver": "human-judge", "depth": null,
+		  "schema_version": 1, "provider": "cursor", "driver": "manual", "depth": null,
 		  "question": "q", "version_source": { "kind": "none" },
 		  "assertion": { "projection": "[.[] | .marker] | first", "expected": "seen" }
 		}

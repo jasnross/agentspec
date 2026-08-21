@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "provider": "cursor",
-  "driver": "human-act",
+  "driver": "manual",
   "depth": null,
   "question": "Does Cursor's sessionStart hook fire again when a conversation is resumed?",
   "version_source": {

@@ -33,14 +33,26 @@ put_manifest() {
 # The command is exec'd as argv rather than through a shell, so a version
 # fixture must be a real executable rather than a quoted `printf`.
 put_version_stub() {
-	local package="$1" version="$2"
+	local package="$1" version="$2" driver="${3:-unattended}"
 	mkdir -p "$TREE/$package"
 	local stub="$TREE/$package/version-stub"
 	printf '#!/usr/bin/env bash\nprintf "%%s\\n" "%s"\n' "$version" >"$stub"
 	chmod +x "$stub"
-	jq -n --arg cmd "$stub" \
-		'{schema_version: 1, provider: "opencode", driver: "script", depth: null,
+	jq -n --arg cmd "$stub" --arg d "$driver" \
+		'{schema_version: 1, provider: "opencode", driver: $d, depth: null,
 		  question: "q", version_source: {kind: "command", command: $cmd},
+		  assertion: {projection: ".", expected: 1}}' \
+		>"$TREE/$package/probe.json"
+}
+
+# A manifest with no records — the state a billed package spends most of its
+# life in, and the one the record loop passes over entirely.
+put_billed_manifest() {
+	local package="$1"
+	mkdir -p "$TREE/$package"
+	jq -n '{schema_version: 1, provider: "claude", driver: "billed",
+		  depth: "outbound-request", question: "q",
+		  version_source: {kind: "none"},
 		  assertion: {projection: ".", expected: 1}}' \
 		>"$TREE/$package/probe.json"
 }
@@ -104,7 +116,7 @@ put_version_stub() {
 	put_record alpha 2026-06-01T000000 opencode confirmed 2.0.0
 	put_manifest alpha <<-'JSON'
 		{
-		  "schema_version": 1, "provider": "opencode", "driver": "script", "depth": null,
+		  "schema_version": 1, "provider": "opencode", "driver": "unattended", "depth": null,
 		  "question": "q",
 		  "version_source": { "kind": "command", "command": "definitely-not-a-real-tool --version" },
 		  "assertion": { "projection": ".", "expected": 1 }
@@ -122,7 +134,7 @@ put_version_stub() {
 	put_record alpha 2026-06-01T000000 cursor confirmed 3.16.17
 	put_manifest alpha <<-'JSON'
 		{
-		  "schema_version": 1, "provider": "cursor", "driver": "human-act", "depth": null,
+		  "schema_version": 1, "provider": "cursor", "driver": "manual", "depth": null,
 		  "question": "q",
 		  "version_source": { "kind": "capture", "jq": "[.[] | .cursor_version] | first" },
 		  "assertion": { "projection": ".", "expected": 1 }
@@ -166,7 +178,7 @@ put_version_stub() {
 	put_record alpha 2026-06-01T000000 opencode confirmed 1.0.0
 	put_manifest alpha <<-'JSON'
 		{
-		  "schema_version": 1, "provider": "opencode", "driver": "script", "depth": null,
+		  "schema_version": 1, "provider": "opencode", "driver": "unattended", "depth": null,
 		  "question": "q",
 		  "version_source": { "kind": "command", "command": "cat" },
 		  "assertion": { "projection": ".", "expected": 1 }
@@ -254,4 +266,99 @@ put_version_stub() {
 	[ "$status" -eq 0 ]
 	[ "${#lines[@]}" -eq 1 ]
 	[[ "$output" == *"0 recorded"* ]]
+}
+
+@test "a billed package's version drift is excluded from the count and named as billed" {
+	# A batch run never refreshes a billed package, so its drift is permanent.
+	# Counting it would make the total structurally unable to reach zero, which
+	# hides the genuine drift of a package a free run could clear.
+	put_record alpha 2026-06-01T000000 opencode confirmed 1.0.0
+	put_version_stub alpha 9.9.9 billed
+
+	run "$STATUS"
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"installed 9.9.9"* ]]
+	[[ "$output" == *"just probe-run --live"* ]]
+	[[ "$output" == *"0 version drift"* ]]
+	[[ "$output" == *"1 billed (drift not tracked)"* ]]
+}
+
+@test "a billed package's bucket does not suppress an unattended package's drift" {
+	# The failure the separate bucket exists to prevent: a permanent-drift
+	# package must not swallow the signal from one a batch run can clear.
+	put_record alpha 2026-06-01T000000 opencode confirmed 1.0.0
+	put_version_stub alpha 9.9.9 billed
+	put_record beta 2026-06-01T000000 opencode confirmed 1.0.0
+	put_version_stub beta 8.8.8 unattended
+
+	run "$STATUS"
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"1 version drift"* ]]
+	[[ "$output" == *"1 billed"* ]]
+}
+
+@test "a billed package with no results directory still renders a row" {
+	# The record loop skips a package with no results/, which is exactly the
+	# state a billed package is most likely to be in — and no batch run will
+	# ever move it out of that state.
+	put_billed_manifest alpha
+
+	run "$STATUS"
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"alpha"* ]]
+	[[ "$output" == *"not yet run"* ]]
+	[[ "$output" == *"outbound-request"* ]]
+	[[ "$output" == *"just probe-run --live"* ]]
+	[[ "$output" != *"No probe records"* ]]
+	[[ "$output" == *"0 recorded"* ]]
+	[[ "$output" == *"1 billed"* ]]
+}
+
+@test "a billed package that has recorded is not also given a not-yet-run row" {
+	put_record alpha 2026-06-01T000000 opencode confirmed 1.0.0
+	put_version_stub alpha 1.0.0 billed
+
+	run "$STATUS"
+	[ "$status" -eq 0 ]
+	[[ "$output" != *"not yet run"* ]]
+	[[ "$output" == *"1 recorded"* ]]
+	[[ "$output" == *"1 billed"* ]]
+}
+
+@test "a tree with no billed packages prints the summary line without a billed segment" {
+	# The segment is omitted rather than printed as zero, so a tree that has
+	# never declared a billed package keeps the line it had before.
+	put_record alpha 2026-06-01T000000 opencode confirmed 2.0.0
+
+	run "$STATUS"
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"1 recorded"* ]]
+	[[ "$output" != *"billed"* ]]
+}
+
+@test "--summary works while a billed package is present" {
+	# The billed manifest scan sets `billed`, which `summary_line` reads at the
+	# `--summary` early exit. Under `set -u` a refactor hoisting that exit above
+	# the scan would fail on an unset variable, and the four tests above all
+	# take the full-report path — so nothing else pins the ordering.
+	put_billed_manifest alpha
+
+	run "$STATUS" --summary
+	[ "$status" -eq 0 ]
+	[ "${#lines[@]}" -eq 1 ]
+	[[ "$output" == *"1 billed (drift not tracked)"* ]]
+}
+
+@test "a billed package holding an unreadable record is not labelled not yet run" {
+	# It has been run. Claiming otherwise would be a false statement about the
+	# package, rather than the invisibility an unparseable record earns every
+	# other package in the report.
+	put_billed_manifest alpha
+	mkdir -p "$TREE/alpha/results"
+	printf 'not json at all {{{\n' >"$TREE/alpha/results/2026-06-01T000000-claude-1.json"
+
+	run "$STATUS"
+	[ "$status" -eq 0 ]
+	[[ "$output" != *"not yet run"* ]]
+	[[ "$output" == *"1 billed"* ]]
 }

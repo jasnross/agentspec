@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "provider": "cursor",
-  "driver": "human-judge",
+  "driver": "manual",
   "depth": null,
   "question": "If a Cursor sessionStart hook emits plain text to stdout and exits 0, does Cursor inject that text into the agent's context?",
   "version_source": {

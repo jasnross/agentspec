@@ -4,7 +4,7 @@
 
 **Why it matters.** A survey of real-world hook usage found plain-stdout context injection is the dominant Claude `SessionStart` pattern — roughly 60% of observed scripts. If Cursor accepted the same shape, the canonical context-injection path would simplify materially: no JSON envelope, no field-name asymmetry to bridge.
 
-**Driver:** `human-judge`. Whether the agent actually knew the planted fact is a person's call.
+**Driver:** `manual`. A person must drive Cursor for the probe to run. Whether the agent actually knew the planted fact is also a person's call, which is why the assertion is an option set.
 
 ## Running it
 

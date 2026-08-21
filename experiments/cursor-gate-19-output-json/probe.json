@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "provider": "cursor",
-  "driver": "human-judge",
+  "driver": "manual",
   "depth": null,
   "question": "When a preToolUse hook exits 2 AND emits deny JSON, which of its marker strings does Cursor surface, and where?",
   "version_source": {

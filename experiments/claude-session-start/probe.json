@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "provider": "claude",
-  "driver": "human-act",
+  "driver": "manual",
   "depth": null,
   "question": "Does Claude Code's SessionStart hook fire again when a session is resumed?",
   "version_source": { "kind": "command", "command": "claude --version" },

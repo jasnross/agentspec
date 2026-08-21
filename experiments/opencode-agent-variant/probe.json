@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "provider": "opencode",
-  "driver": "script",
+  "driver": "unattended",
   "depth": "resolved-config",
   "question": "Does OpenCode read a top-level `variant:` key in agent frontmatter, sibling to `model:`?",
   "version_source": { "kind": "command", "command": "opencode --version" },

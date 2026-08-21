@@ -4,7 +4,7 @@
 
 **Why it matters.** It establishes that `effort` is the wire key and that bracket options reach the resolved model, which is what any `CursorPreset.effort` rendering would depend on.
 
-**Driver:** `human-act`. A human drives Cursor, but the answer arrives in a hook payload and no person has to interpret it.
+**Driver:** `manual`. A person must drive Cursor for the probe to run. The answer arrives in a hook payload and no person has to interpret it — the assertion is a projection.
 
 ## Running it
 

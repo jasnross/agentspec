@@ -4,7 +4,7 @@
 
 **Why it matters.** It determines whether a Claude `exit 2 + reason` hook can be losslessly translated to Cursor by emitting `permission: "deny"` JSON alongside exit 2. If Cursor honors only one or the other, the shim must pick a side per event.
 
-**Driver:** `human-judge`. The oracle is a person looking at a screen; no projection reaches it, ever.
+**Driver:** `manual`. A person must drive Cursor for the probe to run. The oracle is also a person looking at a screen — no projection reaches it, ever — which the assertion states by declaring an option set rather than a projection.
 
 ## Running it
 

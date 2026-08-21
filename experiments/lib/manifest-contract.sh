@@ -17,6 +17,16 @@
 # record can never claim one. Applied to a `.depth` value.
 MANIFEST_DEPTH_JQ='. == null or . == "resolved-config" or . == "outbound-request"'
 
+# What `probe-run` must have before it can execute a package: nothing, an
+# explicit opt-in because the run spends model quota, or a person present.
+# Ordered by escalating requirement, and mutually exclusive because only the
+# strictest requirement governs scheduling.
+#
+# It deliberately does not encode who *answers* the question — that is the
+# assertion's shape, which `MANIFEST_OPTIONS_DRIVER_JQ` gates and
+# `probe-common.sh` reads. Applied to a `.driver` value.
+MANIFEST_DRIVER_JQ='. == "unattended" or . == "billed" or . == "manual"'
+
 # An option's declared status replaces the comparison against `expected`, which
 # is how `couldnt-tell` yields `inconclusive`. Any other declared status would
 # fix the verdict in advance — the caller-supplied status the record contract
@@ -28,14 +38,14 @@ MANIFEST_DEPTH_JQ='. == null or . == "resolved-config" or . == "outbound-request
 # this gate's diagnostic. Applied to a whole manifest.
 MANIFEST_OPTION_STATUS_JQ='all(.assertion.options[]? | select(type == "object" and has("status")) | .status; . == "inconclusive")'
 
-# An options assertion is a person choosing from a list, so the runner has to
-# prompt an operator — which is what `human-judge` and only `human-judge`
-# declares. `human-act` is not merely a weaker version of it: it says the
-# answer lands in a file, which is the opposite of prompting, so it is refused
-# here too. The implication runs one way only: a human-driven probe may still
-# be machine-answered, which is what `claude-session-start` is.
+# An options assertion is a person choosing from a list, so running the probe
+# requires a person present — which is what `manual` declares and what neither
+# other value can supply. An `unattended` or `billed` manifest declaring an
+# option set describes a runner that would have to prompt an operator no
+# scheduler put there. The implication runs one way only: a `manual` probe may
+# still be machine-answered, which is what `claude-session-start` is.
 #
 # `probe-common.sh` reads the assertion shape rather than the driver to decide
 # whether to prompt, so this gate is what makes that read safe. Applied to a
 # whole manifest.
-MANIFEST_OPTIONS_DRIVER_JQ='if (.assertion | has("options")) then .driver == "human-judge" else true end'
+MANIFEST_OPTIONS_DRIVER_JQ='if (.assertion | has("options")) then .driver == "manual" else true end'

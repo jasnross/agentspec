@@ -20,7 +20,7 @@ Probes verify the _provider's_ contract, so they use hand-authored provider conf
 
 ## Authoring a new probe
 
-1. **Pick the driver.** `script` if a command answers the question offline. `human-act` if a human must drive the provider but the answer lands in a file. `human-judge` if a human must drive the provider _and_ answer the question.
+1. **Pick the driver.** It names what `probe-run` must have before it can execute the package. `unattended` if a command answers the question with no credentials and no cost. `billed` if a command answers it but the run spends model quota, so it needs an explicit opt-in. `manual` if a person must drive the provider.
 2. **Create the package.** `experiments/<probe-name>/`, where the directory name is the probe's identity. No file restates it — `probe-status` reads records by path and already knows it.
 3. **Write the fixtures** under `fixtures/`. For a human-driven probe, that includes a capture hook that appends each payload as one JSON line to `capture/payloads.jsonl` — the payload as the provider sent it, with nothing added. Use `{{PLACEHOLDER}}` for anything absolute; `probe_template_file` fills them in at _Arrange_ so no operator ever hand-edits a path.
 4. **Author the assertion** — a jq projection with an expected value, or an option set with an expected id.
@@ -87,7 +87,7 @@ experiments/
   README.md                   # this file — the probe contract
   lib/
     probe-common.sh           # Arrange helpers: workspace, polling, prompting
-    manifest-contract.sh      # the manifest's enums, shared by record.sh and the tests
+    manifest-contract.sh      # the manifest's three enums, shared by record.sh and the tests
     record.sh                 # Assert & record — the single record writer
     probe-status.sh           # reads records, derives the report; invokes no probe
     tests/*.bats              # bats coverage for the three above
@@ -113,12 +113,12 @@ The only hand-authored file in the contract.
 | --- | --- |
 | `schema_version` | `1`. |
 | `provider` | `claude`, `cursor`, or `opencode`. |
-| `driver` | `script`, `human-act`, or `human-judge`. Read by `probe-run` to decide what it can execute, and by `record.sh` for the `--capture` requirement and the options correspondence below. Never on a record. |
+| `driver` | `unattended`, `billed`, or `manual` — what running the probe requires. Read by `probe-run` to decide what it can execute, and by `record.sh` for the `--capture` requirement and the options correspondence below. Never on a record. |
 | `depth` | `resolved-config`, `outbound-request`, or `null`. |
 | `question` | Required. What this probe answers, in one sentence. |
 | `version_source` | Where the tool version comes from. See below. |
-| `wait_for` | Optional jq filter the runner polls the capture against. Present on every `human-act` and `human-judge` manifest. |
-| `assertion` | Either `{projection, expected}` or `{options, expected}`. Never both. An `options` assertion additionally requires `driver: "human-judge"` — see below. |
+| `wait_for` | Optional jq filter the runner polls the capture against. Present on every `manual` manifest. |
+| `assertion` | Either `{projection, expected}` or `{options, expected}`. Never both. An `options` assertion additionally requires `driver: "manual"` — see below. |
 
 **`depth: null` is the right answer for a finding that is not on the config-rendering chain at all.** Output handling and hook-firing semantics are not weaker points on that chain; they are off it, and claiming a position on a chain the evidence never touched is a category error.
 
@@ -160,7 +160,7 @@ A projection over a capture must reduce the array to the shape `expected` is wri
 }
 ```
 
-**An options assertion requires `driver: "human-judge"`, and `record.sh` refuses a manifest that declares one without it.** An option set is a person choosing from a list, so the runner has to prompt an operator; a `script` manifest declaring one describes a runner that cannot exist, and a `human-act` one declares that its answer lands in a file, which is the opposite of prompting. The implication runs one way only — a human-driven probe may still be machine-answered, which is what `claude-session-start` is, and its projection over a capture is perfectly legitimate.
+**An options assertion requires `driver: "manual"`, and `record.sh` refuses a manifest that declares one without it.** An option set is a person choosing from a list, so running the probe requires a person present — which is exactly what `manual` declares and what neither other value can supply. An `unattended` or `billed` manifest declaring one describes a runner that would have to prompt an operator no scheduler put there. The implication runs one way only — a `manual` probe may still be machine-answered, which is what `claude-session-start` is, and its projection over a capture is perfectly legitimate.
 
 This is what makes the runner's read safe: `probe_record_capture` decides whether to prompt from the assertion's shape rather than from `driver`, because the shape is the fact and the driver was a second copy of it. `manifest-contract.sh` holds the gate so `record.sh` and the bats suite cannot drift apart on it.
 
@@ -203,7 +203,8 @@ Every gate still fires. A manifest failing a manifest check, a `--capture` whose
 ## Running probes and reading the report
 
 ```sh
-just probe-run      # run every script-driven probe; human-driven ones are listed as skipped
+just probe-run      # run every unattended probe; manual and billed ones are listed as skipped
+just probe-run --live  # additionally run the billed probes, which spend model quota
 just probe-status   # report on the committed records; invokes no probe
 just bats-test      # the harness test suite
 just shellcheck     # lint the probe shell
@@ -211,15 +212,19 @@ just shellcheck     # lint the probe shell
 
 `just check` ends with a one-line probe summary. That line can never fail the build.
 
-**`probe-run` cannot drive a human-driven probe.** A `human-act` or `human-judge` package needs a live provider session, so `probe-run` lists it as skipped and points at its README; run its `probe.sh` directly.
+**`probe-run` skips a package for one of two reasons, and says which.** A `manual` package needs a live provider session, so it is listed as skipped with a pointer to its README; run its `probe.sh` directly. A `billed` package can be driven by a script, but the run spends model quota, so it is skipped unless you opt in with `just probe-run --live` (or `PROBE_ALLOW_LIVE=1`). The opt-in is deliberately not the default: a batch run that costs money on every invocation is a batch run people stop invoking.
+
+`probe-run` accepts no other argument and exits 2 on one, rather than silently ignoring a flag that was meant to authorize spending.
 
 ### What the summary line can and cannot see
 
 ```
-probes: 6 recorded · 0 refuted · 0 inconclusive · 1 version drift
+probes: 8 recorded · 0 refuted · 0 inconclusive · 1 version drift · 2 billed (drift not tracked)
 ```
 
 The drift count is **not** a claim that everything else is current. Every Cursor probe declares `version_source.kind: "capture"`, and a captured version is knowable only by running the probe — which `probe-status` never does. So no drift is computable for those packages, and they contribute nothing to that count. Read `0 version drift` as "nothing computable drifted," not as "everything is current."
+
+**Billed packages sit in their own segment, and their drift is deliberately uncounted.** A batch run never refreshes one, so its recorded version falls behind the installed one and stays there until somebody pays for a `--live` run. Counted, that drift would be structurally unable to reach zero — and a count that can never reach zero is a muted alarm: it hides the genuine drift of a package a free batch run could clear. The row still shows the installed version and names what would refresh it. The segment is omitted entirely when no package declares `billed`.
 
 ### The two drift signals are not equally strong
 

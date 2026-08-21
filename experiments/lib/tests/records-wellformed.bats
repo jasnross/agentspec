@@ -39,7 +39,6 @@ setup() {
 		run jq -e '
 			(.question | type == "string" and (. | length) > 0)
 			and (.provider | . == "claude" or . == "cursor" or . == "opencode")
-			and (.driver | . == "script" or . == "human-act" or . == "human-judge")
 			and (.assertion | type == "object" and has("expected")
 			     and (has("projection") != has("options")))
 		' "$manifest"
@@ -48,13 +47,21 @@ setup() {
 			return 1
 		fi
 
-		# Its own check rather than a clause in the conjunction above: a retired
-		# depth is a present, well-typed field, so the missing-field diagnostic
-		# would send the reader looking for an absent key.
+		# Their own checks rather than clauses in the conjunction above: a
+		# retired depth or driver is a present, well-typed field, so the
+		# missing-field diagnostic would send the reader looking for an absent
+		# key.
 		run jq -e ".depth | $MANIFEST_DEPTH_JQ" "$manifest"
 		if [ "$status" -ne 0 ]; then
 			printf 'manifest declares a depth the contract cannot gather: %s (%s)\n' \
 				"$manifest" "$(jq -c .depth "$manifest")" >&2
+			return 1
+		fi
+
+		run jq -e ".driver | $MANIFEST_DRIVER_JQ" "$manifest"
+		if [ "$status" -ne 0 ]; then
+			printf 'manifest declares a driver outside the scheduling enum: %s (%s)\n' \
+				"$manifest" "$(jq -c .driver "$manifest")" >&2
 			return 1
 		fi
 	done
@@ -107,7 +114,7 @@ setup() {
 	done
 }
 
-@test "every options manifest declares a human-judged driver" {
+@test "every options manifest declares a manual driver" {
 	# `probe-common.sh` reads the assertion shape to decide whether to prompt.
 	# This is what makes that read safe on committed data; `record.sh` gates it
 	# at write time.
@@ -116,24 +123,24 @@ setup() {
 
 		run jq -e "$MANIFEST_OPTIONS_DRIVER_JQ" "$manifest"
 		if [ "$status" -ne 0 ]; then
-			printf 'manifest declares options without a human-judged driver: %s\n' "$manifest" >&2
+			printf 'manifest declares options without a manual driver: %s\n' "$manifest" >&2
 			return 1
 		fi
 	done
 }
 
-@test "every human-driven manifest declares a wait_for filter" {
+@test "every manual manifest declares a wait_for filter" {
 	# The runner polls against it; without one the run burns its full timeout.
 	for manifest in "$EXPERIMENTS"/*/probe.json; do
 		[ -e "$manifest" ] || continue
 		case "$(jq -r '.driver' "$manifest")" in
-		human-act | human-judge) ;;
+		manual) ;;
 		*) continue ;;
 		esac
 
 		run jq -e '.wait_for | type == "string" and (. | length) > 0' "$manifest"
 		if [ "$status" -ne 0 ]; then
-			printf 'human-driven manifest declares no wait_for: %s\n' "$manifest" >&2
+			printf 'manual manifest declares no wait_for: %s\n' "$manifest" >&2
 			return 1
 		fi
 	done

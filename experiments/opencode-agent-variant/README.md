@@ -4,7 +4,7 @@
 
 **Why it matters.** agentspec emits `variant:` as a sibling key for OpenCode agents. A design revision once asserted a `provider/model#variant` suffix instead — a rendering no parser in OpenCode would ever have accepted. This probe is the measurement that settles which of the two is real.
 
-**Driver:** `script`. There is no human step. `opencode debug agent <name>` makes no model request, needs no network and no credentials, and is deterministic — the cheapest oracle of the three providers.
+**Driver:** `unattended`. There is no human step and nothing to opt into. `opencode debug agent <name>` makes no model request, needs no network and no credentials, and is deterministic — the cheapest oracle of the three providers.
 
 ## Running it
 

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "provider": "cursor",
-  "driver": "human-act",
+  "driver": "manual",
   "depth": "resolved-config",
   "question": "Does Cursor parse a `[effort=…]` bracket option in subagent frontmatter and apply it to the resolved model?",
   "version_source": {

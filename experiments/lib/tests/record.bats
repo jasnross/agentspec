@@ -24,7 +24,7 @@ script_manifest() {
 		{
 		  "schema_version": 1,
 		  "provider": "opencode",
-		  "driver": "script",
+		  "driver": "unattended",
 		  "depth": "resolved-config",
 		  "question": "Test manifest.",
 		  "version_source": { "kind": "none" },
@@ -41,7 +41,7 @@ judge_manifest() {
 		{
 		  "schema_version": 1,
 		  "provider": "cursor",
-		  "driver": "human-judge",
+		  "driver": "manual",
 		  "depth": null,
 		  "question": "Which markers appeared?",
 		  "version_source": { "kind": "none" },
@@ -104,10 +104,10 @@ the_record() {
 	[ "$(the_record | jq -r .status)" = "confirmed" ]
 }
 
-@test "a human-act manifest without --capture is refused" {
+@test "a manual projection manifest without --capture is refused" {
 	write_manifest <<-'JSON'
 		{
-		  "schema_version": 1, "provider": "cursor", "driver": "human-act", "depth": null,
+		  "schema_version": 1, "provider": "cursor", "driver": "manual", "depth": null,
 		  "question": "q", "version_source": { "kind": "none" },
 		  "assertion": { "projection": ".", "expected": {} }
 		}
@@ -119,7 +119,7 @@ the_record() {
 	[[ "$output" == *"requires --capture"* ]]
 }
 
-@test "a human-judge manifest without --capture is refused" {
+@test "a manual options manifest without --capture is refused" {
 	judge_manifest
 
 	run "$RECORD" --manifest "$PKG/probe.json" --selection neither
@@ -163,7 +163,7 @@ the_record() {
 	# smuggled in through the manifest instead of the command line.
 	write_manifest <<-'JSON'
 		{
-		  "schema_version": 1, "provider": "cursor", "driver": "human-judge", "depth": null,
+		  "schema_version": 1, "provider": "cursor", "driver": "manual", "depth": null,
 		  "question": "q", "version_source": { "kind": "none" },
 		  "assertion": {
 		    "options": [
@@ -188,7 +188,7 @@ the_record() {
 multi_inconclusive_manifest() {
 	write_manifest <<-'JSON'
 		{
-		  "schema_version": 1, "provider": "cursor", "driver": "human-judge", "depth": null,
+		  "schema_version": 1, "provider": "cursor", "driver": "manual", "depth": null,
 		  "question": "q", "version_source": { "kind": "none" },
 		  "assertion": {
 		    "options": [
@@ -230,7 +230,7 @@ multi_inconclusive_manifest() {
 		{
 		  "schema_version": 1,
 		  "provider": "opencode",
-		  "driver": "script",
+		  "driver": "unattended",
 		  "depth": "provider-parses",
 		  "question": "Test manifest.",
 		  "version_source": { "kind": "none" },
@@ -305,7 +305,7 @@ multi_inconclusive_manifest() {
 @test "a fresh capture records successfully and stores nothing about the capture" {
 	write_manifest <<-'JSON'
 		{
-		  "schema_version": 1, "provider": "cursor", "driver": "human-act", "depth": null,
+		  "schema_version": 1, "provider": "cursor", "driver": "manual", "depth": null,
 		  "question": "q",
 		  "version_source": { "kind": "capture", "jq": "[.[] | .cursor_version] | map(select(. != null)) | first" },
 		  "assertion": { "projection": "[.[] | .variant] | first", "expected": "high" }
@@ -372,7 +372,7 @@ multi_inconclusive_manifest() {
 	chmod +x "$stub"
 
 	jq -n --arg cmd "$stub" \
-		'{schema_version: 1, provider: "opencode", driver: "script", depth: null,
+		'{schema_version: 1, provider: "opencode", driver: "unattended", depth: null,
 		  question: "q", version_source: {kind: "command", command: $cmd},
 		  assertion: {projection: ".", expected: {}}}' >"$PKG/probe.json"
 	write_view <<<'{}'
@@ -392,7 +392,7 @@ multi_inconclusive_manifest() {
 	# exact failure the contract claims to prevent.
 	write_manifest <<-'JSON'
 		{
-		  "schema_version": 1, "provider": "opencode", "driver": "script", "depth": null,
+		  "schema_version": 1, "provider": "opencode", "driver": "unattended", "depth": null,
 		  "question": "q", "version_source": { "kind": "none" },
 		  "assertion": { "projection": ".no.such.path" }
 		}
@@ -408,7 +408,7 @@ multi_inconclusive_manifest() {
 @test "a manifest declaring both projection and options is refused" {
 	write_manifest <<-'JSON'
 		{
-		  "schema_version": 1, "provider": "cursor", "driver": "human-judge", "depth": null,
+		  "schema_version": 1, "provider": "cursor", "driver": "manual", "depth": null,
 		  "question": "q", "version_source": { "kind": "none" },
 		  "assertion": {
 		    "projection": ".", "options": [{ "id": "a", "text": "a" }], "expected": "a"
@@ -424,11 +424,11 @@ multi_inconclusive_manifest() {
 
 @test "a manifest declaring options under any other driver is refused" {
 	# The correspondence `probe-common.sh` depends on: an options assertion is
-	# a person choosing from a list, so the runner has to prompt an operator.
-	# `human-act` is covered as well as `script`, and deliberately: it is not a
-	# weaker `human-judge` but a claim that the answer lands in a file, so it
-	# is the value a future edit is most likely to loosen the gate for.
-	for driver in script human-act; do
+	# a person choosing from a list, so running the probe requires a person
+	# present. Both other members of the enum are covered rather than just one,
+	# because `billed` is scriptable and so is the value a future edit is most
+	# likely to loosen the gate for.
+	for driver in unattended billed; do
 		rm -rf "$PKG/results"
 		jq -n --arg d "$driver" \
 			'{schema_version: 1, provider: "cursor", driver: $d, depth: null,
@@ -444,7 +444,7 @@ multi_inconclusive_manifest() {
 
 		run "$RECORD" --manifest "$PKG/probe.json" --selection yes --capture "$ws"
 		[ "$status" -ne 0 ]
-		[[ "$output" == *"requires a human-judged driver"* ]]
+		[[ "$output" == *"requires a manual driver"* ]]
 		[ ! -d "$PKG/results" ]
 	done
 }
@@ -452,7 +452,7 @@ multi_inconclusive_manifest() {
 @test "a manifest declaring neither projection nor options is refused" {
 	write_manifest <<-'JSON'
 		{
-		  "schema_version": 1, "provider": "cursor", "driver": "script", "depth": null,
+		  "schema_version": 1, "provider": "cursor", "driver": "unattended", "depth": null,
 		  "question": "q", "version_source": { "kind": "none" },
 		  "assertion": { "expected": "a" }
 		}
@@ -488,7 +488,7 @@ multi_inconclusive_manifest() {
 	# Also keeps `provider` out of the record path, which is built from it.
 	write_manifest <<-'JSON'
 		{
-		  "schema_version": 1, "provider": "../../etc", "driver": "script", "depth": null,
+		  "schema_version": 1, "provider": "../../etc", "driver": "unattended", "depth": null,
 		  "question": "q", "version_source": { "kind": "none" },
 		  "assertion": { "projection": ".", "expected": {} }
 		}
@@ -500,10 +500,10 @@ multi_inconclusive_manifest() {
 	[[ "$output" == *"provider must be"* ]]
 }
 
-@test "a manifest with an unknown driver or schema_version is refused" {
+@test "a manifest with an unknown schema_version is refused" {
 	write_manifest <<-'JSON'
 		{
-		  "schema_version": 99, "provider": "opencode", "driver": "script", "depth": null,
+		  "schema_version": 99, "provider": "opencode", "driver": "unattended", "depth": null,
 		  "question": "q", "version_source": { "kind": "none" },
 		  "assertion": { "projection": ".", "expected": {} }
 		}
@@ -515,10 +515,28 @@ multi_inconclusive_manifest() {
 	[[ "$output" == *"schema_version must be 1"* ]]
 }
 
-@test "a projection yielding several values is refused with a clear diagnostic" {
+@test "a manifest with an unknown driver is refused" {
+	# `script` rather than an invented string: a retired value is what a stale
+	# manifest actually carries, and it is the one the enum has to reject.
 	write_manifest <<-'JSON'
 		{
 		  "schema_version": 1, "provider": "opencode", "driver": "script", "depth": null,
+		  "question": "q", "version_source": { "kind": "none" },
+		  "assertion": { "projection": ".", "expected": {} }
+		}
+	JSON
+	write_view <<<'{}'
+
+	run "$RECORD" --manifest "$PKG/probe.json" --view "$BATS_TEST_TMPDIR/view.json"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"driver must be unattended, billed, or manual"* ]]
+	[ ! -d "$PKG/results" ]
+}
+
+@test "a projection yielding several values is refused with a clear diagnostic" {
+	write_manifest <<-'JSON'
+		{
+		  "schema_version": 1, "provider": "opencode", "driver": "unattended", "depth": null,
 		  "question": "q", "version_source": { "kind": "none" },
 		  "assertion": { "projection": ".[]", "expected": 1 }
 		}
@@ -533,7 +551,7 @@ multi_inconclusive_manifest() {
 @test "a duplicated option id is refused" {
 	write_manifest <<-'JSON'
 		{
-		  "schema_version": 1, "provider": "cursor", "driver": "human-judge", "depth": null,
+		  "schema_version": 1, "provider": "cursor", "driver": "manual", "depth": null,
 		  "question": "q", "version_source": { "kind": "none" },
 		  "assertion": {
 		    "options": [
@@ -618,7 +636,7 @@ the_dry_record() {
 	# of them; only the write is skipped.
 	write_manifest <<-'JSON'
 		{
-		  "schema_version": 1, "provider": "opencode", "driver": "script",
+		  "schema_version": 1, "provider": "opencode", "driver": "unattended",
 		  "depth": "provider-parses",
 		  "question": "q", "version_source": { "kind": "none" },
 		  "assertion": { "projection": ".", "expected": {} }

@@ -4,7 +4,7 @@
 
 **Why it matters.** It drives shipped adapter behavior: a hook registered on `SessionStart` runs twice across a resumed session, so anything it does must be idempotent.
 
-**Driver:** `human-act`. A person drives Claude, but the answer lands in the capture and nobody has to interpret it.
+**Driver:** `manual`. A person must drive Claude for the probe to run at all. The answer still lands in the capture and nobody has to interpret it — that is the assertion's shape, a projection, not the driver's business.
 
 ## Running it
 
