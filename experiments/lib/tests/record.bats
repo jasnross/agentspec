@@ -536,3 +536,100 @@ multi_inconclusive_manifest() {
 
 	[ "$(ls "$PKG"/results/*.json | wc -l | tr -d ' ')" -eq 2 ]
 }
+
+# `--dry-run` prints the would-be record on stdout and its diagnostic on stderr.
+# Splitting them at the redirect rather than through `run --separate-stderr`
+# keeps this file free of a bats version floor nothing else in it needs: with
+# the two streams merged, the diagnostic line would make the captured output
+# unparseable as JSON.
+dry_run() {
+	"$RECORD" --dry-run "$@" >"$BATS_TEST_TMPDIR/dry.json"
+}
+
+the_dry_record() {
+	cat "$BATS_TEST_TMPDIR/dry.json"
+}
+
+@test "--dry-run writes no record" {
+	script_manifest
+	write_view <<<'{"model":"m","variant":"high"}'
+
+	run dry_run --manifest "$PKG/probe.json" --view "$BATS_TEST_TMPDIR/view.json"
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"no file written"* ]]
+	[ ! -d "$PKG/results" ]
+}
+
+@test "--dry-run prints a well-formed record to stdout" {
+	# The point of the flag: what it prints is what a record would contain, so
+	# a projection validated here is the one the real run will evaluate.
+	script_manifest
+	write_view <<<'{"model":"m","variant":"high"}'
+
+	run dry_run --manifest "$PKG/probe.json" --view "$BATS_TEST_TMPDIR/view.json"
+	[ "$status" -eq 0 ]
+
+	run assert_record_wellformed "$BATS_TEST_TMPDIR/dry.json"
+	[ "$status" -eq 0 ]
+}
+
+@test "--dry-run exits 0 when the comparison computes refuted" {
+	# Validating that an assertion discriminates means running it against an
+	# input it is supposed to refute, so a nonzero exit here would fail the
+	# flag's primary use case every time.
+	script_manifest
+	write_view <<<'{"model":"m","variant":"low"}'
+
+	run dry_run --manifest "$PKG/probe.json" --view "$BATS_TEST_TMPDIR/view.json"
+	[ "$status" -eq 0 ]
+	[ "$(the_dry_record | jq -r .status)" = "refuted" ]
+	[ ! -d "$PKG/results" ]
+}
+
+@test "--dry-run still refuses a manifest failing a gate" {
+	# Every gate is part of the wiring being verified, so dry-run enforces all
+	# of them; only the write is skipped.
+	write_manifest <<-'JSON'
+		{
+		  "schema_version": 1, "provider": "opencode", "driver": "script",
+		  "depth": "provider-parses",
+		  "question": "q", "version_source": { "kind": "none" },
+		  "assertion": { "projection": ".", "expected": {} }
+		}
+	JSON
+	write_view <<<'{}'
+
+	run dry_run --manifest "$PKG/probe.json" --view "$BATS_TEST_TMPDIR/view.json"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"depth must be"* ]]
+	# A refused dry run emits no would-be record, so a scripted `--dry-run >file`
+	# cannot leave a partial artifact behind.
+	[ ! -s "$BATS_TEST_TMPDIR/dry.json" ]
+}
+
+@test "--dry-run still enforces the capture non-empty check" {
+	script_manifest
+	write_view <<<'{"model":"m","variant":"high"}'
+	ws="$BATS_TEST_TMPDIR/emptypayloads"
+	mkdir -p "$ws/capture"
+	: >"$ws/capture/payloads.jsonl"
+
+	run dry_run --manifest "$PKG/probe.json" --view "$BATS_TEST_TMPDIR/view.json" --capture "$ws"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"absent or empty"* ]]
+	[ ! -s "$BATS_TEST_TMPDIR/dry.json" ]
+}
+
+@test "--dry-run records nothing on the selection path either" {
+	# The options path is the expensive one to get wrong — a human-judged probe
+	# discovers a wiring error only during a live session. The flag is passed
+	# last here on purpose: both usage lines show it trailing, and the helper
+	# above always passes it first, so nothing else exercises that position.
+	judge_manifest
+	ws=$(fresh_capture)
+
+	run "$RECORD" --manifest "$PKG/probe.json" --selection neither --capture "$ws" --dry-run
+	[ "$status" -eq 0 ]
+	[ ! -d "$PKG/results" ]
+	[[ "$output" == *"no file written"* ]]
+}

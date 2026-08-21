@@ -7,8 +7,8 @@
 # than a workflow.
 #
 # Usage:
-#   record.sh --manifest <probe.json> --view <view.json>      [--capture <ws>]
-#   record.sh --manifest <probe.json> --selection <option-id>  --capture <ws>
+#   record.sh --manifest <probe.json> --view <view.json>      [--capture <ws>] [--dry-run]
+#   record.sh --manifest <probe.json> --selection <option-id>  --capture <ws>  [--dry-run]
 set -euo pipefail
 
 lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -28,9 +28,14 @@ manifest=""
 view=""
 selection=""
 capture=""
+dry_run=0
 
 while [ $# -gt 0 ]; do
 	case "$1" in
+	--dry-run)
+		dry_run=1
+		shift
+		;;
 	--manifest | --view | --selection | --capture)
 		[ $# -ge 2 ] || record_fail "$1 requires a value"
 		case "$1" in
@@ -231,6 +236,20 @@ record=$(jq -n \
 		tool_version: (if $tool_version == "" then null else $tool_version end),
 		assertion: $assertion
 	}')
+
+if [ "$dry_run" -eq 1 ]; then
+	# Not a record. It is what a record would contain, printed so a probe's
+	# wiring can be checked before a live or billed run produces one. The
+	# harness's central invariant is that every record is produced by a runner;
+	# this exists to reduce the pressure to violate it, not to work around it.
+	#
+	# Exits 0 whatever the comparison computed: the discriminator run is
+	# definitionally expected to refute, and refuted is a finding rather than a
+	# failure on a real run too.
+	printf '%s\n' "$record"
+	printf 'record: dry run — %s — observed %s (no file written)\n' "$status" "$observed" >&2
+	exit 0
+fi
 
 version_slug=$(printf '%s' "${tool_version:-unknown}" | tr -c 'A-Za-z0-9._-' '_')
 record_path="$results_dir/${stamped}-$(jq -r '.provider' "$manifest")-${version_slug}.json"

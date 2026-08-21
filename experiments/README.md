@@ -24,11 +24,11 @@ Probes verify the _provider's_ contract, so they use hand-authored provider conf
 2. **Create the package.** `experiments/<probe-name>/`, where the directory name is the probe's identity. No file restates it — `probe-status` reads records by path and already knows it.
 3. **Write the fixtures** under `fixtures/`. For a human-driven probe, that includes a capture hook that appends each payload as one JSON line to `capture/payloads.jsonl` — the payload as the provider sent it, with nothing added. Use `{{PLACEHOLDER}}` for anything absolute; `probe_template_file` fills them in at _Arrange_ so no operator ever hand-edits a path.
 4. **Author the assertion** — a jq projection with an expected value, or an option set with an expected id.
-5. **Validate that it discriminates** (see below). This is a required step, not a nicety.
+5. **Validate that it discriminates** (see below). This is a required step, not a nicety. Do it with `record.sh --dry-run` against the manifest itself, so the expression being validated is the one the manifest actually carries rather than a copy retyped at the shell. Once a view exists on disk, `record.sh --manifest <probe.json> --view <saved-view> --dry-run` re-evaluates any candidate projection for free.
 6. **Run it.** The runner writes the record.
 7. **Commit the fixtures, the manifest, the README, and the record.**
 
-A manifest is written only **once its assertion has been validated to discriminate**. No manifest is authored speculatively for a probe that has never run.
+**The manifest is authored first, and committed only once its assertion has been shown to discriminate.** Writing it first is what makes step 5 honest: `--dry-run` evaluates the expression the manifest actually carries, so the expression validated is the expression that will run. Hand-applying jq at the shell and transcribing the result into `probe.json` afterwards leaves two separately-typed strings, and a transcription slip that makes a projection return `[]` records `refuted` — a false finding rather than a loud failure. What the rule forbids is a _committed_ manifest whose assertion has never been shown to distinguish two inputs, not a draft one on disk.
 
 ### The two rules that replace a control arm
 
@@ -183,6 +183,18 @@ Fields that would merely restate a derivable fact — the probe's name, its driv
 **`blocked` is not a status.** A probe that cannot run makes its runner exit nonzero with a diagnostic, which produces no record at all. Recording "this could not run" would mean writing a record for a run that never happened. Nor is there anywhere for such a status to live: a probe that cannot run has no package at all, so its question sits in `TODO.md` until someone can measure it.
 
 The filename carries a UTC time component because date plus version does not disambiguate a same-day re-run at the same provider version — and re-running to confirm a `refuted` result is the first thing anyone would do. The full name also sorts lexicographically in run order, which is how `probe-status` finds the newest.
+
+### `record.sh --dry-run`
+
+`--dry-run` evaluates a manifest end to end — every gate, the projection, the structural comparison, version resolution, record assembly — and prints what a record would contain instead of writing one. No `results/` directory is created and no record is written. Version resolution still runs, so a manifest declaring `version_source.kind: "command"` still executes that command; what dry-run guarantees is that `record.sh` itself writes nothing, not that the run is side-effect-free.
+
+**A runner takes no arguments, so `--dry-run` is not one of them.** Five of the six committed runners reject any argument outright. A runner that supports a dry run reads `PROBE_DRY_RUN=1` from the environment and passes the flag on to `record.sh` itself — the same shape as `PROBE_FIXTURE`. Where a runner does not read it, invoke `record.sh` directly against a view the runner already produced.
+
+It exits **0 whatever status the comparison computes**, including `refuted`. Validating that an assertion discriminates means running it against an input it is supposed to refute, so a nonzero exit would fail the primary use case every time; it would also make dry-run disagree with real-run semantics, where `refuted` is a finding rather than a failure.
+
+Every gate still fires. A manifest failing a manifest check, a `--capture` whose payloads are absent or empty, a projection yielding several values — all still refuse, because those are the wiring being verified.
+
+**Its stdout is not a record.** It is what a record would contain, and it must never be redirected into `results/`: every record in this repository is produced by a runner, and that invariant is what makes hand-editing one a defect rather than a workflow. `--dry-run` exists to reduce the pressure to violate that rule, not to work around it.
 
 ## Running probes and reading the report
 
