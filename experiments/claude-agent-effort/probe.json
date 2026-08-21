@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "provider": "claude",
+  "driver": "billed",
+  "depth": "outbound-request",
+  "question": "On which invocation paths does Claude Code apply an agent's `effort:` frontmatter to the outbound model request?",
+  "version_source": {
+    "kind": "command",
+    "command": "claude --version"
+  },
+  "assertion": {
+    "projection": "([.[][] | select((.system | tostring | contains(\"AGENTSPEC-PROBE-MARKER-7Q4XKD\")) | not) | select(.output_config | has(\"effort\")) | .output_config.effort] | unique) as $u | def rel: if ($u | length) != 1 then \"no-usable-control-set\" elif length == 0 then \"arm-had-no-governed-request\" elif . == $u then \"same-as-ungoverned\" else . end; { session_agent: ([.session_agent[] | select(.system | tostring | contains(\"AGENTSPEC-PROBE-MARKER-7Q4XKD\")) | .output_config.effort] | unique | rel), delegated: ([.delegated[] | select(.system | tostring | contains(\"AGENTSPEC-PROBE-MARKER-7Q4XKD\")) | .output_config.effort] | unique | rel) }",
+    "expected": {
+      "session_agent": "same-as-ungoverned",
+      "delegated": ["low"]
+    }
+  }
+}
