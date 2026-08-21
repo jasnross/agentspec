@@ -74,34 +74,49 @@ setup() {
 	done
 }
 
-@test "every human-judge manifest carries exactly one inconclusive option" {
+@test "every options manifest carries exactly one inconclusive option" {
 	# Without a "couldn't tell" option a probe forces a binary, and a tired
 	# operator picking the first plausible answer manufactures a pass.
 	for manifest in "$EXPERIMENTS"/*/probe.json; do
 		[ -e "$manifest" ] || continue
-		[ "$(jq -r '.driver' "$manifest")" = "human-judge" ] || continue
+		jq -e '.assertion | has("options")' "$manifest" >/dev/null 2>&1 || continue
 
 		run jq -e '[.assertion.options[] | select(.status == "inconclusive")] | length == 1' "$manifest"
 		if [ "$status" -ne 0 ]; then
-			printf 'human-judge manifest lacks exactly one inconclusive option: %s\n' "$manifest" >&2
+			printf 'options manifest lacks exactly one inconclusive option: %s\n' "$manifest" >&2
 			return 1
 		fi
 	done
 }
 
-@test "every human-judge manifest's expected names one of its own option ids" {
+@test "every options manifest's expected names one of its own option ids" {
 	# A typo here would make the probe permanently unpassable, and it would
 	# only surface during a live session — the most expensive place to find it.
 	#
-	# Scoped to human-judge on purpose: a machine-read manifest's `expected` is
-	# an arbitrary JSON value with no `options` to name.
+	# Scoped by assertion shape on purpose: a projection manifest's `expected`
+	# is an arbitrary JSON value with no `options` to name.
 	for manifest in "$EXPERIMENTS"/*/probe.json; do
 		[ -e "$manifest" ] || continue
-		[ "$(jq -r '.driver' "$manifest")" = "human-judge" ] || continue
+		jq -e '.assertion | has("options")' "$manifest" >/dev/null 2>&1 || continue
 
 		run jq -e '.assertion.expected as $e | any(.assertion.options[]; .id == $e)' "$manifest"
 		if [ "$status" -ne 0 ]; then
-			printf 'human-judge manifest expected names no existing option id: %s\n' "$manifest" >&2
+			printf 'options manifest expected names no existing option id: %s\n' "$manifest" >&2
+			return 1
+		fi
+	done
+}
+
+@test "every options manifest declares a human-judged driver" {
+	# `probe-common.sh` reads the assertion shape to decide whether to prompt.
+	# This is what makes that read safe on committed data; `record.sh` gates it
+	# at write time.
+	for manifest in "$EXPERIMENTS"/*/probe.json; do
+		[ -e "$manifest" ] || continue
+
+		run jq -e "$MANIFEST_OPTIONS_DRIVER_JQ" "$manifest"
+		if [ "$status" -ne 0 ]; then
+			printf 'manifest declares options without a human-judged driver: %s\n' "$manifest" >&2
 			return 1
 		fi
 	done

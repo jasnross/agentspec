@@ -27,3 +27,15 @@ MANIFEST_DEPTH_JQ='. == null or . == "resolved-config" or . == "outbound-request
 # falling through to the clearer refusal downstream rather than raising into
 # this gate's diagnostic. Applied to a whole manifest.
 MANIFEST_OPTION_STATUS_JQ='all(.assertion.options[]? | select(type == "object" and has("status")) | .status; . == "inconclusive")'
+
+# An options assertion is a person choosing from a list, so the runner has to
+# prompt an operator — which is what `human-judge` and only `human-judge`
+# declares. `human-act` is not merely a weaker version of it: it says the
+# answer lands in a file, which is the opposite of prompting, so it is refused
+# here too. The implication runs one way only: a human-driven probe may still
+# be machine-answered, which is what `claude-session-start` is.
+#
+# `probe-common.sh` reads the assertion shape rather than the driver to decide
+# whether to prompt, so this gate is what makes that read safe. Applied to a
+# whole manifest.
+MANIFEST_OPTIONS_DRIVER_JQ='if (.assertion | has("options")) then .driver == "human-judge" else true end'

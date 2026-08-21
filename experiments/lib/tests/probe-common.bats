@@ -303,3 +303,63 @@ write_driver() {
 	[[ "$output" == *'"nonsense" is not one of the option ids'* ]]
 	[[ "$output" == *"neither"* ]]
 }
+
+# A package carrying <manifest-json> and a workspace holding one payload, so
+# `probe_record_capture` has both halves it reads. Sets `pkg` and `ws`.
+put_capture_package() {
+	pkg="$BATS_TEST_TMPDIR/pkg"
+	ws="$BATS_TEST_TMPDIR/ws"
+	mkdir -p "$pkg" "$ws/capture"
+	printf '{"marker":"seen"}\n' >"$ws/capture/payloads.jsonl"
+	cat >"$pkg/probe.json"
+}
+
+@test "probe_record_capture prompts when the assertion declares options" {
+	# The branch reads the assertion's shape, not the driver — `record.sh`
+	# gates the correspondence that makes that read safe. Reaching
+	# `probe_prompt_selection`, whose tty guard exits 2, is what proves the
+	# options path was taken rather than the projection one.
+	put_capture_package <<-'JSON'
+		{
+		  "schema_version": 1, "provider": "cursor", "driver": "human-judge", "depth": null,
+		  "question": "Which markers appeared?", "version_source": { "kind": "none" },
+		  "assertion": {
+		    "options": [
+		      { "id": "neither", "text": "Neither marker was visible" },
+		      { "id": "couldnt-tell", "text": "Could not determine", "status": "inconclusive" }
+		    ],
+		    "expected": "neither"
+		  }
+		}
+	JSON
+	driver=$(write_driver <<-SH
+		probe_record_capture '$pkg' '$ws'
+	SH
+	)
+
+	run "$driver" </dev/null
+	[ "$status" -eq 2 ]
+	[[ "$output" == *"stdin is not a terminal"* ]]
+	[[ "$output" == *"Which markers appeared?"* ]]
+}
+
+@test "probe_record_capture projects when the assertion declares a projection" {
+	# The other half of the same branch. A human-driven manifest may still be
+	# machine-answered — which is what `claude-session-start` is — so the
+	# driver alone cannot decide this.
+	put_capture_package <<-'JSON'
+		{
+		  "schema_version": 1, "provider": "cursor", "driver": "human-judge", "depth": null,
+		  "question": "q", "version_source": { "kind": "none" },
+		  "assertion": { "projection": "[.[] | .marker] | first", "expected": "seen" }
+		}
+	JSON
+	driver=$(write_driver <<-SH
+		probe_record_capture '$pkg' '$ws'
+	SH
+	)
+
+	run "$driver" </dev/null
+	[ "$status" -eq 0 ]
+	[ "$(jq -r .status "$pkg"/results/*.json)" = "confirmed" ]
+}

@@ -422,6 +422,33 @@ multi_inconclusive_manifest() {
 	[[ "$output" == *"exactly one of projection or options"* ]]
 }
 
+@test "a manifest declaring options under any other driver is refused" {
+	# The correspondence `probe-common.sh` depends on: an options assertion is
+	# a person choosing from a list, so the runner has to prompt an operator.
+	# `human-act` is covered as well as `script`, and deliberately: it is not a
+	# weaker `human-judge` but a claim that the answer lands in a file, so it
+	# is the value a future edit is most likely to loosen the gate for.
+	for driver in script human-act; do
+		rm -rf "$PKG/results"
+		jq -n --arg d "$driver" \
+			'{schema_version: 1, provider: "cursor", driver: $d, depth: null,
+			  question: "q", version_source: {kind: "none"},
+			  assertion: {
+			    options: [
+			      {id: "yes", text: "yes"},
+			      {id: "couldnt-tell", text: "Could not determine", status: "inconclusive"}
+			    ],
+			    expected: "yes"
+			  }}' >"$PKG/probe.json"
+		ws=$(fresh_capture)
+
+		run "$RECORD" --manifest "$PKG/probe.json" --selection yes --capture "$ws"
+		[ "$status" -ne 0 ]
+		[[ "$output" == *"requires a human-judged driver"* ]]
+		[ ! -d "$PKG/results" ]
+	done
+}
+
 @test "a manifest declaring neither projection nor options is refused" {
 	write_manifest <<-'JSON'
 		{

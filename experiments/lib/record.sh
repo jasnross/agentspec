@@ -80,6 +80,8 @@ manifest_check '.assertion | (has("projection") != has("options"))' \
 # cannot drift apart; the reasoning for each is there.
 manifest_check "$MANIFEST_OPTION_STATUS_JQ" \
 	'an option may declare only status "inconclusive"'
+manifest_check "$MANIFEST_OPTIONS_DRIVER_JQ" \
+	'an options assertion requires a human-judged driver'
 manifest_check ".depth | $MANIFEST_DEPTH_JQ" \
 	'manifest depth must be resolved-config, outbound-request, or null'
 

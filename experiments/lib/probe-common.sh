@@ -292,8 +292,9 @@ probe_wait_for_manifest() {
 }
 
 # Record from a completed capture, projecting or prompting per the manifest's
-# driver. Refusing to record on an empty capture is the correct outcome: the
-# failure stays loud rather than becoming a record nobody can trust.
+# assertion shape. Refusing to record on an empty capture is the correct
+# outcome: the failure stays loud rather than becoming a record nobody can
+# trust.
 probe_record_capture() {
 	local package="$1" ws="$2"
 	local payloads="$ws/capture/payloads.jsonl"
@@ -308,10 +309,15 @@ probe_record_capture() {
 		exit 1
 	fi
 
-	local driver
-	driver=$(jq -r '.driver // ""' "$package/probe.json")
-
-	if [ "$driver" = "human-judge" ]; then
+	# The assertion shape is what decides this, not the driver: an `options` set
+	# is a person choosing from a list and a `projection` is jq over a file.
+	# `record.sh` gates the correspondence, so this read is safe.
+	#
+	# stderr is deliberately not suppressed. A malformed `.assertion` makes jq
+	# exit nonzero, which falls to the projection branch and is then refused by
+	# `record.sh`'s own `.assertion | type == "object"` gate — so the failure
+	# stays loud either way, but only jq's message names the offending key.
+	if jq -e '.assertion | has("options")' "$package/probe.json" >/dev/null; then
 		# The machine has already proved the apparatus worked — polling
 		# confirmed the hook fired — so the human answers only the question no
 		# machine can.

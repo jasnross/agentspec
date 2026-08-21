@@ -113,12 +113,12 @@ The only hand-authored file in the contract.
 | --- | --- |
 | `schema_version` | `1`. |
 | `provider` | `claude`, `cursor`, or `opencode`. |
-| `driver` | `script`, `human-act`, or `human-judge`. Read only by `probe-run`, which is why it lives here and never on a record. |
+| `driver` | `script`, `human-act`, or `human-judge`. Read by `probe-run` to decide what it can execute, and by `record.sh` for the `--capture` requirement and the options correspondence below. Never on a record. |
 | `depth` | `resolved-config`, `outbound-request`, or `null`. |
 | `question` | Required. What this probe answers, in one sentence. |
 | `version_source` | Where the tool version comes from. See below. |
 | `wait_for` | Optional jq filter the runner polls the capture against. Present on every `human-act` and `human-judge` manifest. |
-| `assertion` | Either `{projection, expected}` or `{options, expected}`. Never both. |
+| `assertion` | Either `{projection, expected}` or `{options, expected}`. Never both. An `options` assertion additionally requires `driver: "human-judge"` — see below. |
 
 **`depth: null` is the right answer for a finding that is not on the config-rendering chain at all.** Output handling and hook-firing semantics are not weaker points on that chain; they are off it, and claiming a position on a chain the evidence never touched is a category error.
 
@@ -159,6 +159,10 @@ A projection over a capture must reduce the array to the shape `expected` is wri
   "expected": "neither"
 }
 ```
+
+**An options assertion requires `driver: "human-judge"`, and `record.sh` refuses a manifest that declares one without it.** An option set is a person choosing from a list, so the runner has to prompt an operator; a `script` manifest declaring one describes a runner that cannot exist, and a `human-act` one declares that its answer lands in a file, which is the opposite of prompting. The implication runs one way only — a human-driven probe may still be machine-answered, which is what `claude-session-start` is, and its projection over a capture is perfectly legitimate.
+
+This is what makes the runner's read safe: `probe_record_capture` decides whether to prompt from the assertion's shape rather than from `driver`, because the shape is the fact and the driver was a second copy of it. `manifest-contract.sh` holds the gate so `record.sh` and the bats suite cannot drift apart on it.
 
 **An option may declare `status`, and `inconclusive` is the only legitimate value.** A declared status replaces the comparison against `expected` — that is how the couldn't-tell option yields `inconclusive` rather than `refuted`. Any other value would let a manifest fix the verdict in advance, which is the caller-supplied status the record contract exists to prevent; it would simply arrive through the manifest instead of the command line. Both `record.sh` and the bats suite reject it, so a committed manifest cannot carry one.
 
