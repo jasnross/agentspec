@@ -41,7 +41,9 @@ shellcheck:
 bats-test:
     bats experiments/lib/tests
 
-# Run every probe; manual ones are listed as skipped, billed ones need --live
+# Run the probes this invocation authorizes. Free ones always; --billed and
+# --manual each add their driver, --all adds every one, and the flags stack.
+# --stale narrows to the probes owed a run: never recorded, or version drift.
 probe-run *args:
     experiments/lib/probe-run.sh {{args}}
 

@@ -2,7 +2,7 @@
 
 **Question:** When a skill is model-invoked mid-session, supplied as the session's entry prompt, or forked, does Claude Code apply its `effort:` frontmatter to the outbound model requests it governs?
 
-**Driver:** `billed`. A command answers the question with no human step, but every arm spends a billed model call, so `just probe-run` skips this package by name and reason; it runs only under `just probe-run --live`.
+**Driver:** `billed`. A command answers the question with no human step, but every arm spends a billed model call, so `just probe-run` withholds this package by name and reason; it runs only under `just probe-run --billed`.
 
 **Depth:** `outbound-request`. The oracle is the request body Claude Code sends, captured through OpenTelemetry — the far end of the chain, not the provider's resolved view.
 

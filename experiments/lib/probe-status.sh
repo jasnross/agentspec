@@ -78,11 +78,11 @@ for package in "$experiments_dir"/*/; do
 			if [ "$installed_display" != "$recorded_version" ]; then
 				if [ "$package_driver" = "billed" ]; then
 					# A billed package is never refreshed by a batch run, so its
-					# drift is permanent and clearable only by a paid `--live`
+					# drift is permanent and clearable only by a paid `--billed`
 					# run. Counting it would make the drift total structurally
 					# nonzero, hiding the genuine drift of packages that a batch
 					# run can clear.
-					version_note=" (installed $installed_display · refresh: just probe-run --live)"
+					version_note=" (installed $installed_display · refresh: just probe-run --billed)"
 				else
 					version_note=" (installed $installed_display)"
 					version_drift=$((version_drift + 1))
@@ -125,7 +125,7 @@ for manifest in "$experiments_dir"/*/probe.json; do
 
 	provider=$(jq -r '.provider // "unknown"' "$manifest")
 	depth=$(jq -r 'if .depth == null then "—" else .depth end' "$manifest")
-	rows="${rows}${provider}"$'\t'"${name}"$'\t'"not yet run"$'\t'"${depth}"$'\t'"—"$'\t'"— (billed; run: just probe-run --live)"$'\n'
+	rows="${rows}${provider}"$'\t'"${name}"$'\t'"not yet run"$'\t'"${depth}"$'\t'"—"$'\t'"— (billed; run: just probe-run --billed)"$'\n'
 done
 
 summary_line() {

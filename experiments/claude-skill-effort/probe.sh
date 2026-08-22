@@ -7,7 +7,7 @@
 # command typed into an already-running interactive session — is not reachable
 # from `claude -p`, which is one turn; see the README and `TODO.md`. Every arm
 # spends a billed model call, which is why this package declares `driver: billed`
-# and `just probe-run` skips it without `--live`.
+# and `just probe-run` withholds it without `--billed`.
 set -euo pipefail
 
 package=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

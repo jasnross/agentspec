@@ -27,6 +27,16 @@ MANIFEST_DEPTH_JQ='. == null or . == "resolved-config" or . == "outbound-request
 # `probe-common.sh` reads. Applied to a `.driver` value.
 MANIFEST_DRIVER_JQ='. == "unattended" or . == "billed" or . == "manual"'
 
+# The same enum as a shell list, in escalating order, for callers that iterate
+# the drivers rather than validate one. `probe-run` derives both its
+# authorization set and its per-driver reporting from this, so adding a fourth
+# driver is one edit here plus its flag — not a new branch in the run loop.
+MANIFEST_DRIVERS="unattended billed manual"
+
+# The driver a run authorizes for free. Every other driver costs something —
+# money, or a person's session — so it has to be asked for by name.
+MANIFEST_DRIVER_FREE="unattended"
+
 # An option's declared status replaces the comparison against `expected`, which
 # is how `couldnt-tell` yields `inconclusive`. Any other declared status would
 # fix the verdict in advance — the caller-supplied status the record contract

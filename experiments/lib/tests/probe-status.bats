@@ -278,7 +278,7 @@ put_billed_manifest() {
 	run "$STATUS"
 	[ "$status" -eq 0 ]
 	[[ "$output" == *"installed 9.9.9"* ]]
-	[[ "$output" == *"just probe-run --live"* ]]
+	[[ "$output" == *"just probe-run --billed"* ]]
 	[[ "$output" == *"0 version drift"* ]]
 	[[ "$output" == *"1 billed (drift not tracked)"* ]]
 }
@@ -308,7 +308,7 @@ put_billed_manifest() {
 	[[ "$output" == *"alpha"* ]]
 	[[ "$output" == *"not yet run"* ]]
 	[[ "$output" == *"outbound-request"* ]]
-	[[ "$output" == *"just probe-run --live"* ]]
+	[[ "$output" == *"just probe-run --billed"* ]]
 	[[ "$output" != *"No probe records"* ]]
 	[[ "$output" == *"0 recorded"* ]]
 	[[ "$output" == *"1 billed"* ]]

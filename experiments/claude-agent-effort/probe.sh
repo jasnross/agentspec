@@ -5,7 +5,7 @@
 # Two arms, one per path the same agent file can be reached by: `--agent` makes
 # it the session agent, and the Task tool delegates to it as a subagent. Both
 # spend a billed model call, which is why this package declares `driver: billed`
-# and `just probe-run` skips it without `--live`.
+# and `just probe-run` withholds it without `--billed`.
 set -euo pipefail
 
 package=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

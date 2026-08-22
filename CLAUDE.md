@@ -27,7 +27,11 @@ just install                    # install binary locally
 
 just shellcheck                 # lint the probe shell under experiments/
 just bats-test                  # run the probe harness test suite
-just probe-run                  # run every probe; manual ones are listed as skipped, billed ones need --live
+just probe-run                  # run the free probes; costlier ones are listed with the flag that frees them
+just probe-run --billed         # additionally run the probes that spend model quota
+just probe-run --manual         # additionally run the probes that block on a live provider session
+just probe-run --all            # every driver; flags stack, so --billed --manual is the same thing
+just probe-run --stale          # narrow to the probes owed a run: never recorded, or version drift
 just probe-status               # report on committed probe records; invokes no probe
 
 # Or without just:
@@ -145,7 +149,7 @@ src/plan.rs              ← CompilePlan/SyncPlan/RemovePlan + per-mode write st
 
 ## Probe Before You Implement
 
-When adding a rendering agentspec will emit, check whether a probe already answers the question: `jq -r '.question' experiments/*/probe.json`. Every package under [`experiments/`](experiments/README.md) carries a manifest, so that list is complete; `just probe-status` shows what each one measured and how stale it is. Write and run a probe if nothing covers it, then design against the measurement. **A `billed` probe spends model quota**, so `just probe-run` skips it by name and reason; it runs only under `just probe-run --live`. Probes verify the _provider's_ contract using hand-authored provider config, so a probe can precede the feature it de-risks rather than gating it afterward.
+When adding a rendering agentspec will emit, check whether a probe already answers the question: `jq -r '.question' experiments/*/probe.json`. Every package under [`experiments/`](experiments/README.md) carries a manifest, so that list is complete; `just probe-status` shows what each one measured and how stale it is. Write and run a probe if nothing covers it, then design against the measurement. **A `billed` probe spends model quota and a `manual` one spends a live session**, so `just probe-run` withholds both, naming the flag that authorizes each (`--billed`, `--manual`, or `--all`). Probes verify the _provider's_ contract using hand-authored provider config, so a probe can precede the feature it de-risks rather than gating it afterward.
 
 **Read a record's `depth` before designing on it.** `resolved-config` proves the provider _read_ the field, not that it acts on it — OpenCode collapses an unrecognized variant at request-build time, well after `opencode debug agent` has printed it. Only `outbound-request` reaches the model, and no Cursor probe can ever get there. The contract's Depth section states what each value licenses.
 

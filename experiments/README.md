@@ -20,7 +20,7 @@ Probes verify the _provider's_ contract, so they use hand-authored provider conf
 
 ## Authoring a new probe
 
-1. **Pick the driver.** It names what `probe-run` must have before it can execute the package. `unattended` if a command answers the question with no credentials and no cost. `billed` if a command answers it but the run spends model quota, so it needs an explicit opt-in. `manual` if a person must drive the provider.
+1. **Pick the driver.** It names what running the package costs, which is what `probe-run` must be authorized to spend before it will execute it. `unattended` if a command answers the question with no credentials and no cost. `billed` if a command answers it but the run spends model quota, so it needs an explicit opt-in. `manual` if a person must drive the provider.
 2. **Create the package.** `experiments/<probe-name>/`, where the directory name is the probe's identity. No file restates it — `probe-status` reads records by path and already knows it.
 3. **Write the fixtures** under `fixtures/`. For a human-driven probe, that includes a capture hook that appends each payload as one JSON line to `capture/payloads.jsonl` — the payload as the provider sent it, with nothing added. Use `{{PLACEHOLDER}}` for anything absolute; `probe_template_file` fills them in at _Arrange_ so no operator ever hand-edits a path.
 4. **Author the assertion** — a jq projection with an expected value, or an option set with an expected id.
@@ -89,8 +89,9 @@ experiments/
     probe-common.sh           # Arrange helpers: workspace, polling, prompting
     manifest-contract.sh      # the manifest's three enums, shared by record.sh and the tests
     record.sh                 # Assert & record — the single record writer
+    probe-state.sh            # derives a package's freshness; shared by probe-run and probe-status
     probe-status.sh           # reads records, derives the report; invokes no probe
-    tests/*.bats              # bats coverage for the three above
+    tests/*.bats              # bats coverage for the above
   <probe-name>/
     README.md                 # question, procedure, discriminates evidence, oracle limits
     probe.json                # the manifest — the only hand-authored contract file
@@ -203,18 +204,40 @@ Every gate still fires. A manifest failing a manifest check, a `--capture` whose
 ## Running probes and reading the report
 
 ```sh
-just probe-run      # run every unattended probe; manual and billed ones are listed as skipped
-just probe-run --live  # additionally run the billed probes, which spend model quota
-just probe-status   # report on the committed records; invokes no probe
+just probe-run                   # the free probes; costlier ones are listed with the flag that frees them
+just probe-run --billed          # + the probes that spend model quota
+just probe-run --manual          # + the probes that block on a live provider session
+just probe-run --all             # every driver
+just probe-run --stale --all     # every probe owed a run
+just probe-status                # report on the committed records; invokes no probe
 just bats-test      # the harness test suite
 just shellcheck     # lint the probe shell
 ```
 
 `just check` ends with a one-line probe summary. That line can never fail the build.
 
-**`probe-run` skips a package for one of two reasons, and says which.** A `manual` package needs a live provider session, so it is listed as skipped with a pointer to its README; run its `probe.sh` directly. A `billed` package can be driven by a script, but the run spends model quota, so it is skipped unless you opt in with `just probe-run --live` (or `PROBE_ALLOW_LIVE=1`). The opt-in is deliberately not the default: a batch run that costs money on every invocation is a batch run people stop invoking.
+### Selection and authorization
 
-`probe-run` accepts no other argument and exits 2 on one, rather than silently ignoring a flag that was meant to authorize spending.
+`probe-run` decides each package with two independent questions, in this order:
+
+|  | question | flags |
+| --- | --- | --- |
+| **selection** | is this package interesting to this run? | `--stale` |
+| **authorization** | may this run pay what the package costs? | `--billed`, `--manual`, `--all` |
+
+**Every probe is runnable by `probe-run`, including the manual ones.** All five route through `probe_human_run`, which arranges the workspace, prints the procedure, blocks until the capture lands, and records. So what separates the drivers is not capability — it is cost. An `unattended` probe costs nothing, a `billed` one spends model quota, and a `manual` one spends an afternoon of a person's attention. A run is therefore defined by what it is willing to spend, and the default spends nothing: a batch run that costs money or blocks for hours on every invocation is a batch run people stop invoking.
+
+**Authorization is a set, not a level.** Each flag adds its own driver; `--billed` never implies `--manual` and neither implies the other. They stack in any order, repeat harmlessly, and `--all` is the union. `PROBE_AUTHORIZE_DRIVERS="billed manual"` seeds the same set for a caller that cannot pass arguments, and composes with flags rather than overriding them. The set is built from `MANIFEST_DRIVERS` in `manifest-contract.sh`, so a fourth driver costs one entry there plus its flag — not a new combination in the run loop, and not a hand-maintained line in the summary breakdown.
+
+A withheld package is printed with the flag that would free it, and the summary counts by driver for the same reason: the only useful thing to tell a reader looking at a skip is what to type next.
+
+**`--stale` narrows the run to the packages actually owed one.** A package is owed a run when it has never produced a readable record, or when its recorded `tool_version` is comparable against the installed one and differs. Everything else is passed over as `fresh`, with the reason printed, so the filter is auditable without running anything.
+
+Selection is evaluated before authorization, so a fresh package is passed over whatever it would have cost — a `--stale` run does not ask you to authorize a probe whose answer cannot have changed. The two are otherwise independent: being owed a run is not permission to pay for one, so `--stale` alone reports a drifted `billed` package as needing `--billed`, and `--stale --billed` runs it.
+
+**"Cannot compare" counts as fresh, not as owed.** A `capture`-sourced version — every Cursor package — is knowable only by running the probe, and a `none`-sourced one only by a human. Treating unknowable as owed would put those packages permanently in the run set, which is the same as having no filter at all. `probe-status` still shows them, annotated with why no comparison was possible. The two commands share one implementation of this judgement (`lib/probe-state.sh`) precisely so the report and the runner cannot come to disagree about what stale means.
+
+`probe-run` accepts no argument beyond those four, and exits 2 on one — as does an unknown driver in `PROBE_AUTHORIZE_DRIVERS` — rather than silently ignoring a token that was meant to authorize spending.
 
 ### What the summary line can and cannot see
 
@@ -224,7 +247,7 @@ probes: 8 recorded · 0 refuted · 0 inconclusive · 1 version drift · 2 billed
 
 The drift count is **not** a claim that everything else is current. Every Cursor probe declares `version_source.kind: "capture"`, and a captured version is knowable only by running the probe — which `probe-status` never does. So no drift is computable for those packages, and they contribute nothing to that count. Read `0 version drift` as "nothing computable drifted," not as "everything is current."
 
-**Billed packages sit in their own segment, and their drift is deliberately uncounted.** A batch run never refreshes one, so its recorded version falls behind the installed one and stays there until somebody pays for a `--live` run. Counted, that drift would be structurally unable to reach zero — and a count that can never reach zero is a muted alarm: it hides the genuine drift of a package a free batch run could clear. The row still shows the installed version and names what would refresh it. The segment is omitted entirely when no package declares `billed`.
+**Billed packages sit in their own segment, and their drift is deliberately uncounted.** A batch run never refreshes one, so its recorded version falls behind the installed one and stays there until somebody pays for a `--billed` run. Counted, that drift would be structurally unable to reach zero — and a count that can never reach zero is a muted alarm: it hides the genuine drift of a package a free batch run could clear. The row still shows the installed version and names what would refresh it. The segment is omitted entirely when no package declares `billed`.
 
 ### The two drift signals are not equally strong
 
