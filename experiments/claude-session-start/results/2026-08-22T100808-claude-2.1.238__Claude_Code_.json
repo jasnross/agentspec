@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "provider": "claude",
+  "status": "confirmed",
+  "depth": null,
+  "date": "2026-08-22",
+  "tool_version": "2.1.238 (Claude Code)",
+  "assertion": {
+    "projection": "[.[] | .hook_event_name] as $n | ($n | index(\"UserPromptSubmit\")) as $i | [.[$i + 1:][] | select(.hook_event_name == \"SessionStart\") | .source]",
+    "expected": [
+      "resume"
+    ],
+    "observed": [
+      "resume"
+    ]
+  }
+}
