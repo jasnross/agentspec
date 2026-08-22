@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "provider": "claude",
+  "driver": "billed",
+  "depth": "outbound-request",
+  "question": "When a skill is model-invoked mid-session, supplied as the session's entry prompt, or forked, does Claude Code apply its `effort:` frontmatter to the outbound model requests it governs?",
+  "version_source": {
+    "kind": "command",
+    "command": "claude --version"
+  },
+  "assertion": {
+    "projection": "([.[][] | select((.messages | tostring | contains(\"AGENTSPEC-PROBE-MARKER-K2M9RT\")) | not) | select(.output_config | has(\"effort\")) | .output_config.effort] | unique) as $u | def rel: if ($u | length) != 1 then \"no-usable-control-set\" elif length == 0 then \"arm-had-no-governed-request\" elif . == $u then \"same-as-ungoverned\" else . end; { inline: ([.inline[] | select(.messages | tostring | contains(\"AGENTSPEC-PROBE-MARKER-K2M9RT\")) | .output_config.effort] | unique | rel), slash_entry: ([.slash_entry[] | select(.messages | tostring | contains(\"AGENTSPEC-PROBE-MARKER-K2M9RT\")) | .output_config.effort] | unique | rel), fork: ([.fork[] | select(.messages | tostring | contains(\"AGENTSPEC-PROBE-MARKER-K2M9RT\")) | .output_config.effort] | unique | rel) }",
+    "expected": {
+      "inline": "same-as-ungoverned",
+      "slash_entry": ["low"],
+      "fork": ["low"]
+    }
+  }
+}

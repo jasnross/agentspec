@@ -2,9 +2,10 @@
 # Shared apparatus for the billed Claude probes: arm invocation, view assembly,
 # and the three gates.
 #
-# `claude-agent-effort` drives `claude -p` through this, and `claude-skill-effort`
-# is intended to follow: the two differ only in their fixtures, arms, and prompts —
-# the same consolidation `probe-common.sh` made for the five manual packages.
+# `claude-agent-effort` and `claude-skill-effort` both drive `claude -p` through
+# this; they differ only in their fixtures, arms, prompts, and which field the
+# fixture governs (see gate 2) — the same consolidation `probe-common.sh` made
+# for the five manual packages.
 # Writing the gates twice would put the safety-critical part of a billed
 # apparatus in two files that can drift, which is the failure
 # `manifest-contract.sh` exists to prevent, turned inward again. As library
@@ -115,27 +116,53 @@ probe_claude_assemble_view() {
 # its effort" are indistinguishable — which would make the most
 # decision-relevant finding the least trustworthy one.
 #
-# "Governs" is the marker appearing in `.system`, not anywhere in the body, and
-# the distinction is load-bearing rather than pedantic. A fixture's text becomes
-# the system prompt of the request it governs; when a subagent replies, that
-# same text comes back to the *main thread* inside a tool result, on a request
-# the fixture governs not at all and which sits at the ungoverned level. Matched
-# on `tostring`, that echo would satisfy this gate for an arm whose fixture
-# never engaged, and would drag an ungoverned level into the arm's own value.
+# "Governs" is the marker appearing in one named field, never anywhere in the
+# body, and the distinction is load-bearing rather than pedantic. When a
+# subagent replies, the fixture's text comes back to the *main thread* inside a
+# tool result, on a request the fixture governs not at all and which sits at the
+# ungoverned level. Matched on a bare `tostring`, that echo would satisfy this
+# gate for an arm whose fixture never engaged, and would drag an ungoverned
+# level into the arm's own value.
+#
+# *Which* field carries the fixture is the caller's to name, because it differs
+# by what the fixture is rather than by anything this library knows. An agent
+# file becomes the system prompt of the request it governs, so `.system` — the
+# default — is right for `claude-agent-effort`. A skill's body never reaches
+# `.system` at all: measured at 2.1.232, it arrives in `messages[]` (a
+# `tool_result` block on the model-invoked path, `messages[0]` text on the
+# session-entry and forked paths), so `claude-skill-effort` passes `.messages`.
+# Widening the default to cover both would reintroduce the echo this gate exists
+# to exclude, and inlining each definition in its own runner would put the
+# safety-critical part of a billed apparatus in two files that can drift. A
+# parameter keeps one implementation and one set of bats tests.
+# `[$field]` rather than a bare `$field`: the collapse costs nothing on a
+# single-output expression and stops a multi-output one from re-emitting its
+# request once per output. Unchecked, that is not a loud failure — gate 2 still
+# passes while gate 3's `select(… | not)` admits a *governed* request whose other
+# outputs lack the marker, contaminating the control set with the very arm the
+# projection is about to compare against it. Measured on a two-request view with
+# `.messages[].content`: the control came out `["low","med","med"]` instead of
+# `["med"]`. Both live callers name single-output fields today, so this guards a
+# future one.
 probe_claude_gate_marker() {
-	local view="$1" marker="$2"
-	jq -e --arg m "$marker" 'all(.[]; any(.[]; .system | tostring | contains($m)))' "$view" >/dev/null && return 0
+	local view="$1" marker="$2" field="${3:-.system}"
+	jq -e --arg m "$marker" "all(.[]; any(.[]; [$field] | tostring | contains(\$m)))" "$view" >/dev/null && return 0
 
-	printf 'probe: an arm captured no request whose system prompt carries the fixture marker.\n' >&2
+	printf 'probe: an arm captured no request whose %s carries the fixture marker.\n' "$field" >&2
 	printf 'probe: that arm never engaged the fixture, so its value describes nothing.\n' >&2
 	return 1
 }
 
 # Gate 3: at least one ungoverned request declares `output_config.effort`, and
 # they all agree on one level. "Ungoverned" is the complement of gate 2's
-# definition — the marker is not in `.system` — so a request that merely quotes
-# the marker back in a tool result counts as ungoverned, which it is: its effort
-# was not set by the fixture. The filter is an explicit exclusion of requests
+# definition — the marker is not in the named field — so on the `.system`
+# default a request that merely quotes the marker back in a tool result counts
+# as ungoverned, which it is: its effort was not set by the fixture. Pass the
+# same field here as to gate 2; the two definitions partition the requests
+# between them, and disagreeing lets a request fall into *both* sets — which
+# puts a governed request into the control the projection then compares it
+# against, the direction that contaminates rather than merely under-counts. The
+# filter is an explicit exclusion of requests
 # carrying no `effort` key: Claude emits an intermittent title-generation
 # sidecar whose `output_config` holds a `format` object and no `effort`, and a
 # control stated over all unmarked requests would fail on it every time it
@@ -143,14 +170,14 @@ probe_claude_gate_marker() {
 # Claude that stopped populating `effort` on governed requests empties the
 # control set and trips the existence clause.
 probe_claude_gate_control() {
-	local view="$1" marker="$2"
-	jq -e --arg m "$marker" '
+	local view="$1" marker="$2" field="${3:-.system}"
+	jq -e --arg m "$marker" "
 		[ .[][]
-		  | select((.system | tostring | contains($m)) | not)
-		  | select(.output_config | has("effort"))
-		  | .output_config.effort ] as $c
-		| ($c | length) > 0 and (($c | unique) | length) == 1
-	' "$view" >/dev/null && return 0
+		  | select(([$field] | tostring | contains(\$m)) | not)
+		  | select(.output_config | has(\"effort\"))
+		  | .output_config.effort ] as \$c
+		| (\$c | length) > 0 and ((\$c | unique) | length) == 1
+	" "$view" >/dev/null && return 0
 
 	printf 'probe: the ungoverned control set is empty or internally inconsistent.\n' >&2
 	printf 'probe: the assertion compares each arm against that set, so it cannot be read.\n' >&2

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "provider": "claude",
+  "status": "confirmed",
+  "depth": "outbound-request",
+  "date": "2026-08-22",
+  "tool_version": "2.1.232 (Claude Code)",
+  "assertion": {
+    "projection": "([.[][] | select((.messages | tostring | contains(\"AGENTSPEC-PROBE-MARKER-K2M9RT\")) | not) | select(.output_config | has(\"effort\")) | .output_config.effort] | unique) as $u | def rel: if ($u | length) != 1 then \"no-usable-control-set\" elif length == 0 then \"arm-had-no-governed-request\" elif . == $u then \"same-as-ungoverned\" else . end; { inline: ([.inline[] | select(.messages | tostring | contains(\"AGENTSPEC-PROBE-MARKER-K2M9RT\")) | .output_config.effort] | unique | rel), slash_entry: ([.slash_entry[] | select(.messages | tostring | contains(\"AGENTSPEC-PROBE-MARKER-K2M9RT\")) | .output_config.effort] | unique | rel), fork: ([.fork[] | select(.messages | tostring | contains(\"AGENTSPEC-PROBE-MARKER-K2M9RT\")) | .output_config.effort] | unique | rel) }",
+    "expected": {
+      "inline": "same-as-ungoverned",
+      "slash_entry": [
+        "low"
+      ],
+      "fork": [
+        "low"
+      ]
+    },
+    "observed": {
+      "inline": "same-as-ungoverned",
+      "slash_entry": [
+        "low"
+      ],
+      "fork": [
+        "low"
+      ]
+    }
+  }
+}
