@@ -4208,6 +4208,18 @@ script = "scripts/startup.sh"
     set_script_permissions(&scripts_dir);
 }
 
+/// Extract just the compile-diagnostic lines from stderr, in order.
+///
+/// Filters out the `compiled N files for M providers` and `wrote N files to …`
+/// lines that bracket them, so tests can assert on order and cardinality of
+/// the diagnostic block alone.
+fn diagnostic_lines(stderr: &str) -> Vec<&str> {
+    stderr
+        .lines()
+        .filter(|line| !line.starts_with("compiled ") && !line.starts_with("wrote "))
+        .collect()
+}
+
 #[test]
 fn test_sync_remove_round_trip_cleans_shim_files() {
     // Phase 4 manifest validation: shim files (the per-event `_wrappers/`
@@ -4437,6 +4449,91 @@ fn test_compile_does_not_emit_session_start_warning_when_only_cursor_targeted() 
         !stderr.contains("session_start asymmetry"),
         "Cursor-only compile must not surface session_start asymmetry warning, got:\n{stderr}"
     );
+}
+
+#[test]
+fn test_compile_diagnostic_block_order_and_cardinality() {
+    // Characterization test: pins the exact order and count of the compile
+    // diagnostic block before the adapter-originated degradation refactor
+    // relocates the push sites. See
+    // $THOUGHTS_DIR/plans/2026-08-22-agentspec-adapter-originated-degradation-warnings.md
+    //
+    // Two fixture facts this depends on: `compile` with no `--provider` targets
+    // every `Provider::VARIANTS`, and `spec/rules/react-components.md` carries a
+    // `paths:` key — the sole source of the path-scoped warning below.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_session_start_hook_fixture(&dir);
+
+    let output = std::process::Command::new(agentspec())
+        .args(["compile", "--verbose"])
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec compile spawn");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    let lines = diagnostic_lines(&stderr);
+    let expected = [
+        "agentspec warning: Cursor has partial implementation",
+        "agentspec warning: session_start asymmetry",
+        "agentspec warning: OpenCode does not support path-scoped rules",
+        "opencode: skipped 1 hook",
+        "opencode: skipped hook startup",
+    ];
+    assert_eq!(
+        lines.len(),
+        expected.len(),
+        "diagnostic line count changed, expected:\n{expected:#?}\ngot:\n{lines:#?}"
+    );
+    for (idx, marker) in expected.iter().enumerate() {
+        assert!(
+            lines[idx].contains(marker),
+            "diagnostic line {idx} should contain {marker:?}, got: {:?}",
+            lines[idx]
+        );
+    }
+}
+
+#[test]
+fn test_compile_skipped_hook_listing_order_and_count() {
+    // Characterization test: three hooks, none emitted for OpenCode. Pins the
+    // plural count line and the per-subject listing order. Today that order is
+    // `hooks.toml` declaration order; the degradation refactor re-sorts it
+    // alphabetically via `BTreeSet<Degradation>`. The leading path-scoped
+    // warning comes from `spec/rules/react-components.md`'s `paths:` key.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_hook_fixture(&dir);
+
+    let output = std::process::Command::new(agentspec())
+        .args(["compile", "--provider", "opencode", "--verbose"])
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec compile spawn");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    let lines = diagnostic_lines(&stderr);
+    let expected = [
+        "agentspec warning: OpenCode does not support path-scoped rules",
+        "opencode: skipped 3 hooks",
+        "opencode: skipped hook init-thoughts",
+        "opencode: skipped hook audit-bash",
+        "opencode: skipped hook subagent-gate",
+    ];
+    assert_eq!(
+        lines.len(),
+        expected.len(),
+        "diagnostic line count changed, expected:\n{expected:#?}\ngot:\n{lines:#?}"
+    );
+    for (idx, marker) in expected.iter().enumerate() {
+        assert!(
+            lines[idx].contains(marker),
+            "diagnostic line {idx} should contain {marker:?}, got: {:?}",
+            lines[idx]
+        );
+    }
 }
 
 #[test]
