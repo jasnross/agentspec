@@ -31,101 +31,8 @@ if ! command -v jq >/dev/null 2>&1; then
 	exit 0
 fi
 
-# Bound a version command so a wedged one cannot hang `just check` forever.
-# A wedged build is worse than a failed one, which is the property this script
-# exists to guarantee. `timeout` is GNU; macOS carries it only as `gtimeout`
-# via coreutils, so its absence degrades to running unbounded rather than to
-# skipping the command.
-VERSION_COMMAND_TIMEOUT=10
-if command -v timeout >/dev/null 2>&1; then
-	timeout_prefix="timeout $VERSION_COMMAND_TIMEOUT"
-elif command -v gtimeout >/dev/null 2>&1; then
-	timeout_prefix="gtimeout $VERSION_COMMAND_TIMEOUT"
-else
-	timeout_prefix=""
-fi
-
-# Resolve the installed version for a package into two values:
-#
-#   installed_display     what to show, or empty for "say nothing"
-#   installed_comparable  1 when it can be compared against the recorded
-#                         version, 0 when no comparison is possible
-#
-# The flag is separate from the string on purpose. Sniffing the display text
-# for a sentinel means a real version that happens to start with the sentinel
-# word is silently treated as incomparable, under-counting genuine staleness.
-resolve_installed_version() {
-	local manifest="$1"
-	installed_display=""
-	installed_comparable=0
-
-	[ -f "$manifest" ] || return 0
-
-	local kind
-	if ! kind=$(jq -er '.version_source.kind // "none"' "$manifest" 2>/dev/null); then
-		# A broken manifest must not be indistinguishable from one that
-		# declares no version source.
-		installed_display="manifest unreadable"
-		return 0
-	fi
-
-	case "$kind" in
-	command)
-		local command_line resolved
-		local -a argv
-		command_line=$(jq -r '.version_source.command // ""' "$manifest" 2>/dev/null)
-		if [ -z "$command_line" ]; then
-			installed_display="manifest declares no command"
-			return 0
-		fi
-		# Split into an argv array and exec directly — never through a shell.
-		# `just check` runs this on every invocation, and a manifest is a data
-		# file reviewed as data; `eval` here would make it arbitrary code.
-		# The cost is that a version command cannot use shell quoting or
-		# metacharacters, which no real one needs.
-		read -r -a argv <<<"$command_line"
-		if ! command -v "${argv[0]}" >/dev/null 2>&1; then
-			installed_display="not installed"
-			return 0
-		fi
-		# stdin is closed: a command that reads it would otherwise block the
-		# report on a terminal nobody is watching.
-		# shellcheck disable=SC2086 # timeout_prefix is a deliberate word-split command prefix
-		resolved=$($timeout_prefix "${argv[@]}" </dev/null 2>/dev/null | sed -n '1p' || true)
-		if [ -z "$resolved" ]; then
-			installed_display="version command produced nothing"
-			return 0
-		fi
-		installed_display="$resolved"
-		installed_comparable=1
-		;;
-	capture)
-		# The common Cursor case: the IDE's version arrives only inside a
-		# payload, so it is knowable by running the probe and by no other
-		# means. This script runs no probe, so it has nothing to compare.
-		installed_display="from capture"
-		;;
-	none)
-		installed_display="human check"
-		;;
-	*)
-		installed_display="unrecognized version_source kind"
-		;;
-	esac
-}
-
-newest_record() {
-	# The filename carries a UTC date and time, so the shell's lexical glob
-	# order is run order and the last match is the newest. The glob is
-	# constrained to the stamped shape so an unrelated .json dropped into
-	# results/ cannot sort after every record and be taken for the newest.
-	local newest="" candidate
-	for candidate in "$1"/results/[0-9]*T[0-9]*-*.json; do
-		[ -e "$candidate" ] || continue
-		newest="$candidate"
-	done
-	printf '%s' "$newest"
-}
+# shellcheck source=experiments/lib/probe-state.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/probe-state.sh"
 
 recorded=0
 refuted=0
@@ -140,7 +47,7 @@ charted=""
 
 for package in "$experiments_dir"/*/; do
 	[ -d "$package/results" ] || continue
-	record=$(newest_record "${package%/}")
+	record=$(probe_newest_record "${package%/}")
 	[ -n "$record" ] || continue
 
 	name=$(basename "${package%/}")
@@ -159,7 +66,7 @@ for package in "$experiments_dir"/*/; do
 	date=$(jq -r '.date // "—"' "$record")
 	recorded_version=$(jq -r 'if .tool_version == null then "—" else .tool_version end' "$record")
 
-	resolve_installed_version "${package%/}/probe.json"
+	probe_resolve_installed_version "${package%/}/probe.json"
 	package_driver=$(jq -r '.driver // ""' "${package%/}/probe.json" 2>/dev/null || printf '')
 
 	# Annotate the recorded version with what is installed now. Only a
