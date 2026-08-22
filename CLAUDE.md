@@ -106,6 +106,26 @@ chore: bump serde to 1.0.210
 
 Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `perf`, `style`. Scope is optional but helpful for module-level changes. Breaking changes: append `!` after type/scope (`feat!:`) and describe in the commit body with `BREAKING CHANGE:`.
 
+### Breaking means breaking for the shipped binary
+
+The semver signal describes the released `agentspec` artifact — the binary, its CLI surface, the spec/config formats it parses, and the library crate's public API. A commit is breaking only when an existing user of that artifact has to change something.
+
+**Probe-harness changes are never breaking.** Nothing under `experiments/` is compiled into the binary, packaged in the crate, or run by CI; it is a local-only measurement apparatus. Renaming a `just probe-run` flag or changing a `probe.json` enum breaks a workflow that only this repository's contributors run, and no release consumer can observe it. Marking such a commit breaking inflates the version and puts a `⚠ BREAKING CHANGES` banner in the user-facing changelog for a change users cannot see.
+
+Concretely, for a commit that touches only `experiments/`, the `justfile`'s probe recipes, `TODO.md`, or the probe sections of this file:
+
+- Do not append `!` to the type/scope.
+- Do not write a `BREAKING CHANGE:` footer either — release-please treats that footer as a breaking marker on its own, with or without the `!`.
+- Do still record the migration. Put it in the body, or under a footer token that carries no semver meaning, e.g. `Probe-harness-change: a manifest declaring script must migrate to billed.`
+
+For the same reason, a probes-only commit does not use `feat` or `fix` — those are the two types the spec binds to a version bump, and neither a new probe package nor a repaired probe assertion changes the released artifact. Reach for the semver-inert types instead:
+
+- `test(probes)` — new probe packages, recorded measurements, harness assertions. This is the default for probe work.
+- `chore(probes)` — harness maintenance that measures nothing: recipe wiring, tooling, cleanup.
+- `refactor` / `docs` / `style` — as they normally apply; these already carry no version weight.
+
+The same reasoning applies in reverse: a commit scoped to `probes` that _also_ changes `src/`, `Cargo.toml`, or the spec format is judged on that part, and marks itself breaking if the shipped artifact broke.
+
 ## Clippy
 
 Five lint groups (`complexity`, `pedantic`, `perf`, `style`, `suspicious`) are denied at `priority = -1` in `Cargo.toml`. Four `restriction` lints are additionally opted into: `expect_used`, `panic`, `unwrap_used`, `wildcard_enum_match_arm`.
