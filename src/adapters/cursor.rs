@@ -11,7 +11,8 @@ use super::hooks_helpers::{
     prune_empty_event_arrays, value_to_cst_input,
 };
 use super::{
-    Adapter, AdapterOutput, CompileCtx, RemovalOutput, RemoveCtx, SyncDestinationMode, TidyOutcome,
+    Adapter, AdapterOutput, CompileCtx, Degradation, DegradationKind, RemovalOutput, RemoveCtx,
+    SyncDestinationMode, TidyOutcome,
 };
 use crate::compile::{
     AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode,
@@ -86,6 +87,18 @@ impl Adapter for CursorAdapter {
             .iter()
             .filter_map(|s| if let Spec::Hook(h) = s { Some(h) } else { None })
             .collect();
+
+        // Pushed here rather than from a post-loop orchestrator scan: this is
+        // the walk that already knows whether any hook spec exists, and the
+        // accessor below is Cursor's own claim about its runtime.
+        let mut degradations = Vec::new();
+        if !hook_specs.is_empty() && !self.fully_implements_canonical_output() {
+            degradations.push(Degradation::provider_wide(
+                Provider::Cursor,
+                DegradationKind::PartialOutputImpl,
+            ));
+        }
+
         let emit_mode = ctx.mode.to_hook_emit_mode();
         let HookSynthesis {
             entries: owned_entries,
@@ -118,6 +131,7 @@ impl Adapter for CursorAdapter {
             files,
             patches,
             dest_root,
+            degradations,
         })
     }
 

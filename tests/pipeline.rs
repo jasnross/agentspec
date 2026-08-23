@@ -4476,10 +4476,10 @@ fn test_compile_diagnostic_block_order_and_cardinality() {
     let lines = diagnostic_lines(&stderr);
     let expected = [
         "agentspec warning: Cursor has partial implementation",
-        "agentspec warning: session_start asymmetry",
         "agentspec warning: OpenCode does not support path-scoped rules",
         "opencode: skipped 1 hook",
         "opencode: skipped hook startup",
+        "agentspec warning: session_start asymmetry",
     ];
     assert_eq!(
         lines.len(),
@@ -4498,10 +4498,11 @@ fn test_compile_diagnostic_block_order_and_cardinality() {
 #[test]
 fn test_compile_skipped_hook_listing_order_and_count() {
     // Characterization test: three hooks, none emitted for OpenCode. Pins the
-    // plural count line and the per-subject listing order. Today that order is
-    // `hooks.toml` declaration order; the degradation refactor re-sorts it
-    // alphabetically via `BTreeSet<Degradation>`. The leading path-scoped
-    // warning comes from `spec/rules/react-components.md`'s `paths:` key.
+    // plural count line and the per-subject listing order. `BTreeSet
+    // <Degradation>` sorts subjects by `(provider, kind, subject)`, so the
+    // listing is alphabetical and stable against `hooks.toml` edits — it no
+    // longer tracks declaration order. The leading path-scoped warning comes
+    // from `spec/rules/react-components.md`'s `paths:` key.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
@@ -4518,8 +4519,8 @@ fn test_compile_skipped_hook_listing_order_and_count() {
     let expected = [
         "agentspec warning: OpenCode does not support path-scoped rules",
         "opencode: skipped 3 hooks",
-        "opencode: skipped hook init-thoughts",
         "opencode: skipped hook audit-bash",
+        "opencode: skipped hook init-thoughts",
         "opencode: skipped hook subagent-gate",
     ];
     assert_eq!(
@@ -4537,10 +4538,47 @@ fn test_compile_skipped_hook_listing_order_and_count() {
 }
 
 #[test]
+fn test_compile_path_scoped_warning_fires_once_for_many_rules() {
+    // Regression guard for the `BTreeSet<Degradation>` collapse. The OpenCode
+    // adapter pushes one `PathScopedRulesUnsupported` per offending rule —
+    // cardinality policy lives at the drain point, not the push site — so
+    // three path-scoped rules must still render exactly one warning line.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    for id in ["vue-components", "svelte-components"] {
+        let body = format!(
+            "---\nid: {id}\ndescription: More conventions\npaths:\n  - \"src/{id}/**/*.ts\"\n---\n\n# {id}\n\nBody.\n"
+        );
+        let r = std::fs::write(dir.join(format!("spec/rules/{id}.md")), body);
+        assert!(r.is_ok(), "write {id} rule: {r:?}");
+    }
+
+    let output = std::process::Command::new(agentspec())
+        .args(["compile", "--provider", "opencode"])
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec compile spawn");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    let path_scoped: Vec<&str> = diagnostic_lines(&stderr)
+        .into_iter()
+        .filter(|line| line.contains("does not support path-scoped rules"))
+        .collect();
+    assert_eq!(
+        path_scoped.len(),
+        1,
+        "three path-scoped rules must collapse to one warning, got:\n{path_scoped:#?}"
+    );
+}
+
+#[test]
 fn test_compile_emits_no_warnings_for_non_hook_fixture() {
     // Sanity check: a compile without hook specs surfaces no hook-related
-    // warnings. The `PartialOutputImpl` and `SessionStartAsymmetry` gates both
-    // require `has_any_hook == true`; neither should fire here.
+    // warnings. With no hook spec to drop, no adapter pushes a
+    // `HooksUnsupported` or `PartialOutputImpl` degradation, and the
+    // cross-provider parity gate has no `session_start` hook to fire on.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     // No hook fixture installed.

@@ -9,7 +9,10 @@ use serde::Serialize;
 use strum::VariantArray as _;
 
 use super::hooks_helpers::has_agentspec_entries;
-use super::{Adapter, AdapterOutput, CompileCtx, RemovalOutput, RemoveCtx, SyncDestinationMode};
+use super::{
+    Adapter, AdapterOutput, CompileCtx, Degradation, DegradationKind, RemovalOutput, RemoveCtx,
+    SyncDestinationMode,
+};
 use crate::compile::{AdapterConfig, GeneratedFile};
 use crate::plan::{FileKind, ForwardPatch, RemovePatchReport, ReversePatch};
 use crate::presets::ProviderPresetsMap;
@@ -56,6 +59,7 @@ pub struct OpenCodeAdapter;
 impl Adapter for OpenCodeAdapter {
     fn compile(&self, specs: &[Spec], ctx: &CompileCtx<'_>) -> Result<AdapterOutput> {
         let mut files = Vec::new();
+        let mut degradations = Vec::new();
         for spec in specs {
             match spec {
                 Spec::Agent(s) => files.extend(adapt_agent_spec(
@@ -69,13 +73,32 @@ impl Adapter for OpenCodeAdapter {
                     ctx.adapter_config,
                 )?),
                 Spec::Rule(s) => {
+                    if s.frontmatter.paths.is_some() && !self.supports_path_scoped_rules() {
+                        degradations.push(Degradation::provider_wide(
+                            Provider::OpenCode,
+                            DegradationKind::PathScopedRulesUnsupported,
+                        ));
+                    }
                     files.extend(adapt_rule_spec(s, ctx.adapter_config));
                 }
-                // hooks are not emitted for OpenCode in v1; the per-provider
-                // warning is surfaced from `compile_specs` via
-                // `CompileDiagnostics::skipped_hooks` (driven by the
-                // `Adapter::emits_hooks` capability accessor).
-                Spec::Hook(_) => {}
+                // Hooks are not emitted for OpenCode in v1. The degradation is
+                // pushed here — the arm that drops the spec — rather than
+                // rediscovered by a post-loop scan in `compile_specs`.
+                Spec::Hook(_) if !self.emits_hooks() => degradations.push(Degradation::for_spec(
+                    Provider::OpenCode,
+                    spec.id(),
+                    DegradationKind::HooksUnsupported,
+                )),
+                // A guarded arm does not contribute to exhaustiveness, and
+                // `wildcard_enum_match_arm` is denied — so the unguarded arm
+                // stays. It is reachable only if `emits_hooks()` flips to
+                // `true` while this adapter still emits no hook files, which
+                // would drop the spec with neither output nor a degradation.
+                // Defense-in-depth per `.claude/rules/validation-locality.md`.
+                Spec::Hook(_) => debug_assert!(
+                    !self.emits_hooks(),
+                    "OpenCode reports emits_hooks() but has no hook emission path"
+                ),
             }
         }
 
@@ -119,6 +142,7 @@ impl Adapter for OpenCodeAdapter {
             files,
             patches,
             dest_root,
+            degradations,
         })
     }
 

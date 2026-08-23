@@ -7,6 +7,7 @@ mod sync;
 
 use std::collections::HashMap;
 
+use agentspec::adapters::{Degradation, Presentation};
 use agentspec::compile::{
     self, AdapterConfig, CompileDiagnostics, CompileResult, ProviderCompileTarget,
 };
@@ -403,42 +404,44 @@ fn compile_targets_from(
 
 /// Print compile diagnostics to stderr.
 ///
-/// Default mode prints one line per provider with skipped hooks (`opencode:
-/// skipped N hook(s)`). Full mode additionally lists each skipped spec id —
-/// matching the format established by `surface_load_report` for `[spec].ignore`
-/// listings under `--verbose`.
+/// Degradations print first, grouped by `(provider, kind)` — the input arrives
+/// already ordered by `(provider, kind, subject)`, so consecutive entries form
+/// a group. Each group renders per its kind's `Presentation`: an
+/// `agentspec warning:` line, or a count line plus a per-subject listing under
+/// `--verbose`. Cross-provider parity warnings print last.
 fn surface_compile_diagnostics(diagnostics: &CompileDiagnostics, display: ReportDisplay) {
-    use std::collections::BTreeMap;
-
-    // Cross-provider portability warnings — printed regardless of display
-    // mode since each represents a real behavioral asymmetry the user
-    // should know about. The set is small (at most a handful per run) and
-    // each line is `agentspec warning:`-prefixed for easy filtering.
-    for warning in &diagnostics.warnings {
-        eprintln!("agentspec warning: {}", warning.message());
-    }
-
-    if diagnostics.skipped_hooks.is_empty() {
-        return;
-    }
-
-    let mut by_provider: BTreeMap<Provider, Vec<&str>> = BTreeMap::new();
-    for skip in &diagnostics.skipped_hooks {
-        by_provider
-            .entry(skip.provider)
-            .or_default()
-            .push(skip.hook_id.as_str());
-    }
-
-    for (provider, ids) in &by_provider {
-        let n = ids.len();
-        let hook_word = if n == 1 { "hook" } else { "hooks" };
-        eprintln!("{provider}: skipped {n} {hook_word}");
-        if matches!(display, ReportDisplay::Full) {
-            for id in ids {
-                eprintln!("{provider}: skipped hook {id}");
+    let groups = diagnostics
+        .degradations()
+        .chunk_by(|a, b| a.provider() == b.provider() && a.kind() == b.kind());
+    for group in groups {
+        // `chunk_by` never yields an empty chunk, so this `continue` is
+        // unreachable — it is the `unwrap`-free shape for taking the head
+        // given `unwrap_used` and `panic` are denied.
+        let Some(head) = group.first() else { continue };
+        let provider = head.provider();
+        match head.kind().presentation() {
+            Presentation::Warning => eprintln!("agentspec warning: {}", head.message()),
+            Presentation::CountedSubjects { singular, plural } => {
+                // `n` counts the whole group while the listing below drops
+                // subjectless entries. The two agree because every
+                // `CountedSubjects` push goes through `Degradation::for_spec`
+                // and so carries a subject; a `provider_wide` push of such a
+                // kind would print this count with nothing beneath it. See
+                // TODO #23 for the options weighed for enforcing that.
+                let n = group.len();
+                let word = if n == 1 { singular } else { plural };
+                eprintln!("{provider}: skipped {n} {word}");
+                if matches!(display, ReportDisplay::Full) {
+                    for subject in group.iter().filter_map(Degradation::subject) {
+                        eprintln!("{provider}: skipped {singular} {subject}");
+                    }
+                }
             }
         }
+    }
+
+    for warning in diagnostics.parity() {
+        eprintln!("agentspec warning: {}", warning.message());
     }
 }
 

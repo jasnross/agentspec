@@ -164,6 +164,10 @@ impl Adapter for ClaudeAdapter {
             files,
             patches,
             dest_root,
+            // Claude honors everything agentspec emits: `emits_hooks()` is
+            // `true` and both `fully_implements_canonical_output()` and
+            // `supports_path_scoped_rules()` take the permissive default.
+            degradations: Vec::new(),
         })
     }
 

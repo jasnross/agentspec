@@ -1,9 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use crate::adapters::{CompileCtx, SyncDestinationMode};
+use crate::adapters::{CompileCtx, Degradation, SyncDestinationMode};
 use crate::plan::{FileKind, ForwardPatch};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
@@ -250,88 +250,52 @@ impl CompileResult {
     }
 }
 
-/// Diagnostics surfaced from the compile stage that depend on the active
-/// provider list (and so can't be computed during load).
+/// Diagnostics surfaced from the compile stage.
 ///
-/// Carries hook-skip notifications for `OpenCode` and cross-provider
-/// portability warnings emitted when a hook fixture would behave
-/// asymmetrically across the active provider set (e.g., Cursor's partial
-/// output-schema implementation, session-start firing asymmetry). The
-/// per-provider summary, per-spec listing, and warning printout are
-/// formatted by the binary. Mirrors `LoadReport` in shape: each pipeline
-/// stage that produces stage-only diagnostics owns its own report struct
-/// and returns it alongside its result.
+/// Two channels, split by who originates them. `degradations` records values
+/// an author supplied that one provider could not honor; each is constructed
+/// by the adapter that dropped it and drained here. `parity` records
+/// disagreements across the active provider set, which no single adapter can
+/// compute. Both fields are private: with no reachable constructor for
+/// `Degradation` in this module, no code path here can append a degradation
+/// after the provider loop.
 #[derive(Debug, Default)]
 pub struct CompileDiagnostics {
-    pub skipped_hooks: Vec<SkippedHook>,
-    pub warnings: Vec<CompileWarning>,
+    degradations: Vec<Degradation>,
+    parity: Vec<ParityWarning>,
 }
 
-#[derive(Debug)]
-pub struct SkippedHook {
-    pub provider: Provider,
-    pub hook_id: String,
+impl CompileDiagnostics {
+    /// Ordered by `(provider, kind, subject)` and deduplicated at the drain
+    /// point, so consecutive entries sharing a `(provider, kind)` form a
+    /// renderable group.
+    pub fn degradations(&self) -> &[Degradation] {
+        &self.degradations
+    }
+
+    pub fn parity(&self) -> &[ParityWarning] {
+        &self.parity
+    }
 }
 
-/// Cross-provider portability warnings emitted by the compile stage.
+/// A disagreement across the active provider set.
 ///
-/// Each variant fires under a precise condition derived from adapter
-/// capability accessors (e.g. [`Adapter::fully_implements_canonical_output`])
-/// — `compile_specs` does not name any specific provider. The binary's
-/// `surface_compile_diagnostics` renders these as
-/// `agentspec warning:`-prefixed stderr lines. Suppression via a future
-/// config flag is a TODO; for v1, the only escape hatch is omitting the
-/// offending hook spec or the offending provider from the active list.
-///
-/// [`Adapter::fully_implements_canonical_output`]: crate::adapters::Adapter::fully_implements_canonical_output
+/// Constructed only by `compile_specs`, which is the only code with the active
+/// provider list. `AdapterOutput` has no field for one, so an adapter cannot
+/// emit a parity warning even by accident.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CompileWarning {
-    /// A targeted provider's hook host runtime only partially implements
-    /// the canonical output schema's UI/agent/context fields — some
-    /// `user_facing_message`, `decision_reason`, and `additional_context`
-    /// values may not surface to the user or model. Fires per-provider
-    /// whenever an `emits_hooks() == true` provider with
-    /// `fully_implements_canonical_output() == false` is in the active
-    /// set and at least one hook spec exists.
-    PartialOutputImpl(Provider),
-    /// At least one active hook-emitting provider does NOT fire
-    /// `session_start` on conversation resume, while another does — a
-    /// cross-provider parity gap that the canonical schema cannot bridge.
-    /// Fires when at least one hook spec targets `session_start` AND the
-    /// active provider set spans both `session_start_fires_on_resume() ==
-    /// true` and `session_start_fires_on_resume() == false` adapters.
-    /// Single-provider configurations never trip this gate.
-    SessionStartAsymmetry,
-    /// At least one rule spec has `paths` set, and the named provider does
-    /// not support native path scoping. The rule is emitted as always-on for
-    /// that provider. Fires per-provider via `supports_path_scoped_rules() ==
-    /// false`.
-    PathScopedRulesUnsupported(Provider),
+pub enum ParityWarning {
+    /// At least one hook spec targets `session_start` AND the active provider
+    /// set spans both `session_start_fires_on_resume() == true` and `== false`
+    /// hook-emitting adapters. Single-provider configurations never trip this.
+    SessionStart,
 }
 
-impl CompileWarning {
-    /// Human-readable diagnostic text shown to the user on stderr.
+impl ParityWarning {
     pub fn message(&self) -> String {
         match self {
-            Self::PartialOutputImpl(provider) => {
-                // URL anchors at the parent `## Documented limitations`
-                // section rather than templating a per-provider subsection
-                // name — the per-provider subsections may not exist for
-                // every adapter that ever returns
-                // `fully_implements_canonical_output() == false`.
-                format!(
-                    "{} has partial implementation of `user_message`/`agent_message`/`additional_context` hook output fields; canonical `user_facing_message`, `decision_reason`, and `additional_context` values may not surface in the {} UI/agent context. See docs/hooks-canonical.md#documented-limitations. (Suppression via config flag is on the roadmap.)",
-                    provider.display_name(),
-                    provider.display_name(),
-                )
-            }
-            Self::SessionStartAsymmetry => String::from(
+            Self::SessionStart => String::from(
                 "session_start asymmetry: at least one targeted provider does not fire `session_start` on conversation resume; the canonical `session_start` event reflects this. To trigger logic on resume firings, branch on `provider_raw.source == \"resume\"` (provider-specific). See docs/hooks-canonical.md#session-start-asymmetry.",
-            ),
-            Self::PathScopedRulesUnsupported(provider) => format!(
-                "{} does not support path-scoped rules; rules with `paths` will be emitted as always-on for {}.",
-                provider.display_name(),
-                provider.display_name(),
             ),
         }
     }
@@ -349,8 +313,10 @@ impl CompileWarning {
 /// (Path mode, no `target_dir`, no overwrite) — appropriate for the `compile`
 /// command path which has no sync destination.
 ///
-/// Returns the generated files alongside a [`CompileDiagnostics`] capturing
-/// any compile-time anomalies (today: hook specs skipped for `OpenCode`).
+/// Returns the generated files alongside a [`CompileDiagnostics`] carrying two
+/// channels: the `Degradation` values each adapter reported for inputs it
+/// could not honor, and the cross-provider `ParityWarning` gates that only the
+/// full active provider set can evaluate.
 // Eight params is over the clippy default of 7, but each carries a distinct
 // stage-input concern (specs, templating, presets, providers, adapter configs,
 // per-provider sync targets, home, cwd). Bundling them into a context struct
@@ -396,7 +362,7 @@ pub(crate) fn compile_specs(
     let mut files: Vec<GeneratedFile> = Vec::new();
     let mut patches: HashMap<Provider, Vec<Box<dyn ForwardPatch>>> = HashMap::new();
     let mut dest_roots: HashMap<Provider, PathBuf> = HashMap::new();
-    let mut diagnostics = CompileDiagnostics::default();
+    let mut degradations: BTreeSet<Degradation> = BTreeSet::new();
 
     let default_target = ProviderCompileTarget::default();
 
@@ -431,62 +397,30 @@ pub(crate) fn compile_specs(
             patches.entry(provider).or_default().extend(output.patches);
         }
         dest_roots.insert(provider, output.dest_root);
-
-        // Diagnostic post-pass: any `Spec::Hook` whose provider can't emit
-        // hooks is recorded as a skip. Today only `OpenCode` falls through
-        // here. The capability accessor lives on `Adapter` itself so the
-        // orchestrator never branches on `Provider`.
-        if !provider.adapter().emits_hooks() {
-            for spec in &resolved {
-                if matches!(spec, Spec::Hook(_)) {
-                    diagnostics.skipped_hooks.push(SkippedHook {
-                        provider,
-                        hook_id: spec.id().to_string(),
-                    });
-                }
-            }
-        }
+        degradations.extend(output.degradations);
     }
 
     // Sort output files by path for deterministic ordering
     files.sort_by(|a, b| a.path.cmp(&b.path));
 
-    // Cross-provider portability warnings. Evaluated after the per-provider
-    // compile loop so the active provider set is fully known. Both gates
-    // are capability-based, not literal-based: the orchestrator iterates
-    // adapters and consults `Adapter::fully_implements_canonical_output`
-    // and `Adapter::session_start_fires_on_resume` rather than naming any
-    // specific provider. Adding a new provider with similar limitations
-    // requires implementing only its adapter.
+    // Cross-provider parity warning. Evaluated after the per-provider compile
+    // loop so the active provider set is fully known — this is the one
+    // diagnostic no single adapter can compute, because it compares adapters
+    // against each other rather than describing any one of them.
     //
-    // The gates intentionally differ:
-    // - `PartialOutputImpl` fires per-provider (one warning per offending
-    //   provider in the active set), since the limitation is local to the
-    //   provider's runtime.
-    // - `SessionStartAsymmetry` fires once globally when the active set
-    //   spans adapters that disagree on resume-firing — a cross-provider
-    //   parity gap that the canonical schema cannot bridge. Single-provider
-    //   configurations can't trip this gate by construction.
-    let (has_any_hook, has_session_start_hook) = specs.iter().fold(
-        (false, false),
-        |(any_hook, any_session_start), spec| match spec {
-            Spec::Hook(h) => (
-                true,
-                any_session_start || h.frontmatter.events.contains(&HookEvent::SessionStart),
-            ),
-            Spec::Agent(_) | Spec::Skill(_) | Spec::Rule(_) => (any_hook, any_session_start),
-        },
-    );
-    if has_any_hook {
-        for &provider in &sorted_providers {
-            let adapter = provider.adapter();
-            if adapter.emits_hooks() && !adapter.fully_implements_canonical_output() {
-                diagnostics
-                    .warnings
-                    .push(CompileWarning::PartialOutputImpl(provider));
-            }
-        }
-    }
+    // Every other diagnostic arrives from the adapters as a `Degradation`,
+    // pushed from the arm that dropped the value. `compile_specs` has no
+    // reachable constructor for one, so it cannot rediscover a degradation by
+    // re-scanning specs here.
+    //
+    // `SessionStart` fires once globally when the active set spans adapters
+    // that disagree on resume-firing. Single-provider configurations can't
+    // trip this gate by construction.
+    let has_session_start_hook = specs.iter().any(|spec| {
+        matches!(spec, Spec::Hook(h) if h.frontmatter.events.contains(&HookEvent::SessionStart))
+    });
+
+    let mut parity: Vec<ParityWarning> = Vec::new();
     if has_session_start_hook {
         let mut any_fires_on_resume = false;
         let mut any_does_not_fire_on_resume = false;
@@ -502,22 +436,7 @@ pub(crate) fn compile_specs(
             }
         }
         if any_fires_on_resume && any_does_not_fire_on_resume {
-            diagnostics
-                .warnings
-                .push(CompileWarning::SessionStartAsymmetry);
-        }
-    }
-
-    let has_any_path_scoped_rule = specs
-        .iter()
-        .any(|spec| matches!(spec, Spec::Rule(r) if r.frontmatter.paths.is_some()));
-    if has_any_path_scoped_rule {
-        for &provider in &sorted_providers {
-            if !provider.adapter().supports_path_scoped_rules() {
-                diagnostics
-                    .warnings
-                    .push(CompileWarning::PathScopedRulesUnsupported(provider));
-            }
+            parity.push(ParityWarning::SessionStart);
         }
     }
 
@@ -527,13 +446,31 @@ pub(crate) fn compile_specs(
             patches,
             dest_roots,
         },
-        diagnostics,
+        CompileDiagnostics {
+            // `BTreeSet` ordering by `(provider, kind, subject)` is what makes
+            // the drained order independent of adapter iteration order and of
+            // the order in which an adapter happens to walk specs.
+            degradations: degradations.into_iter().collect(),
+            parity,
+        },
     ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parity_warning_session_start_message() {
+        // The text was transplanted verbatim from the removed
+        // `CompileWarning::SessionStartAsymmetry` arm; assert it directly so
+        // the string is not pinned only through integration-level stderr.
+        assert!(
+            ParityWarning::SessionStart
+                .message()
+                .contains("session_start asymmetry")
+        );
+    }
 
     #[test]
     fn test_content_prefix_returns_explicit_value() {

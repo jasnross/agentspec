@@ -21,6 +21,7 @@ pub use opencode::OpenCodeAdapter;
 use crate::compile::{AdapterConfig, GeneratedFile, HookEmitMode};
 use crate::plan::{FileKind, ForwardPatch, ReversePatch, expand_tilde};
 use crate::presets::ProviderPresetsMap;
+use crate::provider::Provider;
 use crate::spec::{Spec, ToolFrontmatter};
 
 /// Library-side mirror of the binary's `SyncMode`.
@@ -162,12 +163,155 @@ pub struct RemoveCtx<'a> {
 /// Claude/Cursor settings merges, `OpenCode` instructions registration, etc.
 /// `dest_root` is the adapter-computed sync-mode destination root that
 /// downstream `sync_plan` uses to anchor each `(provider, kind)`
-/// `ManifestTrackedWrite`.
+/// `ManifestTrackedWrite`. `degradations` carries the values this adapter was
+/// handed and could not honor.
 #[derive(Debug)]
 pub struct AdapterOutput {
     pub files: Vec<GeneratedFile>,
     pub patches: Vec<Box<dyn ForwardPatch>>,
     pub dest_root: PathBuf,
+    /// Values this adapter was handed and could not honor, discovered during
+    /// its own walk. `compile_specs` drains these; it cannot construct one.
+    pub degradations: Vec<Degradation>,
+}
+
+/// A value the spec author supplied that one provider could not honor.
+///
+/// Constructed only by adapter implementations, from inside the walk where the
+/// drop happens. The orchestrator drains and renders these; it cannot build
+/// one, which is the direction that eroded when `SkippedHook` was populated by
+/// a post-loop re-scan in `compile_specs`.
+///
+/// Field declaration order is the sort key: derived `Ord` compares
+/// `provider`, then `kind`, then `subject`, which is exactly the tuple
+/// `compile_specs` collects into a `BTreeSet` to dedup and order in one step.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct Degradation {
+    provider: Provider,
+    kind: DegradationKind,
+    /// The spec whose value was dropped, when the same provider honors the
+    /// value for other specs. `None` when the limitation is provider-global
+    /// and enumerating specs adds nothing.
+    subject: Option<String>,
+}
+
+impl Degradation {
+    /// The provider cannot honor this kind of value for any spec. Pushing the
+    /// same `(provider, kind)` more than once is harmless — the drain point's
+    /// `BTreeSet` collapses it.
+    fn provider_wide(provider: Provider, kind: DegradationKind) -> Self {
+        Self {
+            provider,
+            kind,
+            subject: None,
+        }
+    }
+
+    /// The provider honors this kind of value for other specs but dropped it
+    /// for `subject`. One rendered line per subject survives the drain point.
+    fn for_spec(provider: Provider, subject: &str, kind: DegradationKind) -> Self {
+        Self {
+            provider,
+            kind,
+            subject: Some(subject.to_owned()),
+        }
+    }
+
+    pub fn provider(&self) -> Provider {
+        self.provider
+    }
+
+    pub fn kind(&self) -> DegradationKind {
+        self.kind
+    }
+
+    pub fn subject(&self) -> Option<&str> {
+        self.subject.as_deref()
+    }
+
+    /// Human-readable diagnostic text.
+    ///
+    /// Rendered only for kinds whose `presentation()` is
+    /// `Presentation::Warning`; `CountedSubjects` kinds are rendered from
+    /// their subjects instead. The `HooksUnsupported` arm therefore has no
+    /// caller in the binary today, but is reachable through this public
+    /// accessor and is not dead.
+    pub fn message(&self) -> String {
+        let name = self.provider.display_name();
+        match self.kind {
+            DegradationKind::PathScopedRulesUnsupported => format!(
+                "{name} does not support path-scoped rules; rules with `paths` will be emitted as always-on for {name}."
+            ),
+            // URL anchors at the parent `## Documented limitations` section
+            // rather than templating a per-provider subsection name — the
+            // per-provider subsections may not exist for every adapter that
+            // ever returns `fully_implements_canonical_output() == false`.
+            DegradationKind::PartialOutputImpl => format!(
+                "{name} has partial implementation of `user_message`/`agent_message`/`additional_context` hook output fields; canonical `user_facing_message`, `decision_reason`, and `additional_context` values may not surface in the {name} UI/agent context. See docs/hooks-canonical.md#documented-limitations. (Suppression via config flag is on the roadmap.)"
+            ),
+            DegradationKind::HooksUnsupported => {
+                format!("{name} does not emit hooks; hook specs are skipped.")
+            }
+        }
+    }
+}
+
+/// What kind of value was dropped.
+///
+/// Carries no payload, and that is a commitment rather than an omission: the
+/// drain point identifies a degradation by `(provider, kind, subject)`, so a
+/// payload here would redefine what "the same degradation" means and break the
+/// `BTreeSet` collapse.
+///
+/// Declaration order is the secondary sort key, and so is user-visible:
+/// reordering these variants reorders the stderr lines within a provider's
+/// group. `test_compile_diagnostic_block_order_and_cardinality` is what
+/// catches such a reorder.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum DegradationKind {
+    /// A rule spec has `paths` set and the provider has no native path
+    /// scoping, so the rule is emitted as always-on. Pushed by the adapter
+    /// whose `supports_path_scoped_rules()` is `false`.
+    PathScopedRulesUnsupported,
+    /// At least one hook spec targets a provider whose hook host runtime only
+    /// partially implements the canonical output schema's UI/agent/context
+    /// fields. Pushed by the adapter whose
+    /// `fully_implements_canonical_output()` is `false`.
+    PartialOutputImpl,
+    /// A hook spec targets a provider that emits no hooks at all, so the spec
+    /// produces nothing. Pushed by the adapter whose `emits_hooks()` is
+    /// `false`.
+    HooksUnsupported,
+}
+
+impl DegradationKind {
+    /// How `surface_compile_diagnostics` renders a `(provider, kind)` group.
+    pub fn presentation(self) -> Presentation {
+        match self {
+            Self::PathScopedRulesUnsupported | Self::PartialOutputImpl => Presentation::Warning,
+            Self::HooksUnsupported => Presentation::CountedSubjects {
+                singular: "hook",
+                plural: "hooks",
+            },
+        }
+    }
+}
+
+/// Preserves the two stderr shapes the compile stage already emits rather than
+/// unifying them.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Presentation {
+    /// One `agentspec warning: {message}` line per group. Subjects are not
+    /// listed, and `--verbose` changes nothing.
+    Warning,
+    /// A `{provider}: skipped {n} {singular|plural}` count line, plus one
+    /// `{provider}: skipped {singular} {subject}` line per subject under
+    /// `--verbose`. The noun travels with the kind so the renderer stays
+    /// kind-agnostic.
+    CountedSubjects {
+        singular: &'static str,
+        plural: &'static str,
+    },
 }
 
 /// What an adapter's `removal_patches` step returns.
@@ -191,9 +335,12 @@ pub struct RemovalOutput {
 /// reverse-direction patches for the `remove` pipeline (reverse direction has
 /// no spec input — patches identify owned entries by on-disk sentinels). Two
 /// accessor methods (`body_tool_name`, `model_facing_name`) survive because
-/// templating needs them at spec-resolution time, before `compile` runs. Two
-/// capability accessors (`emits_hooks`) let the orchestrator branch on
-/// per-provider feature support without naming individual providers.
+/// templating needs them at spec-resolution time, before `compile` runs. The
+/// capability accessors are each adapter's own claim about its runtime: an
+/// adapter reads its own accessor at the point it drops a value, and pushes a
+/// [`Degradation`] from there. `compile_specs` retains a single capability
+/// read of its own — `session_start_fires_on_resume`, for the cross-provider
+/// parity gate no individual adapter has the input to compute.
 ///
 /// Object-safe by design — `&dyn Adapter` is the dispatch shape used by
 /// `Provider::adapter()`. No associated types.
@@ -268,8 +415,10 @@ pub trait Adapter: std::fmt::Debug + Send + Sync {
     ///
     /// Today: `true` for Claude / Cursor, `false` for `OpenCode` (which has
     /// no `hooks.json` analog and silently drops `Spec::Hook` inputs). The
-    /// `compile_specs` orchestrator consults this to push `SkippedHook`
-    /// diagnostics for hook specs that the active provider can't emit.
+    /// adapter consults this at its own `Spec::Hook` arm and pushes a
+    /// [`DegradationKind::HooksUnsupported`] for each spec it drops.
+    /// `compile_specs` retains one read, to exclude hookless providers from
+    /// the session-start parity gate before comparing resume behavior.
     ///
     /// Capability accessor (not provider-knowledge leakage): adapters expose
     /// what kinds of output they support, callers iterate without branching
@@ -290,14 +439,14 @@ pub trait Adapter: std::fmt::Debug + Send + Sync {
     /// Whether this provider's hook host runtime fully implements the
     /// canonical output schema's UI-facing / agent-facing / context-injection
     /// fields. Defaults to `true`; providers with documented partial
-    /// implementations override to `false` so the compile stage can surface
-    /// an `agentspec warning:` when hook specs target a provider that won't
-    /// fully honour `user_facing_message` / `decision_reason` /
-    /// `additional_context`.
+    /// implementations override to `false` and push a
+    /// [`DegradationKind::PartialOutputImpl`] from their own compile walk when
+    /// they are handed a hook spec they won't fully honour for
+    /// `user_facing_message` / `decision_reason` / `additional_context`.
     ///
-    /// Capability accessor — keeps the warning-firing gate provider-opaque
-    /// at the orchestrator level (no `match provider { ... }` in
-    /// `compile_specs`).
+    /// Capability accessor — the adapter reads its own claim at the point it
+    /// drops the value, so no `match provider { ... }` is needed in
+    /// `compile_specs`.
     ///
     /// This value is a claim about a provider's runtime, so it is probe-backed
     /// rather than inferred. Cursor's `false` is measured by
@@ -332,10 +481,11 @@ pub trait Adapter: std::fmt::Debug + Send + Sync {
 
     /// Whether this provider supports path-scoped rules (rules that
     /// activate only when files matching a glob pattern are in context).
-    /// Defaults to `true`; providers without native path scoping override
-    /// to `false`. The compile stage surfaces a per-provider portability
-    /// warning when path-scoped rule specs target a provider that returns
-    /// `false`.
+    /// Defaults to `true`; providers without native path scoping override to
+    /// `false` and push a [`DegradationKind::PathScopedRulesUnsupported`] from
+    /// their own `Spec::Rule` arm for each path-scoped rule they flatten to
+    /// always-on. The push is naive — once per offending rule — and the drain
+    /// point's `BTreeSet` collapses it to one rendered warning.
     fn supports_path_scoped_rules(&self) -> bool {
         true
     }
@@ -366,5 +516,42 @@ pub trait Adapter: std::fmt::Debug + Send + Sync {
             FileKind::Hooks => Some("hooks"),
             FileKind::PluginManifest => self.plugin_manifest_dir(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::{Degradation, DegradationKind};
+    use crate::provider::Provider;
+
+    #[test]
+    fn test_degradation_set_collapses_duplicate_provider_wide_pushes() {
+        // Cardinality policy lives at the drain point: an adapter pushes once
+        // per occurrence and the `BTreeSet` decides whether that collapses.
+        let set: BTreeSet<Degradation> = (0..3)
+            .map(|_| {
+                Degradation::provider_wide(
+                    Provider::OpenCode,
+                    DegradationKind::PathScopedRulesUnsupported,
+                )
+            })
+            .collect();
+        assert_eq!(set.len(), 1);
+    }
+
+    #[test]
+    fn test_degradation_set_orders_subjects_alphabetically() {
+        // Derived `Ord` compares `provider`, then `kind`, then `subject`, so a
+        // set built from out-of-order pushes iterates in subject order.
+        let set: BTreeSet<Degradation> = ["c", "a", "b"]
+            .into_iter()
+            .map(|id| {
+                Degradation::for_spec(Provider::OpenCode, id, DegradationKind::HooksUnsupported)
+            })
+            .collect();
+        let subjects: Vec<Option<&str>> = set.iter().map(Degradation::subject).collect();
+        assert_eq!(subjects, vec![Some("a"), Some("b"), Some("c")]);
     }
 }

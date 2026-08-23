@@ -65,8 +65,8 @@ mod tests {
     #[test]
     fn test_emits_hooks_capability() {
         // Claude / Cursor produce hook entries; OpenCode does not. The
-        // `compile_specs` orchestrator consults this to push `SkippedHook`
-        // diagnostics for hook specs the active provider can't emit.
+        // OpenCode adapter consults this at its own `Spec::Hook` arm and
+        // pushes a `DegradationKind::HooksUnsupported` for each spec it drops.
         assert!(Provider::Claude.adapter().emits_hooks());
         assert!(Provider::Cursor.adapter().emits_hooks());
         assert!(!Provider::OpenCode.adapter().emits_hooks());
