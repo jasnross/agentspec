@@ -45,7 +45,7 @@ The 2026-08-16 observation sits against a shipped claim. `docs/hooks-canonical.m
 
 > **`agent_message`** — does not surface in the agent context.
 
-The agent quoted both markers back verbatim, so on 3.16.17 that content plainly reached its context. `src/adapters/cursor.rs:222` cites that doc section as justification for `fully_implements_canonical_output()` returning `false` — a verdict still supported by `user_message` genuinely not rendering in the UI, but supported by one stated reason rather than two.
+The agent quoted both markers back verbatim, so on 3.16.17 that content plainly reached its context. `src/adapters/cursor.rs:235` cites that doc section as justification for `fully_implements_canonical_output()` returning `false` — a verdict still supported by `user_message` genuinely not rendering in the UI, but supported by one stated reason rather than two.
 
 Resolving that is out of this package's scope: a probe reports what it measured, and changing a shipped capability accessor is a separate decision needing its own reasoning.
 

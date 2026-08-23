@@ -2,7 +2,7 @@
 
 **Question.** Does Cursor's `sessionStart` hook fire again when a conversation is resumed?
 
-**Why it matters.** It drives shipped adapter behavior — see `src/adapters/cursor.rs:229` and `src/compile.rs:498`. Cursor's answer differs from Claude's, which is why the two providers need separate handling and why this is a separate package from `claude-session-start`.
+**Why it matters.** It drives shipped adapter behavior — see `src/adapters/cursor.rs:246` and `src/compile.rs:432`. Cursor's answer differs from Claude's, which is why the two providers need separate handling and why this is a separate package from `claude-session-start`.
 
 **Driver:** `manual`. A person must drive Cursor for the probe to run. The answer is counted from the capture by a projection, so no person interprets it.
 
@@ -36,7 +36,7 @@ Every part was added because a run without it produced a misleading verdict.
 
 **Why both `fired` and `after_resume` are scoped to that conversation.** Cursor may open a conversation of its own on relaunch, firing a legitimate `sessionStart` for a different id. Counting unscoped would read that as the resume firing and record a false `refuted`.
 
-**`wait_for` blocks recording until the procedure is genuinely complete:** two prompts, sharing one `conversation_id`, with a `sessionStart` seen for it. A procedure slip therefore makes the runner keep polling rather than manufacture a verdict — which is the right failure, because a false `refuted` against `src/adapters/cursor.rs:229` costs a real investigation.
+**`wait_for` blocks recording until the procedure is genuinely complete:** two prompts, sharing one `conversation_id`, with a `sessionStart` seen for it. A procedure slip therefore makes the runner keep polling rather than manufacture a verdict — which is the right failure, because a false `refuted` against `src/adapters/cursor.rs:246` costs a real investigation.
 
 If the runner times out, inspect the capture before assuming anything: differing `conversation_id`s on the two prompts mean the resume did not happen. The run itself is over — the workspace is kept for that inspection, but finishing it means re-running the probe.
 
@@ -44,7 +44,7 @@ If the runner times out, inspect the capture before assuming anything: differing
 
 `1` is the answer a hand-run experiment produced before this package existed. It lives here as the manifest's `expected` value — the hypothesis this probe tests, not a claim that it still holds.
 
-The finding is shipped and load-bearing. It is stated at [`docs/hooks-canonical.md:164`](../../docs/hooks-canonical.md) — "Cursor's `sessionStart` fires only on initial conversation creation, not on conversation resume" — and encoded as `Adapter::session_start_fires_on_resume` returning `false` for Cursor (`src/adapters/cursor.rs:229`), which `src/compile.rs:498` reads to warn when a canonical `session_start` hook targets both providers. The Cursor version that comment cites is 3.2.21.
+The finding is shipped and load-bearing. It is stated at [`docs/hooks-canonical.md:164`](../../docs/hooks-canonical.md) — "Cursor's `sessionStart` fires only on initial conversation creation, not on conversation resume" — and encoded as `Adapter::session_start_fires_on_resume` returning `false` for Cursor (`src/adapters/cursor.rs:246`), which `src/compile.rs:432` reads to warn when a canonical `session_start` hook targets both providers. The Cursor version that comment cites is 3.2.21.
 
 ## The assertion discriminates
 

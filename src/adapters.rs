@@ -338,9 +338,11 @@ pub struct RemovalOutput {
 /// templating needs them at spec-resolution time, before `compile` runs. The
 /// capability accessors are each adapter's own claim about its runtime: an
 /// adapter reads its own accessor at the point it drops a value, and pushes a
-/// [`Degradation`] from there. `compile_specs` retains a single capability
-/// read of its own — `session_start_fires_on_resume`, for the cross-provider
-/// parity gate no individual adapter has the input to compute.
+/// [`Degradation`] from there. `compile_specs` retains a single gate of its
+/// own — the cross-provider parity gate no individual adapter has the input to
+/// compute. That gate reads two accessors: `emits_hooks` to exclude providers
+/// with no hooks to compare, then `session_start_fires_on_resume` on those
+/// that remain.
 ///
 /// Object-safe by design — `&dyn Adapter` is the dispatch shape used by
 /// `Provider::adapter()`. No associated types.

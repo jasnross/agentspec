@@ -129,7 +129,7 @@ That's adapter knowledge masquerading as a `plan.rs`/`compile.rs` concern.
 
 ### Good
 
-Capability accessors on the trait — adapters declare what they support; callers iterate without branching on `Provider`:
+Capability accessors on the trait — adapters declare what they support and act on their own claim; callers drain the result without branching on `Provider`:
 
 ```rust
 // src/adapters/claude.rs
@@ -138,13 +138,22 @@ impl Adapter for ClaudeAdapter {
     // ...
 }
 
-// src/compile.rs
-if !provider.adapter().emits_hooks() {
-    diagnostics.skipped_hooks.push(...);
-}
+// src/adapters/opencode.rs — the adapter reads its own accessor at the arm
+// that drops the spec, and reports the drop in its own return value.
+Spec::Hook(_) if !self.emits_hooks() => degradations.push(Degradation::for_spec(
+    Provider::OpenCode,
+    spec.id(),
+    DegradationKind::HooksUnsupported,
+)),
+
+// src/compile.rs — drains what the adapters reported. It cannot construct a
+// `Degradation`: the constructors are module-private to `src/adapters.rs`.
+degradations.extend(output.degradations);
 ```
 
 Same pattern — capability lookup via the trait, not a `match provider`.
+
+Note where the push lives. An earlier shape had `compile_specs` re-scan `resolved` after each adapter returned, pushing a diagnostic for every hook spec the provider could not emit. That reads like orchestration but is provider knowledge in the wrong file: the adapter had already walked those specs and knew which ones it dropped. Discovering a degradation is the job of whoever drops the value.
 
 ## When dispatch is unavoidable
 
