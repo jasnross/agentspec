@@ -47,7 +47,7 @@
     - `validate_child_blocks` reads template files from disk to walk the parent chain; MiniJinja's loader reads the same files again during render
     - Negligible for small template sets but duplicated I/O worth awareness as template usage grows
 11. _Done — see `$THOUGHTS_DIR/designs/2026-08-20-agentspec-claude-effort-probe-packages.md`._ Slot kept to preserve incoming `TODO #11` references.
-12. _Done — see `$THOUGHTS_DIR/designs/2026-08-22-agentspec-adapter-originated-degradation-warnings.md`._ Slot kept to preserve incoming `TODO #12` references.
+12. _Done — see `$THOUGHTS_DIR/designs/.done/2026-08-22-agentspec-adapter-originated-degradation-warnings.md`._ Slot kept to preserve incoming `TODO #12` references.
 13. Cursor subagent identity in canonical hook input may be wrong for `subagentStart`/`subagentStop`
     - `from_cursor` (`src/hooks_canonical.rs:330-347`) reconstructs canonical `session_id`/`agent_id` on the documented assumption that "Cursor renews `conversation_id` per subagent and carries the parent link as `parent_conversation_id`". Captured payloads falsify that for the two subagent lifecycle events
     - Observed on every `subagentStart` and `subagentStop` (Cursor 3.15.19 / 3.16.17): `conversation_id`, `parent_conversation_id`, and `session_id` all hold the **same** value — the parent conversation. The child identity is in `subagent_id` (e.g. `tool_13007703-…`), which agentspec ignores entirely
@@ -133,4 +133,4 @@
     - The two agree only because every `HooksUnsupported` push goes through `Degradation::for_spec`. That invariant lives in a doc comment, not in the types — a `Degradation::provider_wide(_, HooksUnsupported)` push would print a count line with no listing beneath it, and its `message()` (whose `HooksUnsupported` arm has no caller today) would never render either
     - The mirror-image gap: a `Presentation::Warning` group renders only `head.message()`, so if a warning-kind degradation were ever pushed via `for_spec`, every non-head entry in the group is silently discarded
     - Options weighed and deferred: derive `n` from the collected subjects (agrees by construction, but a stray push then renders `skipped 0 hooks`); fall back to `message()` when the subject list is empty (coherent in both directions, and gives the `HooksUnsupported` arm a real caller); or encode the constraint structurally so `CountedSubjects` kinds cannot be built without a subject
-    - Raised in review of `$THOUGHTS_DIR/plans/2026-08-22-agentspec-adapter-originated-degradation-warnings.md` Phase 2; documented rather than fixed there because the invariant holds for every push site that exists
+    - Raised in review of `$THOUGHTS_DIR/plans/.done/2026-08-22-agentspec-adapter-originated-degradation-warnings.md` Phase 2; documented rather than fixed there because the invariant holds for every push site that exists

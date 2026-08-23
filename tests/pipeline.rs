@@ -4456,7 +4456,7 @@ fn test_compile_diagnostic_block_order_and_cardinality() {
     // Characterization test: pins the exact order and count of the compile
     // diagnostic block before the adapter-originated degradation refactor
     // relocates the push sites. See
-    // $THOUGHTS_DIR/plans/2026-08-22-agentspec-adapter-originated-degradation-warnings.md
+    // $THOUGHTS_DIR/plans/.done/2026-08-22-agentspec-adapter-originated-degradation-warnings.md
     //
     // Two fixture facts this depends on: `compile` with no `--provider` targets
     // every `Provider::VARIANTS`, and `spec/rules/react-components.md` carries a
