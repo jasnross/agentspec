@@ -38,7 +38,7 @@ Asserting the list of `source` values after the operator's first prompt reads as
 
 `["startup", "resume"]` is the answer a hand-run experiment produced before this package existed, and it lives here as the manifest's `expected` value — the hypothesis this probe tests, not a claim that it still holds. `results/` holds what is current; until this probe is run, `just probe-status` correctly shows no row for it.
 
-The finding is already shipped, which is what makes it worth re-establishing rather than dropping. It is stated at [`docs/hooks-canonical.md:164`](../../docs/hooks-canonical.md) — "Claude's `SessionStart` fires on both" — and encoded as `Adapter::session_start_fires_on_resume` returning `true` for Claude, which `src/compile.rs:432` reads to emit a cross-provider portability warning.
+The finding is already shipped, which is what makes it worth re-establishing rather than dropping. It is stated under [`docs/hooks-canonical.md` § Session-start asymmetry](../../docs/hooks-canonical.md#session-start-asymmetry) — "Claude's `SessionStart` fires on both" — and encoded as `Adapter::session_start_fires_on_resume` returning `true` for Claude, which `compile_specs`'s parity gate in `src/compile.rs` reads to emit a cross-provider portability warning.
 
 **That the two providers disagree here is the whole point.** Cursor's `sessionStart` fires only on initial conversation creation, so a single canonical `session_start` hook cannot achieve resume parity. This package measures the Claude half; `cursor-session-start` measures the other.
 

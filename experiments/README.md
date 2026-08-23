@@ -138,7 +138,7 @@ The only hand-authored file in the contract.
 
 **A `command` is split on whitespace and exec'd directly — never through a shell.** So `opencode --version` works and `sh -c "…; …"` does not: `;`, `|`, `>`, `$()`, and quoting are not interpreted. `just probe-status` runs these commands on every `just check`, and a manifest is reviewed as data rather than as code, so it must not be able to express arbitrary code. The command also runs with stdin closed and under a timeout, because a version command that blocks would wedge the build — which is worse than failing it.
 
-**A Cursor probe declares `kind: "capture"` and never a CLI command.** The probe exercises the IDE, whose version arrives in the hook payload as `cursor_version` — the field agentspec itself trusts for host detection (`src/hooks_canonical.rs:250-256`). `cursor-agent --version` reports a different artifact on a different versioning scheme (`2026.05.28-a70ca7c`), so comparing against it would produce a drift signal about something no probe touched.
+**A Cursor probe declares `kind: "capture"` and never a CLI command.** The probe exercises the IDE, whose version arrives in the hook payload as `cursor_version` — the field agentspec itself trusts for host detection (`detect_provider` in `src/hooks_canonical.rs`). `cursor-agent --version` reports a different artifact on a different versioning scheme (`2026.05.28-a70ca7c`), so comparing against it would produce a drift signal about something no probe touched.
 
 ### Every jq expression reads slurped, array-shaped input
 

@@ -14,7 +14,7 @@ experiments/cursor-subagent-effort/probe.sh
 
 One blocking invocation. It prints a workspace path and three instructions, then polls the capture and records automatically — no second command and no keypress. If your terminal closes before the capture arrives, the workspace is kept for inspection, but the run is over: re-run the probe.
 
-The workspace is a throwaway temp directory, never a real project. `agentspec sync` owns `.cursor/hooks.json` through `_agentspec_id` tracking (`src/adapters/cursor.rs:290`, `src/adapters/cursor.rs:349`), so running this in a synced workspace could collide with that merge logic. Generating the workspace makes the collision structurally impossible rather than merely warned against.
+The workspace is a throwaway temp directory, never a real project. `agentspec sync` owns `.cursor/hooks.json` through `_agentspec_id` tracking (`CursorAdapter::entry_to_json` and `CursorAdapter::tidy_hooks` in `src/adapters/cursor.rs`), so running this in a synced workspace could collide with that merge logic. Generating the workspace makes the collision structurally impossible rather than merely warned against.
 
 ## The oracle
 
@@ -89,4 +89,4 @@ Two further arms from the same session establish that `thinking` is not an input
 
 ## Version source
 
-This package declares `version_source.kind: "capture"`. The version that matters is the IDE's, which arrives in the payload as `cursor_version` — the field agentspec itself trusts for host detection (`src/hooks_canonical.rs:250-256`). `cursor-agent --version` reports a different artifact on a different scheme, so `just probe-status` computes no drift for this package.
+This package declares `version_source.kind: "capture"`. The version that matters is the IDE's, which arrives in the payload as `cursor_version` — the field agentspec itself trusts for host detection (`detect_provider` in `src/hooks_canonical.rs`). `cursor-agent --version` reports a different artifact on a different scheme, so `just probe-status` computes no drift for this package.
