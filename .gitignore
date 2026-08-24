@@ -16,3 +16,9 @@ Thumbs.db
 
 # graphify (knowledge graph; regenerated locally, not committed)
 graphify-out/
+
+# Live-session captures staged for a later phase's dry-run checks. The leading
+# dot is load-bearing: `records-wellformed.bats` iterates `experiments/*/` and
+# would demand a manifest, a runner, and a record from any non-dot directory it
+# found there. Bash's `*` does not match a leading dot without `dotglob`.
+experiments/.probe-scratch/
