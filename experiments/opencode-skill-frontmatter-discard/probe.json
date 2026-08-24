@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "provider": "opencode",
+  "driver": "unattended",
+  "depth": "resolved-config",
+  "question": "Does OpenCode discard `model`, `variant`, and `tools` from skill frontmatter, resolving the skill to `name`, `description`, `location`, and `content` alone?",
+  "version_source": { "kind": "command", "command": "opencode --version" },
+  "assertion": {
+    "projection": "[.[] | select(.name == \"agentspec-probe-discard\") | {keys: keys, description: .description}] | first",
+    "expected": {
+      "keys": ["content", "description", "location", "name"],
+      "description": "agentspec skill-frontmatter discard probe"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "provider": "opencode",
+  "status": "confirmed",
+  "depth": "resolved-config",
+  "date": "2026-08-24",
+  "tool_version": "1.18.21",
+  "assertion": {
+    "projection": "[.[] | select(.name == \"agentspec-probe-discard\") | {keys: keys, description: .description}] | first",
+    "expected": {
+      "keys": [
+        "content",
+        "description",
+        "location",
+        "name"
+      ],
+      "description": "agentspec skill-frontmatter discard probe"
+    },
+    "observed": {
+      "keys": [
+        "content",
+        "description",
+        "location",
+        "name"
+      ],
+      "description": "agentspec skill-frontmatter discard probe"
+    }
+  }
+}
