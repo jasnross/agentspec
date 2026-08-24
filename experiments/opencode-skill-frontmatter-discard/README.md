@@ -47,7 +47,7 @@ The `description` half is what makes the projection track the file under test, a
 
 ### Why the agent arm is evidence rather than the discriminator
 
-The corroboration arm carries the **same three fields** on the **agent** surface, where OpenCode honors them. That is what establishes the assertion arm's absent keys are a discard rather than a malformed fixture — the fields are well-formed and read somewhere.
+The corroboration arm carries the **same three fields** on the **agent** surface, where OpenCode reads them into its resolved view. That is what establishes the assertion arm's absent keys are a discard rather than a malformed fixture — the fields are well-formed and read somewhere.
 
 It is deliberately **not** the machine-checked discriminator. `opencode debug agent` emits a single object rather than a list, so this package's skill projection errors on it and `record.sh` hard-fails instead of reporting `refuted`. A hard failure is not a refutation, and the contract's discrimination rule wants a distinct value. The discriminator skill arm supplies that; the agent arm supplies this README's evidence.
 
@@ -55,7 +55,7 @@ It is deliberately **not** the machine-checked discriminator. `opencode debug ag
 
 **`resolved-config`, not `outbound-request`.** This proves OpenCode did not surface the three fields in its resolved skill record. It does not prove no later stage would have used them — only that nothing downstream can read them from here.
 
-**The oracle enumerates the operator's global skills, not only the workspace's.** `--pure` excludes external plugins; it does not exclude global config. The projection therefore selects by `name`, and the fixture name `agentspec-probe-discard` is distinctive enough that a collision is implausible. The authoring run confirmed exactly one match.
+**The oracle enumerates the operator's global skills, not only the workspace's.** `--pure` excludes external plugins; it does not exclude global config. The projection therefore selects by `name`, and the fixture name `agentspec-probe-discard` is distinctive enough that a collision is implausible. The authoring run confirmed exactly one match against 29 resolved skills; that count is machine-specific, and what transfers is the single-match requirement rather than the total.
 
 **`location` is deliberately absent from the projection.** It resolves to an absolute path inside a throwaway workspace, so no fixed `expected` could match it. It is still present in the asserted key set, which is where it carries its weight.
 
@@ -67,4 +67,6 @@ This is not hypothetical drift: skills are discovered under both `.opencode/skil
 
 ## Related
 
-`experiments/opencode-agent-variant/` measures the same `variant:` key on the **agent** surface, where OpenCode honors it. Surfaces diverging within one provider is the standing argument for counting surfaces rather than providers, and these two packages are a measured instance of it: the same key, read on one surface and discarded on the other.
+`experiments/opencode-agent-variant/` and `experiments/opencode-command-variant/` measure the same `variant:` key on the **agent** and **command** surfaces, where OpenCode reads it in both. All three records stop at `resolved-config`, so "reads" is the whole claim — none of them reaches request build.
+
+Surfaces diverging within one provider is the standing argument for counting surfaces rather than providers, and these three packages are a measured instance of it: one key, read on two surfaces and discarded on the third. Each package stands alone; none depends on another.

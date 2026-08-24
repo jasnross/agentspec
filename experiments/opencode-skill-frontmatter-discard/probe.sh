@@ -10,8 +10,10 @@ package=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 probe_require_tools jq opencode
 
-# A runner takes no arguments: it is one invocation against one fixture, so
-# there is no second arm for an argument to select.
+# A runner takes no arguments. The other fixture arms exist for the authoring-
+# time discrimination check, which runs `record.sh --dry-run` against a saved
+# view rather than through this script; see the README. Whether they should be
+# reachable from here at all is `TODO.md` #24.
 if [ $# -ne 0 ]; then
 	printf '%s: unexpected argument: %s\n' "$(basename "${BASH_SOURCE[0]}")" "$1" >&2
 	exit 2
@@ -54,7 +56,12 @@ fi
 # agent <name>` is name-addressed and exits nonzero when the agent is missing.
 matches=$(jq '[.[] | select(.name == "agentspec-probe-discard")] | length' "$ws/view.json")
 if [ "$matches" != 1 ]; then
-	printf 'probe: the fixture resolved %s times, expected exactly 1.\n' "$matches" >&2
+	# The names, not just a count: the likeliest cause of this branch firing is a
+	# change in how OpenCode discovers skills — `.opencode/skill/` versus
+	# `.opencode/skills/` is itself unmeasured (`TODO.md` #16) — and only the
+	# names reveal that. A count says the apparatus broke but not how.
+	printf 'probe: the fixture resolved %s times, expected exactly 1. Resolved skills:\n' "$matches" >&2
+	jq -r '.[].name' "$ws/view.json" | sed 's/^/probe:   /' >&2
 	printf 'probe: this is an apparatus failure, not a refutation; no record written.\n' >&2
 	printf 'probe: the workspace is preserved at %s\n' "$ws" >&2
 	exit 1
