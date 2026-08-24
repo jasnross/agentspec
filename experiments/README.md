@@ -193,7 +193,7 @@ The filename carries a UTC time component because date plus version does not dis
 
 `--dry-run` evaluates a manifest end to end — every gate, the projection, the structural comparison, version resolution, record assembly — and prints what a record would contain instead of writing one. No `results/` directory is created and no record is written. Version resolution still runs, so a manifest declaring `version_source.kind: "command"` still executes that command; what dry-run guarantees is that `record.sh` itself writes nothing, not that the run is side-effect-free.
 
-**A runner takes no arguments, so `--dry-run` is not one of them.** Five of the six committed runners reject any argument outright. A runner that supports a dry run reads `PROBE_DRY_RUN=1` from the environment and passes the flag on to `record.sh` itself — the same shape as `PROBE_FIXTURE`. Where a runner does not read it, invoke `record.sh` directly against a view the runner already produced.
+**A runner takes no arguments, so `--dry-run` is not one of them.** Ten of the eleven committed runners reject any argument outright. A runner that supports a dry run reads `PROBE_DRY_RUN=1` from the environment and passes the flag on to `record.sh` itself — the same shape as `PROBE_FIXTURE`. Where a runner does not read it, invoke `record.sh` directly against a view the runner already produced.
 
 It exits **0 whatever status the comparison computes**, including `refuted`. Validating that an assertion discriminates means running it against an input it is supposed to refute, so a nonzero exit would fail the primary use case every time; it would also make dry-run disagree with real-run semantics, where `refuted` is a finding rather than a failure.
 

@@ -205,10 +205,10 @@ probe_template_file() {
 
 # --- The human-driven runner -------------------------------------------------
 #
-# Five packages drive a provider by hand and differ only in their fixtures, the
+# Six packages drive a provider by hand and differ only in their fixtures, the
 # instructions they print, and whether the answer is read from the capture or
 # from a person. That shared shape lives here rather than being written out
-# five times.
+# six times.
 
 # Materialize a human-driven probe's workspace and print the path the operator
 # opens the provider on.
