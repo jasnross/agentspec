@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "provider": "opencode",
+  "status": "confirmed",
+  "depth": "resolved-config",
+  "date": "2026-08-24",
+  "tool_version": "1.18.21",
+  "assertion": {
+    "projection": ".command[\"agentspec-probe-variant\"] | {model, variant}",
+    "expected": {
+      "model": "anthropic/claude-sonnet-4-5",
+      "variant": "high"
+    },
+    "observed": {
+      "model": "anthropic/claude-sonnet-4-5",
+      "variant": "high"
+    }
+  }
+}
