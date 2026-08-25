@@ -12,7 +12,11 @@ When you are about to make agentspec emit a new rendering:
 2. If nothing covers it, write a probe and run it.
 3. Design against the measurement — and against what its `depth` licenses you to conclude.
 
-**Absent from that list means nobody has measured it**, not that it works. OpenCode's _skill_ surface is the standing example of why that matters: `variant:`, `model:`, and `tools:` are all parsed and discarded there, while the agent surface honors them.
+**Absent from that list means nobody has measured it**, not that it works. OpenCode's _skill_ surface is the worked example, and it is now on the list rather than absent from it: `experiments/opencode-skill-frontmatter-discard/` records that `variant:`, `model:`, and `tools:` are all parsed and discarded there, while `experiments/opencode-agent-variant/` and `experiments/opencode-command-variant/` record the agent and command surfaces reading the same `variant:` key.
+
+That the three disagree is the lesson: one key, read on two surfaces of one provider and discarded on the third.
+
+The skill finding also shows what "absent from that list" costs. It was a record once, in `docs/provider-verification.md`; when that document was replaced by this harness on 2026-08-15 it survived only as prose, and it stayed prose until a package re-measured it on 2026-08-24. Throughout, agentspec kept emitting the discarded fields — and a prose claim, unlike a record, is not something `probe-status` can report as stale.
 
 Probes verify the _provider's_ contract, so they use hand-authored provider config files rather than `agentspec compile` output. Nothing here requires an agentspec feature to exist first, which is why a probe can precede the change it de-risks instead of gating it afterward.
 
@@ -225,7 +229,7 @@ just shellcheck     # lint the probe shell
 | **selection** | is this package interesting to this run? | `--stale` |
 | **authorization** | may this run pay what the package costs? | `--billed`, `--manual`, `--all` |
 
-**Every probe is runnable by `probe-run`, including the manual ones.** All five route through `probe_human_run`, which arranges the workspace, prints the procedure, blocks until the capture lands, and records. So what separates the drivers is not capability — it is cost. An `unattended` probe costs nothing, a `billed` one spends model quota, and a `manual` one spends an afternoon of a person's attention. A run is therefore defined by what it is willing to spend, and the default spends nothing: a batch run that costs money or blocks for hours on every invocation is a batch run people stop invoking.
+**Every probe is runnable by `probe-run`, including the manual ones.** All six route through `probe_human_run`, which arranges the workspace, prints the procedure, blocks until the capture lands, and records. So what separates the drivers is not capability — it is cost. An `unattended` probe costs nothing, a `billed` one spends model quota, and a `manual` one spends an afternoon of a person's attention. A run is therefore defined by what it is willing to spend, and the default spends nothing: a batch run that costs money or blocks for hours on every invocation is a batch run people stop invoking.
 
 **Authorization is a set, not a level.** Each flag adds its own driver; `--billed` never implies `--manual` and neither implies the other. They stack in any order, repeat harmlessly, and `--all` is the union. `PROBE_AUTHORIZE_DRIVERS="billed manual"` seeds the same set for a caller that cannot pass arguments, and composes with flags rather than overriding them. The set is built from `MANIFEST_DRIVERS` in `manifest-contract.sh`, so a fourth driver costs one entry there plus its flag — not a new combination in the run loop, and not a hand-maintained line in the summary breakdown.
 
@@ -261,7 +265,7 @@ A human-driven runner materializes the workspace, prints the procedure, polls, a
 
 The cost is that an interrupt or a timeout ends the run. The workspace is kept either way, because discarding one an operator spent a live session on is the single unrecoverable mistake a runner could make, and reading the capture is how they tell a hook that never fired from a procedure that went off the rails. But finishing that run is not possible: **re-run the probe.** The poll timeout is generous for the same reason — an hour, overridable with `PROBE_TIMEOUT_SECONDS`. Its job is diagnostic, not resource protection, and a premature expiry would cost a session outright.
 
-`record.sh --capture` remains, because it is how the capture directory reaches version resolution for a manifest declaring `version_source.kind: "capture"` — which four of six manifests do. A runner itself takes no arguments.
+`record.sh --capture` remains, because it is how the capture directory reaches version resolution for a manifest declaring `version_source.kind: "capture"` — which five of eleven manifests do. A runner itself takes no arguments.
 
 ## Re-verification
 
