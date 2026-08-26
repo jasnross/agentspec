@@ -82,6 +82,9 @@ fn test_validate_fixture() {
     assert!(stderr.contains("validation complete"), "stderr: {stderr}");
 }
 
+// This test is an inventory of every file the fixture is expected to produce,
+// so its length tracks the fixture's size rather than any branching complexity.
+#[allow(clippy::too_many_lines)]
 #[test]
 fn test_compile_generates_expected_files() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
@@ -116,6 +119,11 @@ fn test_compile_generates_expected_files() {
             .exists(),
         "missing claude helper script"
     );
+    assert!(
+        dir.join("generated/claude/skills/agent-invocable-skill/SKILL.md")
+            .exists(),
+        "missing claude agent-invocable-skill"
+    );
 
     // OpenCode: agent + flat command files for user-invocable skills
     assert!(
@@ -132,12 +140,22 @@ fn test_compile_generates_expected_files() {
             .exists(),
         "missing opencode scripted-skill command"
     );
+    assert!(
+        dir.join("generated/opencode/skills/agent-invocable-skill/SKILL.md")
+            .exists(),
+        "missing opencode agent-invocable-skill"
+    );
 
     // Cursor: skills and agents
     assert!(
         dir.join("generated/cursor/skills/basic-skill/SKILL.md")
             .exists(),
         "missing cursor basic-skill"
+    );
+    assert!(
+        dir.join("generated/cursor/skills/agent-invocable-skill/SKILL.md")
+            .exists(),
+        "missing cursor agent-invocable-skill"
     );
     assert!(
         dir.join("generated/cursor/agents/test-agent.md").exists(),
@@ -242,6 +260,56 @@ fn test_compile_opencode_command_carries_preset_variant() {
     assert!(
         frontmatter.contains("variant: high"),
         "opencode command should carry the preset variant, got:\n{frontmatter}"
+    );
+}
+
+/// `OpenCode` does not surface `model`, `variant`, or `tools` on skills, so
+/// agentspec does not emit them.
+///
+/// The assertion is not a tautology: the fixture's `agent-invocable-skill`
+/// names the `default` preset, whose `OpenCode` half sets both `model` and
+/// `variant` in `agentspec.toml`, and its spec declares `capabilities.tools`.
+/// All three keys had values available to emit.
+#[test]
+fn test_compile_opencode_skill_omits_discarded_frontmatter() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    let skill_path = dir.join("generated/opencode/skills/agent-invocable-skill/SKILL.md");
+    let content = std::fs::read_to_string(&skill_path).expect("failed to read opencode skill");
+
+    // Scope to the frontmatter block so a word in the body can neither satisfy
+    // nor break these assertions.
+    let Some((frontmatter, _)) = content
+        .strip_prefix("---\n")
+        .and_then(|rest| rest.split_once("\n---"))
+    else {
+        panic!("expected a frontmatter block, got:\n{content}");
+    };
+
+    for key in ["model:", "variant:", "tools:"] {
+        assert!(
+            !frontmatter.contains(key),
+            "opencode skill frontmatter should not carry `{key}`, got:\n{frontmatter}"
+        );
+    }
+
+    assert!(
+        frontmatter.contains("name: agent-invocable-skill"),
+        "opencode skill should keep its name, got:\n{frontmatter}"
+    );
+    assert!(
+        frontmatter.contains("description:"),
+        "opencode skill should keep its description, got:\n{frontmatter}"
     );
 }
 

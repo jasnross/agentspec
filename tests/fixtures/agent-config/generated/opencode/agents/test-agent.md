@@ -8,6 +8,8 @@ tools:
   grep: false
   question: false
   read: false
+  skill: false
+  task: false
   todowrite: false
   webfetch: false
   websearch: false

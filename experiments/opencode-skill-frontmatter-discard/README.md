@@ -2,7 +2,7 @@
 
 **Question.** Does OpenCode discard `model`, `variant`, and `tools` from skill frontmatter, resolving the skill to `name`, `description`, `location`, and `content` alone?
 
-**Why it matters.** `OpenCodeSkillFrontmatter` (`src/adapters/opencode.rs`) emits all three fields into every generated OpenCode skill file. `tools` is emitted unconditionally, so every skill agentspec writes carries a dead `tools:` block. If the three are discarded, agentspec is writing bytes no OpenCode stage reads.
+**Why it matters.** This package was written against a defect: `OpenCodeSkillFrontmatter` (`src/adapters/opencode.rs`) emitted all three fields into every generated OpenCode skill file, and `tools` was emitted unconditionally, so every skill agentspec wrote carried a dead `tools:` block. The measurement below established that OpenCode discards all three, making those bytes ones no OpenCode stage reads. The plan `$THOUGHTS_DIR/plans/2026-08-26-agentspec-set-1-opencode-frontmatter-fidelity.md` removed the emission — the struct now carries `name` and `description` alone.
 
 This is the harness's first negative finding — the first probe whose **confirmed** answer is that a provider ignores a rendering, as distinct from a probe that happens to have recorded a `refuted`. It is expressible as a positive signal because the discard shows up as a **complete, enumerable key set** rather than as a missing error; the contract forbids asserting on the absence of an error, and this probe never does.
 

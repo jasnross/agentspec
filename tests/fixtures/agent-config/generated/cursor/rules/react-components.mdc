@@ -1,0 +1,9 @@
+---
+description: React component conventions
+globs: src/components/**/*.tsx, src/hooks/**/*.ts
+alwaysApply: false
+---
+
+# React Components
+
+Use functional components with hooks.

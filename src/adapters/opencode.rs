@@ -42,14 +42,15 @@ struct OpenCodeCommandFrontmatter {
 }
 
 // See: https://opencode.ai/docs/skills/#write-frontmatter
+// `model`, `variant`, and `tools` are deliberately absent: `OpenCode` does not
+// surface them in its resolved skill record, which resolves to `content`,
+// `description`, `location`, and `name` alone.
+// Measured by `experiments/opencode-skill-frontmatter-discard/` at opencode 1.18.21.
 #[serde_with::skip_serializing_none]
 #[derive(Serialize)]
 struct OpenCodeSkillFrontmatter {
     name: String,
     description: String,
-    model: Option<String>,
-    variant: Option<String>,
-    tools: IndexMap<String, bool>,
 }
 
 /// Filename of `OpenCode`'s host config under each provider's config dir.
@@ -325,16 +326,6 @@ fn adapt_skill_spec(
     let model = preset.as_ref().and_then(|x| x.model.clone());
     let variant = preset.as_ref().and_then(|x| x.variant.clone());
 
-    let tools: Vec<ToolFrontmatter> = spec
-        .frontmatter
-        .capabilities
-        .and_then(|x| x.tools)
-        .into_iter()
-        .flatten()
-        .collect();
-
-    let tools = build_tool_map(&tools);
-
     let body = spec.body;
     let supporting_files = spec.supporting_files;
 
@@ -349,8 +340,8 @@ fn adapt_skill_spec(
 
         let frontmatter = OpenCodeCommandFrontmatter {
             description: description.clone(),
-            model: model.clone(),
-            variant: variant.clone(),
+            model,
+            variant,
         };
         let frontmatter_str = serde_yml::to_string(&frontmatter)?;
         let content = format!("---\n{frontmatter_str}---\n\n{}", body.trim());
@@ -368,9 +359,6 @@ fn adapt_skill_spec(
         let frontmatter = OpenCodeSkillFrontmatter {
             name: id.clone(),
             description,
-            model,
-            variant,
-            tools,
         };
         let frontmatter_str = serde_yml::to_string(&frontmatter)?;
         let content = format!("---\n{frontmatter_str}---\n\n{}", body.trim());
@@ -725,7 +713,8 @@ mod tests {
     use super::*;
     use crate::presets::{OpenCodePreset, ProviderPresets};
     use crate::spec::{
-        AgentFrontmatter, AgentSpec, ExecutionFrontmatter, SkillFrontmatter, SkillSpec,
+        AgentFrontmatter, AgentSpec, CapabilitiesFrontmatter, ExecutionFrontmatter,
+        SkillFrontmatter, SkillSpec,
     };
 
     fn compile_one_with_presets(
@@ -1011,6 +1000,45 @@ mod tests {
             "---\n",
             "description: A skill with a model-only preset\n",
             "model: anthropic/claude-sonnet-4-5\n",
+            "---\n",
+            "\n",
+            "Body.",
+        );
+        assert_eq!(content, expected);
+    }
+
+    /// The preset resolves with both `model` and `variant`, and the spec
+    /// declares `capabilities.tools`, so all three discarded keys had values
+    /// available to emit. The full-block assertion is what pins the field set
+    /// down to `name` and `description`.
+    #[test]
+    fn test_adapt_skill_output_format_omits_discarded_keys() {
+        let spec = Spec::Skill(SkillSpec {
+            path: "test.md".into(),
+            frontmatter: SkillFrontmatter {
+                id: "preset-skill".to_string(),
+                description: Some("A skill with a preset".to_string()),
+                tags: None,
+                execution: Some(ExecutionFrontmatter {
+                    preset: Some("default".to_string()),
+                }),
+                capabilities: Some(CapabilitiesFrontmatter {
+                    tools: Some(vec![ToolFrontmatter::Read, ToolFrontmatter::Grep]),
+                }),
+                user_invocable: false,
+                agent_invocable: true,
+            },
+            body: "Body.".to_string(),
+            supporting_files: IndexMap::new(),
+        });
+
+        let files = compile_one_with_presets(spec, None, &presets_with_model_and_variant());
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
+
+        let expected = concat!(
+            "---\n",
+            "name: preset-skill\n",
+            "description: A skill with a preset\n",
             "---\n",
             "\n",
             "Body.",

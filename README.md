@@ -562,6 +562,8 @@ opencode = { model = "openai/gpt-5.3-codex", variant = "low" }
 cursor = { model = "fast" }
 ```
 
+OpenCode reads `variant` on agents and commands. It does not surface the key on skills, so a skill that is only agent-invocable carries neither `model` nor `variant` in its generated OpenCode file, whatever its preset sets. The same is true of `capabilities.tools`: OpenCode reads a tool map on agents but not on skills, so declared tools do not reach a generated OpenCode skill file either.
+
 Then refer to a preset in your specs. For example, in `spec/agents/example-agent.md`:
 
 ```
