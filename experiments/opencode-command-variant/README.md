@@ -2,7 +2,7 @@
 
 **Question.** Does OpenCode read a top-level `variant:` key in command frontmatter, sibling to `model:`?
 
-**Why it matters.** `OpenCodeCommandFrontmatter` (`src/adapters/opencode.rs`) carries `model` but omits `variant`, so agentspec resolves a variant and then drops it on the way to every generated OpenCode command. If OpenCode reads the key, that is a field agentspec should be emitting and is not.
+**Why it matters.** This package was written against a defect: `OpenCodeCommandFrontmatter` (`src/adapters/opencode.rs`) carried `model` but had no `variant` field, so agentspec resolved a variant and then dropped it on the way to every generated OpenCode command. The measurement below established that OpenCode does read the key, and the plan `thoughts/plans/2026-08-26-agentspec-set-1-opencode-frontmatter-fidelity.md` corrected the drop — the struct now carries `variant` beside `model`.
 
 **Driver:** `unattended`. `opencode debug config --pure` makes no model request, needs no network and no credentials, and is deterministic.
 

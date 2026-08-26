@@ -31,11 +31,14 @@ struct OpenCodeAgentFrontmatter {
 }
 
 // See: https://opencode.ai/docs/commands/#markdown
+// `OpenCode` surfaces a top-level `variant:` key on commands, sibling to `model:`.
+// Measured by `experiments/opencode-command-variant/` at opencode 1.18.21.
 #[serde_with::skip_serializing_none]
 #[derive(Serialize)]
 struct OpenCodeCommandFrontmatter {
     description: String,
     model: Option<String>,
+    variant: Option<String>,
 }
 
 // See: https://opencode.ai/docs/skills/#write-frontmatter
@@ -347,6 +350,7 @@ fn adapt_skill_spec(
         let frontmatter = OpenCodeCommandFrontmatter {
             description: description.clone(),
             model: model.clone(),
+            variant: variant.clone(),
         };
         let frontmatter_str = serde_yml::to_string(&frontmatter)?;
         let content = format!("---\n{frontmatter_str}---\n\n{}", body.trim());
@@ -719,10 +723,16 @@ mod tests {
     use std::fs;
 
     use super::*;
-    use crate::spec::{AgentFrontmatter, AgentSpec, SkillFrontmatter, SkillSpec};
+    use crate::presets::{OpenCodePreset, ProviderPresets};
+    use crate::spec::{
+        AgentFrontmatter, AgentSpec, ExecutionFrontmatter, SkillFrontmatter, SkillSpec,
+    };
 
-    fn compile_one(spec: Spec, cfg: Option<&AdapterConfig>) -> Vec<GeneratedFile> {
-        let presets = HashMap::new();
+    fn compile_one_with_presets(
+        spec: Spec,
+        cfg: Option<&AdapterConfig>,
+        presets: &ProviderPresetsMap,
+    ) -> Vec<GeneratedFile> {
         let home = Path::new("/tmp/home");
         let cwd = Path::new("/tmp/cwd");
         let ctx = CompileCtx {
@@ -730,7 +740,7 @@ mod tests {
             home,
             cwd,
             target_dir: None,
-            presets: &presets,
+            presets,
             adapter_config: cfg,
             overwrite: false,
         };
@@ -738,6 +748,26 @@ mod tests {
             .compile(&[spec], &ctx)
             .expect("compile")
             .files
+    }
+
+    fn compile_one(spec: Spec, cfg: Option<&AdapterConfig>) -> Vec<GeneratedFile> {
+        compile_one_with_presets(spec, cfg, &HashMap::new())
+    }
+
+    /// A single-entry presets map whose `OpenCode` half sets both `model` and
+    /// `variant`, so an emitted file proves where each key lands.
+    fn presets_with_model_and_variant() -> ProviderPresetsMap {
+        HashMap::from([(
+            "default".to_string(),
+            ProviderPresets {
+                claude: None,
+                cursor: None,
+                opencode: Some(OpenCodePreset {
+                    model: Some("anthropic/claude-sonnet-4-5".to_string()),
+                    variant: Some("high".to_string()),
+                }),
+            },
+        )])
     }
 
     #[test]
@@ -811,6 +841,176 @@ mod tests {
             "  webfetch: false\n",
             "  websearch: false\n",
             "  write: false\n",
+            "---\n",
+            "\n",
+            "Body.",
+        );
+        assert_eq!(content, expected);
+    }
+
+    /// `OpenCode` surfaces `variant:` on agents as well as on commands. The
+    /// preset-free `test_adapt_agent_output_format` above pins the key's
+    /// *absence*, so without this test nothing here asserts the agent surface
+    /// carries it at all.
+    #[test]
+    fn test_adapt_agent_output_format_includes_variant() {
+        let spec = Spec::Agent(AgentSpec {
+            path: "test.md".into(),
+            frontmatter: AgentFrontmatter {
+                id: "preset-agent".to_string(),
+                description: "An agent with a preset".to_string(),
+                tags: None,
+                execution: Some(ExecutionFrontmatter {
+                    preset: Some("default".to_string()),
+                }),
+                capabilities: None,
+            },
+            body: "Body.".to_string(),
+        });
+
+        let files = compile_one_with_presets(spec, None, &presets_with_model_and_variant());
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
+
+        let expected = concat!(
+            "---\n",
+            "description: An agent with a preset\n",
+            "mode: subagent\n",
+            "model: anthropic/claude-sonnet-4-5\n",
+            "variant: high\n",
+            "tools:\n",
+            "  bash: false\n",
+            "  edit: false\n",
+            "  glob: false\n",
+            "  grep: false\n",
+            "  question: false\n",
+            "  read: false\n",
+            "  skill: false\n",
+            "  task: false\n",
+            "  todowrite: false\n",
+            "  webfetch: false\n",
+            "  websearch: false\n",
+            "  write: false\n",
+            "---\n",
+            "\n",
+            "Body.",
+        );
+        assert_eq!(content, expected);
+    }
+
+    /// Asserts the whole emitted block rather than substrings, so field order
+    /// is pinned alongside presence.
+    #[test]
+    fn test_adapt_command_output_format_includes_variant() {
+        let spec = Spec::Skill(SkillSpec {
+            path: "test.md".into(),
+            frontmatter: SkillFrontmatter {
+                id: "preset-skill".to_string(),
+                description: Some("A skill with a preset".to_string()),
+                tags: None,
+                execution: Some(ExecutionFrontmatter {
+                    preset: Some("default".to_string()),
+                }),
+                capabilities: None,
+                user_invocable: true,
+                agent_invocable: false,
+            },
+            body: "Body.".to_string(),
+            supporting_files: IndexMap::new(),
+        });
+
+        let files = compile_one_with_presets(spec, None, &presets_with_model_and_variant());
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
+
+        let expected = concat!(
+            "---\n",
+            "description: A skill with a preset\n",
+            "model: anthropic/claude-sonnet-4-5\n",
+            "variant: high\n",
+            "---\n",
+            "\n",
+            "Body.",
+        );
+        assert_eq!(content, expected);
+    }
+
+    /// A spec naming no preset at all: `skip_serializing_none` must elide both
+    /// optional keys rather than emitting them as null.
+    ///
+    /// The spec carries `execution: None` rather than a preset name absent from
+    /// the map, because `validate_semantics` rejects the latter with `unknown
+    /// preset` — that pairing never reaches an adapter in the real pipeline.
+    #[test]
+    fn test_adapt_command_output_omits_variant_without_preset() {
+        let spec = Spec::Skill(SkillSpec {
+            path: "test.md".into(),
+            frontmatter: SkillFrontmatter {
+                id: "presetless-skill".to_string(),
+                description: Some("A skill with no preset".to_string()),
+                tags: None,
+                execution: None,
+                capabilities: None,
+                user_invocable: true,
+                agent_invocable: false,
+            },
+            body: "Body.".to_string(),
+            supporting_files: IndexMap::new(),
+        });
+
+        let files = compile_one(spec, None);
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
+
+        let expected = concat!(
+            "---\n",
+            "description: A skill with no preset\n",
+            "---\n",
+            "\n",
+            "Body.",
+        );
+        assert_eq!(content, expected);
+    }
+
+    /// The closest neighbor to the drop this correction fixes: a preset that
+    /// resolves, but whose `OpenCode` half sets `model` with no `variant`. The
+    /// `model:` line proves the preset was found, so the missing `variant:` is
+    /// elision rather than a lookup miss.
+    #[test]
+    fn test_adapt_command_output_omits_variant_when_preset_sets_only_model() {
+        let presets = HashMap::from([(
+            "default".to_string(),
+            ProviderPresets {
+                claude: None,
+                cursor: None,
+                opencode: Some(OpenCodePreset {
+                    model: Some("anthropic/claude-sonnet-4-5".to_string()),
+                    variant: None,
+                }),
+            },
+        )]);
+
+        let spec = Spec::Skill(SkillSpec {
+            path: "test.md".into(),
+            frontmatter: SkillFrontmatter {
+                id: "preset-skill".to_string(),
+                description: Some("A skill with a model-only preset".to_string()),
+                tags: None,
+                execution: Some(ExecutionFrontmatter {
+                    preset: Some("default".to_string()),
+                }),
+                capabilities: None,
+                user_invocable: true,
+                agent_invocable: false,
+            },
+            body: "Body.".to_string(),
+            supporting_files: IndexMap::new(),
+        });
+
+        let files = compile_one_with_presets(spec, None, &presets);
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
+
+        let expected = concat!(
+            "---\n",
+            "description: A skill with a model-only preset\n",
+            "model: anthropic/claude-sonnet-4-5\n",
             "---\n",
             "\n",
             "Body.",

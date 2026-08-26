@@ -206,6 +206,45 @@ fn test_compile_generates_expected_files() {
     );
 }
 
+/// The fixture's `scripted-skill` names the `default` preset, whose `OpenCode`
+/// half sets both `model` and `variant` in `agentspec.toml`. Both keys must
+/// reach the generated command file.
+#[test]
+fn test_compile_opencode_command_carries_preset_variant() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    let command_path = dir.join("generated/opencode/commands/scripted-skill.md");
+    let content = std::fs::read_to_string(&command_path).expect("failed to read opencode command");
+
+    // Scope the assertions to the frontmatter block so body text can never
+    // satisfy them.
+    let Some((frontmatter, _)) = content
+        .strip_prefix("---\n")
+        .and_then(|rest| rest.split_once("\n---"))
+    else {
+        panic!("expected a frontmatter block, got:\n{content}");
+    };
+
+    assert!(
+        frontmatter.contains("model: anthropic/claude-sonnet-4-5"),
+        "opencode command should carry the preset model, got:\n{frontmatter}"
+    );
+    assert!(
+        frontmatter.contains("variant: high"),
+        "opencode command should carry the preset variant, got:\n{frontmatter}"
+    );
+}
+
 #[test]
 fn test_compile_path_scoped_rule_outputs() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
