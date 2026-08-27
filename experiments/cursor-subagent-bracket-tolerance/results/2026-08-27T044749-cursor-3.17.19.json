@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "provider": "cursor",
+  "status": "confirmed",
+  "depth": "resolved-config",
+  "date": "2026-08-27",
+  "tool_version": "3.17.19",
+  "assertion": {
+    "projection": "[.[] | select(.hook_event_name == \"subagentStart\" and .subagent_type == \"arm-bracket-tolerance\") | .subagent_model] | first",
+    "expected": "claude-opus-5-thinking-low",
+    "observed": "claude-opus-5-thinking-low"
+  }
+}

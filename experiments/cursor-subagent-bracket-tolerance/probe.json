@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "provider": "cursor",
+  "driver": "manual",
+  "depth": "resolved-config",
+  "question": "Does a bracket carrying an option Cursor's oracle cannot observe still apply the options it can?",
+  "version_source": {
+    "kind": "capture",
+    "jq": "[.[] | .cursor_version] | map(select(. != null)) | first"
+  },
+  "wait_for": "any(.[]; .hook_event_name == \"subagentStart\" and .subagent_type == \"arm-bracket-tolerance\")",
+  "assertion": {
+    "projection": "[.[] | select(.hook_event_name == \"subagentStart\" and .subagent_type == \"arm-bracket-tolerance\") | .subagent_model] | first",
+    "expected": "claude-opus-5-thinking-low"
+  }
+}
