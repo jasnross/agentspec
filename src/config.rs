@@ -19,7 +19,7 @@ pub struct AgentspecConfig {
     /// Model presets: preset name → per-provider model config.
     ///
     /// Each provider value is an object with provider-specific fields
-    /// (`model`, `variant`, `reasoning_effort`, etc.).
+    /// (`model`, `effort`, `variant`, etc.).
     #[serde(default)]
     pub presets: HashMap<String, ProviderPresets>,
 
@@ -506,7 +506,7 @@ impl SyncFlags {
 mod tests {
     use std::fs;
 
-    use agentspec::presets::{ClaudePreset, CursorPreset, OpenCodePreset};
+    use agentspec::presets::{ClaudeEffort, ClaudePreset, CursorPreset, OpenCodePreset};
 
     use super::*;
 
@@ -587,6 +587,42 @@ claude = "opus"
     }
 
     #[test]
+    fn test_discover_parses_claude_effort() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[presets.x]
+claude = { model = "opus", effort = "high" }
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+        assert_eq!(
+            config.presets["x"].claude,
+            Some(ClaudePreset {
+                model: Some("opus".to_string()),
+                effort: Some(ClaudeEffort::High),
+            })
+        );
+    }
+
+    /// `ClaudeEffort` is a closed enum precisely so a typo fails here rather
+    /// than reaching frontmatter, where Claude would degrade silently.
+    #[test]
+    fn test_discover_rejects_unknown_claude_effort() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[presets.x]
+claude = { model = "opus", effort = "hgih" }
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let err = AgentspecConfig::discover(tmp.path()).expect_err("expected parse error");
+        let full = format!("{err:#}");
+        assert!(full.contains("failed to parse"), "error: {full}");
+        // Asserting on the leaf, not just the `presets.x.claude` prefix: the
+        // documented promise is that the error names the offending *field*.
+        assert!(full.contains("presets.x.claude.effort"), "error: {full}");
+    }
+
+    #[test]
     fn test_discover_with_presets() {
         let tmp = tempfile::tempdir().expect("expected value");
         let toml_content = r#"
@@ -608,7 +644,8 @@ cursor = { model = "fast" }
         assert_eq!(
             deep.claude,
             Some(ClaudePreset {
-                model: Some("opus".to_string())
+                model: Some("opus".to_string()),
+                effort: None,
             })
         );
 

@@ -547,7 +547,7 @@ Model presets allow you to specify models in your specs in a provider-neutral wa
 
 ```toml
 [presets.architect]
-claude = { model = "opus" }
+claude = { model = "opus", effort = "high" }
 opencode = { model = "openai/gpt-5.3-codex", variant = "xhigh" }
 cursor = { model = "claude-opus-4-6" }
 
@@ -561,6 +561,14 @@ claude = { model = "haiku" }
 opencode = { model = "openai/gpt-5.3-codex", variant = "low" }
 cursor = { model = "fast" }
 ```
+
+Besides naming a model, a preset can say how hard that model should think. Each provider block uses **that provider's own spelling** for the setting — Claude calls it `effort`, OpenCode calls it `variant` — because there is no provider-neutral effort vocabulary to translate between: the legal values are a function of the model in all three providers. A key is only accepted in the block whose provider defines it; an unrecognized key is a parse error rather than a silent no-op.
+
+Claude's `effort` is a closed enum: `low`, `medium`, `high`, `xhigh`, or `max`. Anything else fails when `agentspec.toml` is parsed, with an error naming the offending field, so a typo never reaches a generated file. It renders as an `effort:` frontmatter key alongside `model:`, and it is independent of `model` — a Claude block may set `effort` with no `model` beside it.
+
+**Claude applies `effort` on some invocation paths and not others**, and it says nothing on the paths where it does not. Measured against Claude Code's outbound requests: an agent's `effort` governs the request when that agent is invoked as a **delegated subagent**, but not when it is the session's own agent. A skill's `effort` governs when the skill is the session's **entry prompt** or is **forked**, but not when it is model-invoked mid-session. So a skill that is only agent-invocable carries `effort:` into its generated file and never has it applied. agentspec emits the key wherever the preset sets it and does not warn about this.
+
+agentspec does **not** verify that an effort value is supported by the model named beside it. That is deliberate: all three providers degrade silently when it is not — Claude clamps an unsupported level down to the highest supported one at or below it, without warning — so agentspec warrants the format it composes, not that the value is meaningful for that model.
 
 OpenCode reads `variant` on agents and commands. It does not surface the key on skills, so a skill that is only agent-invocable carries neither `model` nor `variant` in its generated OpenCode file, whatever its preset sets. The same is true of `capabilities.tools`: OpenCode reads a tool map on agents but not on skills, so declared tools do not reach a generated OpenCode skill file either.
 

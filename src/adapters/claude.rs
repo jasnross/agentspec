@@ -20,16 +20,18 @@ use crate::compile::{
 };
 use crate::hooks_merge::{merge_owned, remove_owned};
 use crate::plan::{FileKind, ForwardPatch, ReversePatch};
-use crate::presets::ProviderPresetsMap;
+use crate::presets::{ClaudeEffort, ProviderPresetsMap};
 use crate::provider::Provider;
 use crate::spec::{AgentSpec, HookEvent, HookSpec, RuleSpec, SkillSpec, Spec, ToolFrontmatter};
 
 // See: https://code.claude.com/docs/en/sub-agents#supported-frontmatter-fields
+#[serde_with::skip_serializing_none]
 #[derive(Serialize)]
 struct ClaudeAgentFrontmatter {
     name: String,
     description: String,
     model: Option<String>,
+    effort: Option<ClaudeEffort>,
     tools: Option<Vec<ClaudeTool>>,
 }
 
@@ -47,6 +49,7 @@ struct ClaudeRuleFrontmatter {
 struct ClaudeSkillFrontmatter {
     description: String,
     model: Option<String>,
+    effort: Option<ClaudeEffort>,
     user_invocable: Option<bool>,
     disable_model_invocation: Option<bool>,
     allowed_tools: Option<Vec<ClaudeTool>>,
@@ -579,13 +582,15 @@ fn adapt_agent_spec(
     let id = spec.frontmatter.id;
     let description = spec.frontmatter.description;
 
-    let model = spec
+    let claude_preset = spec
         .frontmatter
         .execution
         .and_then(|x| x.preset)
         .and_then(|x| presets.get(&x))
-        .and_then(|x| x.claude.clone())
-        .and_then(|x| x.model);
+        .and_then(|x| x.claude.clone());
+
+    let model = claude_preset.as_ref().and_then(|x| x.model.clone());
+    let effort = claude_preset.and_then(|x| x.effort);
 
     let tools: Option<Vec<ClaudeTool>> = spec
         .frontmatter
@@ -615,6 +620,7 @@ fn adapt_agent_spec(
         name,
         description,
         model,
+        effort,
         tools,
     };
 
@@ -638,13 +644,15 @@ fn adapt_skill_spec(
     let id = spec.frontmatter.id;
     let description = spec.frontmatter.description.unwrap_or_default();
 
-    let model = spec
+    let claude_preset = spec
         .frontmatter
         .execution
         .and_then(|x| x.preset)
         .and_then(|x| presets.get(&x))
-        .and_then(|x| x.claude.clone())
-        .and_then(|x| x.model);
+        .and_then(|x| x.claude.clone());
+
+    let model = claude_preset.as_ref().and_then(|x| x.model.clone());
+    let effort = claude_preset.and_then(|x| x.effort);
 
     let allowed_tools: Option<Vec<ClaudeTool>> = spec
         .frontmatter
@@ -670,6 +678,7 @@ fn adapt_skill_spec(
     let frontmatter = ClaudeSkillFrontmatter {
         description,
         model,
+        effort,
         user_invocable,
         disable_model_invocation,
         allowed_tools,
@@ -802,8 +811,10 @@ mod tests {
     use serde::Deserialize;
 
     use super::*;
+    use crate::presets::{ClaudePreset, ProviderPresets};
     use crate::spec::{
-        AgentFrontmatter, AgentSpec, CapabilitiesFrontmatter, RuleFrontmatter, RuleSpec,
+        AgentFrontmatter, AgentSpec, CapabilitiesFrontmatter, ExecutionFrontmatter,
+        RuleFrontmatter, RuleSpec, SkillFrontmatter,
     };
 
     fn agent(id: &str, capabilities: Option<CapabilitiesFrontmatter>) -> Spec {
@@ -820,8 +831,29 @@ mod tests {
         })
     }
 
-    fn compile_one(spec: Spec, cfg: Option<&AdapterConfig>) -> Vec<GeneratedFile> {
-        let presets = HashMap::new();
+    /// `agent`, but naming an execution preset so a test can exercise preset
+    /// resolution without rebuilding `AgentSpec` inline.
+    fn agent_with_preset(id: &str, preset_name: &str) -> Spec {
+        Spec::Agent(AgentSpec {
+            path: "test.md".into(),
+            frontmatter: AgentFrontmatter {
+                id: id.to_string(),
+                description: "Test agent".to_string(),
+                tags: None,
+                execution: Some(ExecutionFrontmatter {
+                    preset: Some(preset_name.to_string()),
+                }),
+                capabilities: None,
+            },
+            body: "Body.".to_string(),
+        })
+    }
+
+    fn compile_one_with_presets(
+        spec: Spec,
+        cfg: Option<&AdapterConfig>,
+        presets: &ProviderPresetsMap,
+    ) -> Vec<GeneratedFile> {
         let home = Path::new("/tmp/home");
         let cwd = Path::new("/tmp/cwd");
         let ctx = CompileCtx {
@@ -829,11 +861,31 @@ mod tests {
             home,
             cwd,
             target_dir: None,
-            presets: &presets,
+            presets,
             adapter_config: cfg,
             overwrite: false,
         };
         ClaudeAdapter.compile(&[spec], &ctx).expect("compile").files
+    }
+
+    fn compile_one(spec: Spec, cfg: Option<&AdapterConfig>) -> Vec<GeneratedFile> {
+        compile_one_with_presets(spec, cfg, &HashMap::new())
+    }
+
+    /// A single-entry presets map whose Claude half sets both `model` and
+    /// `effort`, so an emitted file proves where each key lands.
+    fn presets_with_model_and_effort() -> ProviderPresetsMap {
+        HashMap::from([(
+            "default".to_string(),
+            ProviderPresets {
+                claude: Some(ClaudePreset {
+                    model: Some("opus".to_string()),
+                    effort: Some(ClaudeEffort::High),
+                }),
+                cursor: None,
+                opencode: None,
+            },
+        )])
     }
 
     #[test]
@@ -886,8 +938,95 @@ mod tests {
             "---\n",
             "name: test-agent\n",
             "description: Test agent\n",
-            "model: null\n",
-            "tools: null\n",
+            "---\n",
+            "\n",
+            "Body.",
+        );
+        assert_eq!(content, expected);
+    }
+
+    #[test]
+    fn test_adapt_agent_preset_emits_model_and_effort() {
+        let files = compile_one_with_presets(
+            agent_with_preset("test-agent", "default"),
+            None,
+            &presets_with_model_and_effort(),
+        );
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
+
+        let expected = concat!(
+            "---\n",
+            "name: test-agent\n",
+            "description: Test agent\n",
+            "model: opus\n",
+            "effort: high\n",
+            "---\n",
+            "\n",
+            "Body.",
+        );
+        assert_eq!(content, expected);
+    }
+
+    /// Claude's `effort` is independent of `model` — measured at
+    /// `outbound-request` depth by `experiments/claude-agent-effort/` with no
+    /// `model` key present at all.
+    #[test]
+    fn test_adapt_agent_preset_effort_without_model() {
+        let presets = HashMap::from([(
+            "default".to_string(),
+            ProviderPresets {
+                claude: Some(ClaudePreset {
+                    model: None,
+                    effort: Some(ClaudeEffort::High),
+                }),
+                cursor: None,
+                opencode: None,
+            },
+        )]);
+
+        let files =
+            compile_one_with_presets(agent_with_preset("test-agent", "default"), None, &presets);
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
+
+        let expected = concat!(
+            "---\n",
+            "name: test-agent\n",
+            "description: Test agent\n",
+            "effort: high\n",
+            "---\n",
+            "\n",
+            "Body.",
+        );
+        assert_eq!(content, expected);
+    }
+
+    #[test]
+    fn test_adapt_skill_preset_emits_effort() {
+        let spec = Spec::Skill(SkillSpec {
+            path: "test.md".into(),
+            frontmatter: SkillFrontmatter {
+                id: "test-skill".to_string(),
+                description: Some("Test skill".to_string()),
+                tags: None,
+                execution: Some(ExecutionFrontmatter {
+                    preset: Some("default".to_string()),
+                }),
+                capabilities: None,
+                user_invocable: true,
+                agent_invocable: true,
+            },
+            body: "Body.".to_string(),
+            supporting_files: IndexMap::new(),
+        });
+
+        let files = compile_one_with_presets(spec, None, &presets_with_model_and_effort());
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
+
+        let expected = concat!(
+            "---\n",
+            "description: Test skill\n",
+            "model: opus\n",
+            "effort: high\n",
             "---\n",
             "\n",
             "Body.",

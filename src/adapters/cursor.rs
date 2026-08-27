@@ -25,6 +25,7 @@ use crate::provider::Provider;
 use crate::spec::{AgentSpec, HookEvent, HookSpec, RuleSpec, SkillSpec, Spec, ToolFrontmatter};
 
 // See: https://cursor.com/docs/subagents#configuration-fields
+#[serde_with::skip_serializing_none]
 #[derive(Serialize)]
 struct CursorAgentFrontmatter {
     name: String,
@@ -745,7 +746,6 @@ mod tests {
             "---\n",
             "name: test-agent\n",
             "description: Test agent\n",
-            "model: null\n",
             "---\n",
             "\n",
             "Body.",
