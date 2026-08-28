@@ -103,9 +103,14 @@ fn main() -> Result<()> {
             // users run to inspect their `[spec].ignore` effect.
             surface_load_report(&dirs.ignore, &report, ReportDisplay::Full);
 
-            // Config validation runs after spec validation: spec errors are
-            // more fundamental — if specs fail to load or validate, config
-            // validation is secondary and the user should fix spec issues first.
+            // Sync-target validation runs after spec validation: spec errors are
+            // more fundamental — if specs fail to load or validate, sync config
+            // is secondary and the user should fix spec issues first.
+            //
+            // Preset config is not checked here. Unlike sync targets it feeds
+            // the compile stage, so it is validated inside `validate_semantics`
+            // — which gates every command *and* every library consumer of
+            // `compile_specs`, not just this arm.
             let config_errors = config.validate_sync_config();
             if !config_errors.is_empty() {
                 for e in &config_errors {

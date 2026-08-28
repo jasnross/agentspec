@@ -562,13 +562,47 @@ opencode = { model = "openai/gpt-5.3-codex", variant = "low" }
 cursor = { model = "fast" }
 ```
 
-Besides naming a model, a preset can say how hard that model should think. Each provider block uses **that provider's own spelling** for the setting — Claude calls it `effort`, OpenCode calls it `variant` — because there is no provider-neutral effort vocabulary to translate between: the legal values are a function of the model in all three providers. A key is only accepted in the block whose provider defines it; an unrecognized key is a parse error rather than a silent no-op.
+Besides naming a model, a preset can say how hard that model should think. Each provider block uses **that provider's own spelling** for the setting, because there is no provider-neutral effort vocabulary to translate between: the legal values are a function of the model in all three providers. A key is only accepted in the block whose provider defines it; an unrecognized key is a parse error rather than a silent no-op.
+
+| Provider | Preset key | Renders as |
+| --- | --- | --- |
+| Claude | `effort` | an `effort:` frontmatter key |
+| Cursor | `effort`, `fast`, `context` | a `[effort=…,fast=…,context=…]` suffix on the model id |
+| OpenCode | `variant` | a `variant:` frontmatter key, sibling to `model:` |
 
 Claude's `effort` is a closed enum: `low`, `medium`, `high`, `xhigh`, or `max`. Anything else fails when `agentspec.toml` is parsed, with an error naming the offending field, so a typo never reaches a generated file. It renders as an `effort:` frontmatter key alongside `model:`, and it is independent of `model` — a Claude block may set `effort` with no `model` beside it.
 
 **Claude applies `effort` on some invocation paths and not others**, and it says nothing on the paths where it does not. Measured against Claude Code's outbound requests: an agent's `effort` governs the request when that agent is invoked as a **delegated subagent**, but not when it is the session's own agent. A skill's `effort` governs when the skill is the session's **entry prompt** or is **forked**, but not when it is model-invoked mid-session. So a skill that is only agent-invocable carries `effort:` into its generated file and never has it applied. agentspec emits the key wherever the preset sets it and does not warn about this.
 
 agentspec does **not** verify that an effort value is supported by the model named beside it. That is deliberate: all three providers degrade silently when it is not — Claude clamps an unsupported level down to the highest supported one at or below it, without warning — so agentspec warrants the format it composes, not that the value is meaningful for that model.
+
+### Cursor's model options
+
+Cursor encodes its options as a bracket suffix on the model id rather than as separate frontmatter keys, so agentspec composes one from the named fields you set:
+
+```toml
+[presets.deep_review]
+cursor = { model = "claude-opus-5", effort = "high", fast = false, context = "300k" }
+# renders as → model: claude-opus-5[effort=high,fast=false,context=300k]
+```
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `effort` | string | Not an enum, unlike Claude's. Cursor documents its legal values as varying by model and discoverable only at runtime, so there is no static set to encode — an enum would reject values Cursor already accepts. |
+| `fast` | bool | Written `false`, not `"false"`. A `false` still renders; it is meaningful to Cursor even where it matches the model's default. |
+| `context` | string | A magnitude such as `"300k"`. See the note below. |
+
+**Cursor's `model` must be a bare identifier.** agentspec is the sole writer of the bracket string, so a hand-written `model = "claude-opus-5[effort=high]"` is rejected — the error names the field to move the option to. Two spellings of one option cannot coexist, and the ban relocates a setting rather than removing one: every option Cursor documents has a named field.
+
+For the same reason, none of `[`, `]`, `,`, or `=` may appear in `model`, `effort`, or `context`. Cursor documents no escaping syntax for its bracket grammar, so a delimiter inside a value would forge an option the preset never declared — `effort = "high,context=1m"` would otherwise compose `model: claude-opus-5[effort=high,context=1m]`. These are rejected at validation time rather than escaped, since there is no escaping convention to compose against.
+
+**About `context`:** agentspec composes it from Cursor's published syntax, but Cursor exposes no way to observe the option taking effect — its resolved view flattens the model string and hides `context` whether it was honored or discarded. What _is_ measured, by `experiments/cursor-subagent-bracket-tolerance/`, is that a bracket carrying `context` still applies the options beside it. So agentspec passes `context` through without warranting its effect.
+
+### Execution presets reach skill files on Claude only
+
+This covers `model` as well as `effort`. Cursor's skill schema has no model field at all, so nothing from a preset's Cursor block reaches a generated Cursor skill file. OpenCode reads neither `model` nor `variant` on skills. Only Claude's `SKILL.md` carries them. A preset set on a skill spec is silently inert on the other two providers.
+
+An OpenCode `variant` set with no `model` beside it is likewise accepted and inert — unlike Cursor's options, which are rejected without a `model`, because Cursor cannot express them apart from one.
 
 OpenCode reads `variant` on agents and commands. It does not surface the key on skills, so a skill that is only agent-invocable carries neither `model` nor `variant` in its generated OpenCode file, whatever its preset sets. The same is true of `capabilities.tools`: OpenCode reads a tool map on agents but not on skills, so declared tools do not reach a generated OpenCode skill file either.
 

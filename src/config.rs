@@ -623,6 +623,26 @@ claude = { model = "opus", effort = "hgih" }
     }
 
     #[test]
+    fn test_discover_parses_cursor_model_options() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let toml_content = r#"
+[presets.x]
+cursor = { model = "claude-opus-5", effort = "high", fast = false, context = "300k" }
+"#;
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        let config = AgentspecConfig::discover(tmp.path()).expect("expected value");
+        assert_eq!(
+            config.presets["x"].cursor,
+            Some(CursorPreset {
+                model: Some("claude-opus-5".to_string()),
+                effort: Some("high".to_string()),
+                fast: Some(false),
+                context: Some("300k".to_string()),
+            })
+        );
+    }
+
+    #[test]
     fn test_discover_with_presets() {
         let tmp = tempfile::tempdir().expect("expected value");
         let toml_content = r#"
@@ -660,7 +680,8 @@ cursor = { model = "fast" }
         assert_eq!(
             balanced.cursor,
             Some(CursorPreset {
-                model: Some("fast".to_string())
+                model: Some("fast".to_string()),
+                ..CursorPreset::default()
             })
         );
     }

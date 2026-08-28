@@ -130,7 +130,47 @@ pub fn validate_semantics(specs: &[Spec], presets: &ProviderPresetsMap) -> Vec<V
         }
     }
 
+    errors.extend(validate_preset_config(presets));
     errors
+}
+
+/// Cross-field checks on the provider blocks inside every `[presets.<name>]`.
+///
+/// Lives here, in the library, rather than beside the binary's other config
+/// checks: `CursorPreset`, `compile_specs`, and the adapters are all public API,
+/// so a consumer that never touches the CLI can still reach the Cursor adapter's
+/// bracket composition. Gating in the binary would leave that path guarded only
+/// by `debug_assert!`s, which compile out in release.
+///
+/// Presets are keyed by a `HashMap`, so iteration order is nondeterministic and
+/// a multi-error run would report differently each time. Sort by preset name
+/// first. At most one error per preset — each provider's `validate` reports its
+/// first failing check.
+fn validate_preset_config(presets: &ProviderPresetsMap) -> Vec<ValidationError> {
+    let mut names: Vec<&String> = presets.keys().collect();
+    names.sort();
+
+    // Cursor is the only provider with cross-field checks. Adding a second
+    // provider's `validate` means extending this into a per-provider chain —
+    // appending after the `?` below would skip presets with no Cursor block.
+    names
+        .into_iter()
+        .filter_map(|name| {
+            presets
+                .get(name)?
+                .cursor
+                .as_ref()?
+                .validate(name)
+                .err()
+                .map(|e| ValidationError {
+                    // Relative because the library does not know where the file
+                    // was discovered. The message names the offending block, so
+                    // it reads unambiguously either way.
+                    path: PathBuf::from("agentspec.toml"),
+                    message: e.to_string(),
+                })
+        })
+        .collect()
 }
 
 fn validate_hook_matcher(hook_spec: &crate::spec::HookSpec, errors: &mut Vec<ValidationError>) {
@@ -584,5 +624,102 @@ mod tests {
             errors.is_empty(),
             "expected no errors for valid paths, got: {errors:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod preset_config_tests {
+    use std::collections::HashMap;
+
+    use super::*;
+    use crate::presets::{CursorPreset, ProviderPresets, ProviderPresetsMap};
+
+    fn presets_with_cursor(name: &str, cursor: CursorPreset) -> ProviderPresetsMap {
+        HashMap::from([(
+            name.to_string(),
+            ProviderPresets {
+                claude: None,
+                cursor: Some(cursor),
+                opencode: None,
+            },
+        )])
+    }
+
+    #[test]
+    fn test_rejects_bracketed_cursor_model() {
+        let presets = presets_with_cursor(
+            "x",
+            CursorPreset {
+                model: Some("claude-opus-5[effort=high]".to_string()),
+                ..CursorPreset::default()
+            },
+        );
+        let errors = validate_preset_config(&presets);
+        assert_eq!(errors.len(), 1, "errors: {errors:?}");
+        assert!(
+            errors[0].message.contains("bare model id"),
+            "error: {}",
+            errors[0].message
+        );
+    }
+
+    /// The gate must reach spec compilation, so it lives in `validate_semantics`
+    /// rather than beside the binary's other config checks — a library consumer
+    /// of `compile_specs` is gated by the same call.
+    #[test]
+    fn test_validate_semantics_surfaces_preset_errors_with_no_specs() {
+        let presets = presets_with_cursor(
+            "x",
+            CursorPreset {
+                model: Some("claude-opus-5[effort=high]".to_string()),
+                ..CursorPreset::default()
+            },
+        );
+        let errors = validate_semantics(&[], &presets);
+        assert_eq!(errors.len(), 1, "errors: {errors:?}");
+    }
+
+    #[test]
+    fn test_rejects_delimiter_in_option_value() {
+        for (field, preset) in [
+            (
+                "effort",
+                CursorPreset {
+                    model: Some("claude-opus-5".to_string()),
+                    effort: Some("high,context=1m".to_string()),
+                    ..CursorPreset::default()
+                },
+            ),
+            (
+                "context",
+                CursorPreset {
+                    model: Some("claude-opus-5".to_string()),
+                    context: Some("300k]evil".to_string()),
+                    ..CursorPreset::default()
+                },
+            ),
+        ] {
+            let errors = validate_preset_config(&presets_with_cursor("x", preset));
+            assert_eq!(errors.len(), 1, "{field}: {errors:?}");
+            assert!(
+                errors[0].message.contains(field),
+                "{field}: {}",
+                errors[0].message
+            );
+        }
+    }
+
+    #[test]
+    fn test_accepts_well_formed_preset() {
+        let presets = presets_with_cursor(
+            "x",
+            CursorPreset {
+                model: Some("claude-opus-5".to_string()),
+                effort: Some("high".to_string()),
+                fast: Some(false),
+                context: Some("300k".to_string()),
+            },
+        );
+        assert!(validate_preset_config(&presets).is_empty());
     }
 }

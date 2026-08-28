@@ -5414,3 +5414,110 @@ fn test_prune_with_provider_flag_only_checks_that_provider() {
         "cursor hooks.json should be deleted after pruning all entries"
     );
 }
+
+/// Overwrite the per-test copy's `agentspec.toml`. The shared fixture must stay
+/// valid for every other test, so preset-shape scenarios are installed into the
+/// `TempDir` after `setup()` rather than committed — the same reasoning as
+/// `install_hook_fixture`.
+fn install_agentspec_toml(dir: &Path, body: &str) {
+    let r = std::fs::write(dir.join("agentspec.toml"), body);
+    assert!(r.is_ok(), "write agentspec.toml: {r:?}");
+}
+
+/// Point the fixture's agent at a preset by name.
+fn install_agent_using_preset(dir: &Path, preset_name: &str) {
+    let r = std::fs::write(
+        dir.join("spec/agents/test-agent.md"),
+        format!(
+            "---\n\
+             id: test-agent\n\
+             description: A test agent for fixture testing\n\
+             execution:\n  preset: {preset_name}\n\
+             ---\n\n\
+             # Test Agent\n\n\
+             Agent instructions here.\n"
+        ),
+    );
+    assert!(r.is_ok(), "write test-agent.md: {r:?}");
+}
+
+/// The bracket ban has to reach `compile`, not just `validate`. The precedent it
+/// deliberately departs from — `SyncTargetConfig::validate_for_provider` — is
+/// only wired into the `validate` command, so a preset gate copied literally
+/// from it would let `compile` compose a double bracket unchecked.
+#[test]
+fn test_compile_rejects_bracketed_cursor_model() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    install_agentspec_toml(
+        &dir,
+        r#"
+[spec]
+sources_dir = "spec"
+
+[compile]
+output_dir = "generated"
+
+[presets.default]
+cursor = { model = "claude-opus-5[effort=high]" }
+"#,
+    );
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "compile should have failed:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("presets.default.cursor"),
+        "stderr should name the offending preset block: {stderr}"
+    );
+    assert!(
+        stderr.contains("bare model id"),
+        "stderr should explain the constraint: {stderr}"
+    );
+}
+
+#[test]
+fn test_compile_composes_cursor_model_options() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    install_agentspec_toml(
+        &dir,
+        r#"
+[spec]
+sources_dir = "spec"
+
+[compile]
+output_dir = "generated"
+
+[presets.default]
+cursor = { model = "claude-opus-5", effort = "high", fast = false, context = "300k" }
+"#,
+    );
+    install_agent_using_preset(&dir, "default");
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    let content = std::fs::read_to_string(dir.join("generated/cursor/agents/test-agent.md"))
+        .expect("failed to read cursor agent");
+    assert!(
+        content.contains("model: claude-opus-5[effort=high,fast=false,context=300k]"),
+        "composed model line missing from:\n{content}"
+    );
+}

@@ -20,7 +20,7 @@ use crate::compile::{
 };
 use crate::hooks_merge::{merge_owned, remove_owned};
 use crate::plan::{FileKind, ForwardPatch, ReversePatch};
-use crate::presets::ProviderPresetsMap;
+use crate::presets::{CursorPreset, ProviderPresetsMap};
 use crate::provider::Provider;
 use crate::spec::{AgentSpec, HookEvent, HookSpec, RuleSpec, SkillSpec, Spec, ToolFrontmatter};
 
@@ -541,13 +541,64 @@ fn adapt_agent_spec(
     let id = spec.frontmatter.id;
     let description = spec.frontmatter.description;
 
-    let model = spec
+    let cursor_preset = spec
         .frontmatter
         .execution
         .and_then(|x| x.preset)
         .and_then(|x| presets.get(&x))
-        .and_then(|x| x.cursor.clone())
-        .and_then(|x| x.model);
+        .and_then(|x| x.cursor.clone());
+
+    // Cursor encodes model options as a `model[k=v,k=v]` suffix on the model id.
+    // Building that suffix is string *construction* of a provider-defined
+    // identifier format — not string *manipulation of serialized output* — so it
+    // does not violate the operate-on-structs rule. The typed fields are the
+    // source of truth right up to this point; nothing parses the result back.
+    //
+    // The emission order is fixed by this array literal, and agentspec owns it.
+    // Authors cannot produce a different order, so one deterministic order is
+    // enough — and a stable order is what keeps the byte-level tests meaningful.
+    //
+    // The destructuring binding mirrors `CursorPreset::any_option_set`: a fourth
+    // option added to the struct fails to compile here rather than being
+    // silently dropped from the bracket after passing validation as "set".
+    let opts: Vec<String> = cursor_preset
+        .as_ref()
+        .map(
+            |CursorPreset {
+                 model: _,
+                 effort,
+                 fast,
+                 context,
+             }| {
+                [
+                    effort.as_ref().map(|v| format!("effort={v}")),
+                    fast.map(|v| format!("fast={v}")),
+                    context.as_ref().map(|v| format!("context={v}")),
+                ]
+                .into_iter()
+                .flatten()
+                .collect()
+            },
+        )
+        .unwrap_or_default();
+
+    let base = cursor_preset.and_then(|p| p.model);
+
+    // Defense-in-depth only: `CursorPreset::validate` is the user-facing gate,
+    // reached from `Specs::validate` before any adapter runs.
+    debug_assert!(
+        base.as_deref().is_none_or(|m| !m.contains('[')),
+        "bracketed Cursor model should have been rejected by CursorPreset::validate"
+    );
+    debug_assert!(
+        base.is_some() || opts.is_empty(),
+        "model-less Cursor options should have been rejected by CursorPreset::validate"
+    );
+
+    let model = match (base, opts.is_empty()) {
+        (Some(m), false) => Some(format!("{m}[{}]", opts.join(","))),
+        (m, _) => m,
+    };
 
     let file_prefix = cfg.and_then(AdapterConfig::file_prefix).unwrap_or_default();
     let path = Path::new("agents").join(format!("{file_prefix}{id}.md"));
@@ -688,12 +739,17 @@ mod tests {
     use indexmap::IndexMap;
 
     use super::*;
+    use crate::presets::ProviderPresets;
     use crate::spec::{
-        AgentFrontmatter, AgentSpec, RuleFrontmatter, RuleSpec, SkillFrontmatter, SkillSpec,
+        AgentFrontmatter, AgentSpec, ExecutionFrontmatter, RuleFrontmatter, RuleSpec,
+        SkillFrontmatter, SkillSpec,
     };
 
-    fn compile_one(spec: Spec, cfg: Option<&AdapterConfig>) -> Vec<GeneratedFile> {
-        let presets = HashMap::new();
+    fn compile_one_with_presets(
+        spec: Spec,
+        cfg: Option<&AdapterConfig>,
+        presets: &ProviderPresetsMap,
+    ) -> Vec<GeneratedFile> {
         let home = Path::new("/tmp/home");
         let cwd = Path::new("/tmp/cwd");
         let ctx = CompileCtx {
@@ -701,11 +757,112 @@ mod tests {
             home,
             cwd,
             target_dir: None,
-            presets: &presets,
+            presets,
             adapter_config: cfg,
             overwrite: false,
         };
         CursorAdapter.compile(&[spec], &ctx).expect("compile").files
+    }
+
+    fn compile_one(spec: Spec, cfg: Option<&AdapterConfig>) -> Vec<GeneratedFile> {
+        compile_one_with_presets(spec, cfg, &HashMap::new())
+    }
+
+    /// `agent`, but naming an execution preset so a test can exercise preset
+    /// resolution without rebuilding `AgentSpec` inline.
+    fn agent_with_preset(id: &str, preset_name: &str) -> Spec {
+        Spec::Agent(AgentSpec {
+            path: "test.md".into(),
+            frontmatter: AgentFrontmatter {
+                id: id.to_string(),
+                description: "Test agent".to_string(),
+                tags: None,
+                execution: Some(ExecutionFrontmatter {
+                    preset: Some(preset_name.to_string()),
+                }),
+                capabilities: None,
+            },
+            body: "Body.".to_string(),
+        })
+    }
+
+    /// A single-entry presets map whose Cursor half is built from `preset`.
+    fn presets_with_cursor(preset: CursorPreset) -> ProviderPresetsMap {
+        HashMap::from([(
+            "default".to_string(),
+            ProviderPresets {
+                claude: None,
+                cursor: Some(preset),
+                opencode: None,
+            },
+        )])
+    }
+
+    /// The generated `model:` line for an agent compiled against `preset`.
+    fn model_line(preset: CursorPreset) -> String {
+        let files = compile_one_with_presets(
+            agent_with_preset("test-agent", "default"),
+            None,
+            &presets_with_cursor(preset),
+        );
+        let content = String::from_utf8(files[0].content.clone()).expect("expected value");
+        content
+            .lines()
+            .find(|l| l.starts_with("model:"))
+            .unwrap_or("<no model line>")
+            .to_string()
+    }
+
+    /// Pins both the composition and the emission order. Every other Cursor
+    /// bracket assertion depends on that order, so a reordering of the adapter's
+    /// array literal fails here with a clear message rather than several with
+    /// opaque ones.
+    #[test]
+    fn test_adapt_agent_composes_all_options_in_order() {
+        let line = model_line(CursorPreset {
+            model: Some("claude-opus-5".to_string()),
+            effort: Some("high".to_string()),
+            fast: Some(false),
+            context: Some("300k".to_string()),
+        });
+        assert_eq!(
+            line,
+            "model: claude-opus-5[effort=high,fast=false,context=300k]"
+        );
+    }
+
+    #[test]
+    fn test_adapt_agent_single_option_has_no_trailing_comma() {
+        let line = model_line(CursorPreset {
+            model: Some("claude-opus-5".to_string()),
+            effort: Some("high".to_string()),
+            ..CursorPreset::default()
+        });
+        assert_eq!(line, "model: claude-opus-5[effort=high]");
+    }
+
+    #[test]
+    fn test_adapt_agent_no_options_emits_bare_model() {
+        let line = model_line(CursorPreset {
+            model: Some("claude-opus-5".to_string()),
+            ..CursorPreset::default()
+        });
+        assert_eq!(line, "model: claude-opus-5");
+    }
+
+    /// `fast = false` is meaningful to Cursor even though it matches the model
+    /// default, so it must render rather than be skipped.
+    /// `experiments/cursor-subagent-model-options/` records that Cursor's oracle
+    /// merely cannot *display* a default-valued option — not that Cursor ignores
+    /// it. Skipping it here would silently drop an author's explicit setting.
+    #[test]
+    fn test_adapt_agent_renders_fast_false() {
+        let line = model_line(CursorPreset {
+            model: Some("claude-opus-5".to_string()),
+            fast: Some(false),
+            ..CursorPreset::default()
+        });
+        assert_eq!(line, "model: claude-opus-5[fast=false]");
     }
 
     fn make_hook_spec(id: &str, event: HookEvent, matcher: Option<&str>) -> HookSpec {
