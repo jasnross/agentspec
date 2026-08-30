@@ -569,6 +569,7 @@ fn adapt_agent_spec(
                  effort,
                  fast,
                  context,
+                 params,
              }| {
                 [
                     effort.as_ref().map(|v| format!("effort={v}")),
@@ -577,6 +578,11 @@ fn adapt_agent_spec(
                 ]
                 .into_iter()
                 .flatten()
+                // Named options first in their fixed order, then `params` —
+                // a `BTreeMap`, so its own order is already deterministic and
+                // needs no sort here. A `params` key cannot collide with a
+                // named option; `CursorPreset::validate` rejects that.
+                .chain(params.iter().map(|(k, v)| format!("{k}={v}")))
                 .collect()
             },
         )
@@ -585,14 +591,40 @@ fn adapt_agent_spec(
     let base = cursor_preset.and_then(|p| p.model);
 
     // Defense-in-depth only: `CursorPreset::validate` is the user-facing gate,
-    // reached from `Specs::validate` before any adapter runs.
+    // reached from `Specs::validate` before any adapter runs. These mirror all
+    // four of its rules rather than a subset, so a direct `Adapter::compile`
+    // call — the one route the gate cannot cover — trips on any of them in a
+    // debug build. They still compile out in release.
     debug_assert!(
-        base.as_deref().is_none_or(|m| !m.contains('[')),
-        "bracketed Cursor model should have been rejected by CursorPreset::validate"
+        base.as_deref()
+            .is_none_or(|m| !m.contains(crate::presets::CURSOR_BRACKET_DELIMITERS)),
+        "delimiter-bearing Cursor model should have been rejected by CursorPreset::validate"
+    );
+    debug_assert!(
+        base.as_deref()
+            .is_none_or(|m| !m.is_empty() && !m.contains(char::is_whitespace)),
+        "empty or whitespace-bearing Cursor model should have been rejected by CursorPreset::validate"
     );
     debug_assert!(
         base.is_some() || opts.is_empty(),
         "model-less Cursor options should have been rejected by CursorPreset::validate"
+    );
+    // Checked on the composed `k=v` fragments rather than the fields, so one
+    // assertion covers every option without naming them — and so a fourth
+    // option is covered the moment the array literal above emits it.
+    debug_assert!(
+        opts.iter().all(|opt| {
+            // Exactly one `=`, from the `format!` above; a delimiter in the
+            // value would add another, and a forged option would add a comma.
+            opt.match_indices('=').count() == 1
+                && !opt.contains([',', '[', ']'])
+                && !opt.contains(char::is_whitespace)
+                // Non-empty on both sides of the `=`. An empty `params` key
+                // composes `=cost`, which satisfies every other condition here.
+                && !opt.ends_with('=')
+                && !opt.starts_with('=')
+        }),
+        "malformed Cursor bracket option should have been rejected by CursorPreset::validate: {opts:?}"
     );
 
     let model = match (base, opts.is_empty()) {
@@ -824,11 +856,44 @@ mod tests {
             effort: Some("high".to_string()),
             fast: Some(false),
             context: Some("300k".to_string()),
+            params: std::collections::BTreeMap::new(),
         });
         assert_eq!(
             line,
             "model: claude-opus-5[effort=high,fast=false,context=300k]"
         );
+    }
+
+    /// `params` composes after the named options, in `BTreeMap` key order, so a
+    /// bracket option agentspec has no field for is still expressible. Cursor's
+    /// option set is account- and model-specific — `optimize_for` is documented
+    /// with no named field here — so without this the ban would delete the
+    /// capability rather than relocate it.
+    #[test]
+    fn test_adapt_agent_composes_params_after_named_options() {
+        let line = model_line(CursorPreset {
+            model: Some("auto-smart".to_string()),
+            effort: Some("high".to_string()),
+            params: BTreeMap::from([
+                ("optimize_for".to_string(), "cost".to_string()),
+                ("a_first_by_key".to_string(), "1".to_string()),
+            ]),
+            ..CursorPreset::default()
+        });
+        assert_eq!(
+            line,
+            "model: auto-smart[effort=high,a_first_by_key=1,optimize_for=cost]"
+        );
+    }
+
+    #[test]
+    fn test_adapt_agent_params_alone_composes_bracket() {
+        let line = model_line(CursorPreset {
+            model: Some("auto-smart".to_string()),
+            params: BTreeMap::from([("optimize_for".to_string(), "cost".to_string())]),
+            ..CursorPreset::default()
+        });
+        assert_eq!(line, "model: auto-smart[optimize_for=cost]");
     }
 
     #[test]
@@ -841,6 +906,18 @@ mod tests {
         assert_eq!(line, "model: claude-opus-5[effort=high]");
     }
 
+    /// `fast = true` composed alone, so a change to how the bool is stringified
+    /// fails here rather than only inside the combined ordering case.
+    #[test]
+    fn test_adapt_agent_renders_fast_true() {
+        let line = model_line(CursorPreset {
+            model: Some("claude-opus-5".to_string()),
+            fast: Some(true),
+            ..CursorPreset::default()
+        });
+        assert_eq!(line, "model: claude-opus-5[fast=true]");
+    }
+
     #[test]
     fn test_adapt_agent_no_options_emits_bare_model() {
         let line = model_line(CursorPreset {
@@ -850,11 +927,12 @@ mod tests {
         assert_eq!(line, "model: claude-opus-5");
     }
 
-    /// `fast = false` is meaningful to Cursor even though it matches the model
-    /// default, so it must render rather than be skipped.
-    /// `experiments/cursor-subagent-model-options/` records that Cursor's oracle
-    /// merely cannot *display* a default-valued option — not that Cursor ignores
-    /// it. Skipping it here would silently drop an author's explicit setting.
+    /// `fast = false` renders rather than being skipped: the author asked for it
+    /// explicitly, and dropping it would be agentspec deciding the value is
+    /// redundant. Whether Cursor *acts* on it is unmeasured —
+    /// `experiments/cursor-subagent-model-options/` records the arm as not
+    /// discriminating, because a default-valued option is invisible to the
+    /// flattened `subagent_model` oracle either way.
     #[test]
     fn test_adapt_agent_renders_fast_false() {
         let line = model_line(CursorPreset {
@@ -935,6 +1013,49 @@ mod tests {
             content.contains("name: tw-test-agent"),
             "expected prefixed name with '-' delimiter, got: {content}"
         );
+    }
+
+    /// Pins the README's claim that execution presets are inert on Cursor
+    /// skills. `CursorSkillFrontmatter` has no model field, so `adapt_skill_spec`
+    /// is not even handed the preset map — a change that started emitting one
+    /// would otherwise pass the suite silently.
+    #[test]
+    fn test_adapt_skill_ignores_cursor_preset() {
+        let spec = Spec::Skill(SkillSpec {
+            path: "test.md".into(),
+            frontmatter: SkillFrontmatter {
+                id: "test-skill".to_string(),
+                description: Some("Test skill".to_string()),
+                tags: None,
+                execution: Some(ExecutionFrontmatter {
+                    preset: Some("default".to_string()),
+                }),
+                capabilities: None,
+                user_invocable: true,
+                agent_invocable: true,
+            },
+            body: "Body.".to_string(),
+            supporting_files: IndexMap::new(),
+        });
+
+        let presets = presets_with_cursor(CursorPreset {
+            model: Some("claude-opus-5".to_string()),
+            effort: Some("high".to_string()),
+            fast: Some(false),
+            context: Some("300k".to_string()),
+            params: std::collections::BTreeMap::new(),
+        });
+
+        // Every emitted file, not just the first: a preset leaking into a
+        // supporting file or a future companion emission should fail too.
+        for file in compile_one_with_presets(spec, None, &presets) {
+            let content = String::from_utf8(file.content.clone()).expect("expected value");
+            assert!(
+                !content.contains("model:") && !content.contains("effort="),
+                "no preset value should reach a Cursor skill file ({}):\n{content}",
+                file.path.display()
+            );
+        }
     }
 
     #[test]

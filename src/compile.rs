@@ -317,16 +317,16 @@ impl ParityWarning {
 /// channels: the `Degradation` values each adapter reported for inputs it
 /// could not honor, and the cross-provider `ParityWarning` gates that only the
 /// full active provider set can evaluate.
-// Eight params is over the clippy default of 7, but each carries a distinct
-// stage-input concern (specs, templating, presets, providers, adapter configs,
-// per-provider sync targets, home, cwd). Bundling them into a context struct
-// would just rename the noise — see CLAUDE.md "config structs at module
-// boundaries"; the boundary here is the public library API surface.
-#[allow(clippy::too_many_arguments)]
+///
+/// Presets come from `validated`, not a parameter, so the map compiled against
+/// is the one [`Specs::validate`](crate::specs::Specs::validate) checked — a
+/// caller cannot validate one map and compile with another. Calling an adapter
+/// directly through [`Provider::adapter`](crate::provider::Provider::adapter)
+/// bypasses that entirely and supplies its own presets, guarded only by
+/// `debug_assert!`s that compile out in release.
 pub fn run(
     validated: &ValidatedSpecs,
     templating: &Templating,
-    presets: &ProviderPresetsMap,
     providers: &[Provider],
     adapter_configs: &HashMap<Provider, AdapterConfig>,
     compile_targets: &HashMap<Provider, ProviderCompileTarget>,
@@ -336,7 +336,7 @@ pub fn run(
     compile_specs(
         validated.specs(),
         templating,
-        presets,
+        validated.presets(),
         providers,
         adapter_configs,
         compile_targets,
@@ -348,7 +348,12 @@ pub fn run(
 /// Takes `&[Spec]` (borrowed) even though `resolve_fragments` needs ownership —
 /// the slice is cloned once per provider so that each provider gets its own
 /// template-resolved copy with the correct prefix-aware names.
-#[allow(clippy::too_many_arguments)] // mirrors `run` — see allow note there
+// Eight params, one over the clippy default, and each carries a distinct
+// stage-input concern (specs, templating, presets, providers, adapter configs,
+// per-provider compile targets, home, cwd). Bundling them into a context struct
+// would just rename the noise — see CLAUDE.md "config structs at module
+// boundaries".
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn compile_specs(
     specs: &[Spec],
     templating: &Templating,

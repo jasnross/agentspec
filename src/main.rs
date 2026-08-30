@@ -12,7 +12,6 @@ use agentspec::compile::{
     self, AdapterConfig, CompileDiagnostics, CompileResult, ProviderCompileTarget,
 };
 use agentspec::plan::{compile_plan, expand_tilde};
-use agentspec::presets::ProviderPresetsMap;
 use agentspec::provider::Provider;
 use agentspec::specs::{IgnoreMatcher, LoadReport, SpecDirs, Specs, ValidatedSpecs};
 use agentspec::templating::{TemplateContext, Templating, resolve_fragments};
@@ -109,8 +108,8 @@ fn main() -> Result<()> {
             //
             // Preset config is not checked here. Unlike sync targets it feeds
             // the compile stage, so it is validated inside `validate_semantics`
-            // — which gates every command *and* every library consumer of
-            // `compile_specs`, not just this arm.
+            // — which gates every command rather than just this arm, and every
+            // library consumer that goes through `compile::run`.
             let config_errors = config.validate_sync_config();
             if !config_errors.is_empty() {
                 for e in &config_errors {
@@ -146,7 +145,6 @@ fn main() -> Result<()> {
             let (mut result, diagnostics) = run_compile(
                 &validated,
                 &templating,
-                &config.presets,
                 &sync_providers,
                 &adapter_configs,
                 &compile_targets,
@@ -199,7 +197,6 @@ fn main() -> Result<()> {
             let (result, diagnostics) = run_compile(
                 &validated,
                 &templating,
-                &config.presets,
                 &providers,
                 &adapter_configs,
                 &compile_targets,
@@ -310,12 +307,15 @@ fn load_and_validate(
     dirs: &SpecDirs,
 ) -> Result<(ValidatedSpecs, LoadReport)> {
     let (specs, report) = Specs::load(dirs)?;
-    let validated = specs.validate(&config.presets).map_err(|errors| {
-        for e in &errors {
-            eprintln!("error: {e}");
-        }
-        anyhow::anyhow!("{} semantic validation error(s)", errors.len())
-    })?;
+    let config_path = config.config_file_path();
+    let validated = specs
+        .validate(&config.presets, &config_path)
+        .map_err(|errors| {
+            for e in &errors {
+                eprintln!("error: {e}");
+            }
+            anyhow::anyhow!("{} semantic validation error(s)", errors.len())
+        })?;
     Ok((validated, report))
 }
 
@@ -359,7 +359,6 @@ fn resolve_extra_include_dirs(
 fn run_compile(
     validated: &ValidatedSpecs,
     templating: &Templating,
-    presets: &ProviderPresetsMap,
     providers: &[Provider],
     adapter_configs: &HashMap<Provider, AdapterConfig>,
     compile_targets: &HashMap<Provider, ProviderCompileTarget>,
@@ -369,7 +368,6 @@ fn run_compile(
     let (result, diagnostics) = compile::run(
         validated,
         templating,
-        presets,
         providers,
         adapter_configs,
         compile_targets,

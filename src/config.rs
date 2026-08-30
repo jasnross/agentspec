@@ -30,6 +30,16 @@ pub struct AgentspecConfig {
     /// Root directory where agentspec.toml was found (not serialized).
     #[serde(skip)]
     pub root_dir: PathBuf,
+
+    /// The config file actually loaded (not serialized).
+    ///
+    /// Kept alongside `root_dir` rather than rebuilt as
+    /// `root_dir.join("agentspec.toml")`, because `--config <path>` accepts any
+    /// filename: `root_dir` is only that file's *parent*, so the reconstructed
+    /// name pointed diagnostics at a file that need not exist. Empty only for
+    /// the default config `discover` returns when it finds no file at all.
+    #[serde(skip)]
+    pub config_file: PathBuf,
 }
 
 impl AgentspecConfig {
@@ -85,7 +95,20 @@ impl AgentspecConfig {
             )
         })?;
         config.root_dir = root_dir;
+        config.config_file = path.to_path_buf();
         Ok(config)
+    }
+
+    /// Path to the config file diagnostics should name.
+    ///
+    /// Falls back to `root_dir/agentspec.toml` only when no config file was
+    /// found — there is no loaded file to name, and that is where one would go.
+    pub fn config_file_path(&self) -> PathBuf {
+        if self.config_file.as_os_str().is_empty() {
+            self.root_dir.join("agentspec.toml")
+        } else {
+            self.config_file.clone()
+        }
     }
 
     /// Resolve a config-relative path to an absolute path.
@@ -210,7 +233,7 @@ impl AgentspecConfig {
                     .validate_for_provider(provider)
                     .err()
                     .map(|e| ValidationError {
-                        path: self.root_dir.join("agentspec.toml"),
+                        path: self.config_file_path(),
                         message: e.to_string(),
                     })
             })
@@ -268,6 +291,7 @@ impl Default for AgentspecConfig {
             presets: HashMap::new(),
             sync: HashMap::new(),
             root_dir: PathBuf::new(),
+            config_file: PathBuf::new(),
         }
     }
 }
@@ -638,6 +662,7 @@ cursor = { model = "claude-opus-5", effort = "high", fast = false, context = "30
                 effort: Some("high".to_string()),
                 fast: Some(false),
                 context: Some("300k".to_string()),
+                params: std::collections::BTreeMap::new(),
             })
         );
     }

@@ -5500,7 +5500,7 @@ sources_dir = "spec"
 output_dir = "generated"
 
 [presets.default]
-cursor = { model = "claude-opus-5", effort = "high", fast = false, context = "300k" }
+cursor = { model = "claude-opus-5", effort = "high", fast = false, context = "300k", params = { optimize_for = "cost" } }
 "#,
     );
     install_agent_using_preset(&dir, "default");
@@ -5517,7 +5517,93 @@ cursor = { model = "claude-opus-5", effort = "high", fast = false, context = "30
     let content = std::fs::read_to_string(dir.join("generated/cursor/agents/test-agent.md"))
         .expect("failed to read cursor agent");
     assert!(
-        content.contains("model: claude-opus-5[effort=high,fast=false,context=300k]"),
+        content.contains(
+            "model: claude-opus-5[effort=high,fast=false,context=300k,optimize_for=cost]"
+        ),
         "composed model line missing from:\n{content}"
+    );
+}
+
+/// The gate's justification is that it fires on every command that loads specs,
+/// not only `compile`. `validate` is the command a user reaches for first.
+#[test]
+fn test_validate_rejects_bracketed_cursor_model() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    install_agentspec_toml(
+        &dir,
+        r#"
+[spec]
+sources_dir = "spec"
+
+[compile]
+output_dir = "generated"
+
+[presets.default]
+cursor = { model = "claude-opus-5[effort=high]" }
+"#,
+    );
+
+    let output = std::process::Command::new(agentspec())
+        .arg("validate")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec validate");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "validate should have failed:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("presets.default.cursor"),
+        "stderr should name the offending preset block: {stderr}"
+    );
+}
+
+/// Claude's half is pinned byte-exactly in `adapters/claude.rs`, but the
+/// `effort:` key reaching a real generated file through the binary was not
+/// exercised — unlike Cursor's, which has three end-to-end cases.
+#[test]
+fn test_compile_emits_claude_effort() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    install_agentspec_toml(
+        &dir,
+        r#"
+[spec]
+sources_dir = "spec"
+
+[compile]
+output_dir = "generated"
+
+[presets.default]
+claude = { model = "opus", effort = "high" }
+"#,
+    );
+    install_agent_using_preset(&dir, "default");
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    let content = std::fs::read_to_string(dir.join("generated/claude/agents/test-agent.md"))
+        .expect("failed to read claude agent");
+    // Whole lines, not substrings: `contains("model: opus")` would also pass
+    // for `model: opus-4.5`, and an `effort:` emitted anywhere in the file.
+    assert!(
+        content.contains("\nmodel: opus\n"),
+        "expected an exact `model: opus` line in:\n{content}"
+    );
+    assert!(
+        content.contains("\neffort: high\n"),
+        "expected an exact `effort: high` line in:\n{content}"
     );
 }

@@ -26,7 +26,16 @@ impl std::error::Error for ValidationError {}
 ///
 /// Returns all errors found. An empty vec means all checks pass.
 /// This function does no I/O and cannot fail structurally.
-pub fn validate_semantics(specs: &[Spec], presets: &ProviderPresetsMap) -> Vec<ValidationError> {
+///
+/// `config_path` is where `agentspec.toml` was discovered; preset errors are
+/// reported against it. The library cannot derive it — `AgentspecConfig::discover`
+/// walks up parent directories, so a bare `"agentspec.toml"` would name a file
+/// that need not exist in the caller's cwd.
+pub fn validate_semantics(
+    specs: &[Spec],
+    presets: &ProviderPresetsMap,
+    config_path: &Path,
+) -> Vec<ValidationError> {
     let mut errors = Vec::new();
     let mut id_set = std::collections::HashSet::new();
 
@@ -130,43 +139,44 @@ pub fn validate_semantics(specs: &[Spec], presets: &ProviderPresetsMap) -> Vec<V
         }
     }
 
-    errors.extend(validate_preset_config(presets));
+    errors.extend(validate_preset_config(presets, config_path));
     errors
 }
 
 /// Cross-field checks on the provider blocks inside every `[presets.<name>]`.
 ///
 /// Lives here, in the library, rather than beside the binary's other config
-/// checks: `CursorPreset`, `compile_specs`, and the adapters are all public API,
-/// so a consumer that never touches the CLI can still reach the Cursor adapter's
-/// bracket composition. Gating in the binary would leave that path guarded only
-/// by `debug_assert!`s, which compile out in release.
+/// checks: `compile::run` is public API, so a consumer that never touches the
+/// CLI can still reach the Cursor adapter's bracket composition. `ValidatedSpecs`
+/// carries the map this ran against and `compile::run` reads presets from there,
+/// so on that path a caller cannot validate one map and compile with another.
+///
+/// That guarantee covers `compile::run`, not every route to an adapter.
+/// `Provider::adapter()`, `Adapter::compile`, and `CompileCtx`'s fields are all
+/// public, so a consumer calling an adapter directly supplies its own presets
+/// and is guarded only by `debug_assert!`s, which compile out in release. The
+/// composition trusts this gate rather than re-checking.
 ///
 /// Presets are keyed by a `HashMap`, so iteration order is nondeterministic and
 /// a multi-error run would report differently each time. Sort by preset name
 /// first. At most one error per preset — each provider's `validate` reports its
 /// first failing check.
-fn validate_preset_config(presets: &ProviderPresetsMap) -> Vec<ValidationError> {
+fn validate_preset_config(
+    presets: &ProviderPresetsMap,
+    config_path: &Path,
+) -> Vec<ValidationError> {
     let mut names: Vec<&String> = presets.keys().collect();
     names.sort();
 
-    // Cursor is the only provider with cross-field checks. Adding a second
-    // provider's `validate` means extending this into a per-provider chain —
-    // appending after the `?` below would skip presets with no Cursor block.
     names
         .into_iter()
         .filter_map(|name| {
             presets
                 .get(name)?
-                .cursor
-                .as_ref()?
                 .validate(name)
                 .err()
                 .map(|e| ValidationError {
-                    // Relative because the library does not know where the file
-                    // was discovered. The message names the offending block, so
-                    // it reads unambiguously either way.
-                    path: PathBuf::from("agentspec.toml"),
+                    path: config_path.to_path_buf(),
                     message: e.to_string(),
                 })
         })
@@ -234,6 +244,12 @@ mod tests {
     };
 
     // -- Helpers --
+
+    /// Stand-in for the discovered `agentspec.toml`. Preset errors are reported
+    /// against it; no test here asserts on the path itself.
+    fn test_config_path() -> &'static Path {
+        Path::new("/tmp/agentspec.toml")
+    }
 
     fn make_agent(id: &str, body: &str) -> Spec {
         Spec::Agent(AgentSpec {
@@ -305,14 +321,14 @@ mod tests {
     #[test]
     fn test_semantics_clean() {
         let specs = vec![make_agent("alpha", "body"), make_skill("beta", "body")];
-        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new(), test_config_path());
         assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
     }
 
     #[test]
     fn test_semantics_duplicate_id() {
         let specs = vec![make_agent("dup", "body a"), make_agent("dup", "body b")];
-        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new(), test_config_path());
         assert_eq!(errors.len(), 1);
         assert!(errors[0].message.contains("duplicate id 'dup'"));
     }
@@ -320,7 +336,7 @@ mod tests {
     #[test]
     fn test_semantics_empty_body() {
         let specs = vec![make_agent("empty", "")];
-        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new(), test_config_path());
         assert!(
             errors
                 .iter()
@@ -336,7 +352,7 @@ mod tests {
         };
         s.frontmatter.user_invocable = false;
         s.frontmatter.agent_invocable = false;
-        let errors = validate_semantics(&[spec], &ProviderPresetsMap::new());
+        let errors = validate_semantics(&[spec], &ProviderPresetsMap::new(), test_config_path());
         assert!(
             errors
                 .iter()
@@ -355,7 +371,7 @@ mod tests {
         });
         let mut presets = ProviderPresetsMap::new();
         presets.insert("known".to_string(), ProviderPresets::default());
-        let errors = validate_semantics(&[spec], &presets);
+        let errors = validate_semantics(&[spec], &presets, test_config_path());
         assert!(
             errors
                 .iter()
@@ -374,14 +390,14 @@ mod tests {
         });
         let mut presets = ProviderPresetsMap::new();
         presets.insert("fast".to_string(), ProviderPresets::default());
-        let errors = validate_semantics(&[spec], &presets);
+        let errors = validate_semantics(&[spec], &presets, test_config_path());
         assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
     }
 
     #[test]
     fn test_semantics_rule_passes_all_checks() {
         let specs = vec![make_rule("my-rule", "body")];
-        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new(), test_config_path());
         assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
     }
 
@@ -393,7 +409,7 @@ mod tests {
             make_skill("gh-safe", "body one"),
             make_skill("gh_safe", "body two"),
         ];
-        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new(), test_config_path());
         let collision_errors: Vec<_> = errors
             .iter()
             .filter(|e| e.message.contains("normalize"))
@@ -414,7 +430,7 @@ mod tests {
             make_agent("gh-safe", "body one"),
             make_skill("gh_safe", "body two"),
         ];
-        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new(), test_config_path());
         let collision_errors: Vec<_> = errors
             .iter()
             .filter(|e| e.message.contains("normalize"))
@@ -428,7 +444,7 @@ mod tests {
     #[test]
     fn test_semantics_underscore_no_collision_single_spec() {
         let specs = vec![make_skill("foo-bar", "body")];
-        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new(), test_config_path());
         let collision_errors: Vec<_> = errors
             .iter()
             .filter(|e| e.message.contains("normalize"))
@@ -444,7 +460,7 @@ mod tests {
     #[test]
     fn test_hook_empty_body_does_not_error() {
         let specs = vec![make_hook("init", vec![HookEvent::SessionStart], None)];
-        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new(), test_config_path());
         assert!(
             errors.is_empty(),
             "expected no errors for hook with empty body, got: {errors:?}"
@@ -458,7 +474,7 @@ mod tests {
             vec![HookEvent::PreToolUse],
             Some("Bash|Edit"),
         )];
-        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new(), test_config_path());
         assert!(
             errors.is_empty(),
             "expected no errors for matcher on pre_tool_use, got: {errors:?}"
@@ -472,7 +488,7 @@ mod tests {
             vec![HookEvent::SessionStart],
             Some("anything"),
         )];
-        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new(), test_config_path());
         let matcher_errors: Vec<_> = errors
             .iter()
             .filter(|e| e.message.contains("do not accept one"))
@@ -493,7 +509,7 @@ mod tests {
             vec![HookEvent::PreToolUse, HookEvent::SessionStart],
             Some("Edit"),
         )];
-        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new(), test_config_path());
         let matcher_errors: Vec<_> = errors
             .iter()
             .filter(|e| e.message.contains("do not accept one"))
@@ -520,7 +536,7 @@ mod tests {
             vec![HookEvent::PreToolUse, HookEvent::PostToolUse],
             Some("Bash"),
         )];
-        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new(), test_config_path());
         assert!(
             errors.is_empty(),
             "expected no errors for matcher on all-tool-events, got: {errors:?}"
@@ -534,7 +550,7 @@ mod tests {
             vec![HookEvent::SubagentStart],
             Some("general"),
         )];
-        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new(), test_config_path());
         assert!(
             errors.is_empty(),
             "expected no errors for matcher on subagent_start, got: {errors:?}"
@@ -548,7 +564,7 @@ mod tests {
             vec![HookEvent::SubagentStop],
             Some("general"),
         )];
-        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new(), test_config_path());
         assert!(
             errors.is_empty(),
             "expected no errors for matcher on subagent_stop, got: {errors:?}"
@@ -561,7 +577,7 @@ mod tests {
             make_skill("gh-safe", "body"),
             make_hook("gh-safe", vec![HookEvent::SessionStart], None),
         ];
-        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new(), test_config_path());
         assert!(
             errors
                 .iter()
@@ -576,7 +592,7 @@ mod tests {
             make_hook("init", vec![HookEvent::SessionStart], None),
             make_hook("init", vec![HookEvent::SessionEnd], None),
         ];
-        let errors = validate_semantics(&specs, &ProviderPresetsMap::new());
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new(), test_config_path());
         assert!(
             errors
                 .iter()
@@ -588,7 +604,7 @@ mod tests {
     #[test]
     fn test_semantics_rule_paths_empty_rejected() {
         let spec = make_rule_with_paths("my-rule", "body", Some(vec![]));
-        let errors = validate_semantics(&[spec], &ProviderPresetsMap::new());
+        let errors = validate_semantics(&[spec], &ProviderPresetsMap::new(), test_config_path());
         assert!(
             errors.iter().any(|e| e
                 .message
@@ -600,7 +616,7 @@ mod tests {
     #[test]
     fn test_semantics_rule_paths_invalid_glob_rejected() {
         let spec = make_rule_with_paths("my-rule", "body", Some(vec!["[unterminated".to_string()]));
-        let errors = validate_semantics(&[spec], &ProviderPresetsMap::new());
+        let errors = validate_semantics(&[spec], &ProviderPresetsMap::new(), test_config_path());
         assert!(
             errors
                 .iter()
@@ -619,7 +635,7 @@ mod tests {
                 "src/hooks/**/*.ts".to_string(),
             ]),
         );
-        let errors = validate_semantics(&[spec], &ProviderPresetsMap::new());
+        let errors = validate_semantics(&[spec], &ProviderPresetsMap::new(), test_config_path());
         assert!(
             errors.is_empty(),
             "expected no errors for valid paths, got: {errors:?}"
@@ -654,7 +670,7 @@ mod preset_config_tests {
                 ..CursorPreset::default()
             },
         );
-        let errors = validate_preset_config(&presets);
+        let errors = validate_preset_config(&presets, Path::new("/tmp/agentspec.toml"));
         assert_eq!(errors.len(), 1, "errors: {errors:?}");
         assert!(
             errors[0].message.contains("bare model id"),
@@ -675,7 +691,7 @@ mod preset_config_tests {
                 ..CursorPreset::default()
             },
         );
-        let errors = validate_semantics(&[], &presets);
+        let errors = validate_semantics(&[], &presets, Path::new("/tmp/agentspec.toml"));
         assert_eq!(errors.len(), 1, "errors: {errors:?}");
     }
 
@@ -699,7 +715,10 @@ mod preset_config_tests {
                 },
             ),
         ] {
-            let errors = validate_preset_config(&presets_with_cursor("x", preset));
+            let errors = validate_preset_config(
+                &presets_with_cursor("x", preset),
+                Path::new("/tmp/agentspec.toml"),
+            );
             assert_eq!(errors.len(), 1, "{field}: {errors:?}");
             assert!(
                 errors[0].message.contains(field),
@@ -718,8 +737,51 @@ mod preset_config_tests {
                 effort: Some("high".to_string()),
                 fast: Some(false),
                 context: Some("300k".to_string()),
+                params: std::collections::BTreeMap::from([(
+                    "optimize_for".to_string(),
+                    "cost".to_string(),
+                )]),
             },
         );
-        assert!(validate_preset_config(&presets).is_empty());
+        assert!(validate_preset_config(&presets, Path::new("/tmp/agentspec.toml")).is_empty());
+    }
+
+    fn bad(model: &str) -> ProviderPresets {
+        ProviderPresets {
+            claude: None,
+            cursor: Some(CursorPreset {
+                model: Some(model.to_string()),
+                ..CursorPreset::default()
+            }),
+            opencode: None,
+        }
+    }
+
+    /// `presets` is a `HashMap`, so without the sort a multi-error run would
+    /// report in a different order each time. Two failing presets pin it.
+    #[test]
+    fn test_errors_are_ordered_by_preset_name() {
+        let presets: ProviderPresetsMap = HashMap::from([
+            ("zebra".to_string(), bad("m[effort=high]")),
+            ("alpha".to_string(), bad("m[effort=high]")),
+            ("middle".to_string(), bad("m[effort=high]")),
+        ]);
+
+        let errors = validate_preset_config(&presets, Path::new("/tmp/agentspec.toml"));
+        assert_eq!(errors.len(), 3, "errors: {errors:?}");
+
+        let order: Vec<&str> = errors
+            .iter()
+            .map(|e| {
+                if e.message.contains("presets.alpha") {
+                    "alpha"
+                } else if e.message.contains("presets.middle") {
+                    "middle"
+                } else {
+                    "zebra"
+                }
+            })
+            .collect();
+        assert_eq!(order, ["alpha", "middle", "zebra"]);
     }
 }

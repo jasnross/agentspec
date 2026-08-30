@@ -567,7 +567,7 @@ Besides naming a model, a preset can say how hard that model should think. Each 
 | Provider | Preset key | Renders as |
 | --- | --- | --- |
 | Claude | `effort` | an `effort:` frontmatter key |
-| Cursor | `effort`, `fast`, `context` | a `[effort=…,fast=…,context=…]` suffix on the model id |
+| Cursor | `effort`, `fast`, `context`, `params` | a `[effort=…,fast=…,context=…,…]` suffix on the model id |
 | OpenCode | `variant` | a `variant:` frontmatter key, sibling to `model:` |
 
 Claude's `effort` is a closed enum: `low`, `medium`, `high`, `xhigh`, or `max`. Anything else fails when `agentspec.toml` is parsed, with an error naming the offending field, so a typo never reaches a generated file. It renders as an `effort:` frontmatter key alongside `model:`, and it is independent of `model` — a Claude block may set `effort` with no `model` beside it.
@@ -589,24 +589,31 @@ cursor = { model = "claude-opus-5", effort = "high", fast = false, context = "30
 | Field | Type | Notes |
 | --- | --- | --- |
 | `effort` | string | Not an enum, unlike Claude's. Cursor documents its legal values as varying by model and discoverable only at runtime, so there is no static set to encode — an enum would reject values Cursor already accepts. |
-| `fast` | bool | Written `false`, not `"false"`. A `false` still renders; it is meaningful to Cursor even where it matches the model's default. |
+| `fast` | bool | Written `false`, not `"false"`. agentspec renders a `false` rather than skipping it; whether Cursor acts on an option whose value matches the model's default is not observable — `experiments/cursor-subagent-effort/` records `fast=false` as uninformative on that oracle. |
 | `context` | string | A magnitude such as `"300k"`. See the note below. |
+| `params` | table | Escape hatch for any other bracket option — `params = { optimize_for = "cost" }` composes `[optimize_for=cost]`. |
 
-**Cursor's `model` must be a bare identifier.** agentspec is the sole writer of the bracket string, so a hand-written `model = "claude-opus-5[effort=high]"` is rejected — the error names the field to move the option to. Two spellings of one option cannot coexist, and the ban relocates a setting rather than removing one: every option Cursor documents has a named field.
+**Cursor's option set is open-ended, so `params` is not optional trivia.** Cursor documents bracket options as using "the same `id=value` pairs as the SDK's model parameters", states that parameter ids and values vary by model, and makes the catalog account- and team-specific — discoverable only through `Cursor.models.list()`. `optimize_for` (`cost` / `balanced` / `intelligence`, on Router models) is a documented example with no named field here. The three named fields are the ones agentspec can type and document; `params` carries the rest under the same rules.
 
-For the same reason, none of `[`, `]`, `,`, or `=` may appear in `model`, `effort`, or `context`. Cursor documents no escaping syntax for its bracket grammar, so a delimiter inside a value would forge an option the preset never declared — `effort = "high,context=1m"` would otherwise compose `model: claude-opus-5[effort=high,context=1m]`. These are rejected at validation time rather than escaped, since there is no escaping convention to compose against.
+**Cursor's `model` must be a bare identifier.** agentspec is the sole writer of the bracket string, so a hand-written `model = "claude-opus-5[effort=high]"` is rejected — the error names the field to move the option to. Two spellings of one option cannot coexist, which is also why a `params` key matching a named field is rejected rather than merged. The ban relocates a setting rather than removing one, because `params` accepts whatever agentspec has no field for.
+
+One thing stays inexpressible: Cursor's `composer-2.5[]`, where _empty_ brackets select the standard variant rather than the fast one. agentspec emits a bare model when no options are set, so there is no way to ask for an empty bracket. Use `fast = false`, which Cursor documents as selecting the same standard variant explicitly.
+
+For the same reason as the bracket ban, none of `[`, `]`, `,`, or `=` may appear in `model`, `effort`, `context`, or any `params` key or value. Cursor documents no escaping syntax for its bracket grammar, so a delimiter inside a value would forge an option the preset never declared — `effort = "high,context=1m"` would otherwise compose `model: claude-opus-5[effort=high,context=1m]`. These are rejected at validation time rather than escaped, since there is no escaping convention to compose against.
 
 **About `context`:** agentspec composes it from Cursor's published syntax, but Cursor exposes no way to observe the option taking effect — its resolved view flattens the model string and hides `context` whether it was honored or discarded. What _is_ measured, by `experiments/cursor-subagent-bracket-tolerance/`, is that a bracket carrying `context` still applies the options beside it. So agentspec passes `context` through without warranting its effect.
 
 ### Execution presets reach skill files on Claude only
 
-This covers `model` as well as `effort`. Cursor's skill schema has no model field at all, so nothing from a preset's Cursor block reaches a generated Cursor skill file. OpenCode reads neither `model` nor `variant` on skills. Only Claude's `SKILL.md` carries them. A preset set on a skill spec is silently inert on the other two providers.
+This covers `model` as well as `effort`. Cursor's skill schema has no model field at all, so nothing from a preset's Cursor block reaches a generated Cursor skill file. OpenCode reads `variant` on agents and commands but does not surface it on skills, so a skill that is only agent-invocable carries neither `model` nor `variant` in its generated OpenCode file, whatever its preset sets. Only Claude's `SKILL.md` carries them. A preset set on a skill spec is silently inert on the other two providers.
 
-An OpenCode `variant` set with no `model` beside it is likewise accepted and inert — unlike Cursor's options, which are rejected without a `model`, because Cursor cannot express them apart from one.
+The same is true of `capabilities.tools`: OpenCode reads a tool map on agents but not on skills, so declared tools do not reach a generated OpenCode skill file either.
 
-OpenCode reads `variant` on agents and commands. It does not surface the key on skills, so a skill that is only agent-invocable carries neither `model` nor `variant` in its generated OpenCode file, whatever its preset sets. The same is true of `capabilities.tools`: OpenCode reads a tool map on agents but not on skills, so declared tools do not reach a generated OpenCode skill file either.
+An OpenCode `variant` set with no `model` beside it is accepted and inert — unlike Cursor's options, which are rejected without a `model`, because Cursor cannot express them apart from one.
 
-Then refer to a preset in your specs. For example, in `spec/agents/example-agent.md`:
+### Referring to a preset
+
+Name the preset in a spec's `execution` block. For example, in `spec/agents/example-agent.md`:
 
 ```
 id: example-agent

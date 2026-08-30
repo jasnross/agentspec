@@ -273,10 +273,14 @@ impl Specs {
     pub fn validate(
         self,
         presets: &ProviderPresetsMap,
+        config_path: &Path,
     ) -> Result<ValidatedSpecs, Vec<ValidationError>> {
-        let errors = validate_semantics(&self.specs, presets);
+        let errors = validate_semantics(&self.specs, presets, config_path);
         if errors.is_empty() {
-            Ok(ValidatedSpecs { specs: self.specs })
+            Ok(ValidatedSpecs {
+                specs: self.specs,
+                presets: presets.clone(),
+            })
         } else {
             Err(errors)
         }
@@ -289,6 +293,18 @@ impl Specs {
 /// resolution internally before dispatching to provider adapters.
 pub struct ValidatedSpecs {
     specs: Vec<Spec>,
+    /// The preset map these specs were validated against.
+    ///
+    /// Carried rather than re-supplied at compile time so `compile::run` cannot
+    /// be handed a map that never passed [`Specs::validate`]. Taking it as a
+    /// separate parameter let a caller validate one map and compile with
+    /// another.
+    ///
+    /// This closes the `compile::run` path only. `Provider::adapter()` and
+    /// `Adapter::compile` are public, so a consumer invoking an adapter directly
+    /// still supplies its own `CompileCtx.presets` and is guarded only by the
+    /// adapter's `debug_assert!`s.
+    presets: ProviderPresetsMap,
 }
 
 impl ValidatedSpecs {
@@ -297,6 +313,11 @@ impl ValidatedSpecs {
     /// Used by the templating module to take ownership of the validated data.
     pub fn into_specs(self) -> Vec<Spec> {
         self.specs
+    }
+
+    /// The preset map these specs were validated against.
+    pub fn presets(&self) -> &ProviderPresetsMap {
+        &self.presets
     }
 
     /// Access the validated specs directly (e.g. for the `validate` command).
