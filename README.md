@@ -158,9 +158,17 @@ timeout = 30
 events = ["pre_tool_use"]
 matcher = "shell"
 script = "scripts/audit-bash.sh"
+
+[hooks.audit-bash-strict]
+events = ["pre_tool_use"]
+matcher = "shell"
+script = "scripts/audit-bash.sh"
+args = ["--strict"]
 ```
 
 `spec/hooks/scripts/` contains both entry scripts (referenced by `[hooks.<id>].script`) and any helper scripts they `source` — agentspec walks the directory and copies all files. Helper conventions like `_common.sh` are supported. The `_agentspec_*` filename prefix is reserved for future use and rejected at load time.
+
+`args` is an optional list of literal strings passed to the script as positional arguments (`$1`, `$2`, …), alongside the canonical payload on stdin — the same script can back several entries with different parameters, as `audit-bash` and `audit-bash-strict` do above. agentspec quotes every value unconditionally; `hooks.toml` resolves no templating inside `args`, so values are literal text, never shell syntax. Argument values are copied verbatim into the user's `settings.json` or `hooks.json` by `sync`, so they are not a place for secrets. See [`docs/hooks-canonical.md`](docs/hooks-canonical.md#script-invocation-and-argv) for the full argv contract.
 
 #### Canonical payload format
 

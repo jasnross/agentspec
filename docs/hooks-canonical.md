@@ -33,6 +33,21 @@ The hook host (Claude Code / Cursor) sees the non-zero exit and surfaces the err
 
 Auto-installation of `jq` into each plugin's persistent-data directory (`${CLAUDE_PLUGIN_DATA}` / `${CURSOR_PLUGIN_DATA}`) is on the roadmap — see [Documented Limitations](#documented-limitations) below.
 
+## Script invocation and argv
+
+A hook entry in `hooks.toml` may set `args`, a list of literal strings passed to the script as positional arguments, alongside the canonical payload on stdin:
+
+```toml
+[hooks.audit-strict]
+events = ["pre_tool_use"]
+script = "scripts/audit-bash.sh"
+args = ["--strict"]
+```
+
+The shim consumes its own positionals (the script path and the hook id) before invoking the script, so the script's positional numbering is independent of how the shim itself was invoked: an entry's `args` always start at the script's `$1`, in the order they're written in `hooks.toml`. A script that reads no positionals is unaffected — nothing about the canonical stdin/stdout contract changes, and `SCHEMA_VERSION` stays `1.0.0` because `args` add no field to the canonical payload. A script can detect whether it received arguments directly as `$#`.
+
+agentspec quotes every value unconditionally before composing the provider's command string; `hooks.toml` resolves no templating inside `args`, so values are literal text, never shell syntax. Argument values are copied verbatim into the user's `settings.json` or `hooks.json` by `sync`, so they are not a place for secrets.
+
 ## Canonical input fields
 
 Every canonical input payload contains the same **envelope** fields, plus event-specific fields. The envelope is identical across events; only the event-specific tail differs.
