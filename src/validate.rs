@@ -76,6 +76,12 @@ pub fn validate_semantics(
             validate_hook_matcher(hook_spec, &mut errors);
         }
 
+        if let Spec::Hook(hook_spec) = spec
+            && hook_spec.frontmatter.args.is_some()
+        {
+            validate_hook_args(hook_spec, &mut errors);
+        }
+
         if let Spec::Rule(rule_spec) = spec
             && let Some(paths) = &rule_spec.frontmatter.paths
         {
@@ -208,6 +214,33 @@ fn validate_hook_matcher(hook_spec: &crate::spec::HookSpec, errors: &mut Vec<Val
     }
 }
 
+/// Reject a NUL byte in any `args` entry.
+///
+/// `sh_quote`'s single-quote escaping is otherwise unconditional — every
+/// other byte a shell can represent survives quoting intact — but `\0`
+/// terminates a C string at the OS `exec` layer, before the shell ever
+/// sees it. An author's argument would silently truncate at the null
+/// rather than reach the script, with a clean `agentspec validate` and no
+/// diagnostic anywhere downstream. Other control characters (newline,
+/// tab) round-trip through the shell byte-exact and are not restricted.
+fn validate_hook_args(hook_spec: &crate::spec::HookSpec, errors: &mut Vec<ValidationError>) {
+    let Some(args) = &hook_spec.frontmatter.args else {
+        return;
+    };
+    for (i, arg) in args.iter().enumerate() {
+        if arg.contains('\0') {
+            errors.push(ValidationError {
+                path: hook_spec.path.clone(),
+                message: format!(
+                    "hook '{}' args[{i}] contains a NUL byte, which cannot survive to the \
+                     shell-invoked script",
+                    hook_spec.frontmatter.id,
+                ),
+            });
+        }
+    }
+}
+
 fn validate_rule_paths(
     path: &std::path::Path,
     paths: &[String],
@@ -300,6 +333,15 @@ mod tests {
     }
 
     fn make_hook(id: &str, events: Vec<HookEvent>, matcher: Option<&str>) -> Spec {
+        make_hook_with_args(id, events, matcher, None)
+    }
+
+    fn make_hook_with_args(
+        id: &str,
+        events: Vec<HookEvent>,
+        matcher: Option<&str>,
+        args: Option<Vec<String>>,
+    ) -> Spec {
         Spec::Hook(HookSpec {
             path: PathBuf::from("hooks.toml"),
             frontmatter: HookFrontmatter {
@@ -310,6 +352,7 @@ mod tests {
                 timeout: None,
                 description: None,
                 tags: None,
+                args,
             },
             body: String::new(),
             supporting_files: IndexMap::new(),
@@ -568,6 +611,38 @@ mod tests {
         assert!(
             errors.is_empty(),
             "expected no errors for matcher on subagent_stop, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_hook_args_with_nul_byte_errors() {
+        let specs = vec![make_hook_with_args(
+            "audit",
+            vec![HookEvent::PreToolUse],
+            None,
+            Some(vec!["a\0b".to_string()]),
+        )];
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new(), test_config_path());
+        assert_eq!(errors.len(), 1, "expected one error, got: {errors:?}");
+        assert!(errors[0].message.contains("NUL byte"));
+        assert!(errors[0].message.contains("args[0]"));
+    }
+
+    #[test]
+    fn test_hook_args_with_other_control_chars_passes() {
+        // Newline and tab round-trip through the shell byte-exact (unlike
+        // NUL, which terminates a C string before the shell ever sees it),
+        // so the ban is narrow — only NUL is rejected.
+        let specs = vec![make_hook_with_args(
+            "audit",
+            vec![HookEvent::PreToolUse],
+            None,
+            Some(vec!["line1\nline2".to_string(), "tab\there".to_string()]),
+        )];
+        let errors = validate_semantics(&specs, &ProviderPresetsMap::new(), test_config_path());
+        assert!(
+            errors.is_empty(),
+            "expected no errors for newline/tab args, got: {errors:?}"
         );
     }
 

@@ -169,6 +169,10 @@ pub struct HookFrontmatter {
     pub description: Option<String>,
     /// Free-form tags.
     pub tags: Option<Vec<String>>,
+    /// Positional arguments passed to the script, after the canonical
+    /// payload on stdin. agentspec quotes each value; authors write
+    /// literal text, never shell syntax.
+    pub args: Option<Vec<String>>,
 }
 
 /// The provider-neutral event surface for hooks.
@@ -348,6 +352,7 @@ mod tests {
                 timeout: None,
                 description: description.map(str::to_string),
                 tags: None,
+                args: None,
             },
             body: String::new(),
             supporting_files: IndexMap::new(),

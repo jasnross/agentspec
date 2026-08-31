@@ -1198,6 +1198,7 @@ mod tests {
                 timeout: None,
                 description: None,
                 tags: None,
+                args: None,
             },
             body: String::new(),
             supporting_files: IndexMap::new(),

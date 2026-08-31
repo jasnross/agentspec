@@ -176,14 +176,36 @@ fn translate_matcher(adapter: &dyn super::Adapter, event: HookEvent, matcher: &s
         .join("|")
 }
 
+/// Strip a leading `./` and the `scripts/` component from a spec's
+/// `script` path, yielding the filename `hook_command_anchor` appends
+/// under `<anchor>/hooks/scripts/`.
+pub(super) fn script_filename(script: &Path) -> String {
+    script
+        .components()
+        .skip_while(|c| matches!(c, Component::CurDir))
+        .skip(1)
+        .collect::<PathBuf>()
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// Render `arg` as a single POSIX `sh` word. Wrapping in single quotes
+/// suppresses every expansion; the only byte needing further treatment
+/// is the closing quote itself, emitted as `'\''` — close, escaped
+/// literal, reopen.
+fn sh_quote(arg: &str) -> String {
+    format!("'{}'", arg.replace('\'', r"'\''"))
+}
+
 /// Build canonical `EmittedHookEntry` rows from hook specs.
 ///
 /// Each entry's `command` field is computed by [`hook_command_anchor`],
 /// which wraps the user script in a per-event shim invocation. The shape
-/// is `<shim> <user_script>`, with both halves anchored under the same
-/// per-mode base (plugin-root env var for Bundled; `$HOME/<dotdir>` for
-/// `MergedUser`; `${CLAUDE_PROJECT_DIR}/<dotdir>` for `MergedProject`).
-/// See [`hook_command_anchor`] for the full per-mode shape.
+/// is `<shim> <user_script> <hook_id> [<arg>…]`, with both anchor-relative
+/// paths under the same per-mode base (plugin-root env var for Bundled;
+/// `$HOME/<dotdir>` for `MergedUser`; `${CLAUDE_PROJECT_DIR}/<dotdir>` for
+/// `MergedProject`). See [`hook_command_anchor`] for the full per-mode
+/// shape.
 fn build_emitted_hook_entries(
     specs: &[&HookSpec],
     provider: Provider,
@@ -195,15 +217,9 @@ fn build_emitted_hook_entries(
     specs
         .iter()
         .flat_map(|s| {
-            let path_under_scripts: PathBuf = s
-                .frontmatter
-                .script
-                .components()
-                .skip_while(|c| matches!(c, Component::CurDir))
-                .skip(1)
-                .collect();
-            let filename = path_under_scripts.to_string_lossy().into_owned();
+            let filename = script_filename(&s.frontmatter.script);
             let hook_id = s.frontmatter.id.clone();
+            let args = s.frontmatter.args.as_deref().unwrap_or(&[]);
             s.frontmatter
                 .events
                 .iter()
@@ -221,6 +237,7 @@ fn build_emitted_hook_entries(
                         event,
                         &filename,
                         &hook_id,
+                        args,
                     ),
                     timeout: s.frontmatter.timeout,
                     agentspec_id: s.frontmatter.id.clone(),
@@ -231,11 +248,12 @@ fn build_emitted_hook_entries(
 
 /// Compute the `command` string for a hook entry given the dotdir, the
 /// per-provider plugin-root env var name, the emit mode, the canonical
-/// event, and the user script's filename.
+/// event, the user script's filename, the hook id, and the entry's
+/// `args`.
 ///
 /// The emitted command invokes the per-event shim with the user script's
-/// path as its sole argument:
-/// `<shim> <user_script>`, where `<shim>` resolves to
+/// path, the hook id, and each argument, quoted:
+/// `<shim> <user_script> <hook_id> [<arg>…]`, where `<shim>` resolves to
 /// `<anchor>/hooks/scripts/_wrappers/<event>.sh` and `<user_script>`
 /// resolves to `<anchor>/hooks/scripts/<filename>`. The anchor itself is
 /// mode-dependent:
@@ -250,6 +268,10 @@ fn build_emitted_hook_entries(
 ///   is not documented — must be verified empirically against a real
 ///   Cursor build before 1.0.
 ///
+/// Only `args` are quoted via [`sh_quote`]. `env_assignment` and the
+/// `$HOME` / `${<plugin_root_env_var>}` / `${CLAUDE_PROJECT_DIR}` anchors
+/// are agentspec-authored shell syntax that must keep expanding.
+///
 /// `dotdir`, `plugin_root_env_var`, and `event` are supplied by the
 /// calling adapter or the spec — this helper carries no provider
 /// knowledge.
@@ -260,6 +282,7 @@ fn hook_command_anchor(
     event: HookEvent,
     filename: &str,
     hook_id: &str,
+    args: &[String],
 ) -> String {
     let (env_assignment, anchor_base) = match emit_mode {
         HookEmitMode::Bundled => (String::new(), format!("${{{plugin_root_env_var}}}")),
@@ -277,7 +300,12 @@ fn hook_command_anchor(
         event.snake_case()
     );
     let user_script_path = format!("{anchor_base}/hooks/scripts/{filename}");
-    format!("{env_assignment}{shim_path} {user_script_path} {hook_id}")
+    let mut command = format!("{env_assignment}{shim_path} {user_script_path} {hook_id}");
+    for arg in args {
+        command.push(' ');
+        command.push_str(&sh_quote(arg));
+    }
+    command
 }
 
 #[cfg(test)]
@@ -299,6 +327,7 @@ mod tests {
                 timeout: None,
                 description: None,
                 tags: None,
+                args: None,
             },
             body: String::new(),
             supporting_files: IndexMap::new(),
@@ -415,6 +444,30 @@ mod tests {
     }
 
     #[test]
+    fn build_emitted_hook_entries_forwards_args_from_frontmatter() {
+        // Exercises the field this phase adds through the actual call
+        // site — `s.frontmatter.args.as_deref().unwrap_or(&[])` inside
+        // `build_emitted_hook_entries` — rather than only through
+        // `hook_command_anchor` called directly with a hand-built slice.
+        let mut spec = hook_spec("audit", vec![HookEvent::PreToolUse]);
+        spec.frontmatter.args = Some(vec!["--strict".to_string(), "two words".to_string()]);
+        let specs: Vec<&HookSpec> = vec![&spec];
+        let entries = build_emitted_hook_entries(
+            &specs,
+            Provider::Claude,
+            ".claude",
+            "CLAUDE_PLUGIN_ROOT",
+            HookEmitMode::Bundled,
+        );
+        assert_eq!(entries.len(), 1);
+        assert!(
+            entries[0].command.ends_with("audit '--strict' 'two words'"),
+            "expected quoted args appended after the hook id, got: {}",
+            entries[0].command
+        );
+    }
+
+    #[test]
     fn translate_matcher_splits_and_translates() {
         let result = translate_matcher(&ClaudeAdapter, HookEvent::PreToolUse, "shell|read");
         assert_eq!(result, "Bash|Read");
@@ -464,10 +517,218 @@ mod tests {
             HookEvent::PreToolUse,
             "audit.sh",
             "audit-bash",
+            &[],
         );
         assert_eq!(
             cmd,
             "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/_wrappers/pre_tool_use.sh ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/audit.sh audit-bash"
         );
+    }
+
+    #[test]
+    fn hook_command_anchor_no_args_merged_user_unchanged() {
+        let cmd = hook_command_anchor(
+            ".claude",
+            "CLAUDE_PLUGIN_ROOT",
+            HookEmitMode::MergedUser,
+            HookEvent::PreToolUse,
+            "audit.sh",
+            "audit-bash",
+            &[],
+        );
+        assert_eq!(
+            cmd,
+            "CLAUDE_PLUGIN_ROOT=$HOME/.claude $HOME/.claude/hooks/scripts/_wrappers/pre_tool_use.sh $HOME/.claude/hooks/scripts/audit.sh audit-bash"
+        );
+    }
+
+    #[test]
+    fn hook_command_anchor_no_args_merged_project_unchanged() {
+        let cmd = hook_command_anchor(
+            ".claude",
+            "CLAUDE_PLUGIN_ROOT",
+            HookEmitMode::MergedProject,
+            HookEvent::PreToolUse,
+            "audit.sh",
+            "audit-bash",
+            &[],
+        );
+        assert_eq!(
+            cmd,
+            "CLAUDE_PLUGIN_ROOT=${CLAUDE_PROJECT_DIR}/.claude ${CLAUDE_PROJECT_DIR}/.claude/hooks/scripts/_wrappers/pre_tool_use.sh ${CLAUDE_PROJECT_DIR}/.claude/hooks/scripts/audit.sh audit-bash"
+        );
+    }
+
+    #[test]
+    fn hook_command_anchor_empty_args_list_matches_no_args() {
+        let no_args = hook_command_anchor(
+            ".claude",
+            "CLAUDE_PLUGIN_ROOT",
+            HookEmitMode::Bundled,
+            HookEvent::PreToolUse,
+            "audit.sh",
+            "audit-bash",
+            &[],
+        );
+        let empty_args: Vec<String> = Vec::new();
+        let with_empty_list = hook_command_anchor(
+            ".claude",
+            "CLAUDE_PLUGIN_ROOT",
+            HookEmitMode::Bundled,
+            HookEvent::PreToolUse,
+            "audit.sh",
+            "audit-bash",
+            &empty_args,
+        );
+        assert_eq!(no_args, with_empty_list);
+        assert!(
+            !no_args.ends_with(' '),
+            "no trailing space when there are no args: {no_args:?}"
+        );
+    }
+
+    #[test]
+    fn hook_command_anchor_empty_string_arg_emits_quoted_empty_word() {
+        // Distinguishes `args = []` (previous test) from `args = [""]`: an
+        // empty-list entry and a one-empty-string-argument entry look
+        // similar on the page but must compose differently — the latter
+        // raises the script's `$#` by one.
+        let args = vec![String::new()];
+        let cmd = hook_command_anchor(
+            ".claude",
+            "CLAUDE_PLUGIN_ROOT",
+            HookEmitMode::Bundled,
+            HookEvent::PreToolUse,
+            "audit.sh",
+            "audit-bash",
+            &args,
+        );
+        assert!(
+            cmd.ends_with("audit-bash ''"),
+            "expected a trailing quoted-empty word, got: {cmd}"
+        );
+    }
+
+    #[test]
+    fn hook_command_anchor_two_entries_same_script_differ_only_in_args() {
+        // Models the feature's motivating case: two `hooks.toml` entries
+        // naming the same script. Holding every other input fixed isolates
+        // `args` as the one axis of variation the composed command carries.
+        let cmd_a = hook_command_anchor(
+            ".claude",
+            "CLAUDE_PLUGIN_ROOT",
+            HookEmitMode::Bundled,
+            HookEvent::PreToolUse,
+            "shared.sh",
+            "shared-hook",
+            &["one".to_string()],
+        );
+        let cmd_b = hook_command_anchor(
+            ".claude",
+            "CLAUDE_PLUGIN_ROOT",
+            HookEmitMode::Bundled,
+            HookEvent::PreToolUse,
+            "shared.sh",
+            "shared-hook",
+            &["two".to_string()],
+        );
+        assert_ne!(cmd_a, cmd_b);
+        assert_eq!(
+            cmd_a.strip_suffix("'one'").expect("cmd_a ends with 'one'"),
+            cmd_b.strip_suffix("'two'").expect("cmd_b ends with 'two'"),
+            "everything but the trailing argument should be identical"
+        );
+    }
+
+    #[test]
+    fn sh_quote_wraps_plain_value() {
+        assert_eq!(sh_quote("plain"), "'plain'");
+    }
+
+    #[test]
+    fn sh_quote_escapes_embedded_single_quote() {
+        assert_eq!(sh_quote("it's"), r"'it'\''s'");
+    }
+
+    #[test]
+    fn sh_quote_suppresses_command_substitution() {
+        assert_eq!(sh_quote("$(echo pwned)"), "'$(echo pwned)'");
+    }
+
+    #[test]
+    fn sh_quote_preserves_utf8() {
+        assert_eq!(sh_quote("café-日本-ñ"), "'café-日本-ñ'");
+    }
+
+    #[test]
+    fn hook_command_anchor_round_trips_through_sh_c() {
+        // The only test where a real shell parses agentspec's own
+        // emission. Rather than exercising the full canonical-translation
+        // shim (which needs `jq`), stand a marker script in at the shim's
+        // path so `sh -c` runs *something* real at that position — proving
+        // `sh_quote`'s composition survives an actual shell parse, not
+        // just Rust-side string equality.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let wrapper_dir = dir.path().join("hooks").join("scripts").join("_wrappers");
+        std::fs::create_dir_all(&wrapper_dir).expect("mkdir wrappers");
+        let marker = dir.path().join("argv.txt");
+        let wrapper = wrapper_dir.join("pre_tool_use.sh");
+        std::fs::write(
+            &wrapper,
+            format!(
+                "#!/usr/bin/env sh\nfor a in \"$@\"; do printf '%s\\0' \"$a\"; done > '{}'\n",
+                marker.display()
+            ),
+        )
+        .expect("write wrapper");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&wrapper).expect("metadata").permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&wrapper, perms).expect("chmod wrapper");
+        }
+
+        let args = vec![
+            "has space".to_string(),
+            "it's".to_string(),
+            "\"quoted\"".to_string(),
+            "$(echo pwned)".to_string(),
+            ";".to_string(),
+            "|".to_string(),
+            String::new(),
+            "café-日本-ñ".to_string(),
+        ];
+        let cmd = hook_command_anchor(
+            ".claude",
+            "CLAUDE_PLUGIN_ROOT",
+            HookEmitMode::Bundled,
+            HookEvent::PreToolUse,
+            "audit.sh",
+            "audit-bash",
+            &args,
+        );
+
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&cmd)
+            .env("CLAUDE_PLUGIN_ROOT", dir.path())
+            .status()
+            .expect("run composed command");
+        assert!(status.success(), "composed command exited non-zero: {cmd}");
+
+        let raw = std::fs::read(&marker).expect("read marker");
+        let mut observed: Vec<&[u8]> = raw.split(|&b| b == 0).collect();
+        if observed.last() == Some(&&b""[..]) {
+            observed.pop();
+        }
+        // The wrapper's own `$@` starts at the user script path (its `$0`
+        // is the wrapper itself, uncounted) — index 0 is the user script
+        // path, index 1 is the hook id, and the forwarded args start at 2.
+        let observed_args: Vec<String> = observed[2..]
+            .iter()
+            .map(|s| String::from_utf8_lossy(s).into_owned())
+            .collect();
+        assert_eq!(observed_args, args);
     }
 }
