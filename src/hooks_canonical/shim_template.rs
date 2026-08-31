@@ -11,6 +11,15 @@
 //!   `jq` program inlined at codegen time to produce canonical JSON.
 //! - argv\[1\]: path to the user's hook script (must exist and be
 //!   executable).
+//! - argv\[2\]: the hook id, used for the log tag. Optional when no
+//!   further arguments follow (all existing invocations before `args`
+//!   omit it), but positionally mandatory whenever argv\[3..\] are present
+//!   — a caller that supplies args without a hook id has its first arg
+//!   silently consumed as the hook id.
+//! - argv\[3..\]: the entry's `args`, forwarded to the user script as its
+//!   `$1` onward. The shim consumes argv\[1\] and, if present, argv\[2\]
+//!   before invoking the script, so the script's positional numbering is
+//!   independent of how many positionals the shim itself takes.
 //! - stdout: provider-shaped hook output, synthesized from the user
 //!   script's canonical stdout via the output-translation `jq` program
 //!   inlined at codegen time. Empty when the user script emits nothing.
@@ -112,6 +121,15 @@ if [ ! -x "$1" ]; then
     exit 1
 fi
 
+# The hook id (argv[2]) is guarded because 27 existing call sites invoke
+# this shim with only the script path (argv[1]); an unguarded second
+# `shift` on some `sh` implementations (dash) aborts the script when no
+# argv[2] is present. Whenever argv[3..] (this entry's args) are supplied,
+# argv[2] is therefore positionally mandatory — a caller that passes args
+# without a hook id would have its first arg silently consumed here.
+SCRIPT="$1"
+shift; [ "$#" -gt 0 ] && shift
+
 RAW=$(cat)
 _alog "raw_input"
 _alog "$RAW"
@@ -125,7 +143,11 @@ else
     INPUT_JQ='__CLAUDE_INPUT_JQ__'
     OUTPUT_JQ='__CLAUDE_OUTPUT_JQ__'
 fi
-_alog "event=__EVENT_SNAKE__ provider=$_detected"
+# Logs argument count, not the argument values themselves — unlike
+# raw_input/canonical_input below, which log the full payload. Argument
+# values may carry secrets a hooks.toml author did not intend to persist
+# to a log file.
+_alog "event=__EVENT_SNAKE__ provider=$_detected argc=$#"
 
 CANONICAL=$(printf '%s' "$RAW" | jq -c "$INPUT_JQ")
 JQ_INPUT_EXIT=$?
@@ -137,7 +159,7 @@ fi
 _alog "canonical_input"
 _alog "$CANONICAL"
 
-USER_OUTPUT=$(printf '%s' "$CANONICAL" | "$1")
+USER_OUTPUT=$(printf '%s' "$CANONICAL" | "$SCRIPT" "$@")
 USER_EXIT=$?
 _alog "user_stdout"
 _alog "$USER_OUTPUT"
@@ -669,6 +691,25 @@ mod tests {
         }
     }
 
+    /// Whether `dash` is on `PATH`. `dash` treats `shift` as a special
+    /// builtin: `shift` past `$#` aborts the whole script rather than
+    /// merely setting a non-zero status, unlike bash/zsh (including
+    /// macOS's bash-as-`/bin/sh`). The guarded shift in the shim template
+    /// exists specifically for this — a test that only ever exercises
+    /// `/bin/sh` cannot pin it on a host where `/bin/sh` isn't dash.
+    fn dash_available() -> bool {
+        match Command::new("dash")
+            .arg("-c")
+            .arg(":")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+        {
+            Ok(status) => status.success(),
+            Err(_) => false,
+        }
+    }
+
     fn write_shim(
         dir: &std::path::Path,
         provider: ProviderName,
@@ -727,6 +768,39 @@ mod tests {
         for (k, v) in env {
             cmd.env(k, v);
         }
+        let mut child = cmd.spawn().expect("spawn shim");
+        {
+            use std::io::Write;
+            let mut child_stdin = child.stdin.take().expect("child stdin");
+            child_stdin
+                .write_all(stdin.as_bytes())
+                .expect("write stdin");
+        }
+        let out = child.wait_with_output().expect("wait shim");
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    }
+
+    /// Like `exec_shim_with_env`, but with no hook id and with `args`
+    /// appended after the user script path — the shape a parameterized
+    /// `hooks.toml` entry produces.
+    fn exec_shim_with_args(
+        shim: &std::path::Path,
+        user_script: &std::path::Path,
+        stdin: &str,
+        args: &[&str],
+    ) -> (i32, String, String) {
+        let mut cmd = Command::new("sh");
+        cmd.arg(shim)
+            .arg(user_script)
+            .arg("hook-id")
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
         let mut child = cmd.spawn().expect("spawn shim");
         {
             use std::io::Write;
@@ -1646,5 +1720,157 @@ printf '%s' '{"permission_decision":"allow"}'
             log.contains("user_exit=3"),
             "log should capture non-zero exit code"
         );
+    }
+
+    #[test]
+    fn e2e_shim_forwards_args_to_script_byte_for_byte() {
+        if !jq_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shim = write_shim(dir.path(), ProviderName::Claude, HookEvent::PreToolUse);
+        let marker = dir.path().join("argv.txt");
+        let user = write_user_script(
+            dir.path(),
+            "user.sh",
+            &format!(
+                "#!/usr/bin/env sh\ncat > /dev/null\nfor a in \"$@\"; do printf '%s\\0' \"$a\"; done > '{}'\n",
+                marker.display()
+            ),
+        );
+        let args = [
+            "has space",
+            "it's",
+            "\"quoted\"",
+            "$(echo pwned)",
+            ";",
+            "|",
+            "café-日本-ñ",
+        ];
+        let provider_stdin = r#"{"session_id":"s","cwd":"/p","tool_name":"Bash","tool_input":{}}"#;
+        let (code, _stdout, stderr) = exec_shim_with_args(&shim, &user, provider_stdin, &args);
+        assert_eq!(code, 0, "stderr={stderr}");
+        let raw = std::fs::read(&marker).expect("read marker");
+        // NUL-delimited: split leaves one trailing empty segment for the
+        // final separator. Strip only that one — an empty *argument* would
+        // also serialize as an empty segment, and filtering every empty
+        // segment would make it silently indistinguishable from a dropped
+        // argument.
+        let mut observed: Vec<&[u8]> = raw.split(|&b| b == 0).collect();
+        if observed.last() == Some(&&b""[..]) {
+            observed.pop();
+        }
+        let expected: Vec<&[u8]> = args.iter().map(|s| s.as_bytes()).collect();
+        assert_eq!(observed, expected);
+    }
+
+    #[test]
+    fn e2e_shim_with_hook_id_no_args_sees_zero_argc() {
+        if !jq_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shim = write_shim(dir.path(), ProviderName::Claude, HookEvent::PreToolUse);
+        let user = write_user_script(
+            dir.path(),
+            "user.sh",
+            "#!/usr/bin/env sh\ncat > /dev/null\n[ \"$#\" -eq 0 ] || exit 7\n",
+        );
+        let provider_stdin = r#"{"session_id":"s","cwd":"/p","tool_name":"Bash","tool_input":{}}"#;
+        let (code, _stdout, stderr) = exec_shim_with_args(&shim, &user, provider_stdin, &[]);
+        assert_eq!(code, 0, "stderr={stderr}");
+    }
+
+    #[test]
+    fn e2e_shim_with_only_script_path_still_runs() {
+        // Pins the one-argument tolerance the guarded shift preserves —
+        // `exec_shim_with_stdin` invokes the shim with no hook id, the
+        // shape twenty-seven existing call sites in this module rely on.
+        // Asserts the script actually sees zero positionals, not merely
+        // `exit 0`. This alone cannot distinguish a guarded from an
+        // unguarded shift on every `sh`: on macOS's `/bin/sh` (bash-as-sh)
+        // and zsh, a `shift` past `$#` leaves `$#`/`$1` exactly as a
+        // guarded shift would, just with a discarded non-zero status — see
+        // `e2e_guarded_shift_required_under_dash` for the test that
+        // actually exercises the shell where the guard matters.
+        if !jq_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shim = write_shim(dir.path(), ProviderName::Claude, HookEvent::PreToolUse);
+        let user = write_user_script(
+            dir.path(),
+            "user.sh",
+            "#!/usr/bin/env sh\ncat > /dev/null\n[ \"$#\" -eq 0 ] && [ -z \"$1\" ] || exit 7\n",
+        );
+        let provider_stdin = r#"{"session_id":"s","cwd":"/p","tool_name":"Bash","tool_input":{}}"#;
+        let (code, _stdout, stderr) = exec_shim_with_stdin(&shim, &user, provider_stdin);
+        assert_eq!(code, 0, "stderr={stderr}");
+    }
+
+    #[test]
+    fn e2e_guarded_shift_required_under_dash() {
+        // The regression `e2e_shim_with_only_script_path_still_runs`
+        // cannot catch on bash/zsh: `dash` treats `shift` past `$#` as a
+        // special-builtin error that aborts the whole script, so an
+        // unguarded double shift here does not merely leave a discarded
+        // non-zero status — it prevents `RAW=$(cat)` and everything after
+        // it from ever running. Invoking `dash` explicitly (rather than
+        // trusting whatever `/bin/sh` resolves to) pins this on every host
+        // that has `dash` installed, not only dash-based CI images.
+        if !jq_available() || !dash_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shim = write_shim(dir.path(), ProviderName::Claude, HookEvent::PreToolUse);
+        let user = write_user_script(
+            dir.path(),
+            "user.sh",
+            "#!/usr/bin/env sh\ncat > /dev/null\nexit 0\n",
+        );
+        let provider_stdin = r#"{"session_id":"s","cwd":"/p","tool_name":"Bash","tool_input":{}}"#;
+        let mut cmd = Command::new("dash");
+        cmd.arg(&shim)
+            .arg(&user)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = cmd.spawn().expect("spawn shim under dash");
+        {
+            use std::io::Write;
+            let mut stdin = child.stdin.take().expect("child stdin");
+            stdin
+                .write_all(provider_stdin.as_bytes())
+                .expect("write stdin");
+        }
+        let out = child.wait_with_output().expect("wait shim under dash");
+        let code = out.status.code().unwrap_or(-1);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(
+            code, 0,
+            "shim invoked under dash with only a script path must not abort on the guarded shift; stderr={stderr}"
+        );
+    }
+
+    #[test]
+    fn e2e_parameterized_invocation_reaches_script() {
+        // The case the existing suite structurally cannot catch: a
+        // non-forwarding shim, or a shift placed in the wrong order, would
+        // still exit 0 on every pre-existing test because none of them
+        // send arguments or assert on argv content.
+        if !jq_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shim = write_shim(dir.path(), ProviderName::Claude, HookEvent::PreToolUse);
+        let user = write_user_script(
+            dir.path(),
+            "user.sh",
+            "#!/usr/bin/env sh\ncat > /dev/null\n[ \"$1\" = \"expected-arg\" ] || exit 9\n",
+        );
+        let provider_stdin = r#"{"session_id":"s","cwd":"/p","tool_name":"Bash","tool_input":{}}"#;
+        let (code, _stdout, stderr) =
+            exec_shim_with_args(&shim, &user, provider_stdin, &["expected-arg"]);
+        assert_eq!(code, 0, "stderr={stderr}");
     }
 }

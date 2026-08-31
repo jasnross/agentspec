@@ -28,6 +28,15 @@ if [ ! -x "$1" ]; then
     exit 1
 fi
 
+# The hook id (argv[2]) is guarded because 27 existing call sites invoke
+# this shim with only the script path (argv[1]); an unguarded second
+# `shift` on some `sh` implementations (dash) aborts the script when no
+# argv[2] is present. Whenever argv[3..] (this entry's args) are supplied,
+# argv[2] is therefore positionally mandatory — a caller that passes args
+# without a hook id would have its first arg silently consumed here.
+SCRIPT="$1"
+shift; [ "$#" -gt 0 ] && shift
+
 RAW=$(cat)
 _alog "raw_input"
 _alog "$RAW"
@@ -73,7 +82,11 @@ else
   } | with_entries(select(.value != null)))
 }'
 fi
-_alog "event=session_end provider=$_detected"
+# Logs argument count, not the argument values themselves — unlike
+# raw_input/canonical_input below, which log the full payload. Argument
+# values may carry secrets a hooks.toml author did not intend to persist
+# to a log file.
+_alog "event=session_end provider=$_detected argc=$#"
 
 CANONICAL=$(printf '%s' "$RAW" | jq -c "$INPUT_JQ")
 JQ_INPUT_EXIT=$?
@@ -85,7 +98,7 @@ fi
 _alog "canonical_input"
 _alog "$CANONICAL"
 
-USER_OUTPUT=$(printf '%s' "$CANONICAL" | "$1")
+USER_OUTPUT=$(printf '%s' "$CANONICAL" | "$SCRIPT" "$@")
 USER_EXIT=$?
 _alog "user_stdout"
 _alog "$USER_OUTPUT"
