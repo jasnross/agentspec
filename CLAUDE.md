@@ -167,13 +167,13 @@ src/plan.rs              ← CompilePlan/SyncPlan/RemovePlan + per-mode write st
 
 `mod.rs` files are harder to navigate in editors (multiple open tabs all named `mod.rs`) and are the older convention. The exception is `main.rs` and `lib.rs`, which are standard entry points.
 
-## Probe Before You Implement
+## Probes: Measured Provider Behavior
 
 When adding a rendering agentspec will emit, check whether a probe already answers the question: `jq -r '.question' experiments/*/probe.json`. Every package under [`experiments/`](experiments/README.md) carries a manifest, so that list is complete; `just probe-status` shows what each one measured and how stale it is. Write and run a probe if nothing covers it, then design against the measurement. **A `billed` probe spends model quota and a `manual` one spends a live session**, so `just probe-run` withholds both, naming the flag that authorizes each (`--billed`, `--manual`, or `--all`). Probes verify the _provider's_ contract using hand-authored provider config, so a probe can precede the feature it de-risks rather than gating it afterward.
 
 **Read a record's `depth` before designing on it.** `resolved-config` proves the provider _read_ the field, not that it acts on it — OpenCode collapses an unrecognized variant at request-build time, well after `opencode debug agent` has printed it. Only `outbound-request` reaches the model, and no Cursor probe can ever get there. The contract's Depth section states what each value licenses.
 
-**A capability accessor is a claim about a provider, so it should cite the probe that measured it.** `fully_implements_canonical_output` and `session_start_fires_on_resume` do. When a probe refutes one, correct the accessor _and_ the manifest's `expected` — see the contract's "life of a refutation," which exists because leaving them disagreeing is the drift this harness was built to stop.
+**A capability accessor is a claim about a provider, so a probe is the thing to consult before changing one.** `fully_implements_canonical_output` and `session_start_fires_on_resume` name the probes their values came from, which is worth doing where a value was measured — but the manifest's `expected` is the binding record of that belief, not the doc comment. When a probe refutes one, correct whatever encoded the old belief _and_ the manifest's `expected` — see the contract's "life of a refutation," which exists because leaving them disagreeing is the drift this harness was built to stop.
 
 **Probe first when the outcome could change the design; defer when it can only confirm.** agentspec's tests compare emitted bytes against agentspec's own belief about what each provider reads, and that belief has been wrong — a design revision once asserted an OpenCode `provider/model#variant` suffix no parser would have accepted.
 
