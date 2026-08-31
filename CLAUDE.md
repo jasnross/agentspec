@@ -211,6 +211,16 @@ Key conventions:
 - **`Option<&Config>` means "use defaults"** — when a config is optional (like `AdapterConfig` for adapters), pass `Option<&Config>` where `None` produces canonical/default output.
 - **Centralize construction** — if multiple call sites build the same config from the same source, extract a helper (e.g., `config.adapter_configs()`).
 
+### Model provider settings as typed fields, never as passthrough
+
+A provider setting gets its own config field with its own type. It never rides inside a field that means something else — a model id, a URL, a command string. Where a provider itself encodes a setting inside another value (Cursor's `model[effort=high]`), agentspec becomes the sole writer of that format and rejects hand-composed input at validate time.
+
+When agentspec cannot name every option a provider accepts, the remainder gets its **own explicit field** — `CursorPreset.params`, validated under the same delimiter and collision rules — never a re-permitted passthrough in the modelled field. `params` is an escape hatch, but a modelled one: agentspec still writes every byte of the composed value. What is ruled out is the unparsed field.
+
+The reason is silent failure. Two spellings of one setting compose into output no provider parses, and all three providers degrade silently rather than erroring — Cursor falls back to the parent conversation's model — so the symptom is an agent running on an unrelated model with a clean `agentspec validate`.
+
+One heuristic falls out of getting this wrong once: **when a provider documents a value space as runtime-discoverable, check whether its key space is open too.** See `.claude/rules/design-principles.md` for the worked example.
+
 ## Pipeline Stages
 
 `main.rs` orchestrates these stages in order, each consuming the previous stage's output (typestate pattern — passing the wrong stage is a compile error):
