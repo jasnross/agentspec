@@ -611,6 +611,8 @@ The same is true of `capabilities.tools`: OpenCode reads a tool map on agents bu
 
 An OpenCode `variant` set with no `model` beside it is accepted and inert — unlike Cursor's options, which are rejected without a `model`, because Cursor cannot express them apart from one.
 
+**OpenCode applies a `variant` only when the agent's declared model is the one the session actually resolves.** Reading OpenCode's source, an agent's `variant` survives only if the agent declares a `model`, the resolved model equals that declared model, and that model's catalog entry lists the variant name. So an agent generated from a preset that sets both `model` and `variant` still loses its variant whenever the session is running a different model — switching models mid-session is enough. agentspec cannot detect this: which model a session resolves is decided long after `agentspec sync` has run. The generated frontmatter is correct in every such case; the value simply does not reach the request.
+
 ### Referring to a preset
 
 Name the preset in a spec's `execution` block. For example, in `spec/agents/example-agent.md`:
