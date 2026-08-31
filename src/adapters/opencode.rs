@@ -17,7 +17,7 @@ use crate::compile::{AdapterConfig, GeneratedFile};
 use crate::plan::{FileKind, ForwardPatch, RemovePatchReport, ReversePatch};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
-use crate::spec::{AgentSpec, RuleSpec, SkillSpec, Spec, ToolFrontmatter};
+use crate::spec::{AgentSpec, HookEvent, RuleSpec, SkillSpec, Spec, ToolFrontmatter};
 
 // See: https://opencode.ai/docs/agents/#markdown
 #[serde_with::skip_serializing_none]
@@ -231,6 +231,19 @@ impl Adapter for OpenCodeAdapter {
 
     fn emits_hooks(&self) -> bool {
         false
+    }
+
+    /// Unreachable rather than meaningful: `emits_hooks` is `false` for
+    /// `OpenCode`, and the only caller (`hook test`) dispatches through
+    /// `ProviderName`, which has no `OpenCode` variant.
+    fn hook_command_preview(
+        &self,
+        _event: HookEvent,
+        _script: &Path,
+        _hook_id: &str,
+        _args: &[String],
+    ) -> String {
+        String::new()
     }
 
     fn plugin_manifest_dir(&self) -> Option<&'static str> {
@@ -1870,5 +1883,20 @@ mod tests {
             content_with, content_without,
             "opencode should emit identical output regardless of paths field"
         );
+    }
+
+    #[test]
+    fn test_hook_command_preview_returns_empty_string() {
+        // OpenCode emits no hooks (`emits_hooks() == false`), and the only
+        // caller of this method dispatches through `ProviderName`, which
+        // has no `OpenCode` variant — this impl exists only to satisfy the
+        // trait.
+        let preview = OpenCodeAdapter.hook_command_preview(
+            HookEvent::PreToolUse,
+            std::path::Path::new("scripts/audit.sh"),
+            "audit-bash",
+            &["--strict".to_string()],
+        );
+        assert_eq!(preview, "");
     }
 }

@@ -111,6 +111,18 @@ impl TryFrom<crate::provider::Provider> for ProviderName {
     }
 }
 
+impl From<ProviderName> for crate::provider::Provider {
+    /// The reverse of [`TryFrom<Provider> for ProviderName`]. Total in this
+    /// direction — `ProviderName` has no `OpenCode` variant to reject — so
+    /// `From` rather than `TryFrom`.
+    fn from(p: ProviderName) -> Self {
+        match p {
+            ProviderName::Claude => Self::Claude,
+            ProviderName::Cursor => Self::Cursor,
+        }
+    }
+}
+
 /// Canonical permission outcome.
 ///
 /// The adapter routes this to each provider's permission API: Claude's
@@ -547,6 +559,16 @@ fn to_cursor_stdout(output: &CanonicalOutput) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provider_name_provider_conversion_round_trips() {
+        for name in [ProviderName::Claude, ProviderName::Cursor] {
+            assert_eq!(
+                ProviderName::try_from(crate::provider::Provider::from(name)),
+                Ok(name)
+            );
+        }
+    }
 
     fn claude_pre_tool_use_raw() -> &'static str {
         r#"{

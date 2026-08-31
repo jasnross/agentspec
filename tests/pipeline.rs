@@ -1735,6 +1735,71 @@ fn test_compile_emits_hooks_for_claude_and_cursor() {
 }
 
 #[test]
+fn test_compile_hooks_with_args_appear_in_hooks_json() {
+    // Two hooks.toml entries on the same script with different args — the
+    // feature's motivating case: `args` composes correctly through the
+    // full TOML-to-JSON pipeline, and quoting survives serialization into
+    // the emitted hooks.json.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    let hooks_dir = dir.join("spec/hooks");
+    let scripts_dir = hooks_dir.join("scripts");
+    std::fs::create_dir_all(&scripts_dir).expect("create hooks dir");
+    std::fs::write(
+        hooks_dir.join("hooks.toml"),
+        r#"
+[hooks.audit-bash]
+events = ["pre_tool_use"]
+matcher = "shell"
+script = "scripts/audit-bash.sh"
+
+[hooks.audit-bash-strict]
+events = ["pre_tool_use"]
+matcher = "shell"
+script = "scripts/audit-bash.sh"
+args = ["--strict", "two words"]
+"#,
+    )
+    .expect("write hooks.toml");
+    std::fs::write(scripts_dir.join("audit-bash.sh"), "#!/bin/sh\nexit 0\n")
+        .expect("write audit-bash.sh");
+    set_script_permissions(&scripts_dir);
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    for (provider, env_var) in [
+        ("claude", "CLAUDE_PLUGIN_ROOT"),
+        ("cursor", "CURSOR_PLUGIN_ROOT"),
+    ] {
+        let json = dir.join(format!("generated/{provider}/hooks/hooks.json"));
+        let content = std::fs::read_to_string(&json).expect("read hooks.json");
+
+        let no_args_command = format!(
+            "${{{env_var}}}/hooks/scripts/_wrappers/pre_tool_use.sh ${{{env_var}}}/hooks/scripts/audit-bash.sh audit-bash"
+        );
+        assert!(
+            content.contains(&no_args_command),
+            "{provider}: hooks.json should contain the no-args command, expected substring:\n  {no_args_command}\ngot:\n{content}"
+        );
+
+        let with_args_command = format!(
+            "${{{env_var}}}/hooks/scripts/_wrappers/pre_tool_use.sh ${{{env_var}}}/hooks/scripts/audit-bash.sh audit-bash-strict '--strict' 'two words'"
+        );
+        assert!(
+            content.contains(&with_args_command),
+            "{provider}: hooks.json should contain the args-carrying command, expected substring:\n  {with_args_command}\ngot:\n{content}"
+        );
+    }
+}
+
+#[test]
 fn test_compile_dedups_shim_per_event_per_provider() {
     // Phase 3: two hook specs targeting the same canonical HookEvent
     // produce exactly one shim file per provider — deduplication is
@@ -4842,6 +4907,76 @@ fn test_hook_test_success_path() {
     assert!(
         stderr.contains("Exit Code"),
         "stderr missing 'Exit Code': {stderr}"
+    );
+}
+
+#[test]
+fn test_hook_test_forwards_args_to_script() {
+    // The one thing about `hook test` that actually changed for this
+    // feature: the entry's `args` reach the spawned shim's argv, and the
+    // two new stderr sections describe what was sent. Everything else
+    // about `args` is exercised at the library level (compile output,
+    // `hook_command_anchor` quoting) — this pins the CLI-level behavior
+    // those tests can't reach.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    let hooks_dir = dir.join("spec/hooks");
+    let scripts_dir = hooks_dir.join("scripts");
+    std::fs::create_dir_all(&scripts_dir).expect("create hooks dir");
+    std::fs::write(
+        hooks_dir.join("hooks.toml"),
+        r#"
+[hooks.audit-bash-strict]
+events = ["pre_tool_use"]
+matcher = "shell"
+script = "scripts/audit-bash.sh"
+args = ["--strict", "two words"]
+"#,
+    )
+    .expect("write hooks.toml");
+    std::fs::write(
+        scripts_dir.join("audit-bash.sh"),
+        // Stdout must be empty or valid canonical JSON (the shim rejects
+        // anything else), so the observed-argv marker goes to stderr.
+        "#!/bin/sh\ncat > /dev/null\nprintf 'received: %s / argc=%s' \"$1\" \"$#\" >&2\n",
+    )
+    .expect("write audit-bash.sh");
+    set_script_permissions(&scripts_dir);
+
+    let output = std::process::Command::new(agentspec())
+        .args([
+            "hook",
+            "test",
+            "audit-bash-strict",
+            "--event",
+            "pre_tool_use",
+        ])
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec hook test");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "hook test failed:\n{stderr}");
+
+    assert!(
+        stderr.contains("Provider Registration"),
+        "stderr missing 'Provider Registration': {stderr}"
+    );
+    assert!(
+        stderr.contains("'--strict' 'two words'"),
+        "Provider Registration should show quoted args: {stderr}"
+    );
+    assert!(
+        stderr.contains("Script Argv"),
+        "stderr missing 'Script Argv': {stderr}"
+    );
+    assert!(
+        stderr.contains(r#"$1: "--strict""#) && stderr.contains(r#"$2: "two words""#),
+        "Script Argv should list each argument by position: {stderr}"
+    );
+    assert!(
+        stderr.contains("received: --strict / argc=2"),
+        "script should have observed the forwarded args on its own argv: {stderr}"
     );
 }
 

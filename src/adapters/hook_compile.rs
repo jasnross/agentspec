@@ -275,7 +275,7 @@ fn build_emitted_hook_entries(
 /// `dotdir`, `plugin_root_env_var`, and `event` are supplied by the
 /// calling adapter or the spec — this helper carries no provider
 /// knowledge.
-fn hook_command_anchor(
+pub(super) fn hook_command_anchor(
     dotdir: &str,
     plugin_root_env_var: &'static str,
     emit_mode: HookEmitMode,

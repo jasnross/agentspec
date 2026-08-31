@@ -22,7 +22,7 @@ use crate::compile::{AdapterConfig, GeneratedFile, HookEmitMode};
 use crate::plan::{FileKind, ForwardPatch, ReversePatch, expand_tilde};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
-use crate::spec::{Spec, ToolFrontmatter};
+use crate::spec::{HookEvent, Spec, ToolFrontmatter};
 
 /// Library-side mirror of the binary's `SyncMode`.
 ///
@@ -491,6 +491,25 @@ pub trait Adapter: std::fmt::Debug + Send + Sync {
     fn supports_path_scoped_rules(&self) -> bool {
         true
     }
+
+    /// Render the command a provider would receive for this hook, using the
+    /// `Bundled` anchor. `Bundled` is the one mode whose anchor is a literal
+    /// `${<PLUGIN_ROOT>}` rather than a resolved path, so the preview needs
+    /// no sync configuration; argument quoting is identical in all modes.
+    ///
+    /// `script` is the raw `hooks.toml` `script` path (still carrying its
+    /// `scripts/` prefix) — each implementation normalizes it via
+    /// `hook_compile::script_filename` internally, the same way
+    /// `build_emitted_hook_entries` does. Callers never derive the filename
+    /// themselves, which is what keeps `scripts/scripts/` from ever
+    /// appearing in a preview.
+    fn hook_command_preview(
+        &self,
+        event: HookEvent,
+        script: &Path,
+        hook_id: &str,
+        args: &[String],
+    ) -> String;
 
     /// Construct reverse patches for all discoverable host-config paths.
     ///

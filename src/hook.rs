@@ -1,8 +1,10 @@
 use std::io::{IsTerminal, Write};
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 use agentspec::hooks_canonical::shim_template::shim_script;
 use agentspec::hooks_canonical::{CanonicalInput, ProviderName, provider_fixture};
+use agentspec::provider::Provider;
 use agentspec::spec::{HookEvent, Spec};
 use agentspec::specs::{SpecDirs, ValidatedSpecs};
 use anyhow::{Context, Result, bail};
@@ -45,6 +47,9 @@ pub fn run_hook_test(
         }
     }
 
+    let args_slice = hook.frontmatter.args.as_deref().unwrap_or(&[]);
+    print_provider_registration(provider, event, script_rel, &args.hook_id, args_slice);
+
     eprintln!(
         "\n\u{2500}\u{2500} Provider Input ({}, {}) \u{2500}\u{2500}",
         provider.wire_name(),
@@ -64,6 +69,7 @@ pub fn run_hook_test(
         .arg(shim_path.path())
         .arg(&script_path)
         .arg(&args.hook_id)
+        .args(args_slice)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -113,6 +119,37 @@ pub fn run_hook_test(
     }
 
     Ok(())
+}
+
+/// Print the "Provider Registration" and "Script Argv" sections: the
+/// command a provider would receive for this hook, dispatched through the
+/// adapter rather than matched on `provider` directly, plus each
+/// forwarded argument with its position.
+fn print_provider_registration(
+    provider: ProviderName,
+    event: HookEvent,
+    script_rel: &Path,
+    hook_id: &str,
+    args_slice: &[String],
+) {
+    let preview = Provider::from(provider)
+        .adapter()
+        .hook_command_preview(event, script_rel, hook_id, args_slice);
+    // Always the Bundled/plugin-mode form — the one anchor that needs no
+    // sync configuration to preview. A hook synced at User or Project
+    // scope emits a different (but identically-quoted) command; see
+    // `hook_command_anchor`'s doc comment for the per-mode shapes.
+    eprintln!(
+        "\n\u{2500}\u{2500} Provider Registration (plugin/bundled form; what would be emitted) \u{2500}\u{2500}"
+    );
+    eprintln!("{preview}");
+
+    if !args_slice.is_empty() {
+        eprintln!("\n\u{2500}\u{2500} Script Argv \u{2500}\u{2500}");
+        for (i, arg) in args_slice.iter().enumerate() {
+            eprintln!("  ${}: {arg:?}", i + 1);
+        }
+    }
 }
 
 fn find_hook<'a>(

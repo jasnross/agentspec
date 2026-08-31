@@ -233,6 +233,25 @@ impl Adapter for CursorAdapter {
         Some(PLUGIN_MANIFEST_DIR)
     }
 
+    fn hook_command_preview(
+        &self,
+        event: HookEvent,
+        script: &Path,
+        hook_id: &str,
+        args: &[String],
+    ) -> String {
+        let filename = hook_compile::script_filename(script);
+        hook_compile::hook_command_anchor(
+            HOOK_DOTDIR,
+            PLUGIN_ROOT_ENV_VAR,
+            HookEmitMode::Bundled,
+            event,
+            &filename,
+            hook_id,
+            args,
+        )
+    }
+
     fn fully_implements_canonical_output(&self) -> bool {
         // `user_message` does not render in the Cursor UI — a denial shows a
         // generic message instead. That alone is why this is `false`.
@@ -1560,6 +1579,46 @@ mod tests {
         assert!(
             content.contains("src/components/**/*.tsx, src/hooks/**/*.ts"),
             "globs should be comma-separated, got: {content}"
+        );
+    }
+
+    #[test]
+    fn test_hook_command_preview_bundled_shape_with_quoted_args() {
+        let preview = CursorAdapter.hook_command_preview(
+            HookEvent::PreToolUse,
+            std::path::Path::new("scripts/audit.sh"),
+            "audit-bash",
+            &["--strict".to_string(), "two words".to_string()],
+        );
+        assert_eq!(
+            preview,
+            "${CURSOR_PLUGIN_ROOT}/hooks/scripts/_wrappers/pre_tool_use.sh ${CURSOR_PLUGIN_ROOT}/hooks/scripts/audit.sh audit-bash '--strict' 'two words'"
+        );
+        assert!(
+            preview.contains("${CURSOR_PLUGIN_ROOT}"),
+            "the Bundled anchor must appear unexpanded, got: {preview}"
+        );
+    }
+
+    #[test]
+    fn test_hook_command_preview_normalizes_scripts_prefix_once() {
+        // The preview takes the raw `hooks.toml` `script` path (still
+        // carrying its `scripts/` prefix) and normalizes it internally via
+        // `script_filename` — callers never derive the filename
+        // themselves, which is what rules out `scripts/scripts/`.
+        let preview = CursorAdapter.hook_command_preview(
+            HookEvent::PreToolUse,
+            std::path::Path::new("scripts/audit.sh"),
+            "audit-bash",
+            &[],
+        );
+        assert!(
+            preview.contains("/hooks/scripts/audit.sh"),
+            "expected exactly one scripts/ segment, got: {preview}"
+        );
+        assert!(
+            !preview.contains("scripts/scripts/"),
+            "scripts/ prefix should not double up, got: {preview}"
         );
     }
 }
