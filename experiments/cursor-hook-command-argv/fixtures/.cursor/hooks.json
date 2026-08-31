@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      { "type": "command", "command": "{{CAPTURE_SCRIPT}}" },
+      { "type": "command", "command": "{{CAPTURE_SCRIPT}} split alpha beta" },
+      {
+        "type": "command",
+        "command": "{{CAPTURE_SCRIPT}} dquote \"two words\""
+      },
+      { "type": "command", "command": "{{CAPTURE_SCRIPT}} squote 'two words'" },
+      { "type": "command", "command": "{{CAPTURE_SCRIPT}} var $HOME" },
+      {
+        "type": "command",
+        "command": "{{CAPTURE_SCRIPT}} subst $(echo SUBSTITUTED)"
+      },
+      { "type": "command", "command": "{{CAPTURE_SCRIPT}} meta 'a;b|c&d'" },
+      { "type": "command", "command": "{{CAPTURE_SCRIPT}} utf8 'café-日本-ñ'" },
+      {
+        "type": "command",
+        "command": "AGENTSPEC_PROBE_ENV=probe-value {{CAPTURE_SCRIPT}} envprefix"
+      },
+      {
+        "type": "command",
+        "command": "{{CAPTURE_SCRIPT}} anchor /tmp/user-script.sh my-hook-id 'arg with spaces'"
+      },
+      { "type": "command", "command": "./control-b.sh" }
+    ]
+  }
+}

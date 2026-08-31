@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "provider": "cursor",
+  "driver": "manual",
+  "depth": null,
+  "question": "How does Cursor interpret a hooks.json `command` string — does it apply shell word-splitting, quoting, variable expansion, and command substitution before spawning the hook?",
+  "version_source": {
+    "kind": "capture",
+    "jq": "[.[] | .payload.cursor_version] | map(select(. != null)) | first"
+  },
+  "wait_for": "([.[] | select(.argc == 0)] | length) >= 2",
+  "assertion": {
+    "projection": "(reduce .[] as $p ({}; if $p.case == null then . else .[$p.case] = $p end)) as $c | {controls: (([.[] | select(.argc == 0)] | length) >= 2), argv0: ((($c.split.argv0 // \"\") | endswith(\"dump-hook.sh\"))), split: ($c.split.argv == [\"split\", \"alpha\", \"beta\"]), dquote: ($c.dquote.argv == [\"dquote\", \"two words\"]), squote: ($c.squote.argv == [\"squote\", \"two words\"]), var: (($c.var.argv[1] // \"\") | (. != \"$HOME\" and startswith(\"/\"))), subst: ($c.subst.argv == [\"subst\", \"SUBSTITUTED\"]), meta: ($c.meta.argv == [\"meta\", \"a;b|c&d\"]), utf8: ($c.utf8.argv == [\"utf8\", \"café-日本-ñ\"]), envprefix: ($c.envprefix.probe_env == \"probe-value\"), envprefix_control: ($c.split.probe_env == \"\"), anchor: ($c.anchor.argv == [\"anchor\", \"/tmp/user-script.sh\", \"my-hook-id\", \"arg with spaces\"])}",
+    "expected": {
+      "controls": true,
+      "argv0": true,
+      "split": true,
+      "dquote": true,
+      "squote": true,
+      "var": true,
+      "subst": true,
+      "meta": true,
+      "utf8": true,
+      "envprefix": true,
+      "envprefix_control": true,
+      "anchor": true
+    }
+  }
+}

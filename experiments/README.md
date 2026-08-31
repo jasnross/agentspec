@@ -197,7 +197,7 @@ The filename carries a UTC time component because date plus version does not dis
 
 `--dry-run` evaluates a manifest end to end — every gate, the projection, the structural comparison, version resolution, record assembly — and prints what a record would contain instead of writing one. No `results/` directory is created and no record is written. Version resolution still runs, so a manifest declaring `version_source.kind: "command"` still executes that command; what dry-run guarantees is that `record.sh` itself writes nothing, not that the run is side-effect-free.
 
-**A runner takes no arguments, so `--dry-run` is not one of them.** Eleven of the twelve committed runners reject any argument outright. A runner that supports a dry run reads `PROBE_DRY_RUN=1` from the environment and passes the flag on to `record.sh` itself — the same shape as `PROBE_FIXTURE`. Where a runner does not read it, invoke `record.sh` directly against a view the runner already produced.
+**A runner takes no arguments, so `--dry-run` is not one of them.** A runner that supports a dry run reads `PROBE_DRY_RUN=1` from the environment and passes the flag on to `record.sh` itself — the same shape as `PROBE_FIXTURE`. Where a runner does not read it, invoke `record.sh` directly against a view the runner already produced.
 
 It exits **0 whatever status the comparison computes**, including `refuted`. Validating that an assertion discriminates means running it against an input it is supposed to refute, so a nonzero exit would fail the primary use case every time; it would also make dry-run disagree with real-run semantics, where `refuted` is a finding rather than a failure.
 
@@ -229,7 +229,7 @@ just shellcheck     # lint the probe shell
 | **selection** | is this package interesting to this run? | `--stale` |
 | **authorization** | may this run pay what the package costs? | `--billed`, `--manual`, `--all` |
 
-**Every probe is runnable by `probe-run`, including the manual ones.** All six route through `probe_human_run`, which arranges the workspace, prints the procedure, blocks until the capture lands, and records. So what separates the drivers is not capability — it is cost. An `unattended` probe costs nothing, a `billed` one spends model quota, and a `manual` one spends an afternoon of a person's attention. A run is therefore defined by what it is willing to spend, and the default spends nothing: a batch run that costs money or blocks for hours on every invocation is a batch run people stop invoking.
+**Every probe is runnable by `probe-run`, including the manual ones.** Every manual package routes through `probe_human_run`, which arranges the workspace, prints the procedure, blocks until the capture lands, and records. So what separates the drivers is not capability — it is cost. An `unattended` probe costs nothing, a `billed` one spends model quota, and a `manual` one spends an afternoon of a person's attention. A run is therefore defined by what it is willing to spend, and the default spends nothing: a batch run that costs money or blocks for hours on every invocation is a batch run people stop invoking.
 
 **Authorization is a set, not a level.** Each flag adds its own driver; `--billed` never implies `--manual` and neither implies the other. They stack in any order, repeat harmlessly, and `--all` is the union. `PROBE_AUTHORIZE_DRIVERS="billed manual"` seeds the same set for a caller that cannot pass arguments, and composes with flags rather than overriding them. The set is built from `MANIFEST_DRIVERS` in `manifest-contract.sh`, so a fourth driver costs one entry there plus its flag — not a new combination in the run loop, and not a hand-maintained line in the summary breakdown.
 
@@ -265,7 +265,7 @@ A human-driven runner materializes the workspace, prints the procedure, polls, a
 
 The cost is that an interrupt or a timeout ends the run. The workspace is kept either way, because discarding one an operator spent a live session on is the single unrecoverable mistake a runner could make, and reading the capture is how they tell a hook that never fired from a procedure that went off the rails. But finishing that run is not possible: **re-run the probe.** The poll timeout is generous for the same reason — an hour, overridable with `PROBE_TIMEOUT_SECONDS`. Its job is diagnostic, not resource protection, and a premature expiry would cost a session outright.
 
-`record.sh --capture` remains, because it is how the capture directory reaches version resolution for a manifest declaring `version_source.kind: "capture"` — which six of twelve manifests do. A runner itself takes no arguments.
+`record.sh --capture` remains, because it is how the capture directory reaches version resolution for a manifest declaring `version_source.kind: "capture"` — which every Cursor manifest does. A runner itself takes no arguments.
 
 ## Re-verification
 
