@@ -1,5 +1,128 @@
 # Changelog
 
+## [0.5.0](https://github.com/jasnross/agentspec/compare/v0.4.0...v0.5.0) (2026-09-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* **presets:** library signatures changed. `compile::run` no longer takes `presets` (it reads them from `ValidatedSpecs`); `Specs::validate` and `validate_semantics` take a `config_path`. `CursorPreset` gains `params`, and `AgentspecConfig` gains `config_file`, so struct-literal construction of either must be updated.
+* **presets:** A Cursor preset's `model` carrying hand-written bracket options is now rejected. Move each option to its named field:
+* **opencode:** OpenCode skill files no longer carry `model:`, `variant:`, or `tools:`. Anything reading those generated files expecting a `tools:` block will not find one. OpenCode itself never surfaced them.
+* **opencode:** OpenCode command files now carry a `variant:` key when the spec's preset sets one. A consumer who worked around the drop by hand-editing generated commands should remove the workaround.
+* **compile:** `CompileWarning` and `SkippedHook` are removed from the library crate's public API, replaced by `Degradation`, `DegradationKind`, `Presentation`, and `ParityWarning`. `CompileDiagnostics::skipped_hooks` and `::warnings` were public fields and are now private behind the `degradations()` and `parity()` accessors. `AdapterOutput` gains a required `degradations` field, so out-of-tree adapter implementations must construct it.
+* **templating:** Fragment includes must add "fragments/" prefix ({% include "shared.md" %} → {% include "fragments/shared.md" %}). extra_fragment_dirs config is replaced by extra_include_dirs with { name, path } entries.
+* **sync:** `--dest` no longer implies `--mode=plugin`. Existing invocations of `agentspec sync --dest <path>` must add `--mode plugin`.
+
+### Features
+
+* **cli:** add `agentspec prune` command for orphaned entry cleanup ([24cd210](https://github.com/jasnross/agentspec/commit/24cd2107fe551fce1844dea6981578c7f53b9919))
+* **cli:** add global --config flag for explicit config file selection ([3d1eb32](https://github.com/jasnross/agentspec/commit/3d1eb3207d8b06bd62fef67da391799105c675a2))
+* **hooks:** add args to hooks.toml entries ([4f05fd2](https://github.com/jasnross/agentspec/commit/4f05fd2018cc54868f13e25a894ce8d37e1e77da))
+* **hooks:** reproduce parameterized invocations in hook test ([82f8fbf](https://github.com/jasnross/agentspec/commit/82f8fbfafa6739057e56e33e27dde28bcdd01dbf))
+* **presets:** add Claude effort to execution presets ([f1e67d4](https://github.com/jasnross/agentspec/commit/f1e67d48e9fc78e856c8dcdba37008a21765749f))
+* **presets:** add Cursor model options to execution presets ([5e8cd9a](https://github.com/jasnross/agentspec/commit/5e8cd9a9f133ccc8a200e86ababf3dfaf1e539e8))
+* **presets:** add Cursor params escape hatch and harden preset validation ([369d451](https://github.com/jasnross/agentspec/commit/369d4517292d1174d877a1eb76499fbc44680f2c))
+* **remove:** thread --verbose to surface destinations with no manifest ([e0e8a72](https://github.com/jasnross/agentspec/commit/e0e8a72c1eff00ec5439a327571938b9064da398))
+* **sync:** decouple dir from mode, allowing project-mode dest overrides ([e1961c2](https://github.com/jasnross/agentspec/commit/e1961c290ec2f0246dfb666d1c940cfd57d92fa3))
+* **templating:** add required block support and template documentation ([34cf1fe](https://github.com/jasnross/agentspec/commit/34cf1fe63a0ca59f493696bc341aadfcb379083f))
+* **templating:** add template inheritance via MiniJinja {% extends %} ([7585ee9](https://github.com/jasnross/agentspec/commit/7585ee914205605d9b26bb2c4350430d76b1cf18))
+* **templating:** add unrecognized-slot validation for template inheritance ([8f11207](https://github.com/jasnross/agentspec/commit/8f112077809b4914968238f55f4c336e4ee14870))
+* **templating:** replace eager fragment loading with spec-relative lazy loader ([68323c9](https://github.com/jasnross/agentspec/commit/68323c936dea0d6b429606c2b770a88d6ff224cc))
+
+
+### Bug Fixes
+
+* **claude:** remove TaskStop from Tasks tool fan-out ([e247147](https://github.com/jasnross/agentspec/commit/e2471477ee0508691b8d88c80ee60c953082664f))
+* **opencode:** emit `variant` on generated command frontmatter ([7fd7d27](https://github.com/jasnross/agentspec/commit/7fd7d2786687aa79f050d267cda608ccf3d3993c))
+* **opencode:** stop emitting frontmatter keys OpenCode discards on skills ([f14be60](https://github.com/jasnross/agentspec/commit/f14be60b14e60f510e0d16939d315565cfcbd3e2))
+* **templating:** harden include resolution and template validation ([208f5f8](https://github.com/jasnross/agentspec/commit/208f5f80addc0b13140f6833ae403c81b7371cc8))
+
+
+### Refactoring
+
+* **compile:** originate degradation warnings in adapters ([2d063b1](https://github.com/jasnross/agentspec/commit/2d063b198fd45d97e6f6c93bdaa6d51c50c02b0d))
+* **hooks:** forward positional arguments through the shim ([00683f6](https://github.com/jasnross/agentspec/commit/00683f68085c751c850e25390c2f9ea6d3e21244))
+* **plan:** split ConfigPatch into ForwardPatch + ReversePatch ([877ba9c](https://github.com/jasnross/agentspec/commit/877ba9c4765c874807426e6bb67ef0d68b96f93e))
+* **probes:** extract freshness derivation into a shared lib ([75d79b1](https://github.com/jasnross/agentspec/commit/75d79b1c6eecd8d87e6a913c84ba65b00726a4f4))
+* **probes:** remove the capture resume path and its run stamp ([d70db8e](https://github.com/jasnross/agentspec/commit/d70db8ee0edf81da5b0e61eef51ae79232ccfe7e))
+* **probes:** retire the two packages that never measured anything ([059595c](https://github.com/jasnross/agentspec/commit/059595c25d751e41b0e3a6bb0af50012ac44e81b))
+* **probes:** split the three legacy packages into six ([27d311d](https://github.com/jasnross/agentspec/commit/27d311dc97584017417a9ab9e84501aca3a16f0b))
+
+
+### Documentation
+
+* anchor citations to symbols instead of line numbers ([1421522](https://github.com/jasnross/agentspec/commit/1421522d0dda6cea4157db96a811319ea00002d2))
+* document typed-fields-over-passthrough design principle ([4da6418](https://github.com/jasnross/agentspec/commit/4da6418fc792423aa8023d7761101a8b8a0cece3))
+* **hooks-canonical:** correct the Cursor agent_message claim ([3cf6ea3](https://github.com/jasnross/agentspec/commit/3cf6ea348281c273559b60090768a0f72befa8cb))
+* **hooks:** publish the shim argv contract ([10aeaba](https://github.com/jasnross/agentspec/commit/10aeaba84832d0692e6a021442deba12267732ce))
+* point degradation-refactor references at their archived paths ([3a0105a](https://github.com/jasnross/agentspec/commit/3a0105a2b860f0f0405351d91356a2c3741b563f))
+* **probes:** correct depth vocabulary and sharpen probe diagnostics ([b41324c](https://github.com/jasnross/agentspec/commit/b41324cffa6bac6f42307539806cd772dd8d9eae))
+* **probes:** make the records usable from a future feature conversation ([d5b62ab](https://github.com/jasnross/agentspec/commit/d5b62ab3847ebf09cf702234bb09b241f949b945))
+* **probes:** reconcile in-repo claims against the Set 0 records ([9702944](https://github.com/jasnross/agentspec/commit/9702944f5945b74694903cd70c37debd69190c1b))
+* **probes:** record that Cursor's `context` oracle no longer blocks Set 2 ([fbd2a20](https://github.com/jasnross/agentspec/commit/fbd2a20abc4835080280fab7e854c36e6091a719))
+* **probes:** record the unmeasurable Cursor context option ([db63eb1](https://github.com/jasnross/agentspec/commit/db63eb1a0d903528c878b697b03cc9a9476a6231))
+* **probes:** reframe probe guidance as a reference, not a citation rule ([af8c923](https://github.com/jasnross/agentspec/commit/af8c923b62fb3888ae7b011d89c7a558158eef1d))
+* **provider-verification:** add provider rendering verification doc ([da05765](https://github.com/jasnross/agentspec/commit/da05765505245f7c9937af6bfcd810f407f3e4fd))
+* **provider-verification:** record OpenCode skill probe results ([54c2160](https://github.com/jasnross/agentspec/commit/54c21600f27deefdfe6c43abaa55213f1a34d94b))
+* re-point citations after the degradation refactor ([1a84abd](https://github.com/jasnross/agentspec/commit/1a84abd3eaee02ff295a1f2bd5a4add58b757e73))
+* **readme:** record that OpenCode drops a variant on model mismatch ([7caba90](https://github.com/jasnross/agentspec/commit/7caba90f65e52e3cc8f3723b5a6e1e8c9c5d5ea4))
+* record the open question on PROBE_FIXTURE reachability ([4b83a33](https://github.com/jasnross/agentspec/commit/4b83a336b89d2b0b0c2a7ed1f726d7a77224b0a9))
+* replace provider-verification.md with the probe packages ([b3d5fcd](https://github.com/jasnross/agentspec/commit/b3d5fcdef2072ba3559e7963925bb668d10a54f2))
+* rule probe-harness changes out of the semver signal ([6addf00](https://github.com/jasnross/agentspec/commit/6addf001e0090e94e2b9bf6879ed9336df67ba23))
+* **templating:** improve inheritance documentation and add follow-up TODOs ([5dd8924](https://github.com/jasnross/agentspec/commit/5dd89241d3a8f25fc3ff2ccee3022e407ec0399b))
+* **todo:** add dry-run mode for the probe harness ([c3fa804](https://github.com/jasnross/agentspec/commit/c3fa804590a01a1729a9b874a07c218c308f9e86))
+* **todo:** add OpenCode tool-id mapping verification follow-up ([7afeb31](https://github.com/jasnross/agentspec/commit/7afeb3118907f7343a891bcf4bcf73c177204c1e))
+* **todo:** add the driver vocabulary and delegated-subagent items ([195468e](https://github.com/jasnross/agentspec/commit/195468e47145b7c48d0b28a4448bdad484185601))
+* **todo:** file the unmeasured typed-slash cell and close [#11](https://github.com/jasnross/agentspec/issues/11) ([5ee18ec](https://github.com/jasnross/agentspec/commit/5ee18ec59336e697984c6b912f1d4331d89f32c7))
+* **todo:** replace the proxy oracle plan in [#11](https://github.com/jasnross/agentspec/issues/11) with the settled OTEL sink ([4192303](https://github.com/jasnross/agentspec/commit/41923033e7968f16e5e6212ef3426316c39f8ca6))
+* **todo:** report the --agent effort contradiction upstream ([e2a1ade](https://github.com/jasnross/agentspec/commit/e2a1adeb0b83f7abe52534179be7cb37d65bd782))
+
+
+### Tests
+
+* **compile:** pin stderr diagnostic order and cardinality ([a84cebd](https://github.com/jasnross/agentspec/commit/a84cebd7af0026ecf969f390ebd96719a7db94cc))
+* **probes:** add the human-driven Cursor subagent-effort probe ([10fd2d2](https://github.com/jasnross/agentspec/commit/10fd2d28af62dad1e2588e5263367959d03f158b))
+* **probes:** add the OpenCode agent-variant probe ([80cb565](https://github.com/jasnross/agentspec/commit/80cb5654c192d40dc04b8d17cba9c41a631b6b92))
+* **probes:** gate the options-implies-human-judge correspondence ([db44daf](https://github.com/jasnross/agentspec/commit/db44daf6310afa23b251e94ebffcd1c4b232951f))
+* **probes:** measure Claude agent effort at the outbound request ([fa42999](https://github.com/jasnross/agentspec/commit/fa42999a6c96353ccff9692f471d32924a2ac618))
+* **probes:** measure Claude skill effort at the outbound request ([aa43c3d](https://github.com/jasnross/agentspec/commit/aa43c3d7010492326c01c116cbe3584bee66556a))
+* **probes:** measure Cursor's comma-separated bracket options ([d8f50dc](https://github.com/jasnross/agentspec/commit/d8f50dcab54fe4352cf8ecd3491af37719c1e94b))
+* **probes:** measure how Cursor parses a hooks.json command string ([3ac3f3e](https://github.com/jasnross/agentspec/commit/3ac3f3ee27275571000909a8a921538494395075))
+* **probes:** measure OpenCode's command variant acceptance ([242bc64](https://github.com/jasnross/agentspec/commit/242bc64b3fe3b53fb5abbde23ad352af3c540e2d))
+* **probes:** measure OpenCode's skill frontmatter discard ([885d25c](https://github.com/jasnross/agentspec/commit/885d25cefe41600fede2b1600573d6b80662a2c2))
+* **probes:** measure that a Cursor bracket carrying context costs effort nothing ([fb65bce](https://github.com/jasnross/agentspec/commit/fb65bce165005d63a21e538644420b1a1e4c71ae))
+* **probes:** move the capture apparatus outside the opened workspace ([3dba3fe](https://github.com/jasnross/agentspec/commit/3dba3fed33693b0509760ab7ee685416babbf0f6))
+* **probes:** re-measure opencode-agent-variant at 1.18.21 ([9c1aa5a](https://github.com/jasnross/agentspec/commit/9c1aa5abff842d2ef26d230af8c97af1414fd3df))
+* **probes:** reconfirm gate-19 under the corrected expected ([fa8b6c0](https://github.com/jasnross/agentspec/commit/fa8b6c0ff9351c7d3c46d82b634e7f7849ba61c8))
+* **probes:** reconfirm subagent effort on the post-removal apparatus ([c8fe339](https://github.com/jasnross/agentspec/commit/c8fe33926df643450bb2c37331b127bf852bff5a))
+* **probes:** record claude session-start, claude skill-effort, and opencode agent-variant results ([75a9c17](https://github.com/jasnross/agentspec/commit/75a9c170017facfe8d2205bdf685fceadbb97850))
+* **probes:** record the provider verification baseline ([db5a18f](https://github.com/jasnross/agentspec/commit/db5a18fbad3cfe47aae66cd03a03d4acdfefb1cf))
+* **probes:** remove a wall-clock race from the option-status tests ([6b7953b](https://github.com/jasnross/agentspec/commit/6b7953bfc1b4658a91d345957d244ba2f9254831))
+* **probes:** strengthen the session-start and gate-19 assertions ([54ee2d1](https://github.com/jasnross/agentspec/commit/54ee2d163ba02c0d145d474e818a24e988006dbc))
+
+
+### Miscellaneous Chores
+
+* **ci:** authenticate release automation with a GitHub App ([071c3b1](https://github.com/jasnross/agentspec/commit/071c3b18fb697ad3ebd652050df4373a9a6659d1))
+* **probes:** add probe harness contract and shared shell ([193feac](https://github.com/jasnross/agentspec/commit/193feac710afedaa880a9226c99c12889116d637))
+* **probes:** add probe recipes, status reporting, and shell gates ([92bc705](https://github.com/jasnross/agentspec/commit/92bc7056c14ac4fa3d3ba06fc91dc6be3914054b))
+* **probes:** add record.sh --dry-run to verify wiring without writing a record ([ac78bcd](https://github.com/jasnross/agentspec/commit/ac78bcda8e7e7e8a2c2e2abab548dbe336c9f400))
+* **probes:** authorize probe-run by driver set ([ff38655](https://github.com/jasnross/agentspec/commit/ff386551561389e0855dcd30c2986d6a4f77d394))
+* **probes:** narrow the manifest's option status and depth enums ([4619e0c](https://github.com/jasnross/agentspec/commit/4619e0cdc4143d23d30409b30995ea96baf2b35e))
+* **probes:** rebuild driver as a scheduling enum ([2437809](https://github.com/jasnross/agentspec/commit/243780986d29ab20dffd00cc0aebce238c60e010))
+* remove completed TODO items ([3d92bcb](https://github.com/jasnross/agentspec/commit/3d92bcbc70e5ea8591c7da04696094d6f7bcb9aa))
+* remove completed TODOs ([#2](https://github.com/jasnross/agentspec/issues/2) config flag, [#7](https://github.com/jasnross/agentspec/issues/7) remove verbose) ([06f4288](https://github.com/jasnross/agentspec/commit/06f42885bbd0a549ff016fb3622fe102a5338984))
+* **todos:** capture hook args and provider budget validation follow-ups ([4ad7ce2](https://github.com/jasnross/agentspec/commit/4ad7ce2ef83d0cb740ab213dcc3212f7f60deae2))
+* **todos:** capture Set 2 review follow-ups ([6227f7b](https://github.com/jasnross/agentspec/commit/6227f7b99d2b0383332c5cf4a3cd7ef4fb4fd31e))
+* **todos:** capture warnings-system reevaluation ([c789b0d](https://github.com/jasnross/agentspec/commit/c789b0d6aa046f11b6247b7e4c7720afc641f702))
+
+
+### Styles
+
+* keep the template block examples on one line ([11412bd](https://github.com/jasnross/agentspec/commit/11412bddb391f75696be9b803123d0b2d4fb9246))
+* normalize emphasis markers in TODO.md ([7b9edfe](https://github.com/jasnross/agentspec/commit/7b9edfeec10a1174ec422f8ae2fe06ed2c086e70))
+* **todo:** normalize emphasis markers in item 19 ([89f549b](https://github.com/jasnross/agentspec/commit/89f549b6815ecbe6e0a688a64503f2dabd06162f))
+
 ## [0.4.0](https://github.com/jasnross/agentspec/compare/v0.3.0...v0.4.0) (2026-05-22)
 
 
