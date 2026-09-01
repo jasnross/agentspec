@@ -237,20 +237,24 @@ jobs:
     env:
       RELEASE_TAG: ${{ needs.publish.outputs.release_tag }}
       VERSION: ${{ needs.publish.outputs.version }}
-      HOMEBREW_TAP_PAT: ${{ secrets.HOMEBREW_TAP_PAT }}
     steps:
-      - name: Validate token configuration
-        run: |
-          if [ -z "${HOMEBREW_TAP_PAT}" ]; then
-            echo "Missing HOMEBREW_TAP_PAT secret. Configure a token with write access to jasnross/homebrew-tap." >&2
-            exit 1
-          fi
+      # Scoped to the tap repository, which the App is installed on separately
+      # from agentspec. A missing or invalid private key fails this step with a
+      # clear error, so no separate secret-presence check is needed.
+      - name: Mint app token for tap repository
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: jasnross
+          repositories: homebrew-tap
 
       - name: Check out tap repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           repository: jasnross/homebrew-tap
-          token: ${{ secrets.HOMEBREW_TAP_PAT }}
+          token: ${{ steps.app-token.outputs.token }}
           path: homebrew-tap
 
       - name: Download release metadata
@@ -262,7 +266,7 @@ jobs:
       - name: Update formula and open or update PR
         id: tap_pr
         env:
-          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_PAT }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
 
