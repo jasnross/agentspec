@@ -55,7 +55,7 @@ execution:
   preset: architect
 capabilities:
   tools:
-    - bash
+    - shell
     - glob
     - grep
     - read
@@ -65,7 +65,7 @@ Review the proposed changes for correctness, security, and maintainability.
 
 ### Skills
 
-Skills are reusable prompts that can be invoked by users or agents. Each skill is a directory in `spec/skills/` containing exactly one `.md` file and any supporting files (scripts, templates, etc.).
+Skills are reusable prompts that can be invoked by users or agents. Each skill is a directory in `spec/skills/` containing a `SKILL.md` file (or a single `.md` file, if unambiguous) and any supporting files (scripts, templates, other colocated `.md` files, etc.).
 
 `spec/skills/commit/SKILL.md`:
 
@@ -79,14 +79,14 @@ execution:
   preset: balanced
 capabilities:
   tools:
-    - bash
+    - shell
 ---
 Create a git commit for the current changes.
 ```
 
 #### Supporting files
 
-Any non-`.md` files in a skill directory are bundled as supporting files and synced alongside the skill. This is useful for scripts that the skill references in its instructions. For example:
+Any file in a skill directory other than the primary spec file is bundled as a supporting file and synced alongside the skill. This is useful for scripts that the skill references in its instructions. For example:
 
 ```
 spec/skills/deploy/
@@ -170,11 +170,13 @@ args = ["--strict"]
 
 `args` is an optional list of literal strings passed to the script as positional arguments (`$1`, `$2`, …), alongside the canonical payload on stdin — the same script can back several entries with different parameters, as `audit-bash` and `audit-bash-strict` do above. agentspec quotes every value unconditionally; `hooks.toml` resolves no templating inside `args`, so values are literal text, never shell syntax. Argument values are copied verbatim into the user's `settings.json` or `hooks.json` by `sync`, so they are not a place for secrets. See [`docs/hooks-canonical.md`](docs/hooks-canonical.md#script-invocation-and-argv) for the full argv contract.
 
+`tags` is an optional list of strings, accepted on `[hooks.<id>]` entries the same way it is on agent, skill, and rule frontmatter. It is used for categorization and exposed in the `specs` template variable.
+
 #### Canonical payload format
 
 Hook scripts receive **canonical JSON** on stdin and emit canonical JSON on stdout — a provider-neutral wire format that produces semantically identical behavior under Claude Code and Cursor. agentspec generates a per-event POSIX shell shim (one per `(provider, HookEvent)` pair) that translates between each provider's native shape and the canonical shape; scripts never see raw provider stdin.
 
-`jq` is a runtime prerequisite — the shim invokes it twice per hook firing (input + output translation). Install via `brew install jq` / `apt install jq` / your package manager of choice. If `jq` is missing at hook-fire time, the shim prints a clear `agentspec: jq is required …` error and exits 1.
+`jq` is a runtime prerequisite. Install via `brew install jq` / `apt install jq` / your package manager of choice. If `jq` is missing at hook-fire time, the shim prints a clear `agentspec: jq is required …` error and exits 1.
 
 See [`docs/hooks-canonical.md`](docs/hooks-canonical.md) for the full canonical schema reference (per-event input/output field tables, `provider_raw` escape hatch, documented limitations, schema-versioning policy, and migration examples).
 
@@ -259,7 +261,7 @@ If your spec set contains hooks and `[sync.opencode]` is configured, agents/skil
 | `edit`      | Make targeted edits to existing files         |
 | `grep`      | Search file contents with regex patterns      |
 | `glob`      | Find files by name patterns                   |
-| `bash`      | Run shell commands                            |
+| `shell`     | Run shell commands                            |
 | `webfetch`  | Fetch content from a URL                      |
 | `websearch` | Search the web                                |
 | `question`  | Ask the user a question                       |
@@ -421,21 +423,20 @@ The `first=false` parameter skips indenting the first line (since it's already a
 
 Fragments can include other fragments (nesting is supported).
 
-#### Migration from pre-0.5
+#### Include directories outside the spec tree
 
-> **Note:** agentspec is currently at v0.4.x. This section documents upcoming breaking changes planned for v0.5. If you are already on v0.5+, these changes have been applied.
+`[spec].extra_include_dirs` registers directories outside `sources_dir` whose files can be included. Each entry has a `name`, which becomes the path prefix in includes, and a `path`, resolved relative to the config file's directory (a leading `~/` expands to `$HOME`):
 
-- **Include paths**: Add the `fragments/` prefix to all `{% include %}` paths that reference files in `spec/fragments/`. Before: `{% include "shared-rules.md" %}`. After: `{% include "fragments/shared-rules.md" %}`.
-- **Extra include dirs**: `extra_fragment_dirs` (a list of paths) is replaced by `extra_include_dirs` (a list of `{ name, path }` entries). The `name` becomes the path prefix in includes:
+```toml
+[spec]
+extra_include_dirs = [{ name = "shared", path = "../shared-fragments" }]
+```
 
-  ```toml
-  # Before
-  extra_fragment_dirs = ["../shared-fragments"]
+A file in that directory is then included under its registered prefix:
 
-  # After
-  extra_include_dirs = [{ name = "shared", path = "../shared-fragments" }]
-  # Include via: {% include "shared/note.md" %}
-  ```
+```
+{% include "shared/note.md" %}
+```
 
 #### Built-in variables
 
@@ -516,6 +517,10 @@ agentspec sync                   # compile and sync to all configured targets
 agentspec sync --dry-run         # preview without making changes
 agentspec sync --force           # allow overwriting user-owned destination files
 agentspec sync --provider claude --mode user # CLI-only sync for one provider
+agentspec remove                 # reverse a prior sync
+agentspec prune                  # strip orphaned entries from host config files
+agentspec hook test <hook-id>    # run a hook through the shim, showing each stage
+agentspec completions <shell>    # print a shell completion script
 ```
 
 ## Configuration
@@ -547,6 +552,8 @@ mode = "user"
 # plugin-version = "0.1.0"   # optional; any string (neither provider enforces SemVer)
 # plugin-description = "..."  # optional human-readable description
 # plugin-author = { name = "Name", email = "name@example.com" }  # optional author (email optional)
+# plugin-repository = "https://github.com/you/repo"  # optional; passed through to the plugin manifest
+# plugin-license = "MIT"     # optional; passed through to the plugin manifest
 ```
 
 ## Model presets
@@ -654,6 +661,8 @@ mode = "user"
 | `content-prefix` | `null` | Literal prefix for content references (model-facing names). Includes its separator (e.g., `"tw:"` → `tw:skill-name`). When unset, defaults to `"{prefix}-"`. See [Content-reference prefix](#content-reference-prefix). |
 | `overwrite` | `false` | When `true`, allows overwriting user-owned files at sync destinations (with backup). Can also be set per-invocation with `--force`. |
 | `dir` | `null` | Base directory for synced output when `mode = "plugin"`. Subdirectories (`agents/`, `skills/`, `rules/`, `commands/`, `hooks/`, `.claude-plugin/`, `.cursor-plugin/`) are created automatically. |
+| `plugin-repository` | `null` | Optional string written to the plugin manifest's `repository` field when `mode = "plugin"`. |
+| `plugin-license` | `null` | Optional string written to the plugin manifest's `license` field when `mode = "plugin"`. |
 
 ### Prefix behavior
 
@@ -713,3 +722,14 @@ agentspec remove --dry-run             # preview every file/manifest deletion wi
 - **`generated/<provider>/`** — `compile` output is independent of `sync`; `remove` reverses `sync`, not `compile`.
 - **`.bak.<timestamp>` files** — backups created when `sync --force` overwrites a user-owned file are not in the manifest. Clean them up by hand if you no longer need them: `find ~/.claude -name '*.bak.*' -delete`.
 - **Files agentspec did not write** — anything not recorded in `.agentspec-manifest.json` is treated as user-owned and left alone, even if it looks like agentspec output. The manifest is the source of truth.
+
+## Prune
+
+`agentspec prune` strips orphaned agentspec entries from host config files. It consults no `[sync.<provider>]` configuration, so it reaches entries left behind by a provider you have already deleted from `agentspec.toml` — which `remove` can no longer act on.
+
+```sh
+agentspec prune                    # every provider
+agentspec prune --provider claude  # narrow to one provider (repeatable / comma-separated)
+agentspec prune --dry-run          # preview without writing
+agentspec prune --verbose          # list every checked path, including those with no entries
+```
