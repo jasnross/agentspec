@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.6.0](https://github.com/jasnross/agentspec/compare/v0.5.0...v0.6.0) (2026-09-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* `CompileDiagnostics` gains a `losses` channel. `DegradationKind` loses `HooksUnsupported` and `PathScopedRulesUnsupported`, and `Degradation` loses `for_spec`. `Adapter` loses `emits_hooks` and `supports_path_scoped_rules`; the session-start parity gate reads `carriable(FileKind::Hooks)` instead.
+* `Adapter::carriable` is a new required trait method with no default body, so every external `Adapter` implementation must supply its table. `GeneratedFile` gains a public `spec_id` field and `AdapterOutput` gains a public `deliveries` field, so struct-literal construction of either must supply them.
+
+### Features
+
+* add `agentspec inspect` and move the loss report off the default run ([6300f76](https://github.com/jasnross/agentspec/commit/6300f76c03fb5c1a842ea28f97d90505c71aaff3))
+* derive dropped values by subtraction instead of adapter assertion ([bfe9987](https://github.com/jasnross/agentspec/commit/bfe998737492fa6eea758e5dd24dadcc912947d3))
+* record what each adapter delivers into generated files ([3542fad](https://github.com/jasnross/agentspec/commit/3542fad0302f87e306ba39957b0e3265d8835777))
+
+
+### Documentation
+
+* **readme:** correct stale claims and document missing surface ([7fd1f96](https://github.com/jasnross/agentspec/commit/7fd1f9673038376fdc92906e5dcd1d9ebbf9f32c))
+
+
+### Miscellaneous Chores
+
+* add TODO.md to .prettierignore ([59eb0aa](https://github.com/jasnross/agentspec/commit/59eb0aa7e8e061acc97116295457542d24c1eb5f))
+* migrate TODO.md to new format ([a1c5fa0](https://github.com/jasnross/agentspec/commit/a1c5fa07d7b1f118e2be04812225c11dca26ecd0))
+* **todos:** capture the compile/inspect setup duplication ([4002b5d](https://github.com/jasnross/agentspec/commit/4002b5d43834eda16a24a2e703929067b7f4c04b))
+* **todos:** drop the completed hook-args and warnings-system entries ([eab6c29](https://github.com/jasnross/agentspec/commit/eab6c291f994caacd6f2cbef2504d47c5888d37f))
+
 ## [0.5.0](https://github.com/jasnross/agentspec/compare/v0.4.0...v0.5.0) (2026-09-01)
 
 
