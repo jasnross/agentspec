@@ -10,13 +10,14 @@ use strum::VariantArray as _;
 
 use super::hooks_helpers::has_agentspec_entries;
 use super::{
-    Adapter, AdapterOutput, CompileCtx, Degradation, DegradationKind, RemovalOutput, RemoveCtx,
-    SyncDestinationMode,
+    Adapter, AdapterOutput, CompileCtx, Degradation, DegradationKind, Delivery, RemovalOutput,
+    RemoveCtx, SyncDestinationMode,
 };
 use crate::compile::{AdapterConfig, GeneratedFile};
 use crate::plan::{FileKind, ForwardPatch, RemovePatchReport, ReversePatch};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
+use crate::setting::{Carries, SettingKey, SettingKind};
 use crate::spec::{AgentSpec, HookEvent, RuleSpec, SkillSpec, Spec, ToolFrontmatter};
 
 // See: https://opencode.ai/docs/agents/#markdown
@@ -30,6 +31,24 @@ struct OpenCodeAgentFrontmatter {
     tools: IndexMap<String, bool>,
 }
 
+impl Carries for OpenCodeAgentFrontmatter {
+    fn carried(&self) -> Vec<SettingKey> {
+        // `tools` is unconditional because it is a non-`Option` map that
+        // `build_tool_map` populates on every agent file — every canonical
+        // tool set to `false`, the declared ones flipped to `true` — so the
+        // file always carries a tool map. A spec that declared no tools
+        // raises no `Tools` intent, so the extra delivery is inert.
+        [
+            self.model.as_ref().map(|_| SettingKey::Model),
+            self.variant.as_ref().map(|_| SettingKey::Variant),
+        ]
+        .into_iter()
+        .flatten()
+        .chain(std::iter::once(SettingKey::Tools))
+        .collect()
+    }
+}
+
 // See: https://opencode.ai/docs/commands/#markdown
 // `OpenCode` surfaces a top-level `variant:` key on commands, sibling to `model:`.
 // Measured by `experiments/opencode-command-variant/` at opencode 1.18.21.
@@ -39,6 +58,18 @@ struct OpenCodeCommandFrontmatter {
     description: String,
     model: Option<String>,
     variant: Option<String>,
+}
+
+impl Carries for OpenCodeCommandFrontmatter {
+    fn carried(&self) -> Vec<SettingKey> {
+        [
+            self.model.as_ref().map(|_| SettingKey::Model),
+            self.variant.as_ref().map(|_| SettingKey::Variant),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
 }
 
 // See: https://opencode.ai/docs/skills/#write-frontmatter
@@ -53,6 +84,16 @@ struct OpenCodeSkillFrontmatter {
     description: String,
 }
 
+impl Carries for OpenCodeSkillFrontmatter {
+    /// Nothing. Per the comment on the struct above, `OpenCode`'s resolved
+    /// skill record is `content`, `description`, `location`, and `name`
+    /// alone — measured by `experiments/opencode-skill-frontmatter-discard/`
+    /// — so this struct has no field a preset or a capability could reach.
+    fn carried(&self) -> Vec<SettingKey> {
+        Vec::new()
+    }
+}
+
 /// Filename of `OpenCode`'s host config under each provider's config dir.
 const HOST_FILENAME: &str = "opencode.json";
 
@@ -64,18 +105,19 @@ impl Adapter for OpenCodeAdapter {
     fn compile(&self, specs: &[Spec], ctx: &CompileCtx<'_>) -> Result<AdapterOutput> {
         let mut files = Vec::new();
         let mut degradations = Vec::new();
+        let mut deliveries = Vec::new();
         for spec in specs {
             match spec {
-                Spec::Agent(s) => files.extend(adapt_agent_spec(
-                    s.clone(),
-                    ctx.presets,
-                    ctx.adapter_config,
-                )?),
-                Spec::Skill(s) => files.extend(adapt_skill_spec(
-                    s.clone(),
-                    ctx.presets,
-                    ctx.adapter_config,
-                )?),
+                Spec::Agent(s) => {
+                    let (f, d) = adapt_agent_spec(s.clone(), ctx.presets, ctx.adapter_config)?;
+                    files.extend(f);
+                    deliveries.extend(d);
+                }
+                Spec::Skill(s) => {
+                    let (f, d) = adapt_skill_spec(s.clone(), ctx.presets, ctx.adapter_config)?;
+                    files.extend(f);
+                    deliveries.extend(d);
+                }
                 Spec::Rule(s) => {
                     if s.frontmatter.paths.is_some() && !self.supports_path_scoped_rules() {
                         degradations.push(Degradation::provider_wide(
@@ -83,7 +125,9 @@ impl Adapter for OpenCodeAdapter {
                             DegradationKind::PathScopedRulesUnsupported,
                         ));
                     }
-                    files.extend(adapt_rule_spec(s, ctx.adapter_config));
+                    let (f, d) = adapt_rule_spec(s, ctx.adapter_config);
+                    files.extend(f);
+                    deliveries.extend(d);
                 }
                 // Hooks are not emitted for OpenCode in v1. The degradation is
                 // pushed here — the arm that drops the spec — rather than
@@ -147,6 +191,7 @@ impl Adapter for OpenCodeAdapter {
             patches,
             dest_root,
             degradations,
+            deliveries,
         })
     }
 
@@ -229,6 +274,20 @@ impl Adapter for OpenCodeAdapter {
         None
     }
 
+    fn carriable(&self, kind: FileKind) -> &'static [SettingKind] {
+        match kind {
+            FileKind::Agents => &[
+                SettingKind::Body,
+                SettingKind::Model,
+                SettingKind::Variant,
+                SettingKind::Tools,
+            ],
+            FileKind::Commands => &[SettingKind::Body, SettingKind::Model, SettingKind::Variant],
+            FileKind::Skills | FileKind::Rules => &[SettingKind::Body],
+            FileKind::Hooks | FileKind::PluginManifest => &[],
+        }
+    }
+
     fn emits_hooks(&self) -> bool {
         false
     }
@@ -275,7 +334,7 @@ fn adapt_agent_spec(
     spec: AgentSpec,
     presets: &ProviderPresetsMap,
     cfg: Option<&AdapterConfig>,
-) -> Result<Vec<GeneratedFile>> {
+) -> Result<(Vec<GeneratedFile>, Vec<Delivery>)> {
     let id = spec.frontmatter.id;
     let description = spec.frontmatter.description;
 
@@ -312,19 +371,22 @@ fn adapt_agent_spec(
 
     let file_prefix = cfg.and_then(AdapterConfig::file_prefix).unwrap_or_default();
 
-    Ok(vec![GeneratedFile::text(
+    let file = GeneratedFile::text(
         Provider::OpenCode,
         FileKind::Agents,
         Path::new("agents").join(format!("{file_prefix}{id}.md")),
         content,
-    )])
+    )
+    .with_spec_id(&id);
+    let deliveries = Delivery::from_file(&id, &file, frontmatter.carried());
+    Ok((vec![file], deliveries))
 }
 
 fn adapt_skill_spec(
     spec: SkillSpec,
     presets: &ProviderPresetsMap,
     cfg: Option<&AdapterConfig>,
-) -> Result<Vec<GeneratedFile>> {
+) -> Result<(Vec<GeneratedFile>, Vec<Delivery>)> {
     let id = spec.frontmatter.id;
     let description = spec.frontmatter.description.unwrap_or_default();
     let user_invocable = spec.frontmatter.user_invocable;
@@ -343,6 +405,13 @@ fn adapt_skill_spec(
     let supporting_files = spec.supporting_files;
 
     let mut files = Vec::new();
+    // Deliveries are recorded only for the branches actually taken: the
+    // command file's `model`/`variant` when `user_invocable`, and nothing
+    // extra when `agent_invocable`, because the skill file carries neither.
+    // A dual-invocable skill therefore reports a `Skills`-kind loss for both
+    // while its `Commands` file satisfies its own intent — the shape the
+    // per-emitted-kind subtraction exists to express. Do not flatten it.
+    let mut deliveries = Vec::new();
 
     if user_invocable {
         // OpenCode commands: prefix becomes a subdirectory, not a file prefix
@@ -358,12 +427,10 @@ fn adapt_skill_spec(
         };
         let frontmatter_str = serde_yml::to_string(&frontmatter)?;
         let content = format!("---\n{frontmatter_str}---\n\n{}", body.trim());
-        files.push(GeneratedFile::text(
-            Provider::OpenCode,
-            FileKind::Commands,
-            cmd_path,
-            content,
-        ));
+        let file = GeneratedFile::text(Provider::OpenCode, FileKind::Commands, cmd_path, content)
+            .with_spec_id(&id);
+        deliveries.extend(Delivery::from_file(&id, &file, frontmatter.carried()));
+        files.push(file);
     }
 
     if agent_invocable {
@@ -378,40 +445,52 @@ fn adapt_skill_spec(
 
         let skill_dir = Path::new("skills").join(format!("{file_prefix}{id}"));
 
-        files.push(GeneratedFile::text(
+        let skill_file = GeneratedFile::text(
             Provider::OpenCode,
             FileKind::Skills,
             skill_dir.join("SKILL.md"),
             content,
-        ));
+        )
+        .with_spec_id(&id);
+        deliveries.extend(Delivery::from_file(&id, &skill_file, frontmatter.carried()));
+        files.push(skill_file);
 
+        // Supporting files carry no settings, but still name their spec:
+        // `Body` membership is read off `GeneratedFile.spec_id`.
         for (rel_path, sf) in supporting_files {
-            files.push(GeneratedFile::binary(
-                Provider::OpenCode,
-                FileKind::Skills,
-                skill_dir.join(&rel_path),
-                sf.content,
-                Some(sf.mode),
-            ));
+            files.push(
+                GeneratedFile::binary(
+                    Provider::OpenCode,
+                    FileKind::Skills,
+                    skill_dir.join(&rel_path),
+                    sf.content,
+                    Some(sf.mode),
+                )
+                .with_spec_id(&id),
+            );
         }
     }
 
-    Ok(files)
+    Ok((files, deliveries))
 }
 
-fn adapt_rule_spec(spec: &RuleSpec, cfg: Option<&AdapterConfig>) -> Vec<GeneratedFile> {
+fn adapt_rule_spec(
+    spec: &RuleSpec,
+    cfg: Option<&AdapterConfig>,
+) -> (Vec<GeneratedFile>, Vec<Delivery>) {
+    let id = &spec.frontmatter.id;
     let content = format!("{}\n", spec.body.trim());
     let file_prefix = cfg.and_then(AdapterConfig::file_prefix).unwrap_or_default();
     let path = Path::new("rules")
-        .join(format!("{file_prefix}{}", spec.frontmatter.id))
+        .join(format!("{file_prefix}{id}"))
         .join("AGENTS.md");
 
-    vec![GeneratedFile::text(
-        Provider::OpenCode,
-        FileKind::Rules,
-        path,
-        content,
-    )]
+    // `OpenCode` rule files carry no frontmatter at all — the whole file is
+    // the body — so there is no struct to read a record off and nothing but
+    // the body is delivered.
+    let file =
+        GeneratedFile::text(Provider::OpenCode, FileKind::Rules, path, content).with_spec_id(id);
+    (vec![file], Vec::new())
 }
 
 /// Post-write patch that registers agentspec rule files in `opencode.json`'s
@@ -729,6 +808,46 @@ mod tests {
         AgentFrontmatter, AgentSpec, CapabilitiesFrontmatter, ExecutionFrontmatter,
         SkillFrontmatter, SkillSpec,
     };
+
+    /// `tools` is a non-`Option` map that `build_tool_map` populates on every
+    /// agent file, so the file carries a tool map whether or not the spec
+    /// declared one. Pinned so the behavior is a decision rather than an
+    /// accident of the field's type.
+    #[test]
+    fn test_agent_frontmatter_carries_tools_with_none_declared() {
+        let frontmatter = OpenCodeAgentFrontmatter {
+            description: "d".to_owned(),
+            mode: "subagent",
+            model: None,
+            variant: None,
+            tools: build_tool_map(&[]),
+        };
+        assert_eq!(frontmatter.carried(), vec![SettingKey::Tools]);
+    }
+
+    #[test]
+    fn test_agent_frontmatter_carries_model_and_variant_when_set() {
+        let frontmatter = OpenCodeAgentFrontmatter {
+            description: "d".to_owned(),
+            mode: "subagent",
+            model: Some("anthropic/claude-opus-5".to_owned()),
+            variant: Some("thinking".to_owned()),
+            tools: build_tool_map(&[]),
+        };
+        assert_eq!(
+            frontmatter.carried(),
+            vec![SettingKey::Model, SettingKey::Variant, SettingKey::Tools]
+        );
+    }
+
+    #[test]
+    fn test_skill_frontmatter_carries_nothing() {
+        let frontmatter = OpenCodeSkillFrontmatter {
+            name: "s".to_owned(),
+            description: "d".to_owned(),
+        };
+        assert!(frontmatter.carried().is_empty());
+    }
 
     fn compile_one_with_presets(
         spec: Spec,

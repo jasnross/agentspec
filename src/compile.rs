@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use crate::adapters::{CompileCtx, Degradation, SyncDestinationMode};
+use crate::adapters::{CompileCtx, Degradation, Delivery, SyncDestinationMode};
 use crate::plan::{FileKind, ForwardPatch};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
@@ -155,6 +155,17 @@ pub struct GeneratedFile {
     pub content: Vec<u8>,
     /// Optional file mode (e.g., 0o755 for executable scripts)
     pub mode: Option<u32>,
+    /// The spec this file was produced from, or `None` for files no single
+    /// spec owns — plugin manifests, hook scripts, hook shims, and the bundled
+    /// `hooks/hooks.json`.
+    ///
+    /// Together with [`crate::adapters::AdapterOutput::deliveries`] this is
+    /// how a provider's per-spec output is identified: a markdown spec names
+    /// itself here, while a hook spec never does — no hook file names a single
+    /// spec in any emit mode — and is identified by its registration delivery
+    /// instead. A spec-owned file left `None` therefore reads as a spec the
+    /// provider emitted nothing for.
+    pub spec_id: Option<String>,
 }
 
 impl GeneratedFile {
@@ -171,6 +182,7 @@ impl GeneratedFile {
             path: path.as_ref().to_path_buf(),
             content: content.into_bytes(),
             mode: None,
+            spec_id: None,
         }
     }
 
@@ -188,7 +200,15 @@ impl GeneratedFile {
             path: path.as_ref().to_path_buf(),
             content,
             mode,
+            spec_id: None,
         }
+    }
+
+    /// Record the spec this file was produced from.
+    #[must_use]
+    pub fn with_spec_id(mut self, spec_id: &str) -> Self {
+        self.spec_id = Some(spec_id.to_owned());
+        self
     }
 }
 
@@ -368,6 +388,9 @@ pub(crate) fn compile_specs(
     let mut patches: HashMap<Provider, Vec<Box<dyn ForwardPatch>>> = HashMap::new();
     let mut dest_roots: HashMap<Provider, PathBuf> = HashMap::new();
     let mut degradations: BTreeSet<Degradation> = BTreeSet::new();
+    // Populated but unconsumed for now; the subtraction that reads it lands
+    // with the loss report.
+    let mut deliveries: HashMap<Provider, Vec<Delivery>> = HashMap::new();
 
     let default_target = ProviderCompileTarget::default();
 
@@ -403,6 +426,10 @@ pub(crate) fn compile_specs(
         }
         dest_roots.insert(provider, output.dest_root);
         degradations.extend(output.degradations);
+        deliveries
+            .entry(provider)
+            .or_default()
+            .extend(output.deliveries);
     }
 
     // Sort output files by path for deterministic ordering

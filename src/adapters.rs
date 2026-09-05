@@ -22,6 +22,7 @@ use crate::compile::{AdapterConfig, GeneratedFile, HookEmitMode};
 use crate::plan::{FileKind, ForwardPatch, ReversePatch, expand_tilde};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
+use crate::setting::{SettingKey, SettingKind};
 use crate::spec::{HookEvent, Spec, ToolFrontmatter};
 
 /// Library-side mirror of the binary's `SyncMode`.
@@ -173,6 +174,85 @@ pub struct AdapterOutput {
     /// Values this adapter was handed and could not honor, discovered during
     /// its own walk. `compile_specs` drains these; it cannot construct one.
     pub degradations: Vec<Degradation>,
+    /// The record of what this adapter carried: one entry per setting that
+    /// landed in an emitted file. An adapter asserts nothing here about what
+    /// it dropped — only about what it delivered.
+    ///
+    /// `compile_specs` collects these per provider. Nothing subtracts them
+    /// from an author-intent set yet, so the record is currently written and
+    /// not read.
+    pub deliveries: Vec<Delivery>,
+}
+
+/// One adapter carried one setting for one spec into one emitted file.
+///
+/// Constructed only by adapter implementations and the hook synthesis helper,
+/// from the point where the value is handed to a `GeneratedFile`. The
+/// orchestrator subtracts these; it cannot build one.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct Delivery {
+    spec_id: String,
+    setting: SettingKey,
+    /// The kind of the file the setting landed in. Part of the subtraction
+    /// key, so a `model` delivered into an `OpenCode` command file does not
+    /// satisfy the same spec's skill-file intent. Also what lets
+    /// `test_carriable_agrees_with_carried` check a declaration against a
+    /// recording per file kind rather than per provider.
+    kind: FileKind,
+    /// Relative to the provider's dest root. For a delivery recorded off a
+    /// `GeneratedFile`, this is that file's path. For a hook registration
+    /// under merged emit mode it is `hooks/hooks.json`, which agentspec does
+    /// not write in that mode — the registration lands in the provider's host
+    /// file instead. The report never renders this field, so the merged-mode
+    /// value is a stable identity for the subtraction rather than a path the
+    /// author can open.
+    file: PathBuf,
+}
+
+impl Delivery {
+    /// One delivery per setting `carried` landed in `file`.
+    ///
+    /// Called immediately after the adapter builds the `GeneratedFile`, from
+    /// the one point where a frontmatter struct becomes bytes.
+    fn from_file(spec_id: &str, file: &GeneratedFile, carried: Vec<SettingKey>) -> Vec<Self> {
+        carried
+            .into_iter()
+            .map(|setting| Self {
+                spec_id: spec_id.to_owned(),
+                setting,
+                kind: file.kind,
+                file: file.path.clone(),
+            })
+            .collect()
+    }
+
+    /// A hook spec's registration reached `file`. Used only by
+    /// `synthesize_hooks`, which has entries rather than per-spec files, so
+    /// this takes the path directly rather than a `GeneratedFile`.
+    fn registration(spec_id: &str, kind: FileKind, file: PathBuf) -> Self {
+        Self {
+            spec_id: spec_id.to_owned(),
+            setting: SettingKey::Body,
+            kind,
+            file,
+        }
+    }
+
+    pub fn spec_id(&self) -> &str {
+        &self.spec_id
+    }
+
+    pub fn setting(&self) -> &SettingKey {
+        &self.setting
+    }
+
+    pub fn kind(&self) -> FileKind {
+        self.kind
+    }
+
+    pub fn file(&self) -> &Path {
+        &self.file
+    }
 }
 
 /// A value the spec author supplied that one provider could not honor.
@@ -413,6 +493,24 @@ pub trait Adapter: std::fmt::Debug + Send + Sync {
     /// references to scripts in skill content. Implementations must not include a trailing slash.
     fn body_skill_root(&self) -> Option<&'static str>;
 
+    /// The settings this adapter can express on `kind`.
+    ///
+    /// A claim about the provider's schema, not about any spec.
+    ///
+    /// `test_carriable_agrees_with_carried` is the sole consumer of the claim:
+    /// it compares this table against what the frontmatter struct for `kind`
+    /// actually records, in both directions. A declared setting with no field
+    /// to hold it and no composer writing it is a bug in this table; a
+    /// recorded delivery whose setting this table omits is a bug the other
+    /// way.
+    ///
+    /// The table is also what `README.md`'s prose about which spec values
+    /// reach which provider is written against — the prose is hand-maintained,
+    /// and this is the declaration a reader checks it against.
+    ///
+    /// Returns an empty slice for a [`FileKind`] this adapter never emits.
+    fn carriable(&self, kind: FileKind) -> &'static [SettingKind];
+
     /// Whether this provider emits hook entries.
     ///
     /// Today: `true` for Claude / Cursor, `false` for `OpenCode` (which has
@@ -542,10 +640,213 @@ pub trait Adapter: std::fmt::Debug + Send + Sync {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
+    use std::path::{Path, PathBuf};
 
-    use super::{Degradation, DegradationKind};
+    use indexmap::IndexMap;
+    use strum::VariantArray as _;
+
+    use super::{CompileCtx, Degradation, DegradationKind, SyncDestinationMode};
+    use crate::plan::FileKind;
+    use crate::presets::{
+        ClaudeEffort, ClaudePreset, CursorPreset, OpenCodePreset, ProviderPresets,
+        ProviderPresetsMap,
+    };
     use crate::provider::Provider;
+    use crate::setting::{SettingKey, SettingKind};
+    use crate::spec::{
+        AgentFrontmatter, AgentSpec, CapabilitiesFrontmatter, ExecutionFrontmatter, HookEvent,
+        HookFrontmatter, HookSpec, RuleFrontmatter, RuleSpec, SkillFrontmatter, SkillSpec, Spec,
+        ToolFrontmatter,
+    };
+
+    const PRESET: &str = "maximal";
+
+    /// A preset configuring every option each provider can express, so that a
+    /// `carriable` entry left undelivered is a bug in the table rather than a
+    /// gap in the fixture.
+    fn maximal_presets() -> ProviderPresetsMap {
+        HashMap::from([(
+            PRESET.to_owned(),
+            ProviderPresets {
+                claude: Some(ClaudePreset {
+                    model: Some("claude-opus-5".to_owned()),
+                    effort: Some(ClaudeEffort::High),
+                }),
+                cursor: Some(CursorPreset {
+                    model: Some("claude-opus-5".to_owned()),
+                    effort: Some("high".to_owned()),
+                    fast: Some(false),
+                    context: Some("300k".to_owned()),
+                    params: BTreeMap::from([("optimize_for".to_owned(), "cost".to_owned())]),
+                }),
+                opencode: Some(OpenCodePreset {
+                    model: Some("anthropic/claude-opus-5".to_owned()),
+                    variant: Some("thinking".to_owned()),
+                }),
+            },
+        )])
+    }
+
+    fn skill(id: &str, user_invocable: bool, agent_invocable: bool) -> Spec {
+        Spec::Skill(SkillSpec {
+            path: PathBuf::from("test.md"),
+            frontmatter: SkillFrontmatter {
+                id: id.to_owned(),
+                description: Some("Test skill".to_owned()),
+                tags: None,
+                user_invocable,
+                agent_invocable,
+                execution: Some(ExecutionFrontmatter {
+                    preset: Some(PRESET.to_owned()),
+                }),
+                capabilities: Some(CapabilitiesFrontmatter {
+                    tools: Some(vec![ToolFrontmatter::Read]),
+                }),
+            },
+            body: "Body.".to_owned(),
+            supporting_files: IndexMap::new(),
+        })
+    }
+
+    /// One agent, three skills spanning the invocation-flag combinations, a
+    /// path-scoped rule, and a hook — the union covers every `FileKind` any
+    /// adapter emits.
+    fn spec_set() -> Vec<Spec> {
+        vec![
+            Spec::Agent(AgentSpec {
+                path: PathBuf::from("test.md"),
+                frontmatter: AgentFrontmatter {
+                    id: "maximal-agent".to_owned(),
+                    description: "Test agent".to_owned(),
+                    tags: None,
+                    execution: Some(ExecutionFrontmatter {
+                        preset: Some(PRESET.to_owned()),
+                    }),
+                    capabilities: Some(CapabilitiesFrontmatter {
+                        tools: Some(vec![ToolFrontmatter::Read]),
+                    }),
+                },
+                body: "Body.".to_owned(),
+            }),
+            skill("dual-skill", true, true),
+            skill("command-only-skill", true, false),
+            skill("skill-only-skill", false, true),
+            Spec::Rule(RuleSpec {
+                path: PathBuf::from("test.md"),
+                frontmatter: RuleFrontmatter {
+                    id: "scoped-rule".to_owned(),
+                    description: Some("Test rule".to_owned()),
+                    tags: None,
+                    paths: Some(vec!["src/**".to_owned()]),
+                },
+                body: "Body.".to_owned(),
+            }),
+            Spec::Hook(HookSpec {
+                path: PathBuf::from("/tmp/hooks.toml"),
+                frontmatter: HookFrontmatter {
+                    id: "startup".to_owned(),
+                    events: vec![HookEvent::SessionStart],
+                    script: PathBuf::from("scripts/startup.sh"),
+                    matcher: None,
+                    timeout: None,
+                    description: None,
+                    tags: None,
+                    args: None,
+                },
+                body: String::new(),
+                supporting_files: IndexMap::new(),
+            }),
+        ]
+    }
+
+    /// The claim `carriable` makes is checked against what adapters actually
+    /// record, in both directions, and nowhere else. A declared setting with
+    /// no field to hold it fails the second assertion; a recorded delivery the
+    /// table omits fails the first. Together they exclude the state a
+    /// report-time "schema limit or adapter bug" verdict would have described,
+    /// which is why the loss report carries no such verdict.
+    #[test]
+    fn test_carriable_agrees_with_carried() {
+        let specs = spec_set();
+        let presets = maximal_presets();
+        // `SyncDestinationMode::Compile` maps to `HookEmitMode::Bundled`, so
+        // Claude and Cursor emit `hooks/hooks.json`. Under a merged mode they
+        // would emit no hook file at all and the emitted-kind assertion below
+        // would wrongly demand an empty `carriable(Hooks)`.
+        let ctx = CompileCtx {
+            mode: SyncDestinationMode::Compile,
+            home: Path::new("/tmp/home"),
+            cwd: Path::new("/tmp/cwd"),
+            target_dir: None,
+            presets: &presets,
+            adapter_config: None,
+            overwrite: false,
+        };
+
+        for provider in Provider::VARIANTS {
+            let adapter = provider.adapter();
+            let output = adapter.compile(&specs, &ctx).expect("compile");
+
+            for delivery in &output.deliveries {
+                let declared = adapter.carriable(delivery.kind());
+                assert!(
+                    declared.contains(&delivery.setting().kind()),
+                    "{provider} recorded {:?} on a {} file but carriable({}) omits it",
+                    delivery.setting(),
+                    delivery.kind(),
+                    delivery.kind(),
+                );
+            }
+
+            for &kind in FileKind::all() {
+                let emitted_any = output.files.iter().any(|f| f.kind == kind);
+                let declared = adapter.carriable(kind);
+                if !emitted_any {
+                    assert!(
+                        declared.is_empty(),
+                        "{provider} emitted no {kind} file but carriable({kind}) declares {declared:?}"
+                    );
+                    continue;
+                }
+                // `Body` is not a frontmatter field, so no `carried()` records
+                // it. Its delivery is the emitted file itself — a spec-owned
+                // `GeneratedFile` of this kind, or, for hooks, a registration
+                // recorded off an `EmittedHookEntry`, because no hook file
+                // names a single spec. Checking it against those rather than
+                // skipping it is what stops a table omitting `Body` — the most
+                // severe loss class there is — from passing.
+                let body_delivered = output
+                    .files
+                    .iter()
+                    .any(|f| f.kind == kind && f.spec_id.is_some())
+                    || output
+                        .deliveries
+                        .iter()
+                        .any(|d| d.kind() == kind && *d.setting() == SettingKey::Body);
+                assert_eq!(
+                    declared.contains(&SettingKind::Body),
+                    body_delivered,
+                    "{provider}: carriable({kind}) declares Body = {}, but a spec body {} reach a {kind} file",
+                    declared.contains(&SettingKind::Body),
+                    if body_delivered { "does" } else { "does not" },
+                );
+
+                for declared_kind in declared {
+                    if matches!(*declared_kind, SettingKind::Body) {
+                        continue;
+                    }
+                    assert!(
+                        output
+                            .deliveries
+                            .iter()
+                            .any(|d| d.kind() == kind && d.setting().kind() == *declared_kind),
+                        "{provider} declares {declared_kind:?} on {kind} but recorded no such delivery"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_degradation_set_collapses_duplicate_provider_wide_pushes() {

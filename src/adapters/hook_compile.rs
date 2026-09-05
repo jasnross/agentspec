@@ -11,6 +11,7 @@ use std::path::{Component, Path, PathBuf};
 
 use anyhow::Result;
 
+use super::Delivery;
 use crate::compile::{EmittedHookEntry, GeneratedFile, HookEmitMode};
 use crate::hooks_canonical::{ProviderName, shim_template};
 use crate::plan::FileKind;
@@ -24,6 +25,8 @@ use crate::spec::{HookEvent, HookSpec, ToolFrontmatter};
 pub(super) struct HookSynthesis {
     pub entries: Vec<EmittedHookEntry>,
     pub files: Vec<GeneratedFile>,
+    /// One `Body` delivery per hook spec that reached a registration entry.
+    pub deliveries: Vec<Delivery>,
 }
 
 /// Build the `EmittedHookEntry` list and supporting `GeneratedFile`s for a
@@ -57,6 +60,33 @@ where
 
     let entries =
         build_emitted_hook_entries(specs, provider, dotdir, plugin_root_env_var, emit_mode);
+
+    // Derived from `entries` rather than from `specs`, which is what makes
+    // this a record of the registration rather than an assertion that
+    // registration happened: a spec dropped before `build_emitted_hook_entries`
+    // produces no entry, no delivery, and a reported loss.
+    //
+    // One per distinct `agentspec_id`, since a multi-event spec produces
+    // several entries and loses its body only if all of them vanish. The
+    // anchor is `hooks/hooks.json` in every emit mode — `Bundled` writes that
+    // file, and merged mode patches the provider's host file, which the report
+    // does not name. A shim would be the wrong anchor: `build_shim_files`
+    // emits one per distinct `HookEvent`, shared across every hook using it.
+    let hooks_json = Path::new("hooks").join("hooks.json");
+    let mut seen: Vec<&str> = Vec::new();
+    let mut deliveries = Vec::new();
+    for entry in &entries {
+        if seen.contains(&entry.agentspec_id.as_str()) {
+            continue;
+        }
+        seen.push(&entry.agentspec_id);
+        deliveries.push(Delivery::registration(
+            &entry.agentspec_id,
+            FileKind::Hooks,
+            hooks_json.clone(),
+        ));
+    }
+
     let mut files = build_hook_script_files(provider, specs);
     files.extend(build_shim_files(provider, specs));
     if matches!(emit_mode, HookEmitMode::Bundled) {
@@ -64,11 +94,15 @@ where
         files.push(GeneratedFile::text(
             provider,
             FileKind::Hooks,
-            Path::new("hooks").join("hooks.json"),
+            hooks_json,
             json,
         ));
     }
-    Ok(HookSynthesis { entries, files })
+    Ok(HookSynthesis {
+        entries,
+        files,
+        deliveries,
+    })
 }
 
 /// Build the per-provider `Vec<GeneratedFile>` for every file under
@@ -314,6 +348,7 @@ mod tests {
 
     use super::*;
     use crate::adapters::{ClaudeAdapter, CursorAdapter};
+    use crate::setting::SettingKey;
     use crate::spec::HookFrontmatter;
 
     fn hook_spec(id: &str, events: Vec<HookEvent>) -> HookSpec {
@@ -414,6 +449,90 @@ mod tests {
             "second shim should be session_start, got: {:?}",
             claude[1].path
         );
+    }
+
+    /// A multi-event spec produces several entries but loses its body only if
+    /// all of them vanish, so the dedup collapses them to one delivery.
+    #[test]
+    fn synthesize_hooks_records_one_body_delivery_per_spec() {
+        let multi = hook_spec(
+            "multi",
+            vec![HookEvent::PreToolUse, HookEvent::SessionStart],
+        );
+        let single = hook_spec("single", vec![HookEvent::SessionStart]);
+        let specs: Vec<&HookSpec> = vec![&multi, &single];
+
+        let synthesis = synthesize_hooks(
+            Provider::Claude,
+            ".claude",
+            "CLAUDE_PLUGIN_ROOT",
+            &specs,
+            HookEmitMode::Bundled,
+            |_| Ok(String::from("{}")),
+        )
+        .expect("synthesize");
+
+        assert_eq!(synthesis.entries.len(), 3, "2 events + 1 event");
+        let ids: Vec<&str> = synthesis
+            .deliveries
+            .iter()
+            .map(super::Delivery::spec_id)
+            .collect();
+        assert_eq!(ids, vec!["multi", "single"]);
+        assert!(
+            synthesis
+                .deliveries
+                .iter()
+                .all(|d| *d.setting() == SettingKey::Body
+                    && d.kind() == FileKind::Hooks
+                    && d.file() == Path::new("hooks/hooks.json")),
+            "every hook delivery is a Body registration anchored on hooks/hooks.json: {:?}",
+            synthesis.deliveries
+        );
+    }
+
+    /// The anchor is the same in every emit mode. Merged mode writes no
+    /// `hooks/hooks.json` — the registration lands in the provider's host file
+    /// — so the path is a stable identity for the subtraction rather than a
+    /// file the author can open, and the subtraction must not vary by mode.
+    #[test]
+    fn synthesize_hooks_anchors_deliveries_identically_in_every_emit_mode() {
+        let spec = hook_spec("startup", vec![HookEvent::SessionStart]);
+        let specs: Vec<&HookSpec> = vec![&spec];
+
+        let of_mode = |mode| {
+            synthesize_hooks(
+                Provider::Claude,
+                ".claude",
+                "CLAUDE_PLUGIN_ROOT",
+                &specs,
+                mode,
+                |_| Ok(String::from("{}")),
+            )
+            .expect("synthesize")
+            .deliveries
+        };
+
+        let bundled = of_mode(HookEmitMode::Bundled);
+        assert_eq!(bundled, of_mode(HookEmitMode::MergedUser));
+        assert_eq!(bundled, of_mode(HookEmitMode::MergedProject));
+        assert_eq!(bundled.len(), 1);
+    }
+
+    /// No hook specs means no entries, so no spec is recorded as delivered —
+    /// which is what makes a dropped hook reportable rather than assumed.
+    #[test]
+    fn synthesize_hooks_records_no_deliveries_without_specs() {
+        let synthesis = synthesize_hooks(
+            Provider::Claude,
+            ".claude",
+            "CLAUDE_PLUGIN_ROOT",
+            &[],
+            HookEmitMode::Bundled,
+            |_| Ok(String::from("{}")),
+        )
+        .expect("synthesize");
+        assert!(synthesis.deliveries.is_empty());
     }
 
     #[test]

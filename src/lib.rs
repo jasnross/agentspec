@@ -6,6 +6,7 @@ pub mod hooks_merge;
 pub mod plan;
 pub mod presets;
 pub mod provider;
+pub mod setting;
 pub mod spec;
 pub mod specs;
 pub mod templating;

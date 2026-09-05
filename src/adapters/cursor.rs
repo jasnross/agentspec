@@ -11,8 +11,8 @@ use super::hooks_helpers::{
     prune_empty_event_arrays, value_to_cst_input,
 };
 use super::{
-    Adapter, AdapterOutput, CompileCtx, Degradation, DegradationKind, RemovalOutput, RemoveCtx,
-    SyncDestinationMode, TidyOutcome,
+    Adapter, AdapterOutput, CompileCtx, Degradation, DegradationKind, Delivery, RemovalOutput,
+    RemoveCtx, SyncDestinationMode, TidyOutcome,
 };
 use crate::compile::{
     AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode,
@@ -22,6 +22,7 @@ use crate::hooks_merge::{merge_owned, remove_owned};
 use crate::plan::{FileKind, ForwardPatch, ReversePatch};
 use crate::presets::{CursorPreset, ProviderPresetsMap};
 use crate::provider::Provider;
+use crate::setting::{Carries, SettingKey, SettingKind};
 use crate::spec::{AgentSpec, HookEvent, HookSpec, RuleSpec, SkillSpec, Spec, ToolFrontmatter};
 
 // See: https://cursor.com/docs/subagents#configuration-fields
@@ -31,6 +32,21 @@ struct CursorAgentFrontmatter {
     name: String,
     description: String,
     model: Option<String>,
+    /// The record the composed `model` value cannot supply.
+    ///
+    /// Cursor spells every model option as a bracket suffix on the model id,
+    /// so by the time `model` is `Some` the individual settings have been
+    /// concatenated into one string that reading back would require a second
+    /// parser. The same expression that builds the bracket collects these
+    /// keys, which is what keeps the record from drifting from the output.
+    #[serde(skip)]
+    carried: Vec<SettingKey>,
+}
+
+impl Carries for CursorAgentFrontmatter {
+    fn carried(&self) -> Vec<SettingKey> {
+        self.carried.clone()
+    }
 }
 
 // See: https://cursor.com/docs/skills#frontmatter-fields
@@ -42,6 +58,16 @@ struct CursorSkillFrontmatter {
     disable_model_invocation: bool,
 }
 
+impl Carries for CursorSkillFrontmatter {
+    /// Nothing. Cursor's skill schema has no model field, so no value from a
+    /// preset's Cursor block reaches a generated Cursor skill file — the drop
+    /// `README.md` documents under "Execution presets reach skill files on
+    /// Claude only".
+    fn carried(&self) -> Vec<SettingKey> {
+        Vec::new()
+    }
+}
+
 // See: https://cursor.com/docs/rules#rule-file-format
 #[serde_with::skip_serializing_none]
 #[derive(Serialize)]
@@ -50,6 +76,16 @@ struct CursorRuleFrontmatter {
     description: String,
     globs: Option<String>,
     always_apply: bool,
+}
+
+impl Carries for CursorRuleFrontmatter {
+    fn carried(&self) -> Vec<SettingKey> {
+        self.globs
+            .is_some()
+            .then_some(SettingKey::Paths)
+            .into_iter()
+            .collect()
+    }
 }
 
 const HOST_FILENAME: &str = "hooks.json";
@@ -69,15 +105,24 @@ pub struct CursorAdapter;
 impl Adapter for CursorAdapter {
     fn compile(&self, specs: &[Spec], ctx: &CompileCtx<'_>) -> Result<AdapterOutput> {
         let mut files = Vec::new();
+        let mut deliveries = Vec::new();
         for spec in specs {
             match spec {
-                Spec::Agent(s) => files.extend(adapt_agent_spec(
-                    s.clone(),
-                    ctx.presets,
-                    ctx.adapter_config,
-                )?),
-                Spec::Skill(s) => files.extend(adapt_skill_spec(s.clone(), ctx.adapter_config)?),
-                Spec::Rule(s) => files.extend(adapt_rule_spec(s.clone(), ctx.adapter_config)?),
+                Spec::Agent(s) => {
+                    let (f, d) = adapt_agent_spec(s.clone(), ctx.presets, ctx.adapter_config)?;
+                    files.extend(f);
+                    deliveries.extend(d);
+                }
+                Spec::Skill(s) => {
+                    let (f, d) = adapt_skill_spec(s.clone(), ctx.adapter_config)?;
+                    files.extend(f);
+                    deliveries.extend(d);
+                }
+                Spec::Rule(s) => {
+                    let (f, d) = adapt_rule_spec(s.clone(), ctx.adapter_config)?;
+                    files.extend(f);
+                    deliveries.extend(d);
+                }
                 // Hook scripts are emitted by `synthesize_hooks` once per provider —
                 // see the matching note in `claude::ClaudeAdapter::compile`.
                 Spec::Hook(_) => {}
@@ -104,8 +149,10 @@ impl Adapter for CursorAdapter {
         let HookSynthesis {
             entries: owned_entries,
             files: hook_files,
+            deliveries: hook_deliveries,
         } = synthesize_hooks(&hook_specs, emit_mode)?;
         files.extend(hook_files);
+        deliveries.extend(hook_deliveries);
 
         // Cursor's plugin manifest is conditionally emitted: only when
         // `mode == Plugin` AND the binary supplied manifest fields. Cursor
@@ -133,6 +180,7 @@ impl Adapter for CursorAdapter {
             patches,
             dest_root,
             degradations,
+            deliveries,
         })
     }
 
@@ -223,6 +271,34 @@ impl Adapter for CursorAdapter {
 
     fn body_skill_root(&self) -> Option<&'static str> {
         None
+    }
+
+    fn carriable(&self, kind: FileKind) -> &'static [SettingKind] {
+        match kind {
+            // `Tools` is absent because Cursor exposes no per-agent tool
+            // restriction: its documented subagent fields are `name`,
+            // `description`, `model`, `readonly`, and `is_background`, and
+            // subagents inherit every tool from the parent. Custom Modes,
+            // which could restrict tools per mode, were removed in Cursor
+            // 2.1, and every remaining control gates approval rather than
+            // availability. If Cursor adds one, this arm gains `Tools` and
+            // `test_carriable_agrees_with_carried` fails until the adapter
+            // threads the value.
+            FileKind::Agents => &[
+                SettingKind::Body,
+                SettingKind::Model,
+                SettingKind::Effort,
+                SettingKind::Fast,
+                SettingKind::Context,
+                SettingKind::Param,
+            ],
+            FileKind::Rules => &[SettingKind::Body, SettingKind::Paths],
+            // Distinct facts that happen to coincide: a Cursor skill file's
+            // schema has no field a preset can reach, and a hook registration
+            // carries only the hook itself.
+            FileKind::Skills | FileKind::Hooks => &[SettingKind::Body],
+            FileKind::Commands | FileKind::PluginManifest => &[],
+        }
     }
 
     fn emits_hooks(&self) -> bool {
@@ -556,7 +632,7 @@ fn adapt_agent_spec(
     spec: AgentSpec,
     presets: &ProviderPresetsMap,
     cfg: Option<&AdapterConfig>,
-) -> Result<Vec<GeneratedFile>> {
+) -> Result<(Vec<GeneratedFile>, Vec<Delivery>)> {
     let id = spec.frontmatter.id;
     let description = spec.frontmatter.description;
 
@@ -580,7 +656,13 @@ fn adapt_agent_spec(
     // The destructuring binding mirrors `CursorPreset::any_option_set`: a fourth
     // option added to the struct fails to compile here rather than being
     // silently dropped from the bracket after passing validation as "set".
-    let opts: Vec<String> = cursor_preset
+    //
+    // Each element pairs the `SettingKey` the option came from with the
+    // composed `k=v` fragment, so the bracket joins the strings and the
+    // delivery record collects the keys from one expression. The composed
+    // `model` value cannot be read back without a second parser, so a
+    // separately-written record is exactly what would drift.
+    let opts: Vec<(SettingKey, String)> = cursor_preset
         .as_ref()
         .map(
             |CursorPreset {
@@ -591,9 +673,13 @@ fn adapt_agent_spec(
                  params,
              }| {
                 [
-                    effort.as_ref().map(|v| format!("effort={v}")),
-                    fast.map(|v| format!("fast={v}")),
-                    context.as_ref().map(|v| format!("context={v}")),
+                    effort
+                        .as_ref()
+                        .map(|v| (SettingKey::Effort, format!("effort={v}"))),
+                    fast.map(|v| (SettingKey::Fast, format!("fast={v}"))),
+                    context
+                        .as_ref()
+                        .map(|v| (SettingKey::Context, format!("context={v}"))),
                 ]
                 .into_iter()
                 .flatten()
@@ -601,7 +687,11 @@ fn adapt_agent_spec(
                 // a `BTreeMap`, so its own order is already deterministic and
                 // needs no sort here. A `params` key cannot collide with a
                 // named option; `CursorPreset::validate` rejects that.
-                .chain(params.iter().map(|(k, v)| format!("{k}={v}")))
+                .chain(
+                    params
+                        .iter()
+                        .map(|(k, v)| (SettingKey::Param(k.clone()), format!("{k}={v}"))),
+                )
                 .collect()
             },
         )
@@ -632,7 +722,7 @@ fn adapt_agent_spec(
     // assertion covers every option without naming them — and so a fourth
     // option is covered the moment the array literal above emits it.
     debug_assert!(
-        opts.iter().all(|opt| {
+        opts.iter().map(|(_, s)| s).all(|opt| {
             // Exactly one `=`, from the `format!` above; a delimiter in the
             // value would add another, and a forged option would add a comma.
             opt.match_indices('=').count() == 1
@@ -646,8 +736,27 @@ fn adapt_agent_spec(
         "malformed Cursor bracket option should have been rejected by CursorPreset::validate: {opts:?}"
     );
 
+    // `Model` is recorded from `base`, not from the composed `model` value,
+    // because reading `base` names the setting the author actually set.
+    //
+    // The one shape where this record and the emitted value could disagree is
+    // options with no `model`: the composition below drops the whole bracket
+    // while these keys still record as delivered, hiding a real loss.
+    // `CursorPreset::validate` rejects that preset outright and the
+    // `base.is_some() || opts.is_empty()` assertion above re-checks it, so the
+    // shape does not reach here — but it is the one to preserve those gates
+    // for.
+    let carried: Vec<SettingKey> = base
+        .iter()
+        .map(|_| SettingKey::Model)
+        .chain(opts.iter().map(|(key, _)| key.clone()))
+        .collect();
+
     let model = match (base, opts.is_empty()) {
-        (Some(m), false) => Some(format!("{m}[{}]", opts.join(","))),
+        (Some(m), false) => {
+            let joined: Vec<&str> = opts.iter().map(|(_, s)| s.as_str()).collect();
+            Some(format!("{m}[{}]", joined.join(",")))
+        }
         (m, _) => m,
     };
 
@@ -657,28 +766,30 @@ fn adapt_agent_spec(
     // Cursor agents get frontmatter name prefix with "-" delimiter
     let name = match cfg.and_then(|c| c.prefix.as_deref()) {
         Some(prefix) => format!("{prefix}-{id}"),
-        None => id,
+        None => id.clone(),
     };
 
     let frontmatter = CursorAgentFrontmatter {
         name,
         description,
         model,
+        carried,
     };
 
     let frontmatter_str = serde_yml::to_string(&frontmatter)?;
     let body = spec.body.trim();
     let content = format!("---\n{frontmatter_str}---\n\n{body}");
 
-    Ok(vec![GeneratedFile::text(
-        Provider::Cursor,
-        FileKind::Agents,
-        path,
-        content,
-    )])
+    let file =
+        GeneratedFile::text(Provider::Cursor, FileKind::Agents, path, content).with_spec_id(&id);
+    let deliveries = Delivery::from_file(&id, &file, frontmatter.carried());
+    Ok((vec![file], deliveries))
 }
 
-fn adapt_skill_spec(spec: SkillSpec, cfg: Option<&AdapterConfig>) -> Result<Vec<GeneratedFile>> {
+fn adapt_skill_spec(
+    spec: SkillSpec,
+    cfg: Option<&AdapterConfig>,
+) -> Result<(Vec<GeneratedFile>, Vec<Delivery>)> {
     let id = spec.frontmatter.id;
     let description = spec.frontmatter.description.unwrap_or_default();
 
@@ -700,27 +811,39 @@ fn adapt_skill_spec(spec: SkillSpec, cfg: Option<&AdapterConfig>) -> Result<Vec<
     let file_prefix = cfg.and_then(AdapterConfig::file_prefix).unwrap_or_default();
     let skill_dir = Path::new("skills").join(format!("{file_prefix}{id}"));
 
-    let mut files = vec![GeneratedFile::text(
+    let skill_file = GeneratedFile::text(
         Provider::Cursor,
         FileKind::Skills,
         skill_dir.join("SKILL.md"),
         content,
-    )];
+    )
+    .with_spec_id(&id);
+    let deliveries = Delivery::from_file(&id, &skill_file, frontmatter.carried());
+    let mut files = vec![skill_file];
 
+    // Supporting files carry no settings, but still name their spec: `Body`
+    // membership is read off `GeneratedFile.spec_id`.
     for (rel_path, sf) in spec.supporting_files {
-        files.push(GeneratedFile::binary(
-            Provider::Cursor,
-            FileKind::Skills,
-            skill_dir.join(&rel_path),
-            sf.content,
-            Some(sf.mode),
-        ));
+        files.push(
+            GeneratedFile::binary(
+                Provider::Cursor,
+                FileKind::Skills,
+                skill_dir.join(&rel_path),
+                sf.content,
+                Some(sf.mode),
+            )
+            .with_spec_id(&id),
+        );
     }
 
-    Ok(files)
+    Ok((files, deliveries))
 }
 
-fn adapt_rule_spec(spec: RuleSpec, cfg: Option<&AdapterConfig>) -> Result<Vec<GeneratedFile>> {
+fn adapt_rule_spec(
+    spec: RuleSpec,
+    cfg: Option<&AdapterConfig>,
+) -> Result<(Vec<GeneratedFile>, Vec<Delivery>)> {
+    let id = spec.frontmatter.id;
     let description = spec.frontmatter.description.unwrap_or_default();
 
     let (always_apply, globs) = if let Some(paths) = spec.frontmatter.paths {
@@ -740,14 +863,12 @@ fn adapt_rule_spec(spec: RuleSpec, cfg: Option<&AdapterConfig>) -> Result<Vec<Ge
     let content = format!("---\n{frontmatter_str}---\n\n{body}");
 
     let file_prefix = cfg.and_then(AdapterConfig::file_prefix).unwrap_or_default();
-    let path = Path::new("rules").join(format!("{file_prefix}{}.mdc", spec.frontmatter.id));
+    let path = Path::new("rules").join(format!("{file_prefix}{id}.mdc"));
 
-    Ok(vec![GeneratedFile::text(
-        Provider::Cursor,
-        FileKind::Rules,
-        path,
-        content,
-    )])
+    let file =
+        GeneratedFile::text(Provider::Cursor, FileKind::Rules, path, content).with_spec_id(&id);
+    let deliveries = Delivery::from_file(&id, &file, frontmatter.carried());
+    Ok((vec![file], deliveries))
 }
 
 // ── hooks.json synthesis ────────────────────────────────────────────────────
@@ -862,6 +983,59 @@ mod tests {
             .find(|l| l.starts_with("model:"))
             .unwrap_or("<no model line>")
             .to_string()
+    }
+
+    /// The composed `model` value and the delivery record come from one
+    /// expression, and this is the guard on the one place they could drift:
+    /// nothing can read the bracket back to recompute the record.
+    #[test]
+    fn test_cursor_bracket_and_record_agree() {
+        let preset = CursorPreset {
+            model: Some("claude-opus-5".to_string()),
+            effort: Some("high".to_string()),
+            fast: Some(false),
+            context: Some("300k".to_string()),
+            params: BTreeMap::from([("optimize_for".to_string(), "cost".to_string())]),
+        };
+        let presets = presets_with_cursor(preset.clone());
+        let Spec::Agent(spec) = agent_with_preset("test-agent", "default") else {
+            panic!("agent_with_preset built a non-agent spec")
+        };
+        let (files, deliveries) = adapt_agent_spec(spec, &presets, None).expect("adapt");
+
+        let content = String::from_utf8(files[0].content.clone()).expect("utf8");
+        assert!(
+            content.contains(
+                "model: claude-opus-5[effort=high,fast=false,context=300k,optimize_for=cost]"
+            ),
+            "unexpected model line in {content}"
+        );
+
+        let recorded: Vec<SettingKey> = deliveries.iter().map(|d| d.setting().clone()).collect();
+        assert_eq!(
+            recorded,
+            vec![
+                SettingKey::Model,
+                SettingKey::Effort,
+                SettingKey::Fast,
+                SettingKey::Context,
+                SettingKey::Param("optimize_for".to_string()),
+            ]
+        );
+    }
+
+    /// Cursor's skill schema has no model field, so no preset value reaches a
+    /// generated Cursor skill file. Pinned rather than left to the empty
+    /// `carriable(Skills)` table, which states the same fact from the other
+    /// side.
+    #[test]
+    fn test_cursor_skill_frontmatter_carries_nothing() {
+        let frontmatter = CursorSkillFrontmatter {
+            name: "s".to_owned(),
+            description: "d".to_owned(),
+            disable_model_invocation: false,
+        };
+        assert!(frontmatter.carried().is_empty());
     }
 
     /// Pins both the composition and the emission order. Every other Cursor

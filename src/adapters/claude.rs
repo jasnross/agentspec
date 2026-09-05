@@ -12,7 +12,8 @@ use super::hooks_helpers::{
     open_or_create_object, prune_empty_event_arrays, value_to_cst_input,
 };
 use super::{
-    Adapter, AdapterOutput, CompileCtx, RemovalOutput, RemoveCtx, SyncDestinationMode, TidyOutcome,
+    Adapter, AdapterOutput, CompileCtx, Delivery, RemovalOutput, RemoveCtx, SyncDestinationMode,
+    TidyOutcome,
 };
 use crate::compile::{
     AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode,
@@ -22,6 +23,7 @@ use crate::hooks_merge::{merge_owned, remove_owned};
 use crate::plan::{FileKind, ForwardPatch, ReversePatch};
 use crate::presets::{ClaudeEffort, ProviderPresetsMap};
 use crate::provider::Provider;
+use crate::setting::{Carries, SettingKey, SettingKind};
 use crate::spec::{AgentSpec, HookEvent, HookSpec, RuleSpec, SkillSpec, Spec, ToolFrontmatter};
 
 // See: https://code.claude.com/docs/en/sub-agents#supported-frontmatter-fields
@@ -35,11 +37,34 @@ struct ClaudeAgentFrontmatter {
     tools: Option<Vec<ClaudeTool>>,
 }
 
+impl Carries for ClaudeAgentFrontmatter {
+    fn carried(&self) -> Vec<SettingKey> {
+        [
+            self.model.as_ref().map(|_| SettingKey::Model),
+            self.effort.as_ref().map(|_| SettingKey::Effort),
+            self.tools.as_ref().map(|_| SettingKey::Tools),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+}
+
 // See: https://code.claude.com/docs/en/memory#path-specific-rules
 #[serde_with::skip_serializing_none]
 #[derive(Serialize)]
 struct ClaudeRuleFrontmatter {
     paths: Option<Vec<String>>,
+}
+
+impl Carries for ClaudeRuleFrontmatter {
+    fn carried(&self) -> Vec<SettingKey> {
+        self.paths
+            .is_some()
+            .then_some(SettingKey::Paths)
+            .into_iter()
+            .collect()
+    }
 }
 
 // See: https://code.claude.com/docs/en/skills#frontmatter-reference
@@ -53,6 +78,19 @@ struct ClaudeSkillFrontmatter {
     user_invocable: Option<bool>,
     disable_model_invocation: Option<bool>,
     allowed_tools: Option<Vec<ClaudeTool>>,
+}
+
+impl Carries for ClaudeSkillFrontmatter {
+    fn carried(&self) -> Vec<SettingKey> {
+        [
+            self.model.as_ref().map(|_| SettingKey::Model),
+            self.effort.as_ref().map(|_| SettingKey::Effort),
+            self.allowed_tools.as_ref().map(|_| SettingKey::Tools),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
 }
 
 // FIXME: Should we consider setting all default Claude tools in the generated file? Otherwise Claude's default behavior is to disallow any unlisted tools.
@@ -110,19 +148,24 @@ pub struct ClaudeAdapter;
 impl Adapter for ClaudeAdapter {
     fn compile(&self, specs: &[Spec], ctx: &CompileCtx<'_>) -> Result<AdapterOutput> {
         let mut files = Vec::new();
+        let mut deliveries = Vec::new();
         for spec in specs {
             match spec {
-                Spec::Agent(s) => files.extend(adapt_agent_spec(
-                    s.clone(),
-                    ctx.presets,
-                    ctx.adapter_config,
-                )?),
-                Spec::Skill(s) => files.extend(adapt_skill_spec(
-                    s.clone(),
-                    ctx.presets,
-                    ctx.adapter_config,
-                )?),
-                Spec::Rule(s) => files.extend(adapt_rule_spec(s, ctx.adapter_config)?),
+                Spec::Agent(s) => {
+                    let (f, d) = adapt_agent_spec(s.clone(), ctx.presets, ctx.adapter_config)?;
+                    files.extend(f);
+                    deliveries.extend(d);
+                }
+                Spec::Skill(s) => {
+                    let (f, d) = adapt_skill_spec(s.clone(), ctx.presets, ctx.adapter_config)?;
+                    files.extend(f);
+                    deliveries.extend(d);
+                }
+                Spec::Rule(s) => {
+                    let (f, d) = adapt_rule_spec(s, ctx.adapter_config)?;
+                    files.extend(f);
+                    deliveries.extend(d);
+                }
                 // Hook scripts (entry scripts AND helpers under `scripts/`) are
                 // emitted by `synthesize_hooks` exactly once per provider, drawn
                 // from `supporting_files` collected by `load_hook_specs`. Per-spec
@@ -140,8 +183,10 @@ impl Adapter for ClaudeAdapter {
         let HookSynthesis {
             entries: owned_entries,
             files: hook_files,
+            deliveries: hook_deliveries,
         } = synthesize_hooks(&hook_specs, emit_mode)?;
         files.extend(hook_files);
+        deliveries.extend(hook_deliveries);
 
         // Emit `.claude-plugin/plugin.json` in plugin mode whenever the
         // binary supplied manifest fields. Validation upstream guarantees
@@ -171,6 +216,7 @@ impl Adapter for ClaudeAdapter {
             // `true` and both `fully_implements_canonical_output()` and
             // `supports_path_scoped_rules()` take the permissive default.
             degradations: Vec::new(),
+            deliveries,
         })
     }
 
@@ -245,6 +291,20 @@ impl Adapter for ClaudeAdapter {
 
     fn body_skill_root(&self) -> Option<&'static str> {
         Some("${CLAUDE_SKILL_DIR}")
+    }
+
+    fn carriable(&self, kind: FileKind) -> &'static [SettingKind] {
+        match kind {
+            FileKind::Agents | FileKind::Skills => &[
+                SettingKind::Body,
+                SettingKind::Model,
+                SettingKind::Effort,
+                SettingKind::Tools,
+            ],
+            FileKind::Rules => &[SettingKind::Body, SettingKind::Paths],
+            FileKind::Hooks => &[SettingKind::Body],
+            FileKind::Commands | FileKind::PluginManifest => &[],
+        }
     }
 
     fn emits_hooks(&self) -> bool {
@@ -597,7 +657,7 @@ fn adapt_agent_spec(
     spec: AgentSpec,
     presets: &ProviderPresetsMap,
     cfg: Option<&AdapterConfig>,
-) -> Result<Vec<GeneratedFile>> {
+) -> Result<(Vec<GeneratedFile>, Vec<Delivery>)> {
     let id = spec.frontmatter.id;
     let description = spec.frontmatter.description;
 
@@ -632,7 +692,7 @@ fn adapt_agent_spec(
 
     let name = match cfg.and_then(|c| c.prefix.as_deref()) {
         Some(prefix) => format!("{prefix}-{id}"),
-        None => id,
+        None => id.clone(),
     };
 
     let frontmatter = ClaudeAgentFrontmatter {
@@ -647,19 +707,17 @@ fn adapt_agent_spec(
     let body = spec.body.trim();
     let content = format!("---\n{frontmatter_str}---\n\n{body}");
 
-    Ok(vec![GeneratedFile::text(
-        Provider::Claude,
-        FileKind::Agents,
-        path,
-        content,
-    )])
+    let file =
+        GeneratedFile::text(Provider::Claude, FileKind::Agents, path, content).with_spec_id(&id);
+    let deliveries = Delivery::from_file(&id, &file, frontmatter.carried());
+    Ok((vec![file], deliveries))
 }
 
 fn adapt_skill_spec(
     spec: SkillSpec,
     presets: &ProviderPresetsMap,
     cfg: Option<&AdapterConfig>,
-) -> Result<Vec<GeneratedFile>> {
+) -> Result<(Vec<GeneratedFile>, Vec<Delivery>)> {
     let id = spec.frontmatter.id;
     let description = spec.frontmatter.description.unwrap_or_default();
 
@@ -707,46 +765,60 @@ fn adapt_skill_spec(
     let body = spec.body.trim();
     let content = format!("---\n{frontmatter_str}---\n\n{body}");
 
-    let mut files = vec![GeneratedFile::text(
+    let skill_file = GeneratedFile::text(
         Provider::Claude,
         FileKind::Skills,
         skill_dir.join("SKILL.md"),
         content,
-    )];
+    )
+    .with_spec_id(&id);
+    let deliveries = Delivery::from_file(&id, &skill_file, frontmatter.carried());
+    let mut files = vec![skill_file];
 
+    // Supporting files carry no settings, but still name their spec: `Body`
+    // membership is read off `GeneratedFile.spec_id`.
     for (rel_path, sf) in spec.supporting_files {
-        files.push(GeneratedFile::binary(
-            Provider::Claude,
-            FileKind::Skills,
-            skill_dir.join(&rel_path),
-            sf.content,
-            Some(sf.mode),
-        ));
+        files.push(
+            GeneratedFile::binary(
+                Provider::Claude,
+                FileKind::Skills,
+                skill_dir.join(&rel_path),
+                sf.content,
+                Some(sf.mode),
+            )
+            .with_spec_id(&id),
+        );
     }
 
-    Ok(files)
+    Ok((files, deliveries))
 }
 
-fn adapt_rule_spec(spec: &RuleSpec, cfg: Option<&AdapterConfig>) -> Result<Vec<GeneratedFile>> {
+fn adapt_rule_spec(
+    spec: &RuleSpec,
+    cfg: Option<&AdapterConfig>,
+) -> Result<(Vec<GeneratedFile>, Vec<Delivery>)> {
+    let id = &spec.frontmatter.id;
     let file_prefix = cfg.and_then(AdapterConfig::file_prefix).unwrap_or_default();
-    let path = Path::new("rules").join(format!("{file_prefix}{}.md", spec.frontmatter.id));
+    let path = Path::new("rules").join(format!("{file_prefix}{id}.md"));
     let body = spec.body.trim();
 
-    let content = if let Some(paths) = spec.frontmatter.paths.clone() {
-        let frontmatter = ClaudeRuleFrontmatter { paths: Some(paths) };
+    // A rule with no `paths` emits no frontmatter block at all, so the struct
+    // is built either way and its `carried()` is what distinguishes the two —
+    // an empty record rather than a special case here.
+    let frontmatter = ClaudeRuleFrontmatter {
+        paths: spec.frontmatter.paths.clone(),
+    };
+    let content = if frontmatter.paths.is_some() {
         let frontmatter_str = serde_yml::to_string(&frontmatter)?;
         format!("---\n{frontmatter_str}---\n\n{body}\n")
     } else {
         format!("{body}\n")
     };
 
-    Ok(vec![GeneratedFile {
-        provider: Provider::Claude,
-        kind: FileKind::Rules,
-        path,
-        content: content.into_bytes(),
-        mode: None,
-    }])
+    let file =
+        GeneratedFile::text(Provider::Claude, FileKind::Rules, path, content).with_spec_id(id);
+    let deliveries = Delivery::from_file(id, &file, frontmatter.carried());
+    Ok((vec![file], deliveries))
 }
 
 fn adapt_tool(tool: &ToolFrontmatter) -> Vec<ClaudeTool> {
@@ -835,6 +907,65 @@ mod tests {
         AgentFrontmatter, AgentSpec, CapabilitiesFrontmatter, ExecutionFrontmatter,
         RuleFrontmatter, RuleSpec, SkillFrontmatter,
     };
+
+    #[test]
+    fn test_agent_frontmatter_carries_every_populated_field() {
+        let full = ClaudeAgentFrontmatter {
+            name: "a".to_owned(),
+            description: "d".to_owned(),
+            model: Some("claude-opus-5".to_owned()),
+            effort: Some(ClaudeEffort::High),
+            tools: Some(vec![ClaudeTool::Read]),
+        };
+        assert_eq!(
+            full.carried(),
+            vec![SettingKey::Model, SettingKey::Effort, SettingKey::Tools]
+        );
+
+        let bare = ClaudeAgentFrontmatter {
+            name: "a".to_owned(),
+            description: "d".to_owned(),
+            model: None,
+            effort: None,
+            tools: None,
+        };
+        assert!(bare.carried().is_empty());
+    }
+
+    #[test]
+    fn test_skill_frontmatter_carries_every_populated_field() {
+        let full = ClaudeSkillFrontmatter {
+            description: "d".to_owned(),
+            model: Some("claude-opus-5".to_owned()),
+            effort: Some(ClaudeEffort::High),
+            user_invocable: None,
+            disable_model_invocation: None,
+            allowed_tools: Some(vec![ClaudeTool::Read]),
+        };
+        assert_eq!(
+            full.carried(),
+            vec![SettingKey::Model, SettingKey::Effort, SettingKey::Tools]
+        );
+
+        let bare = ClaudeSkillFrontmatter {
+            description: "d".to_owned(),
+            model: None,
+            effort: None,
+            user_invocable: None,
+            disable_model_invocation: None,
+            allowed_tools: None,
+        };
+        assert!(bare.carried().is_empty());
+    }
+
+    #[test]
+    fn test_rule_frontmatter_carries_paths_only_when_set() {
+        let scoped = ClaudeRuleFrontmatter {
+            paths: Some(vec!["src/**".to_owned()]),
+        };
+        assert_eq!(scoped.carried(), vec![SettingKey::Paths]);
+        assert!(ClaudeRuleFrontmatter { paths: None }.carried().is_empty());
+    }
 
     fn agent(id: &str, capabilities: Option<CapabilitiesFrontmatter>) -> Spec {
         Spec::Agent(AgentSpec {
