@@ -65,6 +65,39 @@ impl Spec {
             Spec::Hook(_) => "hook",
         }
     }
+
+    /// The execution preset this spec names, if any.
+    ///
+    /// `Spec::Hook` has none: `HookFrontmatter` is `deny_unknown_fields` and
+    /// declares no execution field, so a hooks entry naming a preset fails to
+    /// parse. The same holds for [`Spec::declares_tools`] and
+    /// [`Spec::declares_paths`].
+    pub fn execution_preset(&self) -> Option<&str> {
+        let execution = match self {
+            Spec::Agent(s) => s.frontmatter.execution.as_ref(),
+            Spec::Skill(s) => s.frontmatter.execution.as_ref(),
+            Spec::Rule(_) | Spec::Hook(_) => None,
+        };
+        execution.and_then(|e| e.preset.as_deref())
+    }
+
+    /// Whether this spec declares `capabilities.tools`.
+    pub fn declares_tools(&self) -> bool {
+        let capabilities = match self {
+            Spec::Agent(s) => s.frontmatter.capabilities.as_ref(),
+            Spec::Skill(s) => s.frontmatter.capabilities.as_ref(),
+            Spec::Rule(_) | Spec::Hook(_) => None,
+        };
+        capabilities.is_some_and(|c| c.tools.is_some())
+    }
+
+    /// Whether this spec declares `paths`. Only rules carry the field.
+    pub fn declares_paths(&self) -> bool {
+        match self {
+            Spec::Rule(s) => s.frontmatter.paths.is_some(),
+            Spec::Agent(_) | Spec::Skill(_) | Spec::Hook(_) => false,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

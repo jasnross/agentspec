@@ -238,7 +238,9 @@ Multi-token matchers join with `|` (e.g., `matcher = "read|write|edit"`); each t
 
 #### OpenCode behavior
 
-If your spec set contains hooks and `[sync.opencode]` is configured, agents/skills/rules sync normally and a per-provider warning is printed: `opencode: skipped N hooks`. Use `--verbose` to list each skipped hook id.
+If your spec set contains hooks and `[sync.opencode]` is configured, agents/skills/rules sync normally and each hook is reported as a lost spec body: `opencode: 3 specs lost \`content\` — opencode emits no hook`. Use `--verbose` to list each hook id.
+
+**A rule's `paths` does not reach OpenCode, and the rule widens as a result.** OpenCode has no native path scoping, so a rule that Claude and Cursor activate only when matching files are in context is emitted for OpenCode as an always-on instruction registered in `instructions[]` — injected into every conversation. This is the one dropped value whose consequence is more than a missing default: the rule still applies, to more than it was scoped to. `compile` and `sync` report it as `opencode: N specs lost \`paths\``.
 
 ### Frontmatter reference
 
@@ -623,6 +625,8 @@ For the same reason as the bracket ban, none of `[`, `]`, `,`, or `=` may appear
 This covers `model` as well as `effort`. Cursor's skill schema has no model field at all, so nothing from a preset's Cursor block reaches a generated Cursor skill file. OpenCode reads `variant` on agents and commands but does not surface it on skills, so a skill that is only agent-invocable carries neither `model` nor `variant` in its generated OpenCode file, whatever its preset sets. Only Claude's `SKILL.md` carries them. A preset set on a skill spec is silently inert on the other two providers.
 
 The same is true of `capabilities.tools`: OpenCode reads a tool map on agents but not on skills, so declared tools do not reach a generated OpenCode skill file either.
+
+**Cursor reads no tool restriction on any file kind.** Its documented subagent fields are `name`, `description`, `model`, `readonly`, and `is_background`, and a subagent inherits every tool from the parent conversation; Custom Modes, which could restrict tools per mode, were removed in Cursor 2.1, and every remaining control gates approval rather than availability. So `capabilities.tools` reaches no generated Cursor file at all — not an agent file, not a skill file. `compile` and `sync` report this as a loss against each spec that declares tools; on a library of any size it is the largest single group in the report.
 
 An OpenCode `variant` set with no `model` beside it is accepted and inert — unlike Cursor's options, which are rejected without a `model`, because Cursor cannot express them apart from one.
 

@@ -386,10 +386,11 @@ fn test_compile_path_scoped_rule_outputs() {
         "opencode rule should not contain globs"
     );
 
-    // Portability warning fires for OpenCode (path-scoped rules unsupported)
+    // The rule's `paths` reaches no OpenCode file, and the loss says so with
+    // the derived explanation rather than an adapter-written sentence.
     assert!(
-        stderr.contains("OpenCode does not support path-scoped rules"),
-        "expected OpenCode path-scoped warning, got:\n{stderr}"
+        stderr.contains("no opencode rules file carries `paths`"),
+        "expected an OpenCode `paths` loss, got:\n{stderr}"
     );
 
     // Regression: non-path-scoped rules (general-guidance, api-design) are unaffected
@@ -2127,7 +2128,7 @@ fn test_compile_cursor_hooks_json_uses_camel_case_and_version() {
 }
 
 #[test]
-fn test_compile_opencode_with_hooks_prints_skip_warning() {
+fn test_compile_opencode_hook_body_loss_renders_as_count_without_verbose() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
@@ -2140,13 +2141,21 @@ fn test_compile_opencode_with_hooks_prints_skip_warning() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "compile failed:\n{stderr}");
     assert!(
-        stderr.contains("opencode: skipped"),
-        "expected per-provider skip summary, got:\n{stderr}"
+        stderr.contains("3 specs lost `content`"),
+        "expected a counted hook body loss, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("(--verbose lists them)"),
+        "a counted group without --verbose should point at the flag, got:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("hook/init-thoughts"),
+        "subjects should be withheld without --verbose, got:\n{stderr}"
     );
 }
 
 #[test]
-fn test_compile_opencode_verbose_lists_skipped_hooks() {
+fn test_compile_opencode_verbose_lists_hook_body_loss_subjects() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
@@ -2159,12 +2168,16 @@ fn test_compile_opencode_verbose_lists_skipped_hooks() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "compile failed:\n{stderr}");
     assert!(
-        stderr.contains("opencode: skipped hook init-thoughts"),
+        stderr.contains("hook/init-thoughts"),
         "expected per-spec listing under --verbose, got:\n{stderr}"
     );
     assert!(
-        stderr.contains("opencode: skipped hook audit-bash"),
+        stderr.contains("hook/audit-bash"),
         "expected per-spec listing under --verbose, got:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("(--verbose lists them)"),
+        "the hint is for the non-verbose shape only, got:\n{stderr}"
     );
 }
 
@@ -4550,8 +4563,8 @@ fn test_compile_emits_cursor_partial_output_warning_when_cursor_targeted() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "compile failed:\n{stderr}");
     assert!(
-        stderr.contains("Cursor has partial implementation"),
-        "expected Cursor partial-output warning on stderr, got:\n{stderr}"
+        stderr.contains("Cursor does not surface a hook's canonical `user_facing_message`"),
+        "expected Cursor partial-output limitation on stderr, got:\n{stderr}"
     );
 }
 
@@ -4573,7 +4586,7 @@ fn test_compile_does_not_emit_cursor_warning_when_only_claude_targeted() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "compile failed:\n{stderr}");
     assert!(
-        !stderr.contains("Cursor has partial implementation"),
+        !stderr.contains("does not surface a hook's canonical"),
         "Claude-only compile must not surface Cursor warning, got:\n{stderr}"
     );
 }
@@ -4625,14 +4638,15 @@ fn test_compile_does_not_emit_session_start_warning_when_only_cursor_targeted() 
 
 #[test]
 fn test_compile_diagnostic_block_order_and_cardinality() {
-    // Characterization test: pins the exact order and count of the compile
-    // diagnostic block before the adapter-originated degradation refactor
-    // relocates the push sites. See
-    // $THOUGHTS_DIR/plans/.done/2026-08-22-agentspec-adapter-originated-degradation-warnings.md
+    // Pins the exact order and count of the compile report. Loss ordering is
+    // `(provider, setting, kind, spec_id)` from the `BTreeSet` the subtraction
+    // collects into, so it is stable against spec-file edits and adapter
+    // iteration order alike.
     //
-    // Two fixture facts this depends on: `compile` with no `--provider` targets
-    // every `Provider::VARIANTS`, and `spec/rules/react-components.md` carries a
-    // `paths:` key — the sole source of the path-scoped warning below.
+    // Three fixture facts this depends on: `compile` with no `--provider`
+    // targets every `Provider::VARIANTS`; `spec/rules/react-components.md`
+    // carries a `paths:` key; and three skills name `preset: default`, which
+    // configures a model for all three providers.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_session_start_hook_fixture(&dir);
@@ -4647,11 +4661,29 @@ fn test_compile_diagnostic_block_order_and_cardinality() {
 
     let lines = diagnostic_lines(&stderr);
     let expected = [
-        "agentspec warning: Cursor has partial implementation",
-        "agentspec warning: OpenCode does not support path-scoped rules",
-        "opencode: skipped 1 hook",
-        "opencode: skipped hook startup",
-        "agentspec warning: session_start asymmetry",
+        "not delivered:",
+        "cursor: 3 specs lost `model`",
+        "skill/agent-invocable-skill",
+        "skill/dual-invocable-skill",
+        "skill/scripted-skill",
+        "cursor: 1 spec lost `tools`",
+        "skill/agent-invocable-skill",
+        "opencode: 1 spec lost `content` — opencode emits no hook",
+        "hook/startup",
+        "opencode: 2 specs lost `model`",
+        "skill/agent-invocable-skill",
+        "skill/dual-invocable-skill",
+        "opencode: 2 specs lost `variant`",
+        "skill/agent-invocable-skill",
+        "skill/dual-invocable-skill",
+        "opencode: 1 spec lost `tools`",
+        "skill/agent-invocable-skill",
+        "opencode: 1 spec lost `paths`",
+        "rule/react-components",
+        "provider limitations:",
+        "Cursor does not surface a hook's canonical `user_facing_message`",
+        "session_start asymmetry",
+        "11 losses, 2 provider limitations",
     ];
     assert_eq!(
         lines.len(),
@@ -4668,13 +4700,97 @@ fn test_compile_diagnostic_block_order_and_cardinality() {
 }
 
 #[test]
+fn test_compile_reports_opencode_skill_preset_loss() {
+    // The handed-forward skills condition: a skill names a preset configuring
+    // execution that no file OpenCode emits for it can carry. No provider-level
+    // capability accessor can express this — `agent-invocable-skill` and a
+    // user-invocable skill land on opposite sides of the same accessor — which
+    // is why it needed the per-emitted-kind subtraction rather than a
+    // `DegradationKind`.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    let output = std::process::Command::new(agentspec())
+        .args(["compile", "--provider", "opencode", "--verbose"])
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec compile spawn");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    for setting in ["`model`", "`variant`", "`tools`"] {
+        let named = stderr.lines().any(|line| line.contains(setting))
+            && stderr.contains("skill/agent-invocable-skill");
+        assert!(
+            named,
+            "expected an OpenCode loss naming {setting} for skill/agent-invocable-skill, got:\n{stderr}"
+        );
+    }
+    assert!(
+        stderr.contains("no opencode skills file carries `variant`"),
+        "expected the derived explanation to name the skills file kind, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn test_compile_reports_cursor_tools_loss() {
+    // Cursor reads no tool restriction on any file kind — its documented
+    // subagent fields are `name`, `description`, `model`, `readonly`, and
+    // `is_background`, and subagents inherit every tool from the parent. This
+    // is a silent, undocumented drop before the loss report and the largest
+    // single loss it surfaces on a real library.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    let output = std::process::Command::new(agentspec())
+        .args(["compile", "--provider", "cursor", "--verbose"])
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec compile spawn");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    assert!(
+        stderr.contains("lost `tools`") && stderr.contains("skill/agent-invocable-skill"),
+        "expected a Cursor `tools` loss naming skill/agent-invocable-skill, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn test_compile_reports_dual_invocable_skill_skill_file_loss() {
+    // Per-emitted-kind matching is what stops one output file from masking
+    // another. `dual-invocable-skill` emits an OpenCode command file carrying
+    // `model` and `variant` and a skill file carrying neither; only the skill
+    // file's loss is real, and only per-kind matching reports it. Matching on
+    // `(spec, setting)` would see the command file's delivery and stay silent.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    let output = std::process::Command::new(agentspec())
+        .args(["compile", "--provider", "opencode", "--verbose"])
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec compile spawn");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    assert!(
+        stderr.contains("no opencode skills file carries `model`")
+            && stderr.contains("skill/dual-invocable-skill"),
+        "expected a skills-kind `model` loss naming the dual-invocable skill, got:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("commands file carries"),
+        "the command file carries both values, so no commands-kind loss may be reported:\n{stderr}"
+    );
+}
+
+#[test]
 fn test_compile_skipped_hook_listing_order_and_count() {
-    // Characterization test: three hooks, none emitted for OpenCode. Pins the
-    // plural count line and the per-subject listing order. `BTreeSet
-    // <Degradation>` sorts subjects by `(provider, kind, subject)`, so the
-    // listing is alphabetical and stable against `hooks.toml` edits — it no
-    // longer tracks declaration order. The leading path-scoped warning comes
-    // from `spec/rules/react-components.md`'s `paths:` key.
+    // Three hooks, none emitted for OpenCode. Every one of them loses its
+    // body, so the group is categorical and collapses to a count line plus a
+    // listing under `--verbose`. Ordering is by `spec_id` from the loss
+    // `BTreeSet`, so it is alphabetical and stable against `hooks.toml` edits.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
@@ -4687,34 +4803,38 @@ fn test_compile_skipped_hook_listing_order_and_count() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "compile failed:\n{stderr}");
 
-    let lines = diagnostic_lines(&stderr);
+    let body_lines: Vec<&str> = diagnostic_lines(&stderr)
+        .into_iter()
+        .skip_while(|line| !line.contains("lost `content`"))
+        .take(4)
+        .collect();
     let expected = [
-        "agentspec warning: OpenCode does not support path-scoped rules",
-        "opencode: skipped 3 hooks",
-        "opencode: skipped hook audit-bash",
-        "opencode: skipped hook init-thoughts",
-        "opencode: skipped hook subagent-gate",
+        "opencode: 3 specs lost `content`",
+        "hook/audit-bash",
+        "hook/init-thoughts",
+        "hook/subagent-gate",
     ];
     assert_eq!(
-        lines.len(),
+        body_lines.len(),
         expected.len(),
-        "diagnostic line count changed, expected:\n{expected:#?}\ngot:\n{lines:#?}"
+        "expected a counted line plus three subjects, got:\n{body_lines:#?}"
     );
     for (idx, marker) in expected.iter().enumerate() {
         assert!(
-            lines[idx].contains(marker),
-            "diagnostic line {idx} should contain {marker:?}, got: {:?}",
-            lines[idx]
+            body_lines[idx].contains(marker),
+            "line {idx} should contain {marker:?}, got: {:?}",
+            body_lines[idx]
         );
     }
 }
 
 #[test]
-fn test_compile_path_scoped_warning_fires_once_for_many_rules() {
-    // Regression guard for the `BTreeSet<Degradation>` collapse. The OpenCode
-    // adapter pushes one `PathScopedRulesUnsupported` per offending rule —
-    // cardinality policy lives at the drain point, not the push site — so
-    // three path-scoped rules must still render exactly one warning line.
+fn test_compile_path_scoped_loss_is_one_categorical_line() {
+    // Every path-scoped rule loses `paths` on OpenCode, so the group is
+    // categorical and renders one counted line however many rules there are.
+    // Cardinality is derived from the intent set rather than declared: if
+    // OpenCode ever carried `paths` for some rules and not others, the same
+    // code would render per-spec lines instead.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
 
@@ -4734,14 +4854,19 @@ fn test_compile_path_scoped_warning_fires_once_for_many_rules() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "compile failed:\n{stderr}");
 
-    let path_scoped: Vec<&str> = diagnostic_lines(&stderr)
+    let paths_lines: Vec<&str> = diagnostic_lines(&stderr)
         .into_iter()
-        .filter(|line| line.contains("does not support path-scoped rules"))
+        .filter(|line| line.contains("lost `paths`"))
         .collect();
     assert_eq!(
-        path_scoped.len(),
+        paths_lines.len(),
         1,
-        "three path-scoped rules must collapse to one warning, got:\n{path_scoped:#?}"
+        "three path-scoped rules must collapse to one counted line, got:\n{paths_lines:#?}"
+    );
+    assert!(
+        paths_lines[0].contains("3 specs lost `paths`"),
+        "expected a count of 3, got: {:?}",
+        paths_lines[0]
     );
 }
 
@@ -4749,7 +4874,7 @@ fn test_compile_path_scoped_warning_fires_once_for_many_rules() {
 fn test_compile_emits_no_warnings_for_non_hook_fixture() {
     // Sanity check: a compile without hook specs surfaces no hook-related
     // warnings. With no hook spec to drop, no adapter pushes a
-    // `HooksUnsupported` or `PartialOutputImpl` degradation, and the
+    // hook body loss or `PartialOutputImpl` limitation, and the
     // cross-provider parity gate has no `session_start` hook to fire on.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
@@ -4763,7 +4888,7 @@ fn test_compile_emits_no_warnings_for_non_hook_fixture() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "compile failed:\n{stderr}");
     assert!(
-        !stderr.contains("partial implementation"),
+        !stderr.contains("does not surface a hook's canonical"),
         "non-hook fixture must not surface PartialOutputImpl warning, got:\n{stderr}"
     );
     assert!(

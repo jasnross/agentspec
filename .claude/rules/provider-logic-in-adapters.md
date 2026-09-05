@@ -129,31 +129,38 @@ That's adapter knowledge masquerading as a `plan.rs`/`compile.rs` concern.
 
 ### Good
 
-Capability accessors on the trait — adapters declare what they support and act on their own claim; callers drain the result without branching on `Provider`:
+Capability accessors on the trait — adapters declare what they support, and callers read the declaration without branching on `Provider`:
 
 ```rust
-// src/adapters/claude.rs
+// src/adapters/claude.rs — the provider's schema, stated as a table.
 impl Adapter for ClaudeAdapter {
-    fn emits_hooks(&self) -> bool { true }
+    fn carriable(&self, kind: FileKind) -> &'static [SettingKind] {
+        match kind {
+            FileKind::Agents | FileKind::Skills => &[
+                SettingKind::Body,
+                SettingKind::Model,
+                SettingKind::Effort,
+                SettingKind::Tools,
+            ],
+            FileKind::Rules => &[SettingKind::Body, SettingKind::Paths],
+            FileKind::Hooks => &[SettingKind::Body],
+            FileKind::Commands | FileKind::PluginManifest => &[],
+        }
+    }
     // ...
 }
 
-// src/adapters/opencode.rs — the adapter reads its own accessor at the arm
-// that drops the spec, and reports the drop in its own return value.
-Spec::Hook(_) if !self.emits_hooks() => degradations.push(Degradation::for_spec(
-    Provider::OpenCode,
-    spec.id(),
-    DegradationKind::HooksUnsupported,
-)),
-
-// src/compile.rs — drains what the adapters reported. It cannot construct a
-// `Degradation`: the constructors are module-private to `src/adapters.rs`.
-degradations.extend(output.degradations);
+// src/compile.rs — reads the declaration. No `match provider`.
+if adapter.carriable(FileKind::Hooks).is_empty() {
+    continue;
+}
 ```
 
 Same pattern — capability lookup via the trait, not a `match provider`.
 
-Note where the push lives. An earlier shape had `compile_specs` re-scan `resolved` after each adapter returned, pushing a diagnostic for every hook spec the provider could not emit. That reads like orchestration but is provider knowledge in the wrong file: the adapter had already walked those specs and knew which ones it dropped. Discovering a degradation is the job of whoever drops the value.
+Note what the adapter does _not_ do. It records what it carried, as `Delivery` values taken from the frontmatter structs it serializes, and the orchestrator derives what was lost by subtracting those from what the author configured. **Recording a delivery is the job of whoever makes it.** An adapter never asserts "I dropped something here."
+
+That subtraction is not a re-scan of the kind this section warns about. The failure mode being guarded against is orchestrator-side _provider knowledge_ — `compile_specs` deciding, from a provider's name, what that provider must have dropped. Set arithmetic over two sets of adapter-supplied facts reasons about no provider at all: it does not know what OpenCode is, only that an intent was raised and no matching delivery came back. An earlier shape did have `compile_specs` re-scan the spec list after each adapter returned, pushing a diagnostic for every hook spec the provider could not emit; that read like orchestration but encoded which providers emit hooks in the wrong file.
 
 ## When dispatch is unavoidable
 

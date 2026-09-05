@@ -85,7 +85,7 @@ impl ProviderName {
     ///
     /// Returns `None` for `Provider::OpenCode`, whose adapter does not
     /// emit hooks and therefore has no canonical wire identity. Callers
-    /// that have already gated on `provider.adapter().emits_hooks()` can
+    /// that have already gated on a non-empty `carriable(FileKind::Hooks)` can
     /// rely on this returning `Some`.
     ///
     /// [`TryFrom<Provider>`] is the idiomatic alternative; both spellings

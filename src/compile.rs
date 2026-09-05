@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -7,6 +7,7 @@ use crate::adapters::{CompileCtx, Degradation, Delivery, SyncDestinationMode};
 use crate::plan::{FileKind, ForwardPatch};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
+use crate::setting::SettingKey;
 use crate::spec::{HookEvent, Spec};
 use crate::specs::ValidatedSpecs;
 use crate::templating::{TemplateContext, Templating, resolve_fragments};
@@ -270,22 +271,141 @@ impl CompileResult {
     }
 }
 
+/// An intent with no matching delivery: a value the author configured that
+/// reached no file of the kind that could have carried it.
+///
+/// Derived by subtraction in [`derive_losses`], never pushed. The constructor
+/// is private to this module, so no adapter can assert a loss — an adapter
+/// records only what it carried, and what it dropped follows from the
+/// arithmetic.
+///
+/// Field declaration order is the sort key. `(provider, setting, kind,
+/// spec_id)` is unique per loss, so `spec_type` and `categorical` never decide
+/// an ordering.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct Loss {
+    provider: Provider,
+    setting: SettingKey,
+    /// The file kind the setting failed to reach, and `None` for a `Body`
+    /// loss.
+    ///
+    /// A non-`Body` intent is raised per kind the adapter actually emitted, so
+    /// every such loss names one. A `Body` loss means the adapter emitted
+    /// nothing for this spec, so there is no kind to name — the renderer reads
+    /// `spec_type` instead.
+    kind: Option<FileKind>,
+    /// Sorted on ahead of `spec_id` so a `Body` group stays contiguous by spec
+    /// type, which is the population that group is counted against.
+    spec_type: &'static str,
+    spec_id: String,
+    /// True when every spec holding this intent lost it, so the renderer
+    /// collapses the group to one counted line.
+    ///
+    /// The population is every spec holding the same `(provider, setting,
+    /// kind)` intent — except for `Body`, which every spec holds and whose
+    /// `kind` is always `None`. Comparing a `Body` loss against the whole
+    /// library would mean three hooks out of eleven specs never collapse, so a
+    /// `Body` loss is counted against specs of its own type instead: "every
+    /// hook spec lost its body". That is also the population that shares its
+    /// rendered explanation, which reads from `spec_type` rather than a file
+    /// kind.
+    ///
+    /// Computed after the subtraction by comparing losers against intent
+    /// holders; no adapter declares it, so a provider that gains a capability
+    /// moves its diagnostics from categorical to per-spec with no code change.
+    ///
+    /// This is the one field on `Loss` that encodes a rendering decision on
+    /// the collection side, and it is deliberate: `categorical` is derived
+    /// from the intent set, which only `compile_specs` holds, so the renderer
+    /// cannot compute it.
+    categorical: bool,
+}
+
+impl Loss {
+    /// Build a loss directly, for tests that exercise a renderer rather than
+    /// the subtraction that produces one.
+    ///
+    /// Test support, not part of the supported surface — `derive_losses` is
+    /// the only producer in the pipeline. It cannot be `#[cfg(test)]`: the
+    /// renderer lives in the binary crate, which links the library built
+    /// without that cfg. What the privacy of the fields protects is that
+    /// nothing *derives* a loss except by subtraction, and that holds: there
+    /// is no route from here into [`CompileDiagnostics`], whose fields are
+    /// private and which only `compile_specs` populates.
+    #[doc(hidden)]
+    pub fn for_test(
+        provider: Provider,
+        setting: SettingKey,
+        kind: Option<FileKind>,
+        spec_type: &'static str,
+        spec_id: &str,
+        categorical: bool,
+    ) -> Self {
+        Self {
+            provider,
+            setting,
+            kind,
+            spec_type,
+            spec_id: spec_id.to_owned(),
+            categorical,
+        }
+    }
+
+    pub fn provider(&self) -> Provider {
+        self.provider
+    }
+
+    pub fn setting(&self) -> &SettingKey {
+        &self.setting
+    }
+
+    pub fn kind(&self) -> Option<FileKind> {
+        self.kind
+    }
+
+    pub fn spec_id(&self) -> &str {
+        &self.spec_id
+    }
+
+    pub fn spec_type(&self) -> &'static str {
+        self.spec_type
+    }
+
+    pub fn is_categorical(&self) -> bool {
+        self.categorical
+    }
+}
+
 /// Diagnostics surfaced from the compile stage.
 ///
-/// Two channels, split by who originates them. `degradations` records values
-/// an author supplied that one provider could not honor; each is constructed
-/// by the adapter that dropped it and drained here. `parity` records
-/// disagreements across the active provider set, which no single adapter can
-/// compute. Both fields are private: with no reachable constructor for
-/// `Degradation` in this module, no code path here can append a degradation
-/// after the provider loop.
+/// Three channels, split by who originates them. `losses` records values an
+/// author configured that reached no generated file; each is derived here by
+/// subtracting what the adapters recorded delivering from what the author
+/// configured, so no adapter constructs one. `degradations` records provider
+/// limitations — facts about a provider runtime acting on bytes agentspec
+/// delivered successfully — each constructed by the adapter making the claim
+/// and drained here. `parity` records disagreements across the active
+/// provider set, which no single adapter can compute.
+///
+/// Every field is private, and neither `Loss` nor `Degradation` has a
+/// constructor reachable from outside its own module, so no code path can
+/// append to the wrong channel.
 #[derive(Debug, Default)]
 pub struct CompileDiagnostics {
+    losses: Vec<Loss>,
     degradations: Vec<Degradation>,
     parity: Vec<ParityWarning>,
 }
 
 impl CompileDiagnostics {
+    /// Ordered by `(provider, setting, kind, spec_type, spec_id)` and
+    /// deduplicated at the derivation point. `spec_type` precedes `spec_id`
+    /// so that a `Body` group — which the renderer splits by spec type, on the
+    /// same population `categorical` was counted against — stays contiguous.
+    pub fn losses(&self) -> &[Loss] {
+        &self.losses
+    }
+
     /// Ordered by `(provider, kind, subject)` and deduplicated at the drain
     /// point, so consecutive entries sharing a `(provider, kind)` form a
     /// renderable group.
@@ -319,6 +439,177 @@ impl ParityWarning {
             ),
         }
     }
+}
+
+/// One thing the author configured, and the file kind it was expected to
+/// reach. `None` for `Body`, which is matched per spec rather than per kind.
+type Intent = (String, SettingKey, Option<FileKind>);
+
+/// The settings the author configured for one provider, keyed for subtraction.
+///
+/// `Body` takes one intent per spec. Every other setting takes one intent per
+/// kind the adapter actually emitted for that spec, so an `OpenCode` skill
+/// with both invocation flags holds a `Model` intent against `Commands` and
+/// another against `Skills` — and the command file satisfying the first does
+/// not mask the skill file losing the second.
+///
+/// A spec the provider emitted nothing for yields only its `Body` intent.
+/// Reporting a lost `model` beside "no file at all" is noise, and a per-kind
+/// rule over an empty set would make the total drop unreportable.
+fn intents(
+    specs: &[Spec],
+    provider: Provider,
+    presets: &ProviderPresetsMap,
+    files: &[GeneratedFile],
+) -> Vec<Intent> {
+    let mut out = Vec::new();
+    for spec in specs {
+        let id = spec.id();
+        out.push((id.to_owned(), SettingKey::Body, None));
+
+        let mut emitted: Vec<FileKind> = Vec::new();
+        for file in files {
+            if file.provider == provider
+                && file.spec_id.as_deref() == Some(id)
+                && !emitted.contains(&file.kind)
+            {
+                emitted.push(file.kind);
+            }
+        }
+        if emitted.is_empty() {
+            continue;
+        }
+
+        let mut configured: Vec<SettingKey> = spec
+            .execution_preset()
+            .and_then(|name| presets.get(name))
+            .map(|preset| preset.configured(provider))
+            .unwrap_or_default();
+        if spec.declares_tools() {
+            configured.push(SettingKey::Tools);
+        }
+        if spec.declares_paths() {
+            configured.push(SettingKey::Paths);
+        }
+
+        for key in configured {
+            for &kind in &emitted {
+                out.push((id.to_owned(), key.clone(), Some(kind)));
+            }
+        }
+    }
+    out
+}
+
+/// Subtract what each adapter recorded delivering from what the author
+/// configured. The remainder is the loss set.
+fn derive_losses(
+    specs: &[Spec],
+    presets: &ProviderPresetsMap,
+    providers: &[Provider],
+    files: &[GeneratedFile],
+    deliveries: &HashMap<Provider, Vec<Delivery>>,
+) -> BTreeSet<Loss> {
+    let spec_types: HashMap<&str, &'static str> =
+        specs.iter().map(|s| (s.id(), s.spec_type())).collect();
+    let mut losses: BTreeSet<Loss> = BTreeSet::new();
+
+    for &provider in providers {
+        // A `Body` delivery is reduced to `(spec_id, Body, None)`, discarding
+        // the kind it carries. A spec's emitted kind need not match its spec
+        // type — `OpenCode` emits a `Commands` file and no `Skills` file for a
+        // `user_invocable`-only skill — so keying `Body` on kind would report
+        // those specs as unemitted.
+        let delivered: HashSet<Intent> = deliveries
+            .get(&provider)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+            .iter()
+            .map(|d| {
+                let kind = if *d.setting() == SettingKey::Body {
+                    None
+                } else {
+                    Some(d.kind())
+                };
+                (d.spec_id().to_owned(), d.setting().clone(), kind)
+            })
+            .collect();
+
+        // A markdown spec's `Body` delivery is the emitted file itself, read
+        // straight off `files` rather than through a `Delivery` — which is
+        // what keeps `Delivery`'s constructor out of the orchestrator's reach
+        // while the derivation stays structural.
+        let emitted_bodies: HashSet<&str> = files
+            .iter()
+            .filter(|f| f.provider == provider)
+            .filter_map(|f| f.spec_id.as_deref())
+            .collect();
+
+        let raised = intents(specs, provider, presets, files);
+        let mut lost: Vec<Intent> = Vec::new();
+        for intent in &raised {
+            let satisfied = if intent.1 == SettingKey::Body {
+                emitted_bodies.contains(intent.0.as_str()) || delivered.contains(intent)
+            } else {
+                delivered.contains(intent)
+            };
+            if !satisfied {
+                lost.push(intent.clone());
+            }
+        }
+
+        let adapter = provider.adapter();
+        for (spec_id, setting, kind) in &lost {
+            // A loss whose kind the adapter's own table says carries the
+            // setting means the adapter emitted such a file and left the field
+            // unset. Per `.claude/rules/validation-locality.md` that belongs
+            // here as a debug-only check rather than as a report line, so the
+            // report carries no schema-limit-versus-adapter-bug verdict.
+            //
+            // What holds it: no adapter conditionally omits a field its
+            // `carriable` table declares for a kind it emitted. Each `carried()`
+            // reads `Some`-ness off the struct just built, and every declared
+            // field is populated unconditionally for that kind — Cursor's
+            // bracket keys come from the composing expression, OpenCode's
+            // `tools` map is non-`Option`. `test_carriable_agrees_with_carried`
+            // checks the weaker existential claim (some spec delivered each
+            // declared setting), so it narrows this rather than proving it; a
+            // future adapter that gates a declared field on a spec predicate
+            // would trip this assert, which is the intended signal.
+            //
+            // A `Body` loss carries `kind: None` and is exempt by construction.
+            debug_assert!(
+                kind.is_none_or(|k| !adapter.carriable(k).contains(&setting.kind())),
+                "{provider} lost {setting:?} on a {kind:?} file its own carriable table \
+                 declares — test_carriable_agrees_with_carried should have excluded this"
+            );
+
+            let spec_type = spec_types.get(spec_id.as_str()).copied().unwrap_or("spec");
+
+            // Categorical when every spec holding this intent lost it, derived
+            // from the intent set rather than declared. A `Body` intent is
+            // held by every spec, so it is counted against specs of its own
+            // type — see the field's doc comment.
+            let same_population = |(other_id, s, k): &Intent| {
+                s == setting
+                    && k == kind
+                    && (kind.is_some()
+                        || spec_types.get(other_id.as_str()).copied() == Some(spec_type))
+            };
+            let holders = raised.iter().filter(|i| same_population(i)).count();
+            let losers = lost.iter().filter(|i| same_population(i)).count();
+
+            losses.insert(Loss {
+                provider,
+                setting: setting.clone(),
+                kind: *kind,
+                spec_type,
+                spec_id: spec_id.clone(),
+                categorical: holders == losers,
+            });
+        }
+    }
+    losses
 }
 
 /// Compile validated specs into provider-specific generated files.
@@ -388,8 +679,6 @@ pub(crate) fn compile_specs(
     let mut patches: HashMap<Provider, Vec<Box<dyn ForwardPatch>>> = HashMap::new();
     let mut dest_roots: HashMap<Provider, PathBuf> = HashMap::new();
     let mut degradations: BTreeSet<Degradation> = BTreeSet::new();
-    // Populated but unconsumed for now; the subtraction that reads it lands
-    // with the loss report.
     let mut deliveries: HashMap<Provider, Vec<Delivery>> = HashMap::new();
 
     let default_target = ProviderCompileTarget::default();
@@ -435,15 +724,28 @@ pub(crate) fn compile_specs(
     // Sort output files by path for deterministic ordering
     files.sort_by(|a, b| a.path.cmp(&b.path));
 
+    // Losses are derived here, after every adapter has reported what it
+    // carried, by subtracting those records from what the author configured.
+    // No adapter can construct a `Loss`, and this function cannot construct a
+    // `Delivery` — the arithmetic is the only route between the two.
+    //
+    // Reads the pre-resolution `specs` while the deliveries came from each
+    // provider's template-resolved copy. That is sound because
+    // `resolve_fragments` rewrites `body` alone: ids, execution presets,
+    // capabilities, and paths pass through untouched, so both sides agree on
+    // spec identity and on what the author configured. A resolution step that
+    // ever rewrote frontmatter would make every setting read as lost.
+    let losses = derive_losses(specs, presets, &sorted_providers, &files, &deliveries);
+
     // Cross-provider parity warning. Evaluated after the per-provider compile
     // loop so the active provider set is fully known — this is the one
     // diagnostic no single adapter can compute, because it compares adapters
     // against each other rather than describing any one of them.
     //
-    // Every other diagnostic arrives from the adapters as a `Degradation`,
-    // pushed from the arm that dropped the value. `compile_specs` has no
-    // reachable constructor for one, so it cannot rediscover a degradation by
-    // re-scanning specs here.
+    // The other two channels arrive differently: a `Degradation` is pushed by
+    // the adapter making the claim, and a `Loss` is derived by subtraction
+    // above. `compile_specs` has no reachable constructor for a `Degradation`,
+    // so it cannot rediscover one by re-scanning specs here.
     //
     // `SessionStart` fires once globally when the active set spans adapters
     // that disagree on resume-firing. Single-provider configurations can't
@@ -458,7 +760,9 @@ pub(crate) fn compile_specs(
         let mut any_does_not_fire_on_resume = false;
         for &provider in &sorted_providers {
             let adapter = provider.adapter();
-            if !adapter.emits_hooks() {
+            // A provider that declares no carriable setting on hook files
+            // emits no hooks, so it has no resume behavior to compare.
+            if adapter.carriable(FileKind::Hooks).is_empty() {
                 continue;
             }
             if adapter.session_start_fires_on_resume() {
@@ -479,13 +783,184 @@ pub(crate) fn compile_specs(
             dest_roots,
         },
         CompileDiagnostics {
-            // `BTreeSet` ordering by `(provider, kind, subject)` is what makes
-            // the drained order independent of adapter iteration order and of
-            // the order in which an adapter happens to walk specs.
+            // `BTreeSet` ordering is what makes both drained orders
+            // independent of adapter iteration order and of the order in which
+            // an adapter happens to walk specs — by
+            // `(provider, setting, kind, spec_type, spec_id)` for losses and
+            // `(provider, kind, subject)` for degradations.
+            losses: losses.into_iter().collect(),
             degradations: degradations.into_iter().collect(),
             parity,
         },
     ))
+}
+
+#[cfg(test)]
+mod loss_tests {
+    use indexmap::IndexMap;
+
+    use super::{GeneratedFile, Loss, derive_losses};
+    use crate::adapters::Delivery;
+    use crate::plan::FileKind;
+    use crate::presets::{OpenCodePreset, ProviderPresets, ProviderPresetsMap};
+    use crate::provider::Provider;
+    use crate::setting::SettingKey;
+    use crate::spec::{
+        CapabilitiesFrontmatter, ExecutionFrontmatter, SkillFrontmatter, SkillSpec, Spec,
+        ToolFrontmatter,
+    };
+
+    const PROVIDER: Provider = Provider::OpenCode;
+    const PRESET: &str = "default";
+
+    fn presets() -> ProviderPresetsMap {
+        std::collections::HashMap::from([(
+            PRESET.to_owned(),
+            ProviderPresets {
+                opencode: Some(OpenCodePreset {
+                    model: Some("anthropic/claude-opus-5".to_owned()),
+                    variant: Some("thinking".to_owned()),
+                }),
+                ..ProviderPresets::default()
+            },
+        )])
+    }
+
+    fn skill(id: &str, with_preset: bool, with_tools: bool) -> Spec {
+        Spec::Skill(SkillSpec {
+            path: "test.md".into(),
+            frontmatter: SkillFrontmatter {
+                id: id.to_owned(),
+                description: Some("d".to_owned()),
+                tags: None,
+                user_invocable: true,
+                agent_invocable: true,
+                execution: with_preset.then(|| ExecutionFrontmatter {
+                    preset: Some(PRESET.to_owned()),
+                }),
+                capabilities: with_tools.then(|| CapabilitiesFrontmatter {
+                    tools: Some(vec![ToolFrontmatter::Read]),
+                }),
+            },
+            body: "Body.".to_owned(),
+            supporting_files: IndexMap::new(),
+        })
+    }
+
+    fn file(spec_id: &str, kind: FileKind) -> GeneratedFile {
+        GeneratedFile::text(PROVIDER, kind, "out.md", String::new()).with_spec_id(spec_id)
+    }
+
+    fn delivery(spec_id: &str, setting: &SettingKey, kind: FileKind) -> Delivery {
+        Delivery::for_test(spec_id, setting.clone(), kind)
+    }
+
+    fn losses_for(specs: &[Spec], files: &[GeneratedFile], deliveries: Vec<Delivery>) -> Vec<Loss> {
+        let map = std::collections::HashMap::from([(PROVIDER, deliveries)]);
+        derive_losses(specs, &presets(), &[PROVIDER], files, &map)
+            .into_iter()
+            .collect()
+    }
+
+    #[test]
+    fn test_subtraction_reports_configured_value_with_no_delivery() {
+        // On `Skills`, where `OpenCode` carries neither setting. Asserting
+        // this against `Commands` instead would trip the `debug_assert!` in
+        // `derive_losses`, because that kind's table declares both — which is
+        // the check working, not a test to route around.
+        let specs = [skill("s", true, false)];
+        let files = [file("s", FileKind::Skills)];
+        let losses = losses_for(
+            &specs,
+            &files,
+            vec![delivery("s", &SettingKey::Model, FileKind::Skills)],
+        );
+        assert_eq!(losses.len(), 1, "{losses:#?}");
+        assert_eq!(*losses[0].setting(), SettingKey::Variant);
+        assert_eq!(losses[0].kind(), Some(FileKind::Skills));
+    }
+
+    #[test]
+    fn test_intent_is_per_emitted_kind() {
+        // The masking the per-kind rule exists to close: a command file
+        // carrying `model` must not satisfy the skill file's intent. This is
+        // the assertion that fails if anyone collapses non-`Body` matching
+        // back to `(spec, setting)`.
+        let specs = [skill("s", true, false)];
+        let files = [file("s", FileKind::Commands), file("s", FileKind::Skills)];
+        let losses = losses_for(
+            &specs,
+            &files,
+            vec![
+                delivery("s", &SettingKey::Model, FileKind::Commands),
+                delivery("s", &SettingKey::Variant, FileKind::Commands),
+            ],
+        );
+        let skills_losses: Vec<&Loss> = losses
+            .iter()
+            .filter(|l| l.kind() == Some(FileKind::Skills))
+            .collect();
+        assert_eq!(skills_losses.len(), 2, "{losses:#?}");
+        assert!(
+            losses.iter().all(|l| l.kind() != Some(FileKind::Commands)),
+            "the command file carried both settings, so it loses nothing: {losses:#?}"
+        );
+    }
+
+    #[test]
+    fn test_spec_with_no_emitted_files_loses_only_body() {
+        // Reporting a lost `model` beside "no file at all" is noise, and a
+        // per-kind rule over an empty set would make the total drop
+        // unreportable.
+        let specs = [skill("s", true, true)];
+        let losses = losses_for(&specs, &[], Vec::new());
+        assert_eq!(losses.len(), 1, "{losses:#?}");
+        assert_eq!(*losses[0].setting(), SettingKey::Body);
+        assert_eq!(losses[0].kind(), None);
+    }
+
+    #[test]
+    fn test_body_is_delivered_by_any_emitted_kind() {
+        // Regression guard for keying `Body` on the delivery's kind, which
+        // would fabricate a body loss for every spec whose emitted kind
+        // differs from its spec type — `basic-skill` and `scripted-skill` in
+        // the fixture are both `Commands`-only — and then trip the
+        // `debug_assert!` in `derive_losses`.
+        let specs = [skill("s", false, false)];
+        let files = [file("s", FileKind::Commands)];
+        let losses = losses_for(&specs, &files, Vec::new());
+        assert!(losses.is_empty(), "{losses:#?}");
+    }
+
+    #[test]
+    fn test_loss_is_categorical_when_every_intent_holder_loses() {
+        let specs = [skill("a", true, false), skill("b", true, false)];
+        let files = [file("a", FileKind::Skills), file("b", FileKind::Skills)];
+
+        let both_lose = losses_for(&specs, &files, Vec::new());
+        assert!(
+            both_lose
+                .iter()
+                .filter(|l| *l.setting() == SettingKey::Model)
+                .all(Loss::is_categorical),
+            "{both_lose:#?}"
+        );
+
+        let one_delivers = losses_for(
+            &specs,
+            &files,
+            vec![delivery("a", &SettingKey::Model, FileKind::Skills)],
+        );
+        let model_losses: Vec<&Loss> = one_delivers
+            .iter()
+            .filter(|l| *l.setting() == SettingKey::Model)
+            .collect();
+        assert_eq!(model_losses.len(), 1, "{one_delivers:#?}");
+        assert!(
+            !model_losses[0].is_categorical(),
+            "one holder delivered, so the group is per-spec: {model_losses:#?}"
+        );
+    }
 }
 
 #[cfg(test)]

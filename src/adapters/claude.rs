@@ -212,9 +212,9 @@ impl Adapter for ClaudeAdapter {
             files,
             patches,
             dest_root,
-            // Claude honors everything agentspec emits: `emits_hooks()` is
-            // `true` and both `fully_implements_canonical_output()` and
-            // `supports_path_scoped_rules()` take the permissive default.
+            // Claude makes no claim about its runtime failing to honor bytes
+            // agentspec delivered: `fully_implements_canonical_output()` takes
+            // the permissive default.
             degradations: Vec::new(),
             deliveries,
         })
@@ -305,10 +305,6 @@ impl Adapter for ClaudeAdapter {
             FileKind::Hooks => &[SettingKind::Body],
             FileKind::Commands | FileKind::PluginManifest => &[],
         }
-    }
-
-    fn emits_hooks(&self) -> bool {
-        true
     }
 
     fn plugin_manifest_dir(&self) -> Option<&'static str> {

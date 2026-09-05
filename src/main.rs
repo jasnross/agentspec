@@ -3,11 +3,11 @@ mod config;
 mod emit;
 mod hook;
 mod remove;
+mod report;
 mod sync;
 
 use std::collections::HashMap;
 
-use agentspec::adapters::{Degradation, Presentation};
 use agentspec::compile::{
     self, AdapterConfig, CompileDiagnostics, CompileResult, ProviderCompileTarget,
 };
@@ -151,7 +151,11 @@ fn main() -> Result<()> {
                 &home,
                 &cwd,
             )?;
-            surface_compile_diagnostics(&diagnostics, display);
+            for line in
+                report::format_compile_report(&diagnostics, matches!(display, ReportDisplay::Full))
+            {
+                eprintln!("{line}");
+            }
 
             let plan = sync_plan(&mut result, &targets)?;
             emit_sync(&plan, sync_args.dry_run, sync_args.common.verbose)?;
@@ -203,7 +207,11 @@ fn main() -> Result<()> {
                 &home,
                 &cwd,
             )?;
-            surface_compile_diagnostics(&diagnostics, display);
+            for line in
+                report::format_compile_report(&diagnostics, matches!(display, ReportDisplay::Full))
+            {
+                eprintln!("{line}");
+            }
             let output_dir = config.resolve(&config.compile.output_dir);
             let plan = compile_plan(&result, &output_dir, &providers);
             emit_compile(&plan, false)?;
@@ -403,49 +411,6 @@ fn compile_targets_from(
             )
         })
         .collect()
-}
-
-/// Print compile diagnostics to stderr.
-///
-/// Degradations print first, grouped by `(provider, kind)` — the input arrives
-/// already ordered by `(provider, kind, subject)`, so consecutive entries form
-/// a group. Each group renders per its kind's `Presentation`: an
-/// `agentspec warning:` line, or a count line plus a per-subject listing under
-/// `--verbose`. Cross-provider parity warnings print last.
-fn surface_compile_diagnostics(diagnostics: &CompileDiagnostics, display: ReportDisplay) {
-    let groups = diagnostics
-        .degradations()
-        .chunk_by(|a, b| a.provider() == b.provider() && a.kind() == b.kind());
-    for group in groups {
-        // `chunk_by` never yields an empty chunk, so this `continue` is
-        // unreachable — it is the `unwrap`-free shape for taking the head
-        // given `unwrap_used` and `panic` are denied.
-        let Some(head) = group.first() else { continue };
-        let provider = head.provider();
-        match head.kind().presentation() {
-            Presentation::Warning => eprintln!("agentspec warning: {}", head.message()),
-            Presentation::CountedSubjects { singular, plural } => {
-                // `n` counts the whole group while the listing below drops
-                // subjectless entries. The two agree because every
-                // `CountedSubjects` push goes through `Degradation::for_spec`
-                // and so carries a subject; a `provider_wide` push of such a
-                // kind would print this count with nothing beneath it. See
-                // TODO #23 for the options weighed for enforcing that.
-                let n = group.len();
-                let word = if n == 1 { singular } else { plural };
-                eprintln!("{provider}: skipped {n} {word}");
-                if matches!(display, ReportDisplay::Full) {
-                    for subject in group.iter().filter_map(Degradation::subject) {
-                        eprintln!("{provider}: skipped {singular} {subject}");
-                    }
-                }
-            }
-        }
-    }
-
-    for warning in diagnostics.parity() {
-        eprintln!("agentspec warning: {}", warning.message());
-    }
 }
 
 /// Returns the current user's home directory.

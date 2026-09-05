@@ -301,10 +301,6 @@ impl Adapter for CursorAdapter {
         }
     }
 
-    fn emits_hooks(&self) -> bool {
-        true
-    }
-
     fn plugin_manifest_dir(&self) -> Option<&'static str> {
         Some(PLUGIN_MANIFEST_DIR)
     }

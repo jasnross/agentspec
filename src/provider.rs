@@ -63,13 +63,30 @@ mod tests {
     }
 
     #[test]
-    fn test_emits_hooks_capability() {
-        // Claude / Cursor produce hook entries; OpenCode does not. The
-        // OpenCode adapter consults this at its own `Spec::Hook` arm and
-        // pushes a `DegradationKind::HooksUnsupported` for each spec it drops.
-        assert!(Provider::Claude.adapter().emits_hooks());
-        assert!(Provider::Cursor.adapter().emits_hooks());
-        assert!(!Provider::OpenCode.adapter().emits_hooks());
+    fn test_carriable_declares_hooks_only_for_hook_emitting_providers() {
+        // Claude and Cursor produce hook entries; OpenCode does not. This is
+        // the accessor the cross-provider session-start parity gate reads to
+        // exclude a provider with no hooks to compare, so it needs coverage
+        // of its own rather than only through that gate.
+        use crate::plan::FileKind;
+        assert!(
+            !Provider::Claude
+                .adapter()
+                .carriable(FileKind::Hooks)
+                .is_empty()
+        );
+        assert!(
+            !Provider::Cursor
+                .adapter()
+                .carriable(FileKind::Hooks)
+                .is_empty()
+        );
+        assert!(
+            Provider::OpenCode
+                .adapter()
+                .carriable(FileKind::Hooks)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -98,12 +115,5 @@ mod tests {
             Provider::OpenCode.adapter().matcher_tool_name(&shell),
             Some("bash")
         );
-    }
-
-    #[test]
-    fn test_supports_path_scoped_rules_capability() {
-        assert!(Provider::Claude.adapter().supports_path_scoped_rules());
-        assert!(Provider::Cursor.adapter().supports_path_scoped_rules());
-        assert!(!Provider::OpenCode.adapter().supports_path_scoped_rules());
     }
 }
