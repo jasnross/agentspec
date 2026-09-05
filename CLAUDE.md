@@ -44,6 +44,7 @@ cargo install --path .          # reinstall binary after schema changes (see bel
 
 # From dotfiles/agent-config/ (the spec library that exercises this compiler)
 agentspec validate              # schema + semantic checks only
+agentspec inspect               # report configured values that reached no generated file
 agentspec compile               # full pipeline; writes generated/
 agentspec sync                  # compile + distribute to tool config dirs
 agentspec sync --dry-run        # preview sync operations without writing

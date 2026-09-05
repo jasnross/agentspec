@@ -180,9 +180,9 @@ pub struct AdapterOutput {
     /// landed in an emitted file. An adapter asserts nothing here about what
     /// it dropped — only about what it delivered.
     ///
-    /// `compile_specs` collects these per provider. Nothing subtracts them
-    /// from an author-intent set yet, so the record is currently written and
-    /// not read.
+    /// `compile_specs` collects these per provider and subtracts them from
+    /// the set of settings the author configured; the remainder is the losses
+    /// it reports.
     pub deliveries: Vec<Delivery>,
 }
 
@@ -205,9 +205,13 @@ pub struct Delivery {
     /// `GeneratedFile`, this is that file's path. For a hook registration
     /// under merged emit mode it is `hooks/hooks.json`, which agentspec does
     /// not write in that mode — the registration lands in the provider's host
-    /// file instead. The report never renders this field, so the merged-mode
-    /// value is a stable identity for the subtraction rather than a path the
-    /// author can open.
+    /// file instead.
+    ///
+    /// Provenance only: the subtraction keys on spec id, setting, and file
+    /// kind, and the report renders no path, so nothing outside tests reads
+    /// this. It is retained so the hook-synthesis tests can pin the anchor a
+    /// registration is recorded against, including in the merged modes where
+    /// that path names no file the author can open.
     file: PathBuf,
 }
 

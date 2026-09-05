@@ -31,6 +31,9 @@ pub enum Command {
     /// Compile spec files into provider-specific configurations
     Compile(CommonArgs),
 
+    /// Report configured values that reached no generated file, and measured provider limitations
+    Inspect(CommonArgs),
+
     /// Compile and distribute generated files to each tool's config directory
     Sync(SyncArgs),
 
@@ -56,10 +59,13 @@ pub struct CommonArgs {
     #[arg(long, value_delimiter = ',')]
     pub provider: Vec<Provider>,
 
-    /// Show detailed diagnostics. For `compile` and `sync`, emits the full
+    /// Show detailed diagnostics. For `compile` and `sync`, prints the loss
+    /// and provider-limitation report that `inspect` renders, plus the full
     /// [spec].ignore listing; for `sync`, also shows unchanged sync
-    /// destinations. `validate` always shows the full listing regardless of
-    /// this flag.
+    /// destinations. `sync --dry-run` prints that report with or without this
+    /// flag. For `inspect`, lists the specs behind each counted line.
+    /// `validate` always shows the full ignore listing regardless of this
+    /// flag.
     #[arg(long)]
     pub verbose: bool,
 }

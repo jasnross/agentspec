@@ -138,10 +138,14 @@ fn format_losses(losses: &[Loss], verbose: bool) -> Vec<String> {
 ///
 /// A `Body` loss has no emitted file to name — that is what it means — so it
 /// reads from spec type instead.
+///
+/// Speaks for one spec only. A per-spec line means some sibling spec holding
+/// the same intent *was* delivered, so this must not generalize to the file
+/// kind the way [`explain_group`] does.
 fn explain(loss: &Loss) -> String {
     match loss.kind() {
         Some(kind) => format!(
-            "no {} {kind} file carries `{}`",
+            "this {} {kind} file carries no `{}`",
             loss.provider(),
             loss.setting().label()
         ),
@@ -162,7 +166,11 @@ fn explain(loss: &Loss) -> String {
 /// the sentence is built from, so one sentence is true of all of them.
 fn explain_group(head: &Loss) -> String {
     match head.kind() {
-        Some(_) => explain(head),
+        Some(kind) => format!(
+            "no {} {kind} file carries `{}`",
+            head.provider(),
+            head.setting().label()
+        ),
         None => format!("{} emits no {}", head.provider(), head.spec_type()),
     }
 }

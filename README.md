@@ -238,9 +238,9 @@ Multi-token matchers join with `|` (e.g., `matcher = "read|write|edit"`); each t
 
 #### OpenCode behavior
 
-If your spec set contains hooks and `[sync.opencode]` is configured, agents/skills/rules sync normally and each hook is reported as a lost spec body: `opencode: 3 specs lost \`content\` — opencode emits no hook`. Use `--verbose` to list each hook id.
+If your spec set contains hooks and `[sync.opencode]` is configured, agents/skills/rules sync normally and each hook is reported by `agentspec inspect` as a lost spec body: `opencode: 3 specs lost \`content\` — opencode emits no hook`. Use `--verbose` to list each hook id.
 
-**A rule's `paths` does not reach OpenCode, and the rule widens as a result.** OpenCode has no native path scoping, so a rule that Claude and Cursor activate only when matching files are in context is emitted for OpenCode as an always-on instruction registered in `instructions[]` — injected into every conversation. This is the one dropped value whose consequence is more than a missing default: the rule still applies, to more than it was scoped to. `compile` and `sync` report it as `opencode: N specs lost \`paths\``.
+**A rule's `paths` does not reach OpenCode, and the rule widens as a result.** OpenCode has no native path scoping, so a rule that Claude and Cursor activate only when matching files are in context is emitted for OpenCode as an always-on instruction registered in `instructions[]` — injected into every conversation. This is the one dropped value whose consequence is more than a missing default: the rule still applies, to more than it was scoped to. `agentspec inspect` reports it as `opencode: N specs lost \`paths\``.
 
 ### Frontmatter reference
 
@@ -520,6 +520,7 @@ agentspec sync --dry-run         # preview without making changes
 agentspec sync --force           # allow overwriting user-owned destination files
 agentspec sync --provider claude --mode user # CLI-only sync for one provider
 agentspec remove                 # reverse a prior sync
+agentspec inspect                # report configured values that reached no generated file
 agentspec prune                  # strip orphaned entries from host config files
 agentspec hook test <hook-id>    # run a hook through the shim, showing each stage
 agentspec completions <shell>    # print a shell completion script
@@ -626,7 +627,7 @@ This covers `model` as well as `effort`. Cursor's skill schema has no model fiel
 
 The same is true of `capabilities.tools`: OpenCode reads a tool map on agents but not on skills, so declared tools do not reach a generated OpenCode skill file either.
 
-**Cursor reads no tool restriction on any file kind.** Its documented subagent fields are `name`, `description`, `model`, `readonly`, and `is_background`, and a subagent inherits every tool from the parent conversation; Custom Modes, which could restrict tools per mode, were removed in Cursor 2.1, and every remaining control gates approval rather than availability. So `capabilities.tools` reaches no generated Cursor file at all — not an agent file, not a skill file. `compile` and `sync` report this as a loss against each spec that declares tools; on a library of any size it is the largest single group in the report.
+**Cursor reads no tool restriction on any file kind.** Its documented subagent fields are `name`, `description`, `model`, `readonly`, and `is_background`, and a subagent inherits every tool from the parent conversation; Custom Modes, which could restrict tools per mode, were removed in Cursor 2.1, and every remaining control gates approval rather than availability. So `capabilities.tools` reaches no generated Cursor file at all — not an agent file, not a skill file. `agentspec inspect` reports this as a loss against each spec that declares tools; on a library of any size it is the largest single group in the report.
 
 An OpenCode `variant` set with no `model` beside it is accepted and inert — unlike Cursor's options, which are rejected without a `model`, because Cursor cannot express them apart from one.
 
@@ -726,6 +727,32 @@ agentspec remove --dry-run             # preview every file/manifest deletion wi
 - **`generated/<provider>/`** — `compile` output is independent of `sync`; `remove` reverses `sync`, not `compile`.
 - **`.bak.<timestamp>` files** — backups created when `sync --force` overwrites a user-owned file are not in the manifest. Clean them up by hand if you no longer need them: `find ~/.claude -name '*.bak.*' -delete`.
 - **Files agentspec did not write** — anything not recorded in `.agentspec-manifest.json` is treated as user-owned and left alone, even if it looks like agentspec output. The manifest is the source of truth.
+
+## Inspect
+
+`agentspec inspect` reports every value you configured that reached no generated file, alongside the measured limitations of the providers it covers. It writes nothing.
+
+Unlike `sync`, it defaults to every provider agentspec supports rather than the ones configured under `[sync.<provider>]` — a value dropped by a provider you have not configured yet is still worth seeing before you configure it. Use `--provider` to narrow.
+
+```sh
+agentspec inspect                    # every provider
+agentspec inspect --provider cursor  # narrow to one provider (repeatable / comma-separated)
+agentspec inspect --verbose          # list the specs behind each counted line
+```
+
+`compile --verbose` and `sync --verbose` print the same report inline; a default `compile` or `sync` prints none of it. A loss is a permanent consequence of a configuration you chose on purpose, equally true on the first sync and the hundredth, so it is something to consult rather than something to be told repeatedly.
+
+### The two sections claim different things
+
+**`not delivered`** is agentspec's own warranty about its own output, and it is certain. agentspec composed the bytes, so "no Cursor skills file carries `model`" is a fact about a file you can open. A per-spec line names the spec, the setting, and the file kind the value failed to reach; where every spec configuring a setting lost it, the group collapses to one counted line and `--verbose` lists the specs behind it. A lost spec body names no file kind, because the point is that no file was emitted.
+
+**`provider limitations`** are measured claims about how a provider's runtime treats bytes agentspec delivered successfully. These are probe-backed rather than inferred, and each cites [`docs/hooks-canonical.md`](docs/hooks-canonical.md) so you can check what was measured, against which version, and when.
+
+### Nothing renders as delivered
+
+The report has no success state, and that is deliberate. agentspec can warrant that a value reached a file; it cannot warrant that the provider honors it. The standing example is documented above: OpenCode discards an agent's `variant` whenever the session resolves a model other than the one the agent declares, which is decided long after `sync` has run. A "delivered ✓" beside that would read as "working" and would be worse than saying nothing.
+
+For the same reason `inspect` exits zero whether or not it finds anything. A loss is a fact, not a failure — `validate` is the command that fails, and it keeps its own meaning: a clean run means these specs are safe to compile.
 
 ## Prune
 

@@ -10,8 +10,8 @@ use crate::provider::Provider;
 /// Output kinds agentspec distributes, mirroring the directory layout
 /// under each provider's configuration tree.
 // `Ord`/`PartialOrd` are required by `Delivery`, which derives `Ord` and holds
-// a `FileKind`. `Hash` has no consumer yet; it is here for the loss
-// subtraction, which keys its delivered set on a tuple containing a file kind.
+// a `FileKind`. `Hash` is required by the loss subtraction, which keys its
+// delivered set on a tuple containing a file kind.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum FileKind {
     Agents,

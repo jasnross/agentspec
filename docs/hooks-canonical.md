@@ -178,7 +178,7 @@ The `agent_message` row previously read "does not surface in the agent context,"
 
 `Adapter::fully_implements_canonical_output` remains `false` for Cursor, but now on one ground rather than two: `user_message` still does not render.
 
-agentspec emits a sync-time warning whenever a provider with partial canonical-output routing (today: Cursor) is in the active provider list AND any hook spec exists. The warning is generic on Cursor version — version-specific status is tracked here.
+`agentspec inspect` reports this under `provider limitations` whenever a provider with partial canonical-output routing (today: Cursor) is in the active provider list AND any hook spec exists; `compile --verbose` and `sync --verbose` print it inline. It does not appear on a default `compile` or `sync` run, because it is a standing property of the provider rather than news about a particular run. The line is generic on Cursor version — version-specific status is tracked here.
 
 When Cursor fixes the routing gap in a future release, no agentspec change is required at the user level: hook scripts emitting `user_facing_message` / `decision_reason` / `additional_context` will start surfacing automatically once agentspec updates its capability record for Cursor.
 
@@ -186,7 +186,7 @@ When Cursor fixes the routing gap in a future release, no agentspec change is re
 
 Cursor's `sessionStart` fires only on initial conversation creation, not on conversation resume. Claude's `SessionStart` fires on both. A single canonical `session_start` hook cannot achieve resume parity across the two providers.
 
-For agentspec users targeting both Claude and Cursor with a `session_start` hook, agentspec emits a sync-time warning. To trigger logic on Claude's resume firings:
+For agentspec users targeting both Claude and Cursor with a `session_start` hook, `agentspec inspect` reports this under `provider limitations`; `compile --verbose` and `sync --verbose` print it inline, and a default run does not. To trigger logic on Claude's resume firings:
 
 ```sh
 INPUT=$(cat)

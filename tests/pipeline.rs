@@ -319,7 +319,7 @@ fn test_compile_path_scoped_rule_outputs() {
     let dir = setup(&tmp);
 
     let output = std::process::Command::new(agentspec())
-        .arg("compile")
+        .args(["compile", "--verbose"])
         .current_dir(&dir)
         .output()
         .expect("failed to run agentspec compile");
@@ -2128,56 +2128,58 @@ fn test_compile_cursor_hooks_json_uses_camel_case_and_version() {
 }
 
 #[test]
-fn test_compile_opencode_hook_body_loss_renders_as_count_without_verbose() {
+fn test_inspect_opencode_hook_body_loss_renders_as_count_without_verbose() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
 
     let output = std::process::Command::new(agentspec())
-        .args(["compile", "--provider", "opencode"])
+        .args(["inspect", "--provider", "opencode"])
         .current_dir(&dir)
         .output()
-        .expect("failed to run agentspec compile --provider opencode");
+        .expect("failed to run agentspec inspect --provider opencode");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "compile failed:\n{stderr}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "inspect failed:\n{stderr}");
     assert!(
-        stderr.contains("3 specs lost `content`"),
-        "expected a counted hook body loss, got:\n{stderr}"
+        stdout.contains("3 specs lost `content`"),
+        "expected a counted hook body loss, got:\n{stdout}"
     );
     assert!(
-        stderr.contains("(--verbose lists them)"),
-        "a counted group without --verbose should point at the flag, got:\n{stderr}"
+        stdout.contains("(--verbose lists them)"),
+        "a counted group without --verbose should point at the flag, got:\n{stdout}"
     );
     assert!(
-        !stderr.contains("hook/init-thoughts"),
-        "subjects should be withheld without --verbose, got:\n{stderr}"
+        !stdout.contains("hook/init-thoughts"),
+        "subjects should be withheld without --verbose, got:\n{stdout}"
     );
 }
 
 #[test]
-fn test_compile_opencode_verbose_lists_hook_body_loss_subjects() {
+fn test_inspect_opencode_verbose_lists_hook_body_loss_subjects() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
 
     let output = std::process::Command::new(agentspec())
-        .args(["compile", "--provider", "opencode", "--verbose"])
+        .args(["inspect", "--provider", "opencode", "--verbose"])
         .current_dir(&dir)
         .output()
-        .expect("failed to run agentspec compile --provider opencode --verbose");
+        .expect("failed to run agentspec inspect --provider opencode --verbose");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "compile failed:\n{stderr}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "inspect failed:\n{stderr}");
     assert!(
-        stderr.contains("hook/init-thoughts"),
-        "expected per-spec listing under --verbose, got:\n{stderr}"
+        stdout.contains("hook/init-thoughts"),
+        "expected per-spec listing under --verbose, got:\n{stdout}"
     );
     assert!(
-        stderr.contains("hook/audit-bash"),
-        "expected per-spec listing under --verbose, got:\n{stderr}"
+        stdout.contains("hook/audit-bash"),
+        "expected per-spec listing under --verbose, got:\n{stdout}"
     );
     assert!(
-        !stderr.contains("(--verbose lists them)"),
-        "the hint is for the non-verbose shape only, got:\n{stderr}"
+        !stdout.contains("(--verbose lists them)"),
+        "the hint is for the non-verbose shape only, got:\n{stdout}"
     );
 }
 
@@ -4556,7 +4558,7 @@ fn test_compile_emits_cursor_partial_output_warning_when_cursor_targeted() {
     install_hook_fixture(&dir);
 
     let output = std::process::Command::new(agentspec())
-        .args(["compile", "--provider", "cursor"])
+        .args(["compile", "--provider", "cursor", "--verbose"])
         .current_dir(&dir)
         .output()
         .expect("agentspec compile spawn");
@@ -4602,7 +4604,7 @@ fn test_compile_emits_session_start_asymmetry_warning_for_cross_provider_fixture
     install_session_start_hook_fixture(&dir);
 
     let output = std::process::Command::new(agentspec())
-        .arg("compile")
+        .args(["compile", "--verbose"])
         .current_dir(&dir)
         .output()
         .expect("agentspec compile spawn");
@@ -4847,7 +4849,7 @@ fn test_compile_path_scoped_loss_is_one_categorical_line() {
     }
 
     let output = std::process::Command::new(agentspec())
-        .args(["compile", "--provider", "opencode"])
+        .args(["compile", "--provider", "opencode", "--verbose"])
         .current_dir(&dir)
         .output()
         .expect("agentspec compile spawn");
@@ -4867,6 +4869,278 @@ fn test_compile_path_scoped_loss_is_one_categorical_line() {
         paths_lines[0].contains("3 specs lost `paths`"),
         "expected a count of 3, got: {:?}",
         paths_lines[0]
+    );
+}
+
+#[test]
+fn test_inspect_renders_both_sections() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_session_start_hook_fixture(&dir);
+    // `inspect` is read-only, so start from a tree with no `generated/` to
+    // prove it creates none rather than merely leaving one untouched.
+    let _ = std::fs::remove_dir_all(dir.join("generated"));
+
+    let output = std::process::Command::new(agentspec())
+        .arg("inspect")
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec inspect spawn");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "inspect failed:\n{stderr}");
+
+    assert!(stdout.contains("not delivered:"), "got:\n{stdout}");
+    assert!(stdout.contains("provider limitations:"), "got:\n{stdout}");
+    // The report is this command's result, not a side channel to a write, so
+    // it has to survive `agentspec inspect > report.txt`.
+    assert!(
+        !stderr.contains("not delivered:") && !stderr.contains("provider limitations:"),
+        "the report belongs on stdout alone, got on stderr:\n{stderr}"
+    );
+    assert!(
+        !dir.join("generated").exists(),
+        "inspect must write nothing"
+    );
+    assert!(
+        !stdout.contains("wrote ") && !stdout.contains("compiled "),
+        "inspect performs no write and must not describe one:\n{stdout}"
+    );
+}
+
+#[test]
+fn test_inspect_verbose_lists_subjects() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    let quiet = std::process::Command::new(agentspec())
+        .arg("inspect")
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec inspect spawn");
+    let quiet_err = String::from_utf8_lossy(&quiet.stderr);
+    let quiet_out = String::from_utf8_lossy(&quiet.stdout);
+    assert!(quiet.status.success(), "inspect failed:\n{quiet_err}");
+    assert!(
+        quiet_out.contains("(--verbose lists them)"),
+        "got:\n{quiet_out}"
+    );
+    assert!(
+        !quiet_out.contains("skill/agent-invocable-skill"),
+        "subjects are withheld without --verbose:\n{quiet_out}"
+    );
+
+    let loud = std::process::Command::new(agentspec())
+        .args(["inspect", "--verbose"])
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec inspect spawn");
+    let loud_err = String::from_utf8_lossy(&loud.stderr);
+    let loud_out = String::from_utf8_lossy(&loud.stdout);
+    assert!(loud.status.success(), "inspect failed:\n{loud_err}");
+    assert!(
+        loud_out.contains("skill/agent-invocable-skill"),
+        "got:\n{loud_out}"
+    );
+    assert!(
+        !loud_out.contains("(--verbose lists them)"),
+        "got:\n{loud_out}"
+    );
+}
+
+#[test]
+fn test_inspect_provider_narrows_report() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_session_start_hook_fixture(&dir);
+
+    let output = std::process::Command::new(agentspec())
+        .args(["inspect", "--provider", "claude"])
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec inspect spawn");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "inspect failed:\n{stderr}");
+
+    assert!(
+        !stdout.contains("does not surface a hook's canonical"),
+        "Cursor's limitation must not appear in a Claude-only report:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("opencode"),
+        "no OpenCode loss may appear in a Claude-only report:\n{stdout}"
+    );
+    // Positive anchor: Claude carries every value the fixture configures, so
+    // narrowing to it lands on a known state rather than merely on silence —
+    // without this the two negatives above hold against empty output.
+    assert!(
+        stdout.contains("no losses or provider limitations"),
+        "got:\n{stdout}"
+    );
+}
+
+#[test]
+fn test_inspect_clean_config_reports_nothing() {
+    // Claude carries every value the fixture configures, so a Claude-only
+    // report is empty. A clean run says so rather than producing silence
+    // indistinguishable from a crash — and still exits zero, because a loss is
+    // a fact rather than a failure.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    let output = std::process::Command::new(agentspec())
+        .args(["inspect", "--provider", "claude"])
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec inspect spawn");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "inspect failed:\n{stderr}");
+    assert!(
+        stdout.contains("no losses or provider limitations"),
+        "got:\n{stdout}"
+    );
+}
+
+#[test]
+fn test_compile_default_run_prints_no_diagnostics() {
+    // The change the whole plan exists to make: a permanent consequence of a
+    // configuration the author chose is not news, so it does not print on
+    // every run.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_session_start_hook_fixture(&dir);
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec compile spawn");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    for marker in [
+        "not delivered",
+        "provider limitations",
+        "lost `",
+        "agentspec warning:",
+    ] {
+        assert!(
+            !stderr.contains(marker),
+            "a default compile must not print {marker:?}, got:\n{stderr}"
+        );
+    }
+    assert!(diagnostic_lines(&stderr).is_empty(), "got:\n{stderr}");
+}
+
+#[test]
+fn test_compile_verbose_prints_inspect_report() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_session_start_hook_fixture(&dir);
+
+    let output = std::process::Command::new(agentspec())
+        .args(["compile", "--verbose"])
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec compile spawn");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+    assert!(stderr.contains("not delivered:"), "got:\n{stderr}");
+    assert!(stderr.contains("provider limitations:"), "got:\n{stderr}");
+}
+
+#[test]
+fn test_sync_default_run_prints_no_diagnostics() {
+    // The `sync` half of the gating change, and the one with the broadest
+    // reach — this is the command users run repeatedly.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let dest = dir.join("dest");
+    write_sync_config(
+        &dir,
+        &[SyncEntry::new("opencode", "project").with_dir(dest.to_str().expect("dest path utf-8"))],
+    );
+
+    let output = std::process::Command::new(agentspec())
+        .arg("sync")
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec sync spawn");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "sync failed:\n{stderr}");
+
+    for marker in ["not delivered", "provider limitations", "lost `"] {
+        assert!(
+            !stderr.contains(marker),
+            "a default sync must not print {marker:?}, got:\n{stderr}"
+        );
+    }
+}
+
+#[test]
+fn test_sync_dry_run_prints_inspect_report() {
+    // `--dry-run` keeps the report without `--verbose`, which is why the
+    // predicate is stated at the call site rather than derived from the
+    // load-report's `ReportDisplay`.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let dest = dir.join("dest");
+    write_sync_config(
+        &dir,
+        &[SyncEntry::new("opencode", "project").with_dir(dest.to_str().expect("dest path utf-8"))],
+    );
+
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--dry-run"])
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec sync spawn");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "sync failed:\n{stderr}");
+    assert!(stderr.contains("not delivered:"), "got:\n{stderr}");
+    // `--dry-run` decides *whether* to print; `--verbose` decides how much, so
+    // the flag means the same thing on every command rendering this report.
+    assert!(
+        stderr.contains("(--verbose lists them)"),
+        "a dry run without --verbose withholds subjects, got:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("skill/agent-invocable-skill"),
+        "got:\n{stderr}"
+    );
+}
+
+#[test]
+fn test_sync_verbose_prints_inspect_report_with_subjects() {
+    // The remaining cell of the gating matrix: `--verbose` without
+    // `--dry-run`. Whether to print is `--dry-run || --verbose` and how much
+    // to print is `--verbose` alone, so this is the one combination where the
+    // two predicates could diverge with every other test still passing.
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let dest = dir.join("dest");
+    write_sync_config(
+        &dir,
+        &[SyncEntry::new("opencode", "project").with_dir(dest.to_str().expect("dest path utf-8"))],
+    );
+
+    let output = std::process::Command::new(agentspec())
+        .args(["sync", "--verbose"])
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec sync spawn");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "sync failed:\n{stderr}");
+    assert!(stderr.contains("not delivered:"), "got:\n{stderr}");
+    assert!(
+        stderr.contains("skill/agent-invocable-skill"),
+        "--verbose lists the specs behind each counted line, got:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("(--verbose lists them)"),
+        "the hint is for the non-verbose shape only, got:\n{stderr}"
     );
 }
 

@@ -151,10 +151,18 @@ fn main() -> Result<()> {
                 &home,
                 &cwd,
             )?;
-            for line in
-                report::format_compile_report(&diagnostics, matches!(display, ReportDisplay::Full))
-            {
-                eprintln!("{line}");
+            // Whether to print is `--dry-run || --verbose`; how much detail
+            // to print is `--verbose` alone, so the flag means the same thing
+            // on every command that renders this report.
+            //
+            // Stated here rather than derived from `display`: they agree
+            // today, but leaving a `ReportDisplay` to carry the decision would
+            // silently drop the report from every `--dry-run` that omits
+            // `--verbose` if the two ever diverged.
+            if sync_args.dry_run || sync_args.common.verbose {
+                for line in report::format_compile_report(&diagnostics, sync_args.common.verbose) {
+                    eprintln!("{line}");
+                }
             }
 
             let plan = sync_plan(&mut result, &targets)?;
@@ -207,10 +215,16 @@ fn main() -> Result<()> {
                 &home,
                 &cwd,
             )?;
-            for line in
-                report::format_compile_report(&diagnostics, matches!(display, ReportDisplay::Full))
-            {
-                eprintln!("{line}");
+            // A loss is a permanent consequence of a configuration the author
+            // chose, not news, so it stays off the default run. `agentspec
+            // inspect` is where it is consulted; `--verbose` prints it inline.
+            // The load-stage ignore-pattern warnings above keep their own
+            // gating — those are the one genuinely news-shaped diagnostic in
+            // the pipeline and print on every run.
+            if compile_args.verbose {
+                for line in report::format_compile_report(&diagnostics, true) {
+                    eprintln!("{line}");
+                }
             }
             let output_dir = config.resolve(&config.compile.output_dir);
             let plan = compile_plan(&result, &output_dir, &providers);
@@ -220,6 +234,69 @@ fn main() -> Result<()> {
                 result.files.len(),
                 output_dir.display()
             );
+        }
+        Command::Inspect(inspect_args) => {
+            // Read-only: loads, validates, and compiles in memory, then
+            // renders. Writes no file and constructs no plan.
+            //
+            // Failure behavior is `compile`'s, deliberately. A spec set that
+            // fails to compile has no deliveries to subtract, so any loss set
+            // derived from it would describe a pipeline that never ran —
+            // reporting one would be worse than reporting nothing. There is no
+            // partial report.
+            let (validated, report) = load_and_validate(&config, &dirs)?;
+            // `WarningsOnly` regardless of `--verbose`: on this command
+            // `--verbose` means "list the specs behind each counted loss", and
+            // the `[spec].ignore` listing is about what was loaded rather than
+            // what was delivered. Printing both would bury the report under a
+            // listing that belongs to the commands acting on the loaded set.
+            surface_load_report(&dirs.ignore, &report, ReportDisplay::WarningsOnly);
+            let templating = load_templating(&config)?;
+
+            let sync_targets = config.sync_targets();
+            let adapter_configs = AgentspecConfig::adapter_configs(&sync_targets);
+            // Empty for the same reason as the `Compile` arm's: there is no
+            // sync destination, so each adapter falls back to
+            // `ProviderCompileTarget::default` and plugin manifests stay gated
+            // on `ctx.mode == Plugin`. `inspect` must resolve exactly what
+            // `compile` would, or the two disagree about the same spec set.
+            let compile_targets: HashMap<Provider, ProviderCompileTarget> = HashMap::new();
+
+            let providers: Vec<Provider> = if inspect_args.provider.is_empty() {
+                Provider::VARIANTS.to_vec()
+            } else {
+                inspect_args.provider.clone()
+            };
+
+            let home = home_dir()?;
+            // `compile::run` rather than `run_compile`: the latter prints a
+            // "compiled N files" line describing a write that never happens.
+            let (_result, diagnostics) = compile::run(
+                &validated,
+                &templating,
+                &providers,
+                &adapter_configs,
+                &compile_targets,
+                &home,
+                &cwd,
+            )?;
+
+            // stdout, unlike `compile` and `sync`, which print this report to
+            // stderr as a side channel to a write. The report is the whole
+            // output of `inspect`, so it is the command's result rather than a
+            // commentary on one, and `agentspec inspect > report.txt` has to
+            // capture it.
+            let lines = report::format_compile_report(&diagnostics, inspect_args.verbose);
+            if lines.is_empty() {
+                // Said explicitly, so a clean run is distinguishable from a
+                // crash. A loss is a fact, not a failure: this exits zero
+                // either way.
+                println!("no losses or provider limitations");
+            } else {
+                for line in lines {
+                    println!("{line}");
+                }
+            }
         }
         Command::Hook(hook_cmd) => match &hook_cmd.command {
             cli::HookSubcommand::Test(test_args) => {
