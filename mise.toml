@@ -4,5 +4,5 @@ bats = "latest"
 jq = "latest"
 just = "latest"
 prettier = "latest"
-rust = "latest"
+rust = { version = "latest", components = ["rust-analyzer"] }
 shellcheck = "latest"
