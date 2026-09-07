@@ -95,7 +95,7 @@ spec/skills/deploy/
     └── deploy.sh       # supporting file
 ```
 
-Supporting files preserve their relative paths and executable permissions in the compiled output. The skill's instructions can then reference the script by its relative path (e.g., `scripts/deploy.sh`).
+Supporting files preserve their relative paths and executable permissions in the compiled output. The skill's instructions can then reference the script by its relative path (e.g., `scripts/deploy.sh`). A supporting file may be a symlink into a pool shared with other spec directories — see [Sharing spec content](#sharing-spec-content).
 
 #### Ignoring files
 
@@ -241,6 +241,38 @@ Multi-token matchers join with `|` (e.g., `matcher = "read|write|edit"`); each t
 If your spec set contains hooks and `[sync.opencode]` is configured, agents/skills/rules sync normally and each hook is reported by `agentspec inspect` as a lost spec body: `opencode: 3 specs lost \`content\` — opencode emits no hook`. Use `--verbose` to list each hook id.
 
 **A rule's `paths` does not reach OpenCode, and the rule widens as a result.** OpenCode has no native path scoping, so a rule that Claude and Cursor activate only when matching files are in context is emitted for OpenCode as an always-on instruction registered in `instructions[]` — injected into every conversation. This is the one dropped value whose consequence is more than a missing default: the rule still applies, to more than it was scoped to. `agentspec inspect` reports it as `opencode: N specs lost \`paths\``.
+
+### Sharing spec content
+
+A spec, or a file a spec brings with it, may be a symlink. agentspec follows it at load time and emits the target's content as a regular file at the symlink's own path, so a skill's instructions reference a shared script exactly as they would a local one. This applies to everything the load stage reads: `spec/agents/`, `spec/skills/`, `spec/rules/`, `spec/hooks/hooks.toml`, and `spec/hooks/scripts/`. Fragments resolved by `{% include %}` are read later, by the templating layer, which still requires the target to stay inside the include root.
+
+The target may live anywhere, including outside `sources_dir`. This is how several spec directories share one pool of helper scripts:
+
+```
+repo/
+├── shared/scripts/detect-host.sh
+├── plugin-a/spec/skills/deploy/scripts/detect-host.sh   → ../../../../../shared/scripts/detect-host.sh
+└── plugin-b/spec/hooks/scripts/detect-host.sh           → ../../../../shared/scripts/detect-host.sh
+```
+
+A spec directory is trusted input, the way an executable is. agentspec reads whatever a link resolves to and copies those bytes into `generated/`, and `sync` installs them into a tool config directory — so a link pointing at a readable file anywhere on the host puts that file's contents there. It is the same trust a spec directory asks for by way of hook scripts, which are installed and then run, and it covers every file a spec brings with it. Take symlinked content only from a spec directory you would run code from.
+
+Prefer relative symlinks that stay inside the repository, since those survive a clone. A directory link whose target encloses the directory the link sits in is refused before the walk descends into it — at each spec root, at each entry under `skills/`, and at each directory a walk reaches — and the error names the link.
+
+A dangling target or a symlink loop is a compile-time error that has to be repaired or removed, so a target that exists only on one machine fails loudly elsewhere rather than producing incomplete output. Naming the link in `[spec].ignore` does not exempt a dangling target, since an entry that fails to resolve is never matched against the patterns. What a pattern does reach is a link the load has not tried yet, by any of three routes: prune one of a broken link's parent directories, name an enclosing link, or ignore a skill's only spec file — which skips that skill whole, so nothing under it is read at all, including a broken link the pattern never named. An enclosing link is the narrower of the two, and which walk it sits in decides how narrow. `agents/`, `rules/`, `hooks/scripts/`, and each skill directory are each walked as a unit, and a link cycling back into the walk it sits in is caught while the entry is produced, before any pattern applies — so inside those, a pattern reaches only a link pointing outside its own walk. The entries directly under `skills/` are scanned rather than walked, and a pattern reaches every enclosing link among them. A spec root that is itself an enclosing link is checked before its own prune, so ignoring the root does not exempt it either. None of the three is a way to live with a broken link so much as a way to keep a subtree out of the loaded set entirely, and at the top level under a spec root the narrowest pattern that reaches is the one covering every sibling.
+
+`sources_dir` itself is held to the same standard, and must exist: every spec directory is a path underneath it, so a `sources_dir` that is missing, unreadable, or a broken link would otherwise look like a spec library that had become empty — and `sync` would remove every file an earlier run installed. `agentspec remove` reads the manifest rather than the spec directory, so it still uninstalls when the sources are gone.
+
+Whole specs can be shared the same way. A symlinked `.md` file under `agents/` or `rules/`, or a symlinked skill directory under `skills/`, loads exactly as a real one would — a skill directory brings its supporting files along:
+
+```
+repo/
+├── shared/skills/deploy/SKILL.md
+├── shared/skills/deploy/scripts/deploy.sh
+└── plugin-a/spec/skills/deploy   → ../../../shared/skills/deploy
+```
+
+A spec's `id` comes from its frontmatter, so sharing one spec into two spec directories is unremarkable — they compile separately. Symlinking the same spec twice into one directory is a duplicate id, reported as the usual validation error.
 
 ### Frontmatter reference
 
@@ -534,7 +566,7 @@ Place an `agentspec.toml` in your project root.
 # All sections are optional. Defaults shown where applicable.
 
 [spec]
-sources_dir = "spec" # Directory where your spec sources are located. Can use relative or absolute paths.
+sources_dir = "spec" # Directory where your spec sources are located. Must exist. Can use relative or absolute paths.
 ignore = [] # See "Ignoring files" above for details.
 
 [compile]

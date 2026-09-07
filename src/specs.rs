@@ -22,7 +22,7 @@ use crate::validate::{ValidationError, validate_semantics};
 // ---------------------------------------------------------------------------
 
 /// Compiled set of ignore glob patterns, matched against paths relative to
-/// [`SpecDirs::ignore_anchor`].
+/// [`SpecDirs`]'s `sources_dir`.
 ///
 /// Patterns are structural globs (see the `globset` crate): `*`, `**`, `?`,
 /// character classes, and brace expansion are supported; gitignore negation
@@ -99,24 +99,71 @@ impl IgnoreMatcher {
 ///
 /// Constructing this from an `AgentspecConfig` is the binary's responsibility;
 /// the spec pipeline has no dependency on the config format.
+#[derive(Debug)]
 pub struct SpecDirs {
-    pub agents: PathBuf,
-    pub skills: PathBuf,
-    pub rules: PathBuf,
+    agents: PathBuf,
+    skills: PathBuf,
+    rules: PathBuf,
     /// Directory containing `hooks.toml` and the `scripts/` subdirectory.
     /// Absent directory is not an error — hook authoring is opt-in.
-    pub hooks: PathBuf,
+    hooks: PathBuf,
     /// Compiled ignore patterns applied to every file walked during load.
-    pub ignore: IgnoreMatcher,
-    /// Absolute `sources_dir`. Ignore patterns are matched against paths
-    /// made relative to this directory.
-    pub ignore_anchor: PathBuf,
+    ignore: IgnoreMatcher,
+    /// The root of the spec library: the four roots above are joins onto it,
+    /// ignore patterns are matched against paths made relative to it, and the
+    /// templating layer resolves `{% include %}` under it.
+    sources_dir: PathBuf,
+}
+
+impl SpecDirs {
+    /// Derive the four spec roots from `sources`.
+    ///
+    /// Fails when `sources` is not a directory — absent, unreadable, the wrong
+    /// kind, or a symlink that does not resolve to one.
+    ///
+    /// Each root is a join onto `sources`, so any of those leaves all four
+    /// looking merely absent: the load finds no specs, and `sync` treats every
+    /// file an earlier run installed as stale and removes it. A mistyped
+    /// `sources_dir` is the likeliest way to reach that, which is why an absent
+    /// root is an error here even though each of the four roots below it is
+    /// optional. Constructing the roots in this one place is what keeps the
+    /// check from being bypassed by spelling the joins out again.
+    pub fn new(sources: PathBuf, ignore: IgnoreMatcher) -> Result<Self> {
+        require_sources_dir(&sources)?;
+        Ok(Self {
+            agents: sources.join("agents"),
+            skills: sources.join("skills"),
+            rules: sources.join("rules"),
+            hooks: sources.join("hooks"),
+            ignore,
+            sources_dir: sources,
+        })
+    }
+
+    /// The root of the spec library these roots were derived from.
+    ///
+    /// Derived once, in [`SpecDirs::new`], so a caller that needs the path —
+    /// the templating layer resolves `{% include %}` under it — reads the
+    /// checked value rather than re-resolving it from config.
+    pub fn sources_dir(&self) -> &Path {
+        &self.sources_dir
+    }
+
+    /// The ignore patterns these roots are loaded under.
+    pub fn ignore(&self) -> &IgnoreMatcher {
+        &self.ignore
+    }
+
+    /// The directory holding `hooks.toml` and its `scripts/` subtree.
+    pub fn hooks(&self) -> &Path {
+        &self.hooks
+    }
 }
 
 /// A single file or directory that the load stage filtered out.
 #[derive(Clone, Debug)]
 pub struct IgnoredPath {
-    /// Path relative to [`SpecDirs::ignore_anchor`].
+    /// Path relative to the `sources_dir` the [`SpecDirs`] was built from.
     pub rel_path: PathBuf,
     /// Index into [`IgnoreMatcher::patterns`].
     pub pattern_index: usize,
@@ -223,27 +270,280 @@ fn should_ignore_entry(
     )
 }
 
-fn validate_in_tree_symlink(entry: &walkdir::DirEntry, anchor: &Path) -> Result<()> {
-    if !entry.path_is_symlink() {
+/// Translates a `walkdir` error into a diagnostic naming the symlink at fault,
+/// where `walkdir` supplies the path.
+///
+/// Walks that set `follow_links` surface loops and dangling targets as errors
+/// rather than skipping them, so every such walk routes its results through
+/// here instead of discarding them with `filter_map(Result::ok)`.
+///
+/// `walkdir` carries a path only on an error raised against a single entry. A
+/// failure it cannot attribute — a target that stats but will not open, a
+/// read interrupted mid-directory — arrives with none, and falls through to a
+/// diagnostic headed by the walk root. Naming the link is the better case, not
+/// the guaranteed one.
+///
+/// An entry that fails to resolve never reaches `filter_entry`, so a pattern
+/// naming the link itself does not exempt it — only a pattern that prunes one
+/// of its ancestor directories does, since the walk then never descends far
+/// enough to try the link.
+///
+/// A resolving directory link is checked here too. `walkdir` yields a directory
+/// before descending into it, so refusing an enclosing target at this point is
+/// what keeps the walk off it — left to `walkdir`, the same link is reported
+/// only after the target has been read, and named by the second encounter.
+fn resolve_walk_entry(
+    result: walkdir::Result<walkdir::DirEntry>,
+    root: &Path,
+) -> Result<walkdir::DirEntry> {
+    let err = match result {
+        Ok(entry) => {
+            if entry.file_type().is_dir() && entry.path_is_symlink() {
+                reject_ancestor_loop(entry.path())?;
+            }
+            return Ok(entry);
+        }
+        Err(e) => e,
+    };
+    if let Some(ancestor) = err.loop_ancestor() {
+        let source = err
+            .path()
+            .map_or_else(|| "<unknown>".to_string(), |p| p.display().to_string());
+        bail!(
+            "{source}: symlink loop detected (cycles back to {})",
+            ancestor.display()
+        );
+    }
+    if let Some(path) = err.path().filter(|p| is_symlink(p))
+        && let Some(io) = err.io_error()
+    {
+        // Every failure to resolve a link, not just a missing target: a
+        // mutually-referential pair fails inside `walkdir`'s own `metadata`
+        // call with `ELOOP` before its ancestor tracking runs, so
+        // `loop_ancestor` is `None` and the generic context below would head
+        // the diagnostic with the walk root instead of the link.
+        return Err(anyhow!(unresolvable_symlink(path, io)));
+    }
+    Err(err).with_context(|| format!("error walking {}", root.display()))
+}
+
+/// Fails when `path` is a symlink whose target encloses the directory the link
+/// itself sits in.
+///
+/// Such a link resolves to a real directory, so `metadata()` succeeds and no
+/// `ELOOP` is raised — the cycle only appears once something descends. `walkdir`
+/// does detect it eventually, but only after walking the target in full, and it
+/// reports whatever ancestor it was standing on rather than the link. Naming it
+/// here keeps the diagnostic on the link and the walk off a target that may be
+/// the whole filesystem, which is why every walk root and every resolved
+/// directory entry passes through this.
+fn reject_ancestor_loop(path: &Path) -> Result<()> {
+    if !is_symlink(path) {
         return Ok(());
     }
-    let source = entry.path().display();
-    let canonical_target = fs::canonicalize(entry.path())
-        .with_context(|| format!("failed to resolve symlink {source}"))?;
-    let canonical_anchor = fs::canonicalize(anchor)
-        .with_context(|| format!("failed to canonicalize spec root {}", anchor.display()))?;
-    if !canonical_target.starts_with(&canonical_anchor) {
-        let literal_display = fs::read_link(entry.path())
-            .ok()
-            .map_or_else(|| "<unreadable>".to_string(), |p| p.display().to_string());
-        let target_display = canonical_target.display();
-        let anchor_display = canonical_anchor.display();
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    let target = path
+        .canonicalize()
+        .with_context(|| format!("failed to resolve {}", path.display()))?;
+    // The link's own directory, not the link resolved: a spec root authored as
+    // a link to a shared pool resolves to its target, which would compare equal
+    // to it and read as a cycle.
+    let canonical_parent = parent
+        .canonicalize()
+        .with_context(|| format!("failed to resolve {}", parent.display()))?;
+    if canonical_parent.starts_with(&target) {
         bail!(
-            "{source}: symlink target {literal_display} resolves to {target_display}, \
-             which is outside the spec tree at {anchor_display}"
+            "{}: symlink loop detected (cycles back to {})",
+            path.display(),
+            target.display()
         );
     }
     Ok(())
+}
+
+/// The kind of filesystem object a spec root is expected to be.
+#[derive(Clone, Copy)]
+enum RootKind {
+    Dir,
+    File,
+}
+
+impl RootKind {
+    fn matches(self, file_type: fs::FileType) -> bool {
+        match self {
+            Self::Dir => file_type.is_dir(),
+            Self::File => file_type.is_file(),
+        }
+    }
+
+    fn noun(self) -> &'static str {
+        match self {
+            Self::Dir => "directory",
+            Self::File => "file",
+        }
+    }
+}
+
+/// What a stat of a spec root found.
+///
+/// The optional roots and the required `sources_dir` need the same four-way
+/// distinction and act on it differently, so the distinction is drawn once here
+/// and each caller maps it to its own diagnostic.
+enum RootState {
+    /// Resolves to the expected kind.
+    Present,
+    /// Nothing is at the path.
+    Absent,
+    /// Something is at the path, but not of the expected kind.
+    WrongKind,
+    /// The path could not be stat'd for some other reason.
+    Unreadable(std::io::Error),
+}
+
+fn spec_root_state(path: &Path, kind: RootKind) -> RootState {
+    match path.metadata() {
+        Ok(metadata) if kind.matches(metadata.file_type()) => RootState::Present,
+        Ok(_) => RootState::WrongKind,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => RootState::Absent,
+        Err(e) => RootState::Unreadable(e),
+    }
+}
+
+/// Fails unless `path` is a usable spec sources directory.
+///
+/// Unlike the four roots under it, which are optional, this one is required —
+/// see [`SpecDirs::new`]. Every message names the setting to correct and leads
+/// with what is wrong: the remedy is the same in each case, and the cause is
+/// what the user cannot see.
+fn require_sources_dir(path: &Path) -> Result<()> {
+    const HINT: &str =
+        "set `[spec].sources_dir` to the directory holding agents/, skills/, and rules/";
+    let source = path.display();
+    let linked = is_symlink(path);
+    match spec_root_state(path, RootKind::Dir) {
+        RootState::Present => Ok(()),
+        RootState::Absent if linked => Err(with_hint(&dangling_symlink(path), HINT)),
+        RootState::Absent => {
+            bail!("{source}: spec sources directory does not exist ({HINT})")
+        }
+        RootState::WrongKind if linked => {
+            bail!("{source}: symlink target is not a directory ({HINT})")
+        }
+        RootState::WrongKind => {
+            bail!("{source}: spec sources path is not a directory ({HINT})")
+        }
+        RootState::Unreadable(e) if linked => Err(with_hint(&unresolvable_symlink(path, &e), HINT)),
+        RootState::Unreadable(e) => Err(with_hint(
+            &format!("{source}: spec sources directory could not be read: {e}"),
+            HINT,
+        )),
+    }
+}
+
+/// Reports whether an optional spec root directory is present, failing when it
+/// is a symlink that does not resolve to one.
+fn spec_dir_present(path: &Path) -> Result<bool> {
+    spec_root_present(path, RootKind::Dir)
+}
+
+/// Reports whether an optional spec root file is present, failing when it is a
+/// symlink that does not resolve to one.
+fn spec_file_present(path: &Path) -> Result<bool> {
+    spec_root_present(path, RootKind::File)
+}
+
+/// Distinguishes a root the author never created from one authored as a
+/// symlink that does not resolve.
+///
+/// `Path::is_dir` and `Path::is_file` answer `false` for both, and that
+/// conflation is what makes a broken root dangerous rather than merely wrong:
+/// the load succeeds, the specs under it silently vanish from the output, and
+/// `sync` deletes the files a previous run installed from them.
+///
+/// Only an absent path is read as an unauthored root. A path that exists but is
+/// unreadable, or is of the wrong kind, fails: each is a mistake the author can
+/// correct, and neither has a reading under which the specs were meant to be
+/// missing.
+fn spec_root_present(path: &Path, kind: RootKind) -> Result<bool> {
+    let linked = is_symlink(path);
+    match spec_root_state(path, kind) {
+        RootState::Present => Ok(true),
+        RootState::Absent if linked => Err(anyhow!(dangling_symlink(path))),
+        RootState::WrongKind if linked => bail!(
+            "{}: symlink target is not a {}",
+            path.display(),
+            kind.noun()
+        ),
+        // Absent is the one benign reading: an optional root simply went
+        // unauthored. Something of the wrong kind sitting at the path is an
+        // authoring mistake with no benign reading, and letting it pass as
+        // absent is how the specs under it vanish without a diagnostic.
+        RootState::WrongKind => bail!("{}: is not a {}", path.display(), kind.noun()),
+        RootState::Absent => Ok(false),
+        // Not folded into the absent reading: a root that cannot be read is a
+        // root whose specs cannot be seen, and reporting it as unauthored is
+        // how `sync` comes to treat everything installed from it as stale.
+        RootState::Unreadable(e) if linked => Err(anyhow!(unresolvable_symlink(path, &e))),
+        RootState::Unreadable(e) => {
+            Err(e).with_context(|| format!("failed to read {}", path.display()))
+        }
+    }
+}
+
+/// The diagnostic message for a symlink whose target could not be stat'd, named
+/// on the link rather than on whatever the caller was reaching for through it.
+fn unresolvable_symlink(path: &Path, e: &std::io::Error) -> String {
+    let source = path.display();
+    if e.kind() == std::io::ErrorKind::NotFound {
+        return dangling_symlink(path);
+    }
+    // A cycle lands here as the platform's `ELOOP`, whose `ErrorKind` is still
+    // unstable, as do `EACCES` and `ENOTDIR`. Let the OS supply the reason.
+    format!("{source}: symlink target could not be resolved: {e}")
+}
+
+/// Builds an error reading `message`, with `hint` trailing it.
+///
+/// Not `anyhow::Context`, which would make the hint the headline and demote the
+/// fault to a `Caused by` line — the fault is what the user cannot see. Taking
+/// the message rather than an `anyhow::Error` is what keeps that restatement
+/// from discarding a cause chain: there is none to discard.
+fn with_hint(message: &str, hint: &str) -> anyhow::Error {
+    anyhow!("{message} ({hint})")
+}
+
+/// The diagnostic message for a symlink with nothing at its target.
+fn dangling_symlink(path: &Path) -> String {
+    format!("{}: symlink target does not exist", path.display())
+}
+
+/// Resolves the `read_dir` entry at `path` through any symlink, returning the
+/// file type of the target.
+///
+/// [`fs::DirEntry::file_type`] describes the link itself, so a symlinked skill
+/// directory or spec file reports neither `is_dir` nor `is_file` and would drop
+/// out of a filter written against it. Resolving through the link also means an
+/// unresolvable target surfaces as an error here rather than as a silent skip,
+/// matching the contract [`resolve_walk_entry`] holds for the `WalkDir` passes.
+/// Both paths share [`unresolvable_symlink`], so a cycle reads the same either
+/// way — except where `walkdir` catches one through its own ancestor tracking,
+/// which can also name the directory the link cycles back to.
+fn resolve_dir_entry(path: &Path) -> Result<fs::FileType> {
+    let e = match path.metadata() {
+        Ok(metadata) => return Ok(metadata.file_type()),
+        Err(e) => e,
+    };
+    if is_symlink(path) {
+        return Err(anyhow!(unresolvable_symlink(path, &e)));
+    }
+    Err(e).with_context(|| format!("failed to read {}", path.display()))
+}
+
+fn is_symlink(path: &Path) -> bool {
+    path.symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_symlink())
 }
 
 /// Stage 1: specs loaded from disk.
@@ -331,23 +631,23 @@ impl ValidatedSpecs {
 // ---------------------------------------------------------------------------
 
 fn load_specs_from_dirs(dirs: &SpecDirs, report: &mut LoadReport) -> Result<Vec<Spec>> {
-    let mut specs = load_agent_specs(&dirs.agents, &dirs.ignore, &dirs.ignore_anchor, report)?;
+    let mut specs = load_agent_specs(&dirs.agents, &dirs.ignore, &dirs.sources_dir, report)?;
     specs.extend(load_skill_specs(
         &dirs.skills,
         &dirs.ignore,
-        &dirs.ignore_anchor,
+        &dirs.sources_dir,
         report,
     )?);
     specs.extend(load_rule_specs(
         &dirs.rules,
         &dirs.ignore,
-        &dirs.ignore_anchor,
+        &dirs.sources_dir,
         report,
     )?);
     specs.extend(load_hook_specs(
         &dirs.hooks,
         &dirs.ignore,
-        &dirs.ignore_anchor,
+        &dirs.sources_dir,
         report,
     )?);
     Ok(specs)
@@ -359,17 +659,22 @@ fn load_agent_specs(
     anchor: &Path,
     report: &mut LoadReport,
 ) -> Result<Vec<Spec>> {
-    if !dir.is_dir() {
+    if !spec_dir_present(dir)? {
         return Ok(Vec::new());
     }
 
-    let mut md_paths: Vec<_> = WalkDir::new(dir)
+    reject_ancestor_loop(dir)?;
+    let walker = WalkDir::new(dir)
+        .follow_links(true)
         .into_iter()
-        .filter_entry(|e| !should_ignore_entry(e, anchor, ignore, report))
-        .filter_map(Result::ok)
-        .filter(|e| e.file_type().is_file() && e.path().extension().is_some_and(|ext| ext == "md"))
-        .map(walkdir::DirEntry::into_path)
-        .collect();
+        .filter_entry(|e| !should_ignore_entry(e, anchor, ignore, report));
+    let mut md_paths = Vec::new();
+    for result in walker {
+        let entry = resolve_walk_entry(result, dir)?;
+        if entry.file_type().is_file() && entry.path().extension().is_some_and(|ext| ext == "md") {
+            md_paths.push(entry.into_path());
+        }
+    }
     md_paths.sort();
 
     let matter = Matter::<YAML>::new();
@@ -404,9 +709,10 @@ fn load_skill_specs(
     anchor: &Path,
     report: &mut LoadReport,
 ) -> Result<Vec<Spec>> {
-    if !dir.is_dir() {
+    if !spec_dir_present(dir)? {
         return Ok(Vec::new());
     }
+    reject_ancestor_loop(dir)?;
 
     // Prune the skills root itself if a pattern covers it (mirrors the
     // behavior of `WalkDir::new(dir).filter_entry(...)` in the agent/rule
@@ -415,12 +721,16 @@ fn load_skill_specs(
         return Ok(Vec::new());
     }
 
-    let mut skill_dirs: Vec<_> = fs::read_dir(dir)
-        .with_context(|| format!("failed to read {}", dir.display()))?
-        .filter_map(Result::ok)
-        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
-        .map(|e| e.path())
-        .collect();
+    let mut skill_dirs = Vec::new();
+    for entry in fs::read_dir(dir).with_context(|| format!("failed to read {}", dir.display()))? {
+        let entry = entry.with_context(|| format!("failed to read {}", dir.display()))?;
+        // A skill directory may be a symlink to a shared location, so resolve
+        // the entry rather than describing the link.
+        let path = entry.path();
+        if resolve_dir_entry(&path)?.is_dir() {
+            skill_dirs.push(path);
+        }
+    }
     skill_dirs.sort();
 
     let matter = Matter::<YAML>::new();
@@ -433,6 +743,17 @@ fn load_skill_specs(
         if should_ignore_path(&skill_dir, true, anchor, ignore, report) {
             continue;
         }
+        // After the prune, not before: an enclosing link resolves, so unlike a
+        // broken one it is still a link the load has not tried, and a pattern
+        // naming it should prune it. Resolving the entry above stays ahead of
+        // the prune, since a link that fails to resolve is never matched
+        // against the patterns at all.
+        //
+        // Every entry here reaches this check, which the `WalkDir` paths cannot
+        // promise: `walkdir` runs its own loop detection while producing an
+        // entry, ahead of `filter_entry`, so a link whose target is that walk's
+        // root or an ancestor inside it errors before any pattern is consulted.
+        reject_ancestor_loop(&skill_dir)?;
 
         if let Some(spec) = load_single_skill(&skill_dir, &matter, ignore, anchor, report)? {
             specs.push(spec);
@@ -451,11 +772,17 @@ fn load_single_skill(
     anchor: &Path,
     report: &mut LoadReport,
 ) -> Result<Option<Spec>> {
-    let entries: Vec<_> = fs::read_dir(skill_dir)
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(skill_dir)
         .with_context(|| format!("failed to read {}", skill_dir.display()))?
-        .filter_map(Result::ok)
-        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
-        .collect();
+    {
+        let entry = entry.with_context(|| format!("failed to read {}", skill_dir.display()))?;
+        // A spec file may itself be a symlink into a shared pool, so resolve
+        // the entry rather than describing the link.
+        if resolve_dir_entry(&entry.path())?.is_file() {
+            entries.push(entry);
+        }
+    }
 
     let Some(md_path) = select_spec_md(skill_dir, &entries, ignore, anchor, report)? else {
         return Ok(None);
@@ -479,29 +806,7 @@ fn load_single_skill(
         .into_iter()
         .filter_entry(|e| !should_ignore_entry(e, anchor, ignore, report));
     for result in walker {
-        let entry = match result {
-            Ok(e) => e,
-            Err(e) => {
-                if let Some(ancestor) = e.loop_ancestor() {
-                    let source = e
-                        .path()
-                        .map_or_else(|| "<unknown>".to_string(), |p| p.display().to_string());
-                    bail!(
-                        "{source}: symlink loop detected (cycles back to {})",
-                        ancestor.display()
-                    );
-                }
-                if e.io_error()
-                    .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
-                {
-                    let source = e
-                        .path()
-                        .map_or_else(|| "<unknown>".to_string(), |p| p.display().to_string());
-                    bail!("{source}: symlink target does not exist");
-                }
-                return Err(e).with_context(|| format!("error walking {}", skill_dir.display()));
-            }
-        };
+        let entry = resolve_walk_entry(result, skill_dir)?;
         if !entry.file_type().is_file() {
             continue;
         }
@@ -510,8 +815,6 @@ fn load_single_skill(
         if entry_path == md_path.as_path() {
             continue;
         }
-
-        validate_in_tree_symlink(&entry, anchor)?;
 
         let Ok(relative_path) = entry_path.strip_prefix(skill_dir) else {
             continue;
@@ -621,17 +924,22 @@ fn load_rule_specs(
     anchor: &Path,
     report: &mut LoadReport,
 ) -> Result<Vec<Spec>> {
-    if !dir.is_dir() {
+    if !spec_dir_present(dir)? {
         return Ok(Vec::new());
     }
 
-    let mut md_paths: Vec<_> = WalkDir::new(dir)
+    reject_ancestor_loop(dir)?;
+    let walker = WalkDir::new(dir)
+        .follow_links(true)
         .into_iter()
-        .filter_entry(|e| !should_ignore_entry(e, anchor, ignore, report))
-        .filter_map(Result::ok)
-        .filter(|e| e.file_type().is_file() && e.path().extension().is_some_and(|ext| ext == "md"))
-        .map(walkdir::DirEntry::into_path)
-        .collect();
+        .filter_entry(|e| !should_ignore_entry(e, anchor, ignore, report));
+    let mut md_paths = Vec::new();
+    for result in walker {
+        let entry = resolve_walk_entry(result, dir)?;
+        if entry.file_type().is_file() && entry.path().extension().is_some_and(|ext| ext == "md") {
+            md_paths.push(entry.into_path());
+        }
+    }
     md_paths.sort();
 
     let matter = Matter::<YAML>::new();
@@ -710,9 +1018,10 @@ fn load_hook_specs(
     anchor: &Path,
     report: &mut LoadReport,
 ) -> Result<Vec<Spec>> {
-    if !dir.is_dir() {
+    if !spec_dir_present(dir)? {
         return Ok(Vec::new());
     }
+    reject_ancestor_loop(dir)?;
 
     if should_ignore_path(dir, true, anchor, ignore, report) {
         return Ok(Vec::new());
@@ -721,8 +1030,8 @@ fn load_hook_specs(
     let toml_path = dir.join("hooks.toml");
     let scripts_dir = dir.join("scripts");
 
-    if !toml_path.is_file() {
-        if scripts_dir.is_dir() {
+    if !spec_file_present(&toml_path)? {
+        if spec_dir_present(&scripts_dir)? {
             bail!(
                 "{} exists but {} is missing — orphaned scripts (add hooks.toml or remove the directory)",
                 scripts_dir.display(),
@@ -871,45 +1180,22 @@ fn collect_hook_scripts(
     anchor: &Path,
     report: &mut LoadReport,
 ) -> Result<IndexMap<PathBuf, SupportingFile>> {
-    if !scripts_dir.is_dir() {
+    if !spec_dir_present(scripts_dir)? {
         return Ok(IndexMap::new());
     }
 
     let hooks_dir = scripts_dir.parent().unwrap_or(scripts_dir);
     let mut files = IndexMap::new();
+    reject_ancestor_loop(scripts_dir)?;
     let walker = WalkDir::new(scripts_dir)
         .follow_links(true)
         .into_iter()
         .filter_entry(|e| !should_ignore_entry(e, anchor, ignore, report));
     for result in walker {
-        let entry = match result {
-            Ok(e) => e,
-            Err(e) => {
-                if let Some(ancestor) = e.loop_ancestor() {
-                    let source = e
-                        .path()
-                        .map_or_else(|| "<unknown>".to_string(), |p| p.display().to_string());
-                    bail!(
-                        "{source}: symlink loop detected (cycles back to {})",
-                        ancestor.display()
-                    );
-                }
-                if e.io_error()
-                    .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
-                {
-                    let source = e
-                        .path()
-                        .map_or_else(|| "<unknown>".to_string(), |p| p.display().to_string());
-                    bail!("{source}: symlink target does not exist");
-                }
-                return Err(e).with_context(|| format!("error walking {}", scripts_dir.display()));
-            }
-        };
+        let entry = resolve_walk_entry(result, scripts_dir)?;
         if !entry.file_type().is_file() {
             continue;
         }
-
-        validate_in_tree_symlink(&entry, anchor)?;
 
         if let Ok(rel_under_scripts) = entry.path().strip_prefix(scripts_dir) {
             for component in rel_under_scripts.components() {
@@ -962,6 +1248,12 @@ mod tests {
         load_skill_specs(dir, &IgnoreMatcher::empty(), dir, &mut report)
     }
 
+    /// Load rules with no ignore patterns, rooted at `dir` as the anchor.
+    fn load_rules_no_ignore(dir: &Path) -> Result<Vec<Spec>> {
+        let mut report = LoadReport::default();
+        load_rule_specs(dir, &IgnoreMatcher::empty(), dir, &mut report)
+    }
+
     #[test]
     fn test_load_agent_specs() {
         let tmp = tempfile::tempdir().expect("expected value");
@@ -979,6 +1271,77 @@ mod tests {
         assert_eq!(s.frontmatter.id, "test-agent");
         assert_eq!(s.frontmatter.description, "A test");
         assert_eq!(s.body, "Agent body here.");
+    }
+
+    #[test]
+    fn test_load_agent_specs_out_of_tree_symlink_resolved() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let agents_dir = tmp.path().join("agents");
+        fs::create_dir(&agents_dir).expect("expected value");
+
+        let outside = tmp.path().join("shared-agent.md");
+        let spec_content =
+            "---\nid: shared-agent\ndescription: A shared agent\n---\nShared body.\n";
+        fs::write(&outside, spec_content).expect("expected value");
+        std::os::unix::fs::symlink(&outside, agents_dir.join("shared-agent.md"))
+            .expect("expected value");
+
+        let specs = load_agents_no_ignore(&agents_dir).expect("expected value");
+        assert_eq!(specs.len(), 1);
+        let Spec::Agent(ref s) = specs[0] else {
+            panic!("expected Agent variant")
+        };
+        assert_eq!(s.frontmatter.id, "shared-agent");
+        assert_eq!(s.body, "Shared body.");
+    }
+
+    #[test]
+    fn test_load_agent_specs_dangling_symlink_rejected() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let agents_dir = tmp.path().join("agents");
+        fs::create_dir(&agents_dir).expect("expected value");
+
+        std::os::unix::fs::symlink(tmp.path().join("gone.md"), agents_dir.join("broken.md"))
+            .expect("expected value");
+
+        let err = load_agents_no_ignore(&agents_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(
+            full.contains("symlink target does not exist"),
+            "error: {full}"
+        );
+    }
+
+    #[test]
+    fn test_load_skill_specs_symlinked_skill_directory_resolved() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let skills_dir = tmp.path().join("skills");
+        fs::create_dir(&skills_dir).expect("expected value");
+
+        let outside = tmp.path().join("shared-skill");
+        let scripts_dir = outside.join("scripts");
+        fs::create_dir_all(&scripts_dir).expect("expected value");
+        let spec_content = "---\nid: shared-skill\ndescription: A shared skill\nuser_invocable: true\nagent_invocable: false\n---\nSkill body.\n";
+        fs::write(outside.join("SKILL.md"), spec_content).expect("expected value");
+        let script = scripts_dir.join("run.sh");
+        fs::write(&script, "#!/bin/sh\necho shared").expect("expected value");
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("expected value");
+
+        std::os::unix::fs::symlink(&outside, skills_dir.join("shared-skill"))
+            .expect("expected value");
+
+        let specs = load_skills_no_ignore(&skills_dir).expect("expected value");
+        assert_eq!(specs.len(), 1);
+        let Spec::Skill(ref s) = specs[0] else {
+            panic!("expected Skill variant")
+        };
+        assert_eq!(s.frontmatter.id, "shared-skill");
+        let file = s
+            .supporting_files
+            .get(&PathBuf::from("scripts/run.sh"))
+            .expect("bundled script should load through the directory symlink");
+        assert_eq!(file.content, b"#!/bin/sh\necho shared");
+        assert_eq!(file.mode, 0o755);
     }
 
     #[test]
@@ -1131,21 +1494,30 @@ Agent body.
     }
 
     #[test]
-    fn test_load_skill_specs_out_of_tree_symlink_rejected() {
+    fn test_load_skill_specs_out_of_tree_symlink_resolved() {
         let tmp = tempfile::tempdir().expect("expected value");
         let skills_dir = tmp.path().join("skills");
         let skill_dir = skills_dir.join("my-skill");
-        fs::create_dir_all(&skill_dir).expect("expected value");
+        let scripts_dir = skill_dir.join("scripts");
+        fs::create_dir_all(&scripts_dir).expect("expected value");
         let spec_content = "---\nid: my-skill\ndescription: A test skill\nuser_invocable: true\nagent_invocable: false\n---\nSkill body.\n";
         fs::write(skill_dir.join("SKILL.md"), spec_content).expect("expected value");
 
-        let outside = tmp.path().join("outside-tree.sh");
-        fs::write(&outside, "#!/bin/sh\n").expect("expected value");
-        std::os::unix::fs::symlink(&outside, skill_dir.join("helper.sh")).expect("expected value");
+        let outside = tmp.path().join("shared-pool.sh");
+        fs::write(&outside, "#!/bin/sh\necho pooled").expect("expected value");
+        fs::set_permissions(&outside, fs::Permissions::from_mode(0o755)).expect("expected value");
+        std::os::unix::fs::symlink(&outside, scripts_dir.join("helper.sh"))
+            .expect("expected value");
 
-        let err = load_skills_no_ignore(&skills_dir).expect_err("expected error");
-        let full = format!("{err:#}");
-        assert!(full.contains("outside the spec tree"), "error: {full}");
+        let specs = load_skills_no_ignore(&skills_dir).expect("expected value");
+        assert_eq!(specs.len(), 1);
+        let Spec::Skill(ref s) = specs[0] else {
+            panic!("expected Skill variant")
+        };
+        assert_eq!(s.supporting_files.len(), 1);
+        let file = s.supporting_files.values().next().expect("expected value");
+        assert_eq!(file.content, b"#!/bin/sh\necho pooled");
+        assert_eq!(file.mode, 0o755);
     }
 
     #[test]
@@ -1166,6 +1538,687 @@ Agent body.
         let err = load_skills_no_ignore(&skills_dir).expect_err("expected error");
         let full = format!("{err:#}");
         assert!(full.contains("does not exist"), "error: {full}");
+    }
+
+    #[test]
+    fn test_load_skill_specs_symlinked_spec_md_resolved() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let skills_dir = tmp.path().join("skills");
+        let skill_dir = skills_dir.join("my-skill");
+        fs::create_dir_all(&skill_dir).expect("expected value");
+
+        let outside = tmp.path().join("SKILL.md");
+        let spec_content = "---\nid: my-skill\ndescription: A shared skill\nuser_invocable: true\nagent_invocable: false\n---\nShared skill body.\n";
+        fs::write(&outside, spec_content).expect("expected value");
+        std::os::unix::fs::symlink(&outside, skill_dir.join("SKILL.md")).expect("expected value");
+        // A second, non-spec `.md` must not be promoted in the symlink's place.
+        fs::write(skill_dir.join("notes.md"), "notes").expect("expected value");
+
+        let specs = load_skills_no_ignore(&skills_dir).expect("expected value");
+        assert_eq!(specs.len(), 1);
+        let Spec::Skill(ref sk) = specs[0] else {
+            panic!("expected Skill variant")
+        };
+        assert_eq!(sk.frontmatter.id, "my-skill");
+        assert_eq!(sk.body, "Shared skill body.");
+    }
+
+    #[test]
+    fn test_load_skill_specs_dangling_directory_symlink_rejected() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let skills_dir = tmp.path().join("skills");
+        fs::create_dir_all(&skills_dir).expect("expected value");
+
+        std::os::unix::fs::symlink(tmp.path().join("gone"), skills_dir.join("shared-skill"))
+            .expect("expected value");
+
+        let err = load_skills_no_ignore(&skills_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(
+            full.contains("symlink target does not exist"),
+            "error: {full}"
+        );
+    }
+
+    #[test]
+    fn test_load_rule_specs_out_of_tree_symlink_resolved() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let rules_dir = tmp.path().join("rules");
+        fs::create_dir(&rules_dir).expect("expected value");
+
+        let outside = tmp.path().join("shared-rule.md");
+        let spec_content =
+            "---\nid: shared-rule\ndescription: A shared rule\n---\nShared rule body.\n";
+        fs::write(&outside, spec_content).expect("expected value");
+        std::os::unix::fs::symlink(&outside, rules_dir.join("shared-rule.md"))
+            .expect("expected value");
+
+        let specs = load_rules_no_ignore(&rules_dir).expect("expected value");
+        assert_eq!(specs.len(), 1);
+        let Spec::Rule(ref r) = specs[0] else {
+            panic!("expected Rule variant")
+        };
+        assert_eq!(r.frontmatter.id, "shared-rule");
+        assert_eq!(r.body, "Shared rule body.");
+    }
+
+    #[test]
+    fn test_load_rule_specs_dangling_symlink_rejected() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let rules_dir = tmp.path().join("rules");
+        fs::create_dir(&rules_dir).expect("expected value");
+
+        std::os::unix::fs::symlink(tmp.path().join("gone.md"), rules_dir.join("broken.md"))
+            .expect("expected value");
+
+        let err = load_rules_no_ignore(&rules_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(
+            full.contains("symlink target does not exist"),
+            "error: {full}"
+        );
+    }
+
+    #[test]
+    fn test_load_agent_specs_dangling_symlink_under_pruned_subtree_never_reached() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let agents_dir = tmp.path().join("agents");
+        let vendor_dir = agents_dir.join("vendor");
+        fs::create_dir_all(&vendor_dir).expect("expected value");
+        let spec_content = "---\nid: good-agent\ndescription: A test\n---\nAgent body.\n";
+        fs::write(agents_dir.join("good-agent.md"), spec_content).expect("expected value");
+        std::os::unix::fs::symlink(tmp.path().join("gone.md"), vendor_dir.join("broken.md"))
+            .expect("expected value");
+
+        // Pruning the parent keeps the walk from ever descending to the link.
+        let ignore = IgnoreMatcher::compile(&["vendor/**".to_string()]).expect("expected value");
+        let mut report = LoadReport::with_matcher(&ignore);
+        let specs = load_agent_specs(&agents_dir, &ignore, &agents_dir, &mut report)
+            .expect("a pruned subtree is never descended into");
+
+        assert_eq!(specs.len(), 1);
+    }
+
+    #[test]
+    fn test_load_agent_specs_dangling_symlink_named_by_ignore_still_fails() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let agents_dir = tmp.path().join("agents");
+        fs::create_dir(&agents_dir).expect("expected value");
+        std::os::unix::fs::symlink(tmp.path().join("gone.md"), agents_dir.join("broken.md"))
+            .expect("expected value");
+
+        // The link's own path matches, but a failed entry never reaches
+        // `filter_entry` to be tested against it.
+        let ignore = IgnoreMatcher::compile(&["broken.md".to_string()]).expect("expected value");
+        let mut report = LoadReport::with_matcher(&ignore);
+        let err = load_agent_specs(&agents_dir, &ignore, &agents_dir, &mut report)
+            .expect_err("expected error");
+
+        let full = format!("{err:#}");
+        assert!(
+            full.contains("symlink target does not exist"),
+            "error: {full}"
+        );
+        assert_eq!(
+            report.unused_pattern_indices(),
+            vec![0],
+            "the pattern matches the link's path but is never consulted for it"
+        );
+    }
+
+    #[test]
+    fn test_spec_dirs_new_rejects_missing_sources_dir() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let err = SpecDirs::new(tmp.path().join("spce"), IgnoreMatcher::empty())
+            .expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(
+            full.contains("spec sources directory does not exist"),
+            "error: {full}"
+        );
+    }
+
+    #[test]
+    fn test_spec_dirs_new_rejects_sources_dir_that_is_a_file() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let notes = tmp.path().join("notes.md");
+        fs::write(&notes, "").expect("expected value");
+
+        let err = SpecDirs::new(notes.clone(), IgnoreMatcher::empty()).expect_err("expected error");
+        let full = format!("{err:#}");
+        // The whole prefix, not just the kind: the symlink arm's message ends
+        // the same way, so a substring match would pass while the diagnostic
+        // blamed a link that is not there.
+        assert!(
+            full.starts_with(&format!(
+                "{}: spec sources path is not a directory",
+                notes.display()
+            )),
+            "a path that exists must not be reported as missing: {full}"
+        );
+    }
+
+    #[test]
+    fn test_spec_dirs_new_rejects_dangling_sources_dir_symlink() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let sources = tmp.path().join("spec");
+        std::os::unix::fs::symlink(tmp.path().join("gone"), &sources).expect("expected value");
+
+        let err = SpecDirs::new(sources, IgnoreMatcher::empty()).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(
+            full.contains("symlink target does not exist"),
+            "error: {full}"
+        );
+        assert!(
+            full.contains("`[spec].sources_dir`"),
+            "the setting to correct should be named: {full}"
+        );
+    }
+
+    #[test]
+    fn test_spec_dirs_new_rejects_sources_dir_symlinked_to_wrong_kind() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let target = tmp.path().join("notes.md");
+        fs::write(&target, "").expect("expected value");
+        let sources = tmp.path().join("spec");
+        std::os::unix::fs::symlink(&target, &sources).expect("expected value");
+
+        let err =
+            SpecDirs::new(sources.clone(), IgnoreMatcher::empty()).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(
+            full.starts_with(&format!(
+                "{}: symlink target is not a directory",
+                sources.display()
+            )),
+            "a resolving target of the wrong kind must be blamed on the link: {full}"
+        );
+        assert!(
+            full.contains("`[spec].sources_dir`"),
+            "the setting to correct should be named: {full}"
+        );
+    }
+
+    #[test]
+    fn test_spec_dirs_new_rejects_sources_dir_symlink_cycle() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let a = tmp.path().join("a");
+        let b = tmp.path().join("b");
+        std::os::unix::fs::symlink(&b, &a).expect("expected value");
+        std::os::unix::fs::symlink(&a, &b).expect("expected value");
+
+        let err = SpecDirs::new(a.clone(), IgnoreMatcher::empty()).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(
+            full.starts_with(&format!(
+                "{}: symlink target could not be resolved",
+                a.display()
+            )),
+            "a cycle must not read as an unreadable directory: {full}"
+        );
+        assert!(
+            full.contains("`[spec].sources_dir`"),
+            "the setting to correct should be named: {full}"
+        );
+    }
+
+    #[test]
+    fn test_spec_dirs_new_reports_an_unreadable_sources_dir() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let locked = tmp.path().join("locked");
+        let sources = locked.join("spec");
+        fs::create_dir_all(&sources).expect("expected value");
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).expect("expected value");
+
+        let denied = permissions_deny(&sources);
+        let result = SpecDirs::new(sources, IgnoreMatcher::empty());
+
+        // Restore before asserting: under a root uid the mode denies nothing,
+        // so a panic here would leave a directory `TempDir` cannot clean up.
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).expect("expected value");
+        if !denied {
+            return;
+        }
+        let Err(err) = result else {
+            panic!("expected error")
+        };
+        let full = format!("{err:#}");
+        assert!(
+            full.contains("spec sources directory could not be read"),
+            "an unreadable path must not be reported as missing: {full}"
+        );
+    }
+
+    #[test]
+    fn test_load_agent_specs_unreadable_root_is_not_read_as_absent() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let sources = tmp.path().join("spec");
+        let agents_dir = sources.join("agents");
+        fs::create_dir_all(&agents_dir).expect("expected value");
+        // Stat of the root itself must fail, which needs the parent to be
+        // non-traversable — `chmod 000` on the root leaves `stat` succeeding.
+        fs::set_permissions(&sources, fs::Permissions::from_mode(0o644)).expect("expected value");
+
+        let denied = permissions_deny(&agents_dir);
+        let result = load_agents_no_ignore(&agents_dir);
+
+        fs::set_permissions(&sources, fs::Permissions::from_mode(0o755)).expect("expected value");
+        if !denied {
+            return;
+        }
+        let Err(err) = result else {
+            panic!("expected error")
+        };
+        let full = format!("{err:#}");
+        assert!(
+            full.contains("failed to read"),
+            "an unreadable spec root must not load as an empty one: {full}"
+        );
+    }
+
+    /// Whether the permission fixture actually denies access to `path`.
+    ///
+    /// A root uid ignores the mode, and these tests have nothing to assert when
+    /// it does. Probing the filesystem rather than the call's own result is
+    /// what keeps the skip from swallowing a regression in the code under test.
+    fn permissions_deny(path: &Path) -> bool {
+        path.metadata().is_err()
+    }
+
+    #[test]
+    fn test_spec_dirs_new_accepts_an_empty_sources_dir() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let sources = tmp.path().join("spec");
+        fs::create_dir(&sources).expect("expected value");
+
+        let dirs = SpecDirs::new(sources.clone(), IgnoreMatcher::empty()).expect("expected value");
+        assert_eq!(dirs.hooks(), sources.join("hooks"));
+        let (specs, _report) = Specs::load(&dirs).expect("an empty spec set is not an error");
+        assert!(specs.specs.is_empty());
+    }
+
+    #[test]
+    fn test_load_specs_dangling_spec_root_rejected() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let agents_dir = tmp.path().join("agents");
+        std::os::unix::fs::symlink(tmp.path().join("gone"), &agents_dir).expect("expected value");
+
+        let err = load_agents_no_ignore(&agents_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(
+            full.contains("symlink target does not exist"),
+            "a broken spec root must not read as an absent one: {full}"
+        );
+    }
+
+    #[test]
+    fn test_load_hook_specs_dangling_root_rejected() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let hooks_dir = tmp.path().join("hooks");
+        std::os::unix::fs::symlink(tmp.path().join("gone"), &hooks_dir).expect("expected value");
+
+        let err = load_hooks_no_ignore(&hooks_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(
+            full.contains("symlink target does not exist"),
+            "error: {full}"
+        );
+    }
+
+    #[test]
+    fn test_load_specs_absent_spec_root_is_not_an_error() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let specs = load_agents_no_ignore(&tmp.path().join("agents")).expect("expected value");
+        assert!(specs.is_empty());
+    }
+
+    #[test]
+    fn test_load_hook_specs_dangling_toml_symlink_rejected() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let hooks_dir = tmp.path().join("hooks");
+        fs::create_dir_all(&hooks_dir).expect("expected value");
+        std::os::unix::fs::symlink(tmp.path().join("gone.toml"), hooks_dir.join("hooks.toml"))
+            .expect("expected value");
+
+        let err = load_hooks_no_ignore(&hooks_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(
+            full.contains("symlink target does not exist"),
+            "error: {full}"
+        );
+    }
+
+    #[test]
+    fn test_load_specs_spec_root_symlinked_to_wrong_kind_rejected() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let target = tmp.path().join("not-a-dir");
+        fs::write(&target, "").expect("expected value");
+        let agents_dir = tmp.path().join("agents");
+        std::os::unix::fs::symlink(&target, &agents_dir).expect("expected value");
+
+        let err = load_agents_no_ignore(&agents_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(
+            full.contains("symlink target is not a directory"),
+            "a resolving target of the wrong kind must not read as missing: {full}"
+        );
+    }
+
+    #[test]
+    fn test_load_specs_spec_root_of_wrong_kind_rejected() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let agents_dir = tmp.path().join("agents");
+        fs::write(&agents_dir, "").expect("expected value");
+
+        let err = load_agents_no_ignore(&agents_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(
+            full.starts_with(&format!("{}: is not a directory", agents_dir.display())),
+            "a file sitting at a spec root must not read as missing: {full}"
+        );
+    }
+
+    #[test]
+    fn test_load_hook_specs_toml_of_wrong_kind_rejected() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let hooks_dir = tmp.path().join("hooks");
+        fs::create_dir_all(hooks_dir.join("hooks.toml")).expect("expected value");
+
+        let err = load_hooks_no_ignore(&hooks_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(
+            full.starts_with(&format!(
+                "{}: is not a file",
+                hooks_dir.join("hooks.toml").display()
+            )),
+            "a directory sitting at hooks.toml must not read as missing: {full}"
+        );
+    }
+
+    #[test]
+    fn test_load_specs_spec_root_symlink_loop_rejected() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let a = tmp.path().join("a");
+        let b = tmp.path().join("b");
+        std::os::unix::fs::symlink(&b, &a).expect("expected value");
+        std::os::unix::fs::symlink(&a, &b).expect("expected value");
+
+        let err = load_agents_no_ignore(&a).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(
+            full.contains("could not be resolved"),
+            "a cycle must not read as a missing target: {full}"
+        );
+    }
+
+    #[test]
+    fn test_ignore_does_not_exempt_a_loop_inside_a_skill_directory() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let spec = tmp.path().join("spec");
+        let skills_dir = spec.join("skills");
+        let skill_dir = skills_dir.join("s1");
+        let sub = skill_dir.join("sub");
+        fs::create_dir_all(&sub).expect("expected value");
+        let spec_content = "---\nid: s1\ndescription: A test skill\nuser_invocable: true\nagent_invocable: false\n---\nSkill body.\n";
+        fs::write(skill_dir.join("SKILL.md"), spec_content).expect("expected value");
+        std::os::unix::fs::symlink(&skill_dir, sub.join("loop")).expect("expected value");
+
+        // A skill directory is its own `WalkDir` root, so a link cycling back
+        // into it is narrow in the same way `agents/` and `rules/` are — it is
+        // the entries scanned directly under `skills/` that a pattern always
+        // reaches, not everything beneath them.
+        let ignore =
+            IgnoreMatcher::compile(&["skills/s1/sub/loop".to_string()]).expect("expected value");
+        let mut report = LoadReport::with_matcher(&ignore);
+        let err =
+            load_skill_specs(&skills_dir, &ignore, &spec, &mut report).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(
+            full.contains("symlink loop detected"),
+            "a loop inside a skill directory is not exempted by a pattern: {full}"
+        );
+    }
+
+    #[test]
+    fn test_ignore_does_not_exempt_a_loop_walkdir_catches_first() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let spec = tmp.path().join("spec");
+        let agents_dir = spec.join("agents");
+        fs::create_dir_all(&agents_dir).expect("expected value");
+        std::os::unix::fs::symlink(&agents_dir, agents_dir.join("loop")).expect("expected value");
+
+        let ignore = IgnoreMatcher::compile(&["agents/loop".to_string()]).expect("expected value");
+        let mut report = LoadReport::with_matcher(&ignore);
+        let err =
+            load_agent_specs(&agents_dir, &ignore, &spec, &mut report).expect_err("expected error");
+        let full = format!("{err:#}");
+        // `walkdir` detects a link cycling back into the walk while producing
+        // the entry, and `FilterEntry` propagates the error without consulting
+        // the predicate — so this one is not prunable, unlike the links
+        // `reject_ancestor_loop` is what catches.
+        assert!(
+            full.contains("symlink loop detected"),
+            "a loop walkdir catches first is not exempted by a pattern: {full}"
+        );
+    }
+
+    #[test]
+    fn test_ignore_prunes_an_enclosing_symlink_this_guard_catches() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let spec = tmp.path().join("spec");
+        let skills_dir = spec.join("skills");
+        let agents_sub = spec.join("agents").join("sub");
+        fs::create_dir_all(&skills_dir).expect("expected value");
+        fs::create_dir_all(&agents_sub).expect("expected value");
+        std::os::unix::fs::symlink(tmp.path(), skills_dir.join("up")).expect("expected value");
+        std::os::unix::fs::symlink(tmp.path(), agents_sub.join("up")).expect("expected value");
+
+        // An enclosing link resolves, so it is a link the load has not tried
+        // yet, and a pattern naming it prunes it. The `agents/` link points
+        // above `spec/`, outside the walk root — a link cycling back into that
+        // walk is `walkdir`'s to catch, and it does so ahead of `filter_entry`.
+        let ignore =
+            IgnoreMatcher::compile(&["skills/up".to_string(), "agents/sub/up".to_string()])
+                .expect("expected value");
+        let mut report = LoadReport::with_matcher(&ignore);
+        load_skill_specs(&skills_dir, &ignore, &spec, &mut report)
+            .expect("an ignored enclosing link under skills/ is pruned");
+        load_agent_specs(&spec.join("agents"), &ignore, &spec, &mut report)
+            .expect("an ignored enclosing link under agents/ is pruned");
+    }
+
+    #[test]
+    fn test_load_agent_specs_nested_symlink_cycle_named_on_the_link() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let agents_dir = tmp.path().join("agents");
+        let sub = agents_dir.join("sub");
+        fs::create_dir_all(&sub).expect("expected value");
+        let a = sub.join("a");
+        std::os::unix::fs::symlink(sub.join("b"), &a).expect("expected value");
+        std::os::unix::fs::symlink(&a, sub.join("b")).expect("expected value");
+
+        let err = load_agents_no_ignore(&agents_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        // A mutually-referential pair fails inside `walkdir`'s own `metadata`
+        // call, so its ancestor tracking never runs and the fallback would head
+        // the diagnostic with the walk root instead of the link.
+        assert!(
+            full.starts_with(&format!(
+                "{}: symlink target could not be resolved",
+                a.display()
+            )) || full.starts_with(&format!(
+                "{}: symlink target could not be resolved",
+                sub.join("b").display()
+            )),
+            "a cycle must be named on the link, not on the walk root: {full}"
+        );
+    }
+
+    #[test]
+    fn test_load_agent_specs_nested_enclosing_symlink_rejected_before_descent() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let agents_dir = tmp.path().join("spec").join("agents");
+        let sub = agents_dir.join("sub");
+        fs::create_dir_all(&sub).expect("expected value");
+        let up = sub.join("up");
+        std::os::unix::fs::symlink(tmp.path(), &up).expect("expected value");
+
+        let err = load_agents_no_ignore(&agents_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        // The link's own path, undoubled: `walkdir` would report this only
+        // after reading the target, and name the second encounter of the link
+        // reached through itself.
+        assert!(
+            full.starts_with(&format!("{}: symlink loop", up.display())),
+            "a nested enclosing link must be refused before the descent: {full}"
+        );
+    }
+
+    #[test]
+    fn test_load_skill_specs_nested_symlink_to_a_pool_loads() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let pool = tmp.path().join("pool");
+        fs::create_dir_all(&pool).expect("expected value");
+        fs::write(pool.join("helper.sh"), "echo hi\n").expect("expected value");
+
+        let skills_dir = tmp.path().join("spec").join("skills");
+        let skill_dir = skills_dir.join("s");
+        fs::create_dir_all(&skill_dir).expect("expected value");
+        let spec_content = "---\nid: s\ndescription: A test skill\nuser_invocable: true\nagent_invocable: false\n---\nSkill body.\n";
+        fs::write(skill_dir.join("SKILL.md"), spec_content).expect("expected value");
+        std::os::unix::fs::symlink(&pool, skill_dir.join("scripts")).expect("expected value");
+
+        let specs = load_skills_no_ignore(&skills_dir).expect("a pool link is not a cycle");
+        assert_eq!(specs.len(), 1);
+        let Spec::Skill(ref s) = specs[0] else {
+            panic!("expected Skill variant")
+        };
+        assert!(
+            s.supporting_files
+                .keys()
+                .any(|p| p.ends_with("scripts/helper.sh")),
+            "the pooled file should be emitted at the link's own path: {:?}",
+            s.supporting_files.keys().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_load_agent_specs_root_enclosing_its_own_tree_rejected() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let spec = tmp.path().join("spec");
+        fs::create_dir_all(&spec).expect("expected value");
+        let agents_dir = spec.join("agents");
+        std::os::unix::fs::symlink(tmp.path(), &agents_dir).expect("expected value");
+
+        let err = load_agents_no_ignore(&agents_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        // Naming the link itself is what distinguishes the pre-walk guard from
+        // `walkdir`'s own detection, which reports the ancestor it was standing
+        // on after traversing the target in full.
+        assert!(
+            full.starts_with(&format!("{}: symlink loop", agents_dir.display())),
+            "a root enclosing its own tree must fail before the walk: {full}"
+        );
+    }
+
+    #[test]
+    fn test_load_rule_specs_root_enclosing_its_own_tree_rejected() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let spec = tmp.path().join("spec");
+        fs::create_dir_all(&spec).expect("expected value");
+        let rules_dir = spec.join("rules");
+        std::os::unix::fs::symlink(tmp.path(), &rules_dir).expect("expected value");
+
+        let err = load_rules_no_ignore(&rules_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(
+            full.starts_with(&format!("{}: symlink loop", rules_dir.display())),
+            "a root enclosing its own tree must fail before the walk: {full}"
+        );
+    }
+
+    #[test]
+    fn test_load_skill_specs_root_enclosing_its_own_tree_rejected() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let spec = tmp.path().join("spec");
+        fs::create_dir_all(&spec).expect("expected value");
+        let skills_dir = spec.join("skills");
+        std::os::unix::fs::symlink(tmp.path(), &skills_dir).expect("expected value");
+
+        let err = load_skills_no_ignore(&skills_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(
+            full.starts_with(&format!("{}: symlink loop", skills_dir.display())),
+            "a root enclosing its own tree must fail before the walk: {full}"
+        );
+    }
+
+    #[test]
+    fn test_load_specs_resolving_spec_root_symlink_loads() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let pool = tmp.path().join("pool-agents");
+        fs::create_dir_all(&pool).expect("expected value");
+        let spec_content = "---\nid: pooled\ndescription: A pooled agent\n---\nPooled body.\n";
+        fs::write(pool.join("pooled.md"), spec_content).expect("expected value");
+        let agents_dir = tmp.path().join("agents");
+        std::os::unix::fs::symlink(&pool, &agents_dir).expect("expected value");
+
+        let specs = load_agents_no_ignore(&agents_dir).expect("expected value");
+        assert_eq!(specs.len(), 1);
+        let Spec::Agent(ref a) = specs[0] else {
+            panic!("expected Agent variant")
+        };
+        assert_eq!(a.frontmatter.id, "pooled");
+    }
+
+    #[test]
+    fn test_load_hook_specs_dangling_scripts_symlink_without_toml_rejected() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let hooks_dir = tmp.path().join("hooks");
+        fs::create_dir_all(&hooks_dir).expect("expected value");
+        std::os::unix::fs::symlink(tmp.path().join("gone"), hooks_dir.join("scripts"))
+            .expect("expected value");
+
+        let err = load_hooks_no_ignore(&hooks_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(
+            full.contains("symlink target does not exist"),
+            "error: {full}"
+        );
+    }
+
+    #[test]
+    fn test_load_skill_specs_ancestor_symlink_loop_rejected() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let skills_dir = tmp.path().join("skills");
+        fs::create_dir_all(&skills_dir).expect("expected value");
+        // Resolves to a real directory, so `metadata()` reports no `ELOOP`.
+        std::os::unix::fs::symlink(&skills_dir, skills_dir.join("self-link"))
+            .expect("expected value");
+
+        let err = load_skills_no_ignore(&skills_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(full.contains("symlink loop"), "error: {full}");
+    }
+
+    #[test]
+    fn test_load_skill_specs_directory_symlink_loop_rejected() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let skills_dir = tmp.path().join("skills");
+        fs::create_dir_all(&skills_dir).expect("expected value");
+
+        std::os::unix::fs::symlink(skills_dir.join("b"), skills_dir.join("a"))
+            .expect("expected value");
+        std::os::unix::fs::symlink(skills_dir.join("a"), skills_dir.join("b"))
+            .expect("expected value");
+
+        let err = load_skills_no_ignore(&skills_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(
+            full.contains("symlink target could not be resolved"),
+            "error: {full}"
+        );
     }
 
     #[test]
@@ -1760,14 +2813,15 @@ script = \"scripts/real-init.sh\"
     }
 
     #[test]
-    fn test_load_hook_specs_out_of_tree_symlink_rejected() {
+    fn test_load_hook_specs_out_of_tree_symlink_resolved() {
         let tmp = tempfile::tempdir().expect("expected value");
         let hooks_dir = tmp.path().join("hooks");
         let scripts_dir = hooks_dir.join("scripts");
         fs::create_dir_all(&scripts_dir).expect("expected value");
 
-        let outside = tmp.path().join("outside.sh");
-        fs::write(&outside, "#!/bin/sh\n").expect("expected value");
+        let outside = tmp.path().join("shared-init.sh");
+        fs::write(&outside, "#!/bin/sh\necho pooled").expect("expected value");
+        fs::set_permissions(&outside, fs::Permissions::from_mode(0o755)).expect("expected value");
         std::os::unix::fs::symlink(&outside, scripts_dir.join("init.sh")).expect("expected value");
 
         let toml = "
@@ -1777,9 +2831,20 @@ script = \"scripts/init.sh\"
 ";
         fs::write(hooks_dir.join("hooks.toml"), toml).expect("expected value");
 
-        let err = load_hooks_no_ignore(&hooks_dir).expect_err("expected error");
-        let full = format!("{err:#}");
-        assert!(full.contains("outside the spec tree"), "error: {full}");
+        let specs = load_hooks_no_ignore(&hooks_dir).expect("expected value");
+        let hook_spec = specs
+            .iter()
+            .find_map(|s| match s {
+                Spec::Hook(h) => Some(h),
+                Spec::Agent(_) | Spec::Skill(_) | Spec::Rule(_) => None,
+            })
+            .expect("expected hook spec");
+        let link_file = hook_spec
+            .supporting_files
+            .get(&PathBuf::from("scripts/init.sh"))
+            .expect("symlinked file should appear in supporting_files");
+        assert_eq!(link_file.content, b"#!/bin/sh\necho pooled");
+        assert_eq!(link_file.mode, 0o755);
     }
 
     #[test]
@@ -1805,6 +2870,27 @@ script = \"scripts/init.sh\"
         let err = load_hooks_no_ignore(&hooks_dir).expect_err("expected error");
         let full = format!("{err:#}");
         assert!(full.contains("does not exist"), "error: {full}");
+    }
+
+    #[test]
+    fn test_load_hook_specs_scripts_root_enclosing_its_own_tree_rejected() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let hooks_dir = tmp.path().join("spec").join("hooks");
+        fs::create_dir_all(&hooks_dir).expect("expected value");
+        fs::write(
+            hooks_dir.join("hooks.toml"),
+            "\n[hooks.init]\nevents = [\"session_start\"]\nscript = \"scripts/init.sh\"\n",
+        )
+        .expect("expected value");
+        let scripts_dir = hooks_dir.join("scripts");
+        std::os::unix::fs::symlink(tmp.path(), &scripts_dir).expect("expected value");
+
+        let err = load_hooks_no_ignore(&hooks_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(
+            full.starts_with(&format!("{}: symlink loop", scripts_dir.display())),
+            "a scripts root enclosing its own tree must fail before the walk: {full}"
+        );
     }
 
     #[test]

@@ -25,7 +25,7 @@ pub fn run_hook_test(
     let shim_path = write_temp_executable(&shim_content, "shim.sh")?;
 
     let script_rel = &hook.frontmatter.script;
-    let script_path = dirs.hooks.join(script_rel);
+    let script_path = dirs.hooks().join(script_rel);
     if !script_path.exists() {
         bail!(
             "hook script not found: {} (resolved to {})",

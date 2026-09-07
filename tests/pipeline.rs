@@ -2945,6 +2945,98 @@ fn test_remove_after_sync_user_mode_deletes_all_tracked_files() {
 }
 
 #[test]
+fn test_sync_refuses_when_sources_dir_is_missing() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
+    let home = dir.join("home");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(
+        sync.status.success(),
+        "sync failed:\n{}",
+        String::from_utf8_lossy(&sync.stderr)
+    );
+    assert!(home.join(".claude/agents/test-agent.md").exists());
+
+    // A mistyped `sources_dir` must not read as a spec set that became empty.
+    let config = std::fs::read_to_string(dir.join("agentspec.toml")).expect("read config");
+    std::fs::write(
+        dir.join("agentspec.toml"),
+        format!("[spec]\nsources_dir = \"spce\"\n{config}"),
+    )
+    .expect("write config");
+
+    let resync =
+        run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    let stderr = String::from_utf8_lossy(&resync.stderr);
+    assert!(
+        !resync.status.success(),
+        "sync must not proceed with a missing spec sources directory:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("spec sources directory does not exist"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        home.join(".claude/agents/test-agent.md").exists(),
+        "the failed sync must not have removed the installed file"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn test_remove_works_with_dangling_sources_dir() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    write_sync_config(&dir, &[SyncEntry::new("claude", "user")]);
+    let home = dir.join("home");
+
+    let pool = tmp.path().join("pool-spec");
+    std::fs::rename(dir.join("spec"), &pool).expect("move spec aside");
+    std::os::unix::fs::symlink(&pool, dir.join("spec")).expect("link spec");
+
+    let sync =
+        run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(
+        sync.status.success(),
+        "sync failed:\n{}",
+        String::from_utf8_lossy(&sync.stderr)
+    );
+    assert!(home.join(".claude/agents/test-agent.md").exists());
+
+    // The pool is gone, as it would be on a machine that never checked it out.
+    // `remove` consults only the manifest, so it must still uninstall.
+    std::fs::remove_dir_all(&pool).expect("remove pool");
+
+    // `sync` must refuse rather than compile an empty spec set and treat every
+    // installed file as stale.
+    let resync =
+        run_agentspec(&["sync", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    assert!(
+        !resync.status.success(),
+        "sync must not proceed with an unresolvable spec root"
+    );
+    assert!(
+        home.join(".claude/agents/test-agent.md").exists(),
+        "the failed sync must not have removed the installed file"
+    );
+
+    let remove =
+        run_agentspec(&["remove", "--provider", "claude"], &dir, &home).expect("agentspec spawn");
+    let stderr = String::from_utf8_lossy(&remove.stderr);
+    assert!(
+        remove.status.success(),
+        "a dangling spec root must not block uninstall:\n{stderr}"
+    );
+    assert!(
+        !home.join(".claude/agents/test-agent.md").exists(),
+        "agent file should have been removed"
+    );
+}
+
+#[test]
 fn test_remove_after_sync_project_mode_deletes_all_tracked_files() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
@@ -5208,6 +5300,132 @@ fn test_compile_resolves_symlinked_supporting_file() {
         .expect("read original");
     let resolved = std::fs::read(&generated).expect("read generated");
     assert_eq!(original, resolved, "resolved content must match target");
+}
+
+#[test]
+#[cfg(unix)]
+fn test_compile_rejects_dangling_sources_dir() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    // Replace the spec root with a link to a pool that is then removed: the
+    // shape a shared pool takes on a machine that has not checked it out.
+    let pool = tmp.path().join("pool-spec");
+    std::fs::rename(dir.join("spec"), &pool).expect("move spec aside");
+    std::os::unix::fs::symlink(&pool, dir.join("spec")).expect("link spec");
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+    assert!(
+        output.status.success(),
+        "a resolving spec root must compile:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    std::fs::remove_dir_all(&pool).expect("remove pool");
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "a dangling spec root must not compile as an empty one:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("symlink target does not exist"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn test_compile_resolves_symlinked_whole_specs() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    // A pool outside `sources_dir`, drawn on by both an agent and a skill.
+    let pool = tmp.path().join("shared");
+    std::fs::create_dir_all(pool.join("skills/pooled-skill/scripts")).expect("create pool");
+    std::fs::create_dir_all(pool.join("agents")).expect("create pool agents");
+    std::fs::write(
+        pool.join("agents/pooled-agent.md"),
+        "---\nid: pooled-agent\ndescription: A pooled agent\n---\nPooled agent body.\n",
+    )
+    .expect("write pooled agent");
+    std::fs::write(
+        pool.join("skills/pooled-skill/SKILL.md"),
+        "---\nid: pooled-skill\ndescription: A pooled skill\nuser_invocable: true\nagent_invocable: false\n---\nPooled skill body.\n",
+    )
+    .expect("write pooled skill");
+    std::fs::write(
+        pool.join("skills/pooled-skill/scripts/pooled.sh"),
+        "#!/bin/sh\necho pooled\n",
+    )
+    .expect("write pooled script");
+
+    std::os::unix::fs::symlink(
+        pool.join("agents/pooled-agent.md"),
+        dir.join("spec/agents/pooled-agent.md"),
+    )
+    .expect("link agent");
+    std::os::unix::fs::symlink(
+        pool.join("skills/pooled-skill"),
+        dir.join("spec/skills/pooled-skill"),
+    )
+    .expect("link skill dir");
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    let agent = dir.join("generated/claude/agents/pooled-agent.md");
+    assert!(
+        agent.exists(),
+        "symlinked agent spec not in compiled output"
+    );
+    let agent_body = std::fs::read_to_string(&agent).expect("read generated agent");
+    assert!(agent_body.contains("Pooled agent body."), "{agent_body}");
+
+    let skill = dir.join("generated/claude/skills/pooled-skill/SKILL.md");
+    assert!(
+        skill.exists(),
+        "symlinked skill spec not in compiled output"
+    );
+    let skill_body = std::fs::read_to_string(&skill).expect("read generated skill");
+    assert!(skill_body.contains("Pooled skill body."), "{skill_body}");
+
+    let script = dir.join("generated/claude/skills/pooled-skill/scripts/pooled.sh");
+    assert!(
+        script.exists(),
+        "supporting file of a symlinked skill directory not in compiled output"
+    );
+    assert_eq!(
+        std::fs::read(&script).expect("read generated script"),
+        b"#!/bin/sh\necho pooled\n",
+        "resolved content must match target"
+    );
+    for path in [&agent, &skill, &script] {
+        assert!(
+            !path
+                .symlink_metadata()
+                .expect("stat")
+                .file_type()
+                .is_symlink(),
+            "compiled output must be a regular file, not a symlink: {}",
+            path.display()
+        );
+    }
 }
 
 #[test]

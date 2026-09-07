@@ -84,23 +84,23 @@ fn main() -> Result<()> {
         None => AgentspecConfig::discover(&cwd)?,
     };
 
-    let sources = config.resolve(&config.spec.sources_dir);
-    let ignore = config.spec.compile_ignore_matcher()?;
-    let dirs = SpecDirs {
-        agents: sources.join("agents"),
-        skills: sources.join("skills"),
-        rules: sources.join("rules"),
-        hooks: sources.join("hooks"),
-        ignore,
-        ignore_anchor: sources,
+    // Built per-arm rather than here: `remove` consults only the manifest, so
+    // neither an unusable `sources_dir` nor a malformed `[spec].ignore` pattern
+    // should be what stops an uninstall.
+    let spec_dirs = || -> Result<SpecDirs> {
+        SpecDirs::new(
+            config.resolve(&config.spec.sources_dir),
+            config.spec.compile_ignore_matcher()?,
+        )
     };
 
     match &cli.command {
         Command::Validate(_) => {
+            let dirs = spec_dirs()?;
             let (validated, report) = load_and_validate(&config, &dirs)?;
             // `validate` always shows the full listing — this is the command
             // users run to inspect their `[spec].ignore` effect.
-            surface_load_report(&dirs.ignore, &report, ReportDisplay::Full);
+            surface_load_report(dirs.ignore(), &report, ReportDisplay::Full);
 
             // Sync-target validation runs after spec validation: spec errors are
             // more fundamental — if specs fail to load or validate, sync config
@@ -118,20 +118,21 @@ fn main() -> Result<()> {
                 anyhow::bail!("{} config validation error(s)", config_errors.len());
             }
 
-            let templating = load_templating(&config)?;
+            let templating = load_templating(&config, &dirs)?;
             let context = TemplateContext::from_specs(validated.specs());
             resolve_fragments(validated.into_specs(), &templating, None, &context)?;
             eprintln!("validation complete");
         }
         Command::Sync(sync_args) => {
+            let dirs = spec_dirs()?;
             let (validated, report) = load_and_validate(&config, &dirs)?;
             let display = if sync_args.dry_run || sync_args.common.verbose {
                 ReportDisplay::Full
             } else {
                 ReportDisplay::WarningsOnly
             };
-            surface_load_report(&dirs.ignore, &report, display);
-            let templating = load_templating(&config)?;
+            surface_load_report(dirs.ignore(), &report, display);
+            let templating = load_templating(&config, &dirs)?;
             let targets = resolve_sync_targets(&config, sync_args)?;
             let sync_providers: Vec<Provider> = targets.iter().map(|(p, _)| *p).collect();
 
@@ -179,14 +180,15 @@ fn main() -> Result<()> {
             }
         }
         Command::Compile(compile_args) => {
+            let dirs = spec_dirs()?;
             let (validated, report) = load_and_validate(&config, &dirs)?;
             let display = if compile_args.verbose {
                 ReportDisplay::Full
             } else {
                 ReportDisplay::WarningsOnly
             };
-            surface_load_report(&dirs.ignore, &report, display);
-            let templating = load_templating(&config)?;
+            surface_load_report(dirs.ignore(), &report, display);
+            let templating = load_templating(&config, &dirs)?;
 
             let sync_targets = config.sync_targets();
             let adapter_configs = AgentspecConfig::adapter_configs(&sync_targets);
@@ -244,14 +246,15 @@ fn main() -> Result<()> {
             // derived from it would describe a pipeline that never ran —
             // reporting one would be worse than reporting nothing. There is no
             // partial report.
+            let dirs = spec_dirs()?;
             let (validated, report) = load_and_validate(&config, &dirs)?;
             // `WarningsOnly` regardless of `--verbose`: on this command
             // `--verbose` means "list the specs behind each counted loss", and
             // the `[spec].ignore` listing is about what was loaded rather than
             // what was delivered. Printing both would bury the report under a
             // listing that belongs to the commands acting on the loaded set.
-            surface_load_report(&dirs.ignore, &report, ReportDisplay::WarningsOnly);
-            let templating = load_templating(&config)?;
+            surface_load_report(dirs.ignore(), &report, ReportDisplay::WarningsOnly);
+            let templating = load_templating(&config, &dirs)?;
 
             let sync_targets = config.sync_targets();
             let adapter_configs = AgentspecConfig::adapter_configs(&sync_targets);
@@ -300,6 +303,7 @@ fn main() -> Result<()> {
         }
         Command::Hook(hook_cmd) => match &hook_cmd.command {
             cli::HookSubcommand::Test(test_args) => {
+                let dirs = spec_dirs()?;
                 let (validated, _report) = load_and_validate(&config, &dirs)?;
                 hook::run_hook_test(test_args, &dirs, &validated)?;
             }
@@ -404,10 +408,9 @@ fn load_and_validate(
     Ok((validated, report))
 }
 
-fn load_templating(config: &AgentspecConfig) -> Result<Templating> {
-    let sources = config.resolve(&config.spec.sources_dir);
+fn load_templating(config: &AgentspecConfig, dirs: &SpecDirs) -> Result<Templating> {
     let extra_dirs = resolve_extra_include_dirs(config)?;
-    Templating::new(&sources, &extra_dirs)
+    Templating::new(dirs.sources_dir(), &extra_dirs)
 }
 
 fn resolve_extra_include_dirs(
