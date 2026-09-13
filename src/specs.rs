@@ -1,6 +1,7 @@
+use std::collections::HashSet;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
@@ -160,15 +161,17 @@ impl SpecDirs {
     }
 }
 
-/// A single file or directory that the load stage filtered out.
+/// A single path that an `[spec].ignore` pattern excluded from the loaded set.
+///
+/// Carries no claim about what kind of filesystem object sat at the path: a
+/// pattern decides membership before anything is resolved, so most sites that
+/// record one have never stat'd it.
 #[derive(Clone, Debug)]
 pub struct IgnoredPath {
     /// Path relative to the `sources_dir` the [`SpecDirs`] was built from.
     pub rel_path: PathBuf,
     /// Index into [`IgnoreMatcher::patterns`].
     pub pattern_index: usize,
-    /// `true` when the path is a directory whose subtree was pruned entirely.
-    pub pruned: bool,
 }
 
 /// Diagnostic data produced by [`Specs::load`].
@@ -181,6 +184,8 @@ pub struct LoadReport {
     pub ignored: Vec<IgnoredPath>,
     /// Per-pattern hit counts (index-aligned with [`IgnoreMatcher::patterns`]).
     pub pattern_hits: Vec<u32>,
+    /// Paths already recorded, so [`LoadReport::record`] can drop a repeat.
+    seen: HashSet<PathBuf>,
 }
 
 impl LoadReport {
@@ -189,15 +194,25 @@ impl LoadReport {
         Self {
             ignored: Vec::new(),
             pattern_hits: vec![0; matcher.len()],
+            seen: HashSet::new(),
         }
     }
 
     /// Record a single ignored path and bump its pattern's hit count.
-    pub fn record(&mut self, rel_path: PathBuf, pattern_index: usize, pruned: bool) {
+    ///
+    /// This is the single-recording enforcement point: every site records
+    /// unconditionally and the first recording wins. Two sites reaching the same
+    /// path is one ignored path with one hit, and nothing in [`IgnoredPath`]
+    /// varies between sightings — [`IgnoreMatcher::matching_index`] returns the
+    /// lowest matching index, so the pattern is the same either time — which is
+    /// what makes first-wins unambiguous rather than a tiebreak.
+    pub fn record(&mut self, rel_path: PathBuf, pattern_index: usize) {
+        if !self.seen.insert(rel_path.clone()) {
+            return;
+        }
         self.ignored.push(IgnoredPath {
             rel_path,
             pattern_index,
-            pruned,
         });
         if let Some(hit) = self.pattern_hits.get_mut(pattern_index) {
             *hit = hit.saturating_add(1);
@@ -214,20 +229,26 @@ impl LoadReport {
     }
 }
 
-/// Path-based variant of the `filter_entry` ignore check.
+/// Decide whether `path` is excluded from the loaded set, recording the match.
 ///
-/// Returns `true` when the caller should skip the entry (and, for directories,
-/// prune the subtree). Records the match in `report`. `is_dir` distinguishes
-/// a file match from a directory prune; the distinction surfaces in the
-/// ignored-path listing.
+/// A pattern decides membership before anything is resolved, so every site that
+/// could exclude a path asks this first and stats second. Returns `true` when
+/// the caller should skip the path — and, where the path turns out to be a
+/// directory, prune the subtree.
 ///
-/// A directory path matches when the path itself matches any pattern *or*
-/// a synthetic child under it would match — so a user-supplied pattern like
-/// `skills/deploy/**` prunes the `skills/deploy` subtree even though the
-/// directory path itself lacks a child component for `**` to bind to.
+/// A path matches when it matches a pattern itself *or* when a synthetic child
+/// under it would, which is what lets `skills/deploy/**` exclude
+/// `skills/deploy` even though the directory path has no child component for
+/// `**` to bind to. That second test runs for every path, not only for one
+/// already known to be a directory: most callers here have not resolved the
+/// path and cannot know, and a rule that ran the test only for paths of a known
+/// kind would exclude a path at one site and admit it at another — reporting a
+/// file as ignored while still emitting it.
+///
+/// Nothing recorded here distinguishes a file from a directory, for the same
+/// reason.
 fn should_ignore_path(
     path: &Path,
-    is_dir: bool,
     anchor: &Path,
     ignore: &IgnoreMatcher,
     report: &mut LoadReport,
@@ -238,20 +259,14 @@ fn should_ignore_path(
     let Ok(rel) = path.strip_prefix(anchor) else {
         return false;
     };
-    if let Some(idx) = ignore.matching_index(rel) {
-        report.record(rel.to_path_buf(), idx, is_dir);
-        return true;
-    }
-    // For directories, also check whether any child under this dir would
-    // match — that lets `foo/**` prune the `foo` subtree entirely.
-    if is_dir {
-        let probe = rel.join("__agentspec_ignore_probe__");
-        if let Some(idx) = ignore.matching_index(&probe) {
-            report.record(rel.to_path_buf(), idx, true);
-            return true;
-        }
-    }
-    false
+    let Some(idx) = ignore
+        .matching_index(rel)
+        .or_else(|| ignore.matching_index(&rel.join("__agentspec_ignore_probe__")))
+    else {
+        return false;
+    };
+    report.record(rel.to_path_buf(), idx);
+    true
 }
 
 /// `walkdir::DirEntry` adapter around [`should_ignore_path`].
@@ -261,20 +276,69 @@ fn should_ignore_entry(
     ignore: &IgnoreMatcher,
     report: &mut LoadReport,
 ) -> bool {
-    should_ignore_path(
-        entry.path(),
-        entry.file_type().is_dir(),
-        anchor,
-        ignore,
-        report,
-    )
+    should_ignore_path(entry.path(), anchor, ignore, report)
+}
+
+/// Walk `root`, yielding each surviving entry to `visit`.
+///
+/// A pattern decides membership in the loaded set before anything is resolved,
+/// which is why this drives `WalkDir` directly rather than through
+/// `filter_entry`: `filter_entry` propagates a failed entry without consulting
+/// its predicate, so a pattern could never reach a dangling link or a cycle
+/// `walkdir` caught while producing the entry. Driving the iterator by hand also
+/// leaves one owner of `report`, which a predicate closure holding it for the
+/// walker's lifetime would not.
+///
+/// Every entry is checked, the root included. An admitted root cannot match a
+/// pattern — [`admit_spec_dir`] returns `false` when it does — and
+/// [`LoadReport::record`] absorbs a repeat in any case.
+fn walk_spec_tree(
+    root: &Path,
+    ignore: &IgnoreMatcher,
+    anchor: &Path,
+    report: &mut LoadReport,
+    mut visit: impl FnMut(walkdir::DirEntry) -> Result<()>,
+) -> Result<()> {
+    let mut it = WalkDir::new(root).follow_links(true).into_iter();
+    while let Some(result) = it.next() {
+        let entry = match result {
+            Ok(entry) => entry,
+            Err(err) => {
+                // An entry that failed to resolve is still matched against the
+                // patterns by its own path. `walkdir` returns from `follow`
+                // before `push`, so the walk never descended and iteration
+                // resumes safely.
+                if let Some(path) = err.path()
+                    && should_ignore_path(path, anchor, ignore, report)
+                {
+                    continue;
+                }
+                return Err(walk_error(err, root));
+            }
+        };
+        if should_ignore_entry(&entry, anchor, ignore, report) {
+            if entry.file_type().is_dir() {
+                it.skip_current_dir();
+            }
+            continue;
+        }
+        // `walkdir` yields a directory before descending into it, so refusing an
+        // enclosing target here is what keeps the walk off it — left to
+        // `walkdir`, the same link is reported only after the target has been
+        // read, and named by the second encounter.
+        if entry.file_type().is_dir() && entry.path_is_symlink() {
+            reject_ancestor_loop(entry.path())?;
+        }
+        visit(entry)?;
+    }
+    Ok(())
 }
 
 /// Translates a `walkdir` error into a diagnostic naming the symlink at fault,
 /// where `walkdir` supplies the path.
 ///
 /// Walks that set `follow_links` surface loops and dangling targets as errors
-/// rather than skipping them, so every such walk routes its results through
+/// rather than skipping them, so every such walk routes its failures through
 /// here instead of discarding them with `filter_map(Result::ok)`.
 ///
 /// `walkdir` carries a path only on an error raised against a single entry. A
@@ -282,34 +346,12 @@ fn should_ignore_entry(
 /// read interrupted mid-directory — arrives with none, and falls through to a
 /// diagnostic headed by the walk root. Naming the link is the better case, not
 /// the guaranteed one.
-///
-/// An entry that fails to resolve never reaches `filter_entry`, so a pattern
-/// naming the link itself does not exempt it — only a pattern that prunes one
-/// of its ancestor directories does, since the walk then never descends far
-/// enough to try the link.
-///
-/// A resolving directory link is checked here too. `walkdir` yields a directory
-/// before descending into it, so refusing an enclosing target at this point is
-/// what keeps the walk off it — left to `walkdir`, the same link is reported
-/// only after the target has been read, and named by the second encounter.
-fn resolve_walk_entry(
-    result: walkdir::Result<walkdir::DirEntry>,
-    root: &Path,
-) -> Result<walkdir::DirEntry> {
-    let err = match result {
-        Ok(entry) => {
-            if entry.file_type().is_dir() && entry.path_is_symlink() {
-                reject_ancestor_loop(entry.path())?;
-            }
-            return Ok(entry);
-        }
-        Err(e) => e,
-    };
+fn walk_error(err: walkdir::Error, root: &Path) -> anyhow::Error {
     if let Some(ancestor) = err.loop_ancestor() {
         let source = err
             .path()
             .map_or_else(|| "<unknown>".to_string(), |p| p.display().to_string());
-        bail!(
+        return anyhow!(
             "{source}: symlink loop detected (cycles back to {})",
             ancestor.display()
         );
@@ -322,9 +364,10 @@ fn resolve_walk_entry(
         // call with `ELOOP` before its ancestor tracking runs, so
         // `loop_ancestor` is `None` and the generic context below would head
         // the diagnostic with the walk root instead of the link.
-        return Err(anyhow!(unresolvable_symlink(path, io)));
+        return anyhow!(unresolvable_symlink(path, io));
     }
-    Err(err).with_context(|| format!("error walking {}", root.display()))
+    let root = root.display().to_string();
+    anyhow::Error::new(err).context(format!("error walking {root}"))
 }
 
 /// Fails when `path` is a symlink whose target encloses the directory the link
@@ -442,6 +485,33 @@ fn require_sources_dir(path: &Path) -> Result<()> {
     }
 }
 
+/// Decide whether a spec root participates in this load.
+///
+/// Pattern first, then presence, then the ancestor-loop guard. An ignored root
+/// leaves the loaded set before it is stat'd, so ignoring `agents` exempts a
+/// dangling or wrong-kind `agents` link — the same rule every entry under the
+/// root follows.
+///
+/// Recording precedes the presence check too, so an ignored root that does not
+/// exist gets a listing entry and a pattern hit. That follows from the rule: the
+/// pattern decided the root's membership, and whether the root exists is a
+/// question agentspec no longer asks.
+fn admit_spec_dir(
+    root: &Path,
+    ignore: &IgnoreMatcher,
+    anchor: &Path,
+    report: &mut LoadReport,
+) -> Result<bool> {
+    if should_ignore_path(root, anchor, ignore, report) {
+        return Ok(false);
+    }
+    if !spec_dir_present(root)? {
+        return Ok(false);
+    }
+    reject_ancestor_loop(root)?;
+    Ok(true)
+}
+
 /// Reports whether an optional spec root directory is present, failing when it
 /// is a symlink that does not resolve to one.
 fn spec_dir_present(path: &Path) -> Result<bool> {
@@ -526,7 +596,7 @@ fn dangling_symlink(path: &Path) -> String {
 /// directory or spec file reports neither `is_dir` nor `is_file` and would drop
 /// out of a filter written against it. Resolving through the link also means an
 /// unresolvable target surfaces as an error here rather than as a silent skip,
-/// matching the contract [`resolve_walk_entry`] holds for the `WalkDir` passes.
+/// matching the contract [`walk_spec_tree`] holds for the `WalkDir` passes.
 /// Both paths share [`unresolvable_symlink`], so a cycle reads the same either
 /// way — except where `walkdir` catches one through its own ancestor tracking,
 /// which can also name the directory the link cycles back to.
@@ -659,22 +729,17 @@ fn load_agent_specs(
     anchor: &Path,
     report: &mut LoadReport,
 ) -> Result<Vec<Spec>> {
-    if !spec_dir_present(dir)? {
+    if !admit_spec_dir(dir, ignore, anchor, report)? {
         return Ok(Vec::new());
     }
 
-    reject_ancestor_loop(dir)?;
-    let walker = WalkDir::new(dir)
-        .follow_links(true)
-        .into_iter()
-        .filter_entry(|e| !should_ignore_entry(e, anchor, ignore, report));
     let mut md_paths = Vec::new();
-    for result in walker {
-        let entry = resolve_walk_entry(result, dir)?;
+    walk_spec_tree(dir, ignore, anchor, report, |entry| {
         if entry.file_type().is_file() && entry.path().extension().is_some_and(|ext| ext == "md") {
             md_paths.push(entry.into_path());
         }
-    }
+        Ok(())
+    })?;
     md_paths.sort();
 
     let matter = Matter::<YAML>::new();
@@ -709,24 +774,26 @@ fn load_skill_specs(
     anchor: &Path,
     report: &mut LoadReport,
 ) -> Result<Vec<Spec>> {
-    if !spec_dir_present(dir)? {
-        return Ok(Vec::new());
-    }
-    reject_ancestor_loop(dir)?;
-
-    // Prune the skills root itself if a pattern covers it (mirrors the
-    // behavior of `WalkDir::new(dir).filter_entry(...)` in the agent/rule
-    // loaders — they prune the root when e.g. `agents` or `rules` is ignored).
-    if should_ignore_path(dir, true, anchor, ignore, report) {
+    if !admit_spec_dir(dir, ignore, anchor, report)? {
         return Ok(Vec::new());
     }
 
     let mut skill_dirs = Vec::new();
     for entry in fs::read_dir(dir).with_context(|| format!("failed to read {}", dir.display()))? {
         let entry = entry.with_context(|| format!("failed to read {}", dir.display()))?;
+        let path = entry.path();
+        // Prune-first: an ignored entry leaves the loaded set before it is
+        // resolved, so a pattern naming a skill directory exempts a link that
+        // does not resolve.
+        //
+        // Every entry reaches this, not only the directories that survive
+        // resolution — a plain `skills/README.md` named by a pattern is recorded
+        // and counts as a pattern hit.
+        if should_ignore_path(&path, anchor, ignore, report) {
+            continue;
+        }
         // A skill directory may be a symlink to a shared location, so resolve
         // the entry rather than describing the link.
-        let path = entry.path();
         if resolve_dir_entry(&path)?.is_dir() {
             skill_dirs.push(path);
         }
@@ -738,21 +805,8 @@ fn load_skill_specs(
     let mut specs = Vec::new();
 
     for skill_dir in skill_dirs {
-        // Top-level prune: if the whole skill directory matches ignore, skip
-        // it entirely (neither read its contents nor report inner entries).
-        if should_ignore_path(&skill_dir, true, anchor, ignore, report) {
-            continue;
-        }
-        // After the prune, not before: an enclosing link resolves, so unlike a
-        // broken one it is still a link the load has not tried, and a pattern
-        // naming it should prune it. Resolving the entry above stays ahead of
-        // the prune, since a link that fails to resolve is never matched
-        // against the patterns at all.
-        //
-        // Every entry here reaches this check, which the `WalkDir` paths cannot
-        // promise: `walkdir` runs its own loop detection while producing an
-        // entry, ahead of `filter_entry`, so a link whose target is that walk's
-        // root or an ancestor inside it errors before any pattern is consulted.
+        // The scan above already decided membership, so this guard only refuses
+        // links the patterns admitted.
         reject_ancestor_loop(&skill_dir)?;
 
         if let Some(spec) = load_single_skill(&skill_dir, &matter, ignore, anchor, report)? {
@@ -773,18 +827,30 @@ fn load_single_skill(
     report: &mut LoadReport,
 ) -> Result<Option<Spec>> {
     let mut entries = Vec::new();
+    let mut ignored_md = false;
     for entry in fs::read_dir(skill_dir)
         .with_context(|| format!("failed to read {}", skill_dir.display()))?
     {
         let entry = entry.with_context(|| format!("failed to read {}", skill_dir.display()))?;
+        let entry_path = entry.path();
+        // Prune-first: an ignored entry is never resolved, so a pattern naming a
+        // spec file exempts a link that does not resolve.
+        if should_ignore_path(&entry_path, anchor, ignore, report) {
+            // `select_spec_md` needs to tell "every `.md` here was ignored"
+            // (skip the skill) from "there is no `.md` here" (an authoring
+            // error), and it can no longer see the ignored entries to work that
+            // out for itself.
+            ignored_md |= entry_path.extension().is_some_and(|ext| ext == "md");
+            continue;
+        }
         // A spec file may itself be a symlink into a shared pool, so resolve
         // the entry rather than describing the link.
-        if resolve_dir_entry(&entry.path())?.is_file() {
+        if resolve_dir_entry(&entry_path)?.is_file() {
             entries.push(entry);
         }
     }
 
-    let Some(md_path) = select_spec_md(skill_dir, &entries, ignore, anchor, report)? else {
+    let Some(md_path) = select_spec_md(skill_dir, &entries, ignored_md)? else {
         return Ok(None);
     };
     let md_path_display = md_path.display().to_string();
@@ -801,23 +867,20 @@ fn load_single_skill(
     let body = parsed.content;
 
     let mut supporting_files = IndexMap::new();
-    let walker = WalkDir::new(skill_dir)
-        .follow_links(true)
-        .into_iter()
-        .filter_entry(|e| !should_ignore_entry(e, anchor, ignore, report));
-    for result in walker {
-        let entry = resolve_walk_entry(result, skill_dir)?;
+    // `load_skill_specs` already admitted this directory, so no `admit_spec_dir`
+    // here.
+    walk_spec_tree(skill_dir, ignore, anchor, report, |entry| {
         if !entry.file_type().is_file() {
-            continue;
+            return Ok(());
         }
         let entry_path = entry.path();
 
         if entry_path == md_path.as_path() {
-            continue;
+            return Ok(());
         }
 
         let Ok(relative_path) = entry_path.strip_prefix(skill_dir) else {
-            continue;
+            return Ok(());
         };
         let relative_path = relative_path.to_path_buf();
 
@@ -835,7 +898,8 @@ fn load_single_skill(
                 mode,
             },
         );
-    }
+        Ok(())
+    })?;
     supporting_files.sort_keys();
 
     Ok(Some(Spec::Skill(SkillSpec {
@@ -848,50 +912,25 @@ fn load_single_skill(
 
 /// Pick the single `.md` file that becomes the skill spec.
 ///
-/// Returns `Ok(None)` when every `.md` in the directory was ignored (the
-/// skill is absent from the pipeline). Records those ignored `.md` files
-/// in `report` exactly once — the caller's subsequent `WalkDir` pass won't
-/// run in this case.
-///
-/// Uses a non-recording `matching_index` lookup for the `.md` filter to
-/// avoid double-counting when the skill proceeds (the `WalkDir` pass would
-/// otherwise record the same ignored `.md` a second time).
+/// `entries` holds only the files that survived the caller's pattern check, so
+/// this sees no ignored path and records nothing. `ignored_md` is what the
+/// caller observed while excluding them: `true` when at least one `.md` in the
+/// directory was excluded by a pattern, which distinguishes a skill that is
+/// absent from the pipeline (`Ok(None)`) from one that is malformed.
 fn select_spec_md(
     skill_dir: &Path,
     entries: &[fs::DirEntry],
-    ignore: &IgnoreMatcher,
-    anchor: &Path,
-    report: &mut LoadReport,
+    ignored_md: bool,
 ) -> Result<Option<PathBuf>> {
-    let any_md_present = entries
-        .iter()
-        .any(|e| e.path().extension().is_some_and(|ext| ext == "md"));
-
-    let ignore_match_index = |path: &Path| -> Option<usize> {
-        path.strip_prefix(anchor)
-            .ok()
-            .and_then(|rel| ignore.matching_index(rel))
-    };
-
     let md_files: Vec<_> = entries
         .iter()
         .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
-        .filter(|e| ignore_match_index(&e.path()).is_none())
         .collect();
 
     if md_files.is_empty() {
-        if any_md_present {
-            // All .md files in this skill were ignored — record them once
-            // (the WalkDir pass in the caller won't run) and signal absent.
-            for e in entries {
-                let path = e.path();
-                if path.extension().is_some_and(|ext| ext == "md")
-                    && let Some(idx) = ignore_match_index(&path)
-                    && let Ok(rel) = path.strip_prefix(anchor)
-                {
-                    report.record(rel.to_path_buf(), idx, false);
-                }
-            }
+        // Every `.md` in this skill was ignored — the caller's scan recorded
+        // them, so the skill is absent from the pipeline rather than malformed.
+        if ignored_md {
             return Ok(None);
         }
         bail!(
@@ -924,22 +963,17 @@ fn load_rule_specs(
     anchor: &Path,
     report: &mut LoadReport,
 ) -> Result<Vec<Spec>> {
-    if !spec_dir_present(dir)? {
+    if !admit_spec_dir(dir, ignore, anchor, report)? {
         return Ok(Vec::new());
     }
 
-    reject_ancestor_loop(dir)?;
-    let walker = WalkDir::new(dir)
-        .follow_links(true)
-        .into_iter()
-        .filter_entry(|e| !should_ignore_entry(e, anchor, ignore, report));
     let mut md_paths = Vec::new();
-    for result in walker {
-        let entry = resolve_walk_entry(result, dir)?;
+    walk_spec_tree(dir, ignore, anchor, report, |entry| {
         if entry.file_type().is_file() && entry.path().extension().is_some_and(|ext| ext == "md") {
             md_paths.push(entry.into_path());
         }
-    }
+        Ok(())
+    })?;
     md_paths.sort();
 
     let matter = Matter::<YAML>::new();
@@ -1018,20 +1052,28 @@ fn load_hook_specs(
     anchor: &Path,
     report: &mut LoadReport,
 ) -> Result<Vec<Spec>> {
-    if !spec_dir_present(dir)? {
-        return Ok(Vec::new());
-    }
-    reject_ancestor_loop(dir)?;
-
-    if should_ignore_path(dir, true, anchor, ignore, report) {
+    if !admit_spec_dir(dir, ignore, anchor, report)? {
         return Ok(Vec::new());
     }
 
     let toml_path = dir.join("hooks.toml");
     let scripts_dir = dir.join("scripts");
 
+    // An ignored `hooks.toml` removes the hook set entirely, scripts included:
+    // there is no declaration left to emit them from.
+    if should_ignore_path(&toml_path, anchor, ignore, report) {
+        return Ok(Vec::new());
+    }
+
     if !spec_file_present(&toml_path)? {
-        if spec_dir_present(&scripts_dir)? {
+        // `admit_spec_dir` rather than `spec_dir_present`: an ignored `scripts/`
+        // tree raises no orphan diagnostic, because an author who excluded it
+        // and wrote no `hooks.toml` turned hooks off rather than forgetting
+        // something. It also runs `reject_ancestor_loop`, which
+        // `spec_dir_present` did not — a `scripts` link enclosing its own parent
+        // now fails on the loop, which names the link and is the more specific
+        // fault for a directory that cannot be walked at all.
+        if admit_spec_dir(&scripts_dir, ignore, anchor, report)? {
             bail!(
                 "{} exists but {} is missing — orphaned scripts (add hooks.toml or remove the directory)",
                 scripts_dir.display(),
@@ -1067,8 +1109,39 @@ fn load_hook_specs(
     for (id, mut frontmatter) in parsed.hooks {
         validate_hook_id(&id).with_context(|| format!("in {}", toml_path.display()))?;
         validate_hook_script_path(&id, &frontmatter.script, dir, &toml_path)?;
-        let script_path = dir.join(&frontmatter.script);
-        if !script_path.is_file() {
+        // Ask the loaded set, not the disk: a script a pattern excluded is not
+        // emitted, so a `hooks.toml` declaring it would otherwise produce a hook
+        // command pointing at a file agentspec never writes.
+        //
+        // `collect_hook_scripts` keys on `strip_prefix(hooks_dir)`, which yields
+        // no `.` components, while `validate_hook_script_path` permits
+        // `././scripts/x.sh`.
+        let script_key: PathBuf = frontmatter
+            .script
+            .components()
+            .filter(|c| !matches!(c, Component::CurDir))
+            .collect();
+        if !supporting_files.contains_key(&script_key) {
+            let script_path = dir.join(&script_key);
+            // Ask what the load excluded rather than re-deriving it. A pattern
+            // naming an ancestor directory pruned this script without ever
+            // matching its own path, so re-running the matcher on the script
+            // would report the wrong fault — that it does not exist, about a
+            // file sitting on disk.
+            let covering = script_path.strip_prefix(anchor).ok().and_then(|rel| {
+                report
+                    .ignored
+                    .iter()
+                    .find(|ignored| rel.starts_with(&ignored.rel_path))
+            });
+            if let Some(ignored) = covering {
+                bail!(
+                    "hook '{id}' in {}: script {} was excluded from the load by `[spec].ignore` pattern '{}'",
+                    toml_path.display(),
+                    script_key.display(),
+                    ignore.pattern(ignored.pattern_index).unwrap_or("<unknown>")
+                );
+            }
             bail!(
                 "hook '{id}' in {} references script {} which does not exist",
                 toml_path.display(),
@@ -1116,7 +1189,6 @@ fn validate_hook_script_path(
     hooks_dir: &Path,
     toml_path: &Path,
 ) -> Result<()> {
-    use std::path::Component;
     if script.is_absolute() {
         bail!(
             "hook '{id}' in {}: script {} must be a relative path under the hooks directory",
@@ -1180,26 +1252,23 @@ fn collect_hook_scripts(
     anchor: &Path,
     report: &mut LoadReport,
 ) -> Result<IndexMap<PathBuf, SupportingFile>> {
-    if !spec_dir_present(scripts_dir)? {
+    // An ignored or absent `scripts/` yields an empty map rather than
+    // propagating: this is the value the declared-script membership test in
+    // `load_hook_specs` reads.
+    if !admit_spec_dir(scripts_dir, ignore, anchor, report)? {
         return Ok(IndexMap::new());
     }
 
     let hooks_dir = scripts_dir.parent().unwrap_or(scripts_dir);
     let mut files = IndexMap::new();
-    reject_ancestor_loop(scripts_dir)?;
-    let walker = WalkDir::new(scripts_dir)
-        .follow_links(true)
-        .into_iter()
-        .filter_entry(|e| !should_ignore_entry(e, anchor, ignore, report));
-    for result in walker {
-        let entry = resolve_walk_entry(result, scripts_dir)?;
+    walk_spec_tree(scripts_dir, ignore, anchor, report, |entry| {
         if !entry.file_type().is_file() {
-            continue;
+            return Ok(());
         }
 
         if let Ok(rel_under_scripts) = entry.path().strip_prefix(scripts_dir) {
             for component in rel_under_scripts.components() {
-                if let std::path::Component::Normal(name) = component
+                if let Component::Normal(name) = component
                     && name.to_string_lossy().starts_with("_agentspec_")
                 {
                     bail!(
@@ -1212,7 +1281,7 @@ fn collect_hook_scripts(
         }
         let entry_path = entry.path();
         let Ok(relative_path) = entry_path.strip_prefix(hooks_dir) else {
-            continue;
+            return Ok(());
         };
         let content = fs::read(entry_path)
             .with_context(|| format!("failed to read {}", entry_path.display()))?;
@@ -1224,7 +1293,8 @@ fn collect_hook_scripts(
             relative_path.to_path_buf(),
             SupportingFile { content, mode },
         );
-    }
+        Ok(())
+    })?;
     files.sort_keys();
     Ok(files)
 }
@@ -1640,29 +1710,24 @@ Agent body.
     }
 
     #[test]
-    fn test_load_agent_specs_dangling_symlink_named_by_ignore_still_fails() {
+    fn test_load_agent_specs_dangling_symlink_named_by_ignore_is_pruned() {
         let tmp = tempfile::tempdir().expect("expected value");
         let agents_dir = tmp.path().join("agents");
         fs::create_dir(&agents_dir).expect("expected value");
         std::os::unix::fs::symlink(tmp.path().join("gone.md"), agents_dir.join("broken.md"))
             .expect("expected value");
 
-        // The link's own path matches, but a failed entry never reaches
-        // `filter_entry` to be tested against it.
+        // A pattern decides membership before anything is resolved, so naming
+        // the link exempts it exactly as pruning its parent does.
         let ignore = IgnoreMatcher::compile(&["broken.md".to_string()]).expect("expected value");
         let mut report = LoadReport::with_matcher(&ignore);
-        let err = load_agent_specs(&agents_dir, &ignore, &agents_dir, &mut report)
-            .expect_err("expected error");
+        let specs = load_agent_specs(&agents_dir, &ignore, &agents_dir, &mut report)
+            .expect("a pattern naming a dangling link exempts it");
 
-        let full = format!("{err:#}");
+        assert!(specs.is_empty());
         assert!(
-            full.contains("symlink target does not exist"),
-            "error: {full}"
-        );
-        assert_eq!(
-            report.unused_pattern_indices(),
-            vec![0],
-            "the pattern matches the link's path but is never consulted for it"
+            report.unused_pattern_indices().is_empty(),
+            "the pattern was consulted for the link and hit"
         );
     }
 
@@ -1953,7 +2018,7 @@ Agent body.
     }
 
     #[test]
-    fn test_ignore_does_not_exempt_a_loop_inside_a_skill_directory() {
+    fn test_ignore_prunes_a_loop_inside_a_skill_directory() {
         let tmp = tempfile::tempdir().expect("expected value");
         let spec = tmp.path().join("spec");
         let skills_dir = spec.join("skills");
@@ -1964,24 +2029,23 @@ Agent body.
         fs::write(skill_dir.join("SKILL.md"), spec_content).expect("expected value");
         std::os::unix::fs::symlink(&skill_dir, sub.join("loop")).expect("expected value");
 
-        // A skill directory is its own `WalkDir` root, so a link cycling back
-        // into it is narrow in the same way `agents/` and `rules/` are — it is
-        // the entries scanned directly under `skills/` that a pattern always
-        // reaches, not everything beneath them.
+        // A pattern reaches every entry of every walk, a skill directory's own
+        // walk included, so a loop named by one is pruned like any other path.
         let ignore =
             IgnoreMatcher::compile(&["skills/s1/sub/loop".to_string()]).expect("expected value");
         let mut report = LoadReport::with_matcher(&ignore);
-        let err =
-            load_skill_specs(&skills_dir, &ignore, &spec, &mut report).expect_err("expected error");
-        let full = format!("{err:#}");
-        assert!(
-            full.contains("symlink loop detected"),
-            "a loop inside a skill directory is not exempted by a pattern: {full}"
-        );
+        let specs = load_skill_specs(&skills_dir, &ignore, &spec, &mut report)
+            .expect("a pattern naming a loop inside a skill directory prunes it");
+
+        assert_eq!(specs.len(), 1);
+        let Spec::Skill(ref s) = specs[0] else {
+            panic!("expected Skill variant")
+        };
+        assert_eq!(s.frontmatter.id, "s1");
     }
 
     #[test]
-    fn test_ignore_does_not_exempt_a_loop_walkdir_catches_first() {
+    fn test_ignore_prunes_a_loop_walkdir_catches_first() {
         let tmp = tempfile::tempdir().expect("expected value");
         let spec = tmp.path().join("spec");
         let agents_dir = spec.join("agents");
@@ -1990,17 +2054,15 @@ Agent body.
 
         let ignore = IgnoreMatcher::compile(&["agents/loop".to_string()]).expect("expected value");
         let mut report = LoadReport::with_matcher(&ignore);
-        let err =
-            load_agent_specs(&agents_dir, &ignore, &spec, &mut report).expect_err("expected error");
-        let full = format!("{err:#}");
         // `walkdir` detects a link cycling back into the walk while producing
-        // the entry, and `FilterEntry` propagates the error without consulting
-        // the predicate — so this one is not prunable, unlike the links
-        // `reject_ancestor_loop` is what catches.
-        assert!(
-            full.contains("symlink loop detected"),
-            "a loop walkdir catches first is not exempted by a pattern: {full}"
-        );
+        // the entry, so this is the case manual driving exists for: a
+        // `filter_entry` predicate is never consulted for a failed entry and
+        // could not have reached this link.
+        let specs = load_agent_specs(&agents_dir, &ignore, &spec, &mut report)
+            .expect("a pattern naming a loop walkdir catches first prunes it");
+
+        assert!(specs.is_empty());
+        assert!(report.unused_pattern_indices().is_empty());
     }
 
     #[test]
@@ -2014,10 +2076,10 @@ Agent body.
         std::os::unix::fs::symlink(tmp.path(), skills_dir.join("up")).expect("expected value");
         std::os::unix::fs::symlink(tmp.path(), agents_sub.join("up")).expect("expected value");
 
-        // An enclosing link resolves, so it is a link the load has not tried
-        // yet, and a pattern naming it prunes it. The `agents/` link points
-        // above `spec/`, outside the walk root — a link cycling back into that
-        // walk is `walkdir`'s to catch, and it does so ahead of `filter_entry`.
+        // A pattern decides membership before anything is resolved, so an
+        // enclosing link named by one is pruned wherever it sits — under
+        // `skills/`, where `reject_ancestor_loop` is what would catch it, and
+        // under `agents/`, inside a walk.
         let ignore =
             IgnoreMatcher::compile(&["skills/up".to_string(), "agents/sub/up".to_string()])
                 .expect("expected value");
@@ -2383,7 +2445,6 @@ Agent body.
 
         assert!(!should_ignore_path(
             &anchor.join("agents/a.md"),
-            false,
             anchor,
             &ignore,
             &mut report,
@@ -2420,7 +2481,6 @@ Agent body.
             report.ignored[0].rel_path,
             PathBuf::from("agents/ignored.md")
         );
-        assert!(!report.ignored[0].pruned);
         assert_eq!(report.pattern_hits, vec![1]);
     }
 
@@ -2489,9 +2549,8 @@ Agent body.
             })
             .collect();
         assert_eq!(ids, vec!["kept"]);
-        // Whole dir pruned — exactly one report entry with pruned=true.
+        // Whole dir pruned — exactly one report entry.
         assert_eq!(report.ignored.len(), 1);
-        assert!(report.ignored[0].pruned);
         assert_eq!(report.ignored[0].rel_path, PathBuf::from("skills/deploy"));
     }
 
@@ -2508,7 +2567,7 @@ Agent body.
         )
         .expect("expected value");
         // Non-ignored non-.md file in the skill — ensures we're not hitting
-        // the "pruned subtree" path, just the .md-ignored path.
+        // the whole-directory prune, just the .md-ignored path.
         fs::write(skill_dir.join("helper.sh"), "#!/bin/sh\n").expect("expected value");
 
         let patterns = vec!["skills/hidden/SKILL.md".to_string()];
@@ -2597,7 +2656,6 @@ Agent body.
 
         assert!(specs.is_empty());
         assert_eq!(report.ignored.len(), 1);
-        assert!(report.ignored[0].pruned);
         assert_eq!(report.ignored[0].rel_path, PathBuf::from("skills"));
     }
 
@@ -2990,5 +3048,340 @@ script = \"scripts/missing.sh\"
         // No `.bats` nor `never-matches` file exists — both should be 0.
         assert_eq!(report.pattern_hits, vec![0, 0]);
         assert_eq!(report.unused_pattern_indices(), vec![0, 1]);
+    }
+
+    #[test]
+    fn test_ignore_exempts_a_dangling_spec_root_link() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let spec = tmp.path().join("spec");
+        fs::create_dir_all(&spec).expect("expected value");
+        std::os::unix::fs::symlink(tmp.path().join("gone"), spec.join("agents"))
+            .expect("expected value");
+
+        let ignore = IgnoreMatcher::compile(&["agents".to_string()]).expect("expected value");
+        let mut report = LoadReport::with_matcher(&ignore);
+        let specs = load_agent_specs(&spec.join("agents"), &ignore, &spec, &mut report)
+            .expect("an ignored root is never stat'd");
+
+        assert!(specs.is_empty());
+        assert_eq!(report.ignored.len(), 1);
+        assert_eq!(report.ignored[0].rel_path, PathBuf::from("agents"));
+    }
+
+    #[test]
+    fn test_ignore_exempts_a_dangling_skill_dir_link() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let spec = tmp.path().join("spec");
+        let skills_dir = spec.join("skills");
+        fs::create_dir_all(&skills_dir).expect("expected value");
+        std::os::unix::fs::symlink(tmp.path().join("gone"), skills_dir.join("demo"))
+            .expect("expected value");
+
+        // The `read_dir` scan under `skills/` used to stat before checking.
+        let ignore = IgnoreMatcher::compile(&["skills/demo".to_string()]).expect("expected value");
+        let mut report = LoadReport::with_matcher(&ignore);
+        let specs = load_skill_specs(&skills_dir, &ignore, &spec, &mut report)
+            .expect("an ignored skill directory link is never resolved");
+
+        assert!(specs.is_empty());
+        assert_eq!(report.ignored[0].rel_path, PathBuf::from("skills/demo"));
+    }
+
+    #[test]
+    fn test_ignore_exempts_a_dangling_link_under_hook_scripts() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let hooks_dir = tmp.path().join("hooks");
+        write_hook_fixture(&hooks_dir, "init", "session_start", "init.sh");
+        std::os::unix::fs::symlink(
+            tmp.path().join("gone.sh"),
+            hooks_dir.join("scripts").join("broken.sh"),
+        )
+        .expect("expected value");
+
+        let ignore = IgnoreMatcher::compile(&["hooks/scripts/broken.sh".to_string()])
+            .expect("expected value");
+        let mut report = LoadReport::with_matcher(&ignore);
+        let specs = load_hook_specs(&hooks_dir, &ignore, tmp.path(), &mut report)
+            .expect("a pattern naming a dangling link under scripts/ exempts it");
+
+        assert_eq!(specs.len(), 1);
+        assert!(report.unused_pattern_indices().is_empty());
+    }
+
+    #[test]
+    fn test_ignored_hooks_toml_suppresses_the_hook_set() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let hooks_dir = tmp.path().join("hooks");
+        write_hook_fixture(&hooks_dir, "init", "session_start", "init.sh");
+
+        let ignore =
+            IgnoreMatcher::compile(&["hooks/hooks.toml".to_string()]).expect("expected value");
+        let mut report = LoadReport::with_matcher(&ignore);
+        let specs = load_hook_specs(&hooks_dir, &ignore, tmp.path(), &mut report)
+            .expect("an ignored hooks.toml removes the hook set, scripts included");
+
+        assert!(specs.is_empty());
+        assert_eq!(
+            report.ignored[0].rel_path,
+            PathBuf::from("hooks/hooks.toml")
+        );
+    }
+
+    #[test]
+    fn test_ignored_scripts_dir_raises_no_orphan_error() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let hooks_dir = tmp.path().join("hooks");
+        fs::create_dir_all(hooks_dir.join("scripts")).expect("expected value");
+        fs::write(hooks_dir.join("scripts").join("orphan.sh"), "#!/bin/sh\n")
+            .expect("expected value");
+
+        let ignore =
+            IgnoreMatcher::compile(&["hooks/scripts/**".to_string()]).expect("expected value");
+        let mut report = LoadReport::with_matcher(&ignore);
+        let specs = load_hook_specs(&hooks_dir, &ignore, tmp.path(), &mut report)
+            .expect("an ignored scripts/ tree is hooks turned off, not scripts forgotten");
+
+        assert!(specs.is_empty());
+    }
+
+    #[test]
+    fn test_ignored_scripts_dir_enclosing_link_fails_on_the_loop() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let hooks_dir = tmp.path().join("hooks");
+        fs::create_dir_all(&hooks_dir).expect("expected value");
+        std::os::unix::fs::symlink(tmp.path(), hooks_dir.join("scripts")).expect("expected value");
+
+        let err = load_hooks_no_ignore(&hooks_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(
+            full.contains("symlink loop detected"),
+            "the loop names the link and outranks the orphan message: {full}"
+        );
+    }
+
+    #[test]
+    fn test_hook_referencing_an_ignored_script_names_the_pattern() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let hooks_dir = tmp.path().join("hooks");
+        write_hook_fixture(&hooks_dir, "deploy", "session_start", "deploy.sh");
+
+        let ignore = IgnoreMatcher::compile(&["hooks/scripts/deploy.sh".to_string()])
+            .expect("expected value");
+        let mut report = LoadReport::with_matcher(&ignore);
+        let err = load_hook_specs(&hooks_dir, &ignore, tmp.path(), &mut report)
+            .expect_err("expected error");
+
+        let full = format!("{err:#}");
+        assert!(full.contains("deploy"), "error: {full}");
+        assert!(full.contains("scripts/deploy.sh"), "error: {full}");
+        assert!(
+            full.contains("hooks/scripts/deploy.sh"),
+            "the message names the pattern: {full}"
+        );
+        assert!(!full.contains("does not exist"), "error: {full}");
+    }
+
+    #[test]
+    fn test_hook_script_excluded_by_an_ancestor_pattern_names_that_pattern() {
+        // Neither spelling matches the script's own path — both prune the
+        // directory above it — so both must still report the exclusion.
+        for pattern in ["hooks/scripts", "hooks/scripts/**"] {
+            let tmp = tempfile::tempdir().expect("expected value");
+            let hooks_dir = tmp.path().join("hooks");
+            write_hook_fixture(&hooks_dir, "deploy", "session_start", "deploy.sh");
+
+            let ignore = IgnoreMatcher::compile(&[pattern.to_string()]).expect("expected value");
+            let mut report = LoadReport::with_matcher(&ignore);
+            let err = load_hook_specs(&hooks_dir, &ignore, tmp.path(), &mut report)
+                .expect_err("expected error");
+
+            let full = format!("{err:#}");
+            assert!(full.contains(pattern), "pattern {pattern}: {full}");
+            assert!(
+                !full.contains("does not exist"),
+                "pattern {pattern}: the script is on disk, it was excluded: {full}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_hook_referencing_a_missing_script_still_says_does_not_exist() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let hooks_dir = tmp.path().join("hooks");
+        write_hook_fixture(&hooks_dir, "deploy", "session_start", "deploy.sh");
+        fs::remove_file(hooks_dir.join("scripts").join("deploy.sh")).expect("expected value");
+
+        let err = load_hooks_no_ignore(&hooks_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(full.contains("does not exist"), "error: {full}");
+    }
+
+    #[test]
+    fn test_hook_script_reference_tolerates_curdir_components() {
+        for script in ["./scripts/deploy.sh", "././scripts/deploy.sh"] {
+            let tmp = tempfile::tempdir().expect("expected value");
+            let hooks_dir = tmp.path().join("hooks");
+            fs::create_dir_all(hooks_dir.join("scripts")).expect("expected value");
+            fs::write(hooks_dir.join("scripts").join("deploy.sh"), "#!/bin/sh\n")
+                .expect("expected value");
+            fs::write(
+                hooks_dir.join("hooks.toml"),
+                format!("[hooks.deploy]\nevents = [\"session_start\"]\nscript = \"{script}\"\n"),
+            )
+            .expect("expected value");
+
+            load_hooks_no_ignore(&hooks_dir).expect("expected value");
+        }
+    }
+
+    #[test]
+    fn test_ignored_dangling_link_is_recorded_once() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let spec = tmp.path().join("spec");
+        let agents_dir = spec.join("agents");
+        fs::create_dir_all(&agents_dir).expect("expected value");
+        std::os::unix::fs::symlink(tmp.path().join("gone.md"), agents_dir.join("broken.md"))
+            .expect("expected value");
+
+        let ignore =
+            IgnoreMatcher::compile(&["agents/broken.md".to_string()]).expect("expected value");
+        let mut report = LoadReport::with_matcher(&ignore);
+        load_agent_specs(&agents_dir, &ignore, &spec, &mut report).expect("expected value");
+
+        assert_eq!(report.ignored.len(), 1);
+        assert_eq!(report.pattern_hits, vec![1]);
+    }
+
+    #[test]
+    fn test_skill_whose_only_md_is_an_ignored_broken_link_is_skipped() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let spec = tmp.path().join("spec");
+        let skills_dir = spec.join("skills");
+        let skill_dir = skills_dir.join("demo");
+        fs::create_dir_all(&skill_dir).expect("expected value");
+        std::os::unix::fs::symlink(tmp.path().join("gone.md"), skill_dir.join("SKILL.md"))
+            .expect("expected value");
+
+        let ignore =
+            IgnoreMatcher::compile(&["skills/demo/SKILL.md".to_string()]).expect("expected value");
+        let mut report = LoadReport::with_matcher(&ignore);
+        let specs = load_skill_specs(&skills_dir, &ignore, &spec, &mut report)
+            .expect("an ignored spec file is never resolved");
+
+        assert!(specs.is_empty());
+    }
+
+    #[test]
+    fn test_skill_with_no_md_at_all_still_fails() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let spec = tmp.path().join("spec");
+        let skill_dir = spec.join("skills").join("demo");
+        fs::create_dir_all(skill_dir.join("scripts")).expect("expected value");
+
+        let ignore = IgnoreMatcher::empty();
+        let mut report = LoadReport::default();
+        let err = load_skill_specs(&spec.join("skills"), &ignore, &spec, &mut report)
+            .expect_err("expected error");
+        assert!(err.to_string().contains("no .md file"), "error: {err}");
+    }
+
+    #[test]
+    fn test_load_report_record_dedupes_a_repeated_path() {
+        let ignore = IgnoreMatcher::compile(&["agents/x.md".to_string()]).expect("expected value");
+        let mut report = LoadReport::with_matcher(&ignore);
+        report.record(PathBuf::from("agents/x.md"), 0);
+        report.record(PathBuf::from("agents/x.md"), 0);
+
+        assert_eq!(report.ignored.len(), 1);
+        assert_eq!(report.pattern_hits, vec![1]);
+    }
+
+    #[test]
+    fn test_ignored_plain_file_under_skills_root_counts_as_a_pattern_hit() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let spec = tmp.path().join("spec");
+        let skills_dir = spec.join("skills");
+        let skill_dir = skills_dir.join("s");
+        fs::create_dir_all(&skill_dir).expect("expected value");
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nid: s\ndescription: s\nuser_invocable: true\nagent_invocable: false\n---\nbody.\n",
+        )
+        .expect("expected value");
+        fs::write(skills_dir.join("README.md"), "# notes").expect("expected value");
+
+        let ignore =
+            IgnoreMatcher::compile(&["skills/README.md".to_string()]).expect("expected value");
+        let mut report = LoadReport::with_matcher(&ignore);
+        let specs =
+            load_skill_specs(&skills_dir, &ignore, &spec, &mut report).expect("expected value");
+
+        assert_eq!(specs.len(), 1);
+        assert_eq!(
+            report.ignored[0].rel_path,
+            PathBuf::from("skills/README.md")
+        );
+        assert!(report.unused_pattern_indices().is_empty());
+    }
+
+    #[test]
+    fn test_ignored_supporting_file_named_by_a_child_pattern_is_not_emitted() {
+        // Regression: the scan under a skill directory and the walk over it both
+        // run the child probe, so a `foo/**` pattern cannot exclude a path at one
+        // and admit it at the other — which reported a file as ignored and
+        // emitted it anyway.
+        let tmp = tempfile::tempdir().expect("expected value");
+        let spec = tmp.path().join("spec");
+        let skills_dir = spec.join("skills");
+        let skill_dir = skills_dir.join("demo");
+        fs::create_dir_all(&skill_dir).expect("expected value");
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nid: demo\ndescription: d\nuser_invocable: true\nagent_invocable: false\n---\nbody.\n",
+        )
+        .expect("expected value");
+        fs::write(skill_dir.join("helper.sh"), "#!/bin/sh\n").expect("expected value");
+
+        let ignore = IgnoreMatcher::compile(&["skills/demo/helper.sh/**".to_string()])
+            .expect("expected value");
+        let mut report = LoadReport::with_matcher(&ignore);
+        let specs =
+            load_skill_specs(&skills_dir, &ignore, &spec, &mut report).expect("expected value");
+
+        assert_eq!(specs.len(), 1);
+        let Spec::Skill(ref sk) = specs[0] else {
+            panic!("expected Skill variant")
+        };
+        assert!(
+            sk.supporting_files.is_empty(),
+            "a path the report calls ignored must not be emitted: {:?}",
+            sk.supporting_files.keys().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            report.ignored[0].rel_path,
+            PathBuf::from("skills/demo/helper.sh")
+        );
+    }
+
+    #[test]
+    fn test_hook_script_reference_is_case_sensitive() {
+        // The declared script is looked up in the loaded set rather than stat'd,
+        // so a case mismatch fails even on a case-insensitive filesystem, where
+        // the old `is_file()` stat accepted it and emitted a hook command whose
+        // path matched no emitted file.
+        let tmp = tempfile::tempdir().expect("expected value");
+        let hooks_dir = tmp.path().join("hooks");
+        fs::create_dir_all(hooks_dir.join("scripts")).expect("expected value");
+        fs::write(hooks_dir.join("scripts").join("deploy.sh"), "#!/bin/sh\n")
+            .expect("expected value");
+        fs::write(
+            hooks_dir.join("hooks.toml"),
+            "[hooks.deploy]\nevents = [\"session_start\"]\nscript = \"scripts/Deploy.sh\"\n",
+        )
+        .expect("expected value");
+
+        let err = load_hooks_no_ignore(&hooks_dir).expect_err("expected error");
+        let full = format!("{err:#}");
+        assert!(full.contains("does not exist"), "error: {full}");
     }
 }

@@ -354,22 +354,11 @@ fn format_ignored_listing(matcher: &IgnoreMatcher, report: &LoadReport) -> Vec<S
         return Vec::new();
     }
 
-    let pruned_count = report.ignored.iter().filter(|p| p.pruned).count();
     let total = report.ignored.len();
 
     let mut lines = Vec::with_capacity(1 + total);
     let paths_word = if total == 1 { "path" } else { "paths" };
-    let summary = if pruned_count == 0 {
-        format!("ignoring {total} {paths_word}:")
-    } else {
-        let subtrees_word = if pruned_count == 1 {
-            "subtree"
-        } else {
-            "subtrees"
-        };
-        format!("ignoring {total} {paths_word} ({pruned_count} pruned {subtrees_word}):")
-    };
-    lines.push(summary);
+    lines.push(format!("ignoring {total} {paths_word}:"));
 
     let max_rel = report
         .ignored
@@ -379,9 +368,8 @@ fn format_ignored_listing(matcher: &IgnoreMatcher, report: &LoadReport) -> Vec<S
         .unwrap_or(0);
     for entry in &report.ignored {
         let pattern = matcher.pattern(entry.pattern_index).unwrap_or("<unknown>");
-        let suffix = if entry.pruned { ", pruned" } else { "" };
         lines.push(format!(
-            "  {:<max_rel$}  (pattern: {pattern}{suffix})",
+            "  {:<max_rel$}  (pattern: {pattern})",
             entry.rel_path.display(),
         ));
     }
@@ -514,45 +502,43 @@ mod tests {
     }
 
     #[test]
-    fn test_format_ignored_listing_renders_file_and_pruned_entries() {
+    fn test_format_ignored_listing_renders_every_entry_with_its_pattern() {
         let matcher =
             IgnoreMatcher::compile(&["**/*.bats".to_string(), "skills/deploy/**".to_string()])
                 .expect("expected value");
         let mut report = LoadReport::with_matcher(&matcher);
-        report.record(PathBuf::from("skills/s/test.bats"), 0, false);
-        report.record(PathBuf::from("skills/deploy"), 1, true);
+        report.record(PathBuf::from("skills/s/test.bats"), 0);
+        report.record(PathBuf::from("skills/deploy"), 1);
 
         let lines = format_ignored_listing(&matcher, &report);
         assert_eq!(lines.len(), 3);
-        assert_eq!(lines[0], "ignoring 2 paths (1 pruned subtree):");
+        assert_eq!(lines[0], "ignoring 2 paths:");
         assert!(lines[1].contains("skills/s/test.bats"));
         assert!(lines[1].contains("(pattern: **/*.bats)"));
         assert!(lines[2].contains("skills/deploy"));
-        assert!(lines[2].contains("(pattern: skills/deploy/**, pruned)"));
+        assert!(lines[2].contains("(pattern: skills/deploy/**)"));
     }
 
     #[test]
-    fn test_format_ignored_listing_drops_pruned_parenthetical_when_zero() {
-        // When no subtrees are pruned, the summary should be "ignoring 1 path:"
-        // — not "ignoring 1 path (0 pruned subtrees):".
+    fn test_format_ignored_listing_singular_summary() {
         let matcher = IgnoreMatcher::compile(&["**/*.bats".to_string()]).expect("expected value");
         let mut report = LoadReport::with_matcher(&matcher);
-        report.record(PathBuf::from("skills/s/test.bats"), 0, false);
+        report.record(PathBuf::from("skills/s/test.bats"), 0);
 
         let lines = format_ignored_listing(&matcher, &report);
         assert_eq!(lines[0], "ignoring 1 path:");
     }
 
     #[test]
-    fn test_format_ignored_listing_plural_pruned() {
+    fn test_format_ignored_listing_plural_summary() {
         let matcher =
             IgnoreMatcher::compile(&["skills/a/**".to_string(), "skills/b/**".to_string()])
                 .expect("expected value");
         let mut report = LoadReport::with_matcher(&matcher);
-        report.record(PathBuf::from("skills/a"), 0, true);
-        report.record(PathBuf::from("skills/b"), 1, true);
+        report.record(PathBuf::from("skills/a"), 0);
+        report.record(PathBuf::from("skills/b"), 1);
 
         let lines = format_ignored_listing(&matcher, &report);
-        assert_eq!(lines[0], "ignoring 2 paths (2 pruned subtrees):");
+        assert_eq!(lines[0], "ignoring 2 paths:");
     }
 }

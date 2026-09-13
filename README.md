@@ -123,6 +123,8 @@ spec/skills/deploy/
 ignore = ["**/*.bats"]
 ```
 
+A pattern excludes a path before agentspec reads it, so an ignored path is never a source of load errors — see [Sharing spec content](#sharing-spec-content) for what that means for a broken symlink.
+
 `agentspec validate` reports which files were ignored and warns about patterns that matched zero files. Use `agentspec compile --verbose` or `agentspec sync --verbose` (or `--dry-run`) to see the same listing during a build.
 
 Gitignore-style negation (`!pattern`) and trailing-slash directory sugar (`foo/`) are **not** supported — write `foo/**` explicitly.
@@ -167,6 +169,8 @@ args = ["--strict"]
 ```
 
 `spec/hooks/scripts/` contains both entry scripts (referenced by `[hooks.<id>].script`) and any helper scripts they `source` — agentspec walks the directory and copies all files. Helper conventions like `_common.sh` are supported. The `_agentspec_*` filename prefix is reserved for future use and rejected at load time.
+
+Ignoring a script that a `hooks.toml` entry declares fails the load, naming the hook, the script, and the pattern — remove the pattern or remove the hook entry. This is the one place where excluding a path produces an error, and the error is about the declaration rather than about the excluded path: agentspec would otherwise emit a hook command pointing at a file it never writes.
 
 `args` is an optional list of literal strings passed to the script as positional arguments (`$1`, `$2`, …), alongside the canonical payload on stdin — the same script can back several entries with different parameters, as `audit-bash` and `audit-bash-strict` do above. agentspec quotes every value unconditionally; `hooks.toml` resolves no templating inside `args`, so values are literal text, never shell syntax. Argument values are copied verbatim into the user's `settings.json` or `hooks.json` by `sync`, so they are not a place for secrets. See [`docs/hooks-canonical.md`](docs/hooks-canonical.md#script-invocation-and-argv) for the full argv contract.
 
@@ -259,7 +263,7 @@ A spec directory is trusted input, the way an executable is. agentspec reads wha
 
 Prefer relative symlinks that stay inside the repository, since those survive a clone. A directory link whose target encloses the directory the link sits in is refused before the walk descends into it — at each spec root, at each entry under `skills/`, and at each directory a walk reaches — and the error names the link.
 
-A dangling target or a symlink loop is a compile-time error that has to be repaired or removed, so a target that exists only on one machine fails loudly elsewhere rather than producing incomplete output. Naming the link in `[spec].ignore` does not exempt a dangling target, since an entry that fails to resolve is never matched against the patterns. What a pattern does reach is a link the load has not tried yet, by any of three routes: prune one of a broken link's parent directories, name an enclosing link, or ignore a skill's only spec file — which skips that skill whole, so nothing under it is read at all, including a broken link the pattern never named. An enclosing link is the narrower of the two, and which walk it sits in decides how narrow. `agents/`, `rules/`, `hooks/scripts/`, and each skill directory are each walked as a unit, and a link cycling back into the walk it sits in is caught while the entry is produced, before any pattern applies — so inside those, a pattern reaches only a link pointing outside its own walk. The entries directly under `skills/` are scanned rather than walked, and a pattern reaches every enclosing link among them. A spec root that is itself an enclosing link is checked before its own prune, so ignoring the root does not exempt it either. None of the three is a way to live with a broken link so much as a way to keep a subtree out of the loaded set entirely, and at the top level under a spec root the narrowest pattern that reaches is the one covering every sibling.
+A dangling target or a symlink loop is a compile-time error that has to be repaired or removed, so a target that exists only on one machine fails loudly elsewhere rather than producing incomplete output. `[spec].ignore` is what takes a path out of that: a pattern decides membership in the loaded set before anything is resolved, so naming a broken or looping link — or any directory above it — keeps the load off it entirely.
 
 `sources_dir` itself is held to the same standard, and must exist: every spec directory is a path underneath it, so a `sources_dir` that is missing, unreadable, or a broken link would otherwise look like a spec library that had become empty — and `sync` would remove every file an earlier run installed. `agentspec remove` reads the manifest rather than the spec directory, so it still uninstalls when the sources are gone.
 
