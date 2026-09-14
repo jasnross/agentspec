@@ -9,12 +9,13 @@ use gray_matter::Matter;
 use gray_matter::engine::YAML;
 use indexmap::IndexMap;
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use walkdir::WalkDir;
 
 use crate::presets::ProviderPresetsMap;
 use crate::spec::{
-    AgentFrontmatter, AgentSpec, HookFrontmatter, HookSpec, RuleFrontmatter, RuleSpec,
-    SkillFrontmatter, SkillSpec, Spec, SupportingFile,
+    AgentSpec, HookFrontmatter, HookSpec, RuleSpec, SkillFrontmatter, SkillSpec, Spec,
+    SupportingFile,
 };
 use crate::validate::{ValidationError, validate_semantics};
 
@@ -723,12 +724,22 @@ fn load_specs_from_dirs(dirs: &SpecDirs, report: &mut LoadReport) -> Result<Vec<
     Ok(specs)
 }
 
-fn load_agent_specs(
+/// Load every `.md` file under `dir` as one flat spec kind.
+///
+/// Deserializes `F` from each file's YAML frontmatter and delegates variant
+/// construction to `make`, so a spec kind that is one `.md` file per spec
+/// differs from its siblings only in those two things.
+fn load_md_specs<F, M>(
     dir: &Path,
     ignore: &IgnoreMatcher,
     anchor: &Path,
     report: &mut LoadReport,
-) -> Result<Vec<Spec>> {
+    make: M,
+) -> Result<Vec<Spec>>
+where
+    F: DeserializeOwned,
+    M: Fn(PathBuf, F, String) -> Spec,
+{
     if !admit_spec_dir(dir, ignore, anchor, report)? {
         return Ok(Vec::new());
     }
@@ -743,29 +754,34 @@ fn load_agent_specs(
     md_paths.sort();
 
     let matter = Matter::<YAML>::new();
-
     let mut specs = Vec::new();
-
     for path in md_paths {
         let content = fs::read_to_string(&path)
             .with_context(|| format!("failed to read {}", path.display()))?;
-
         let parsed = matter
-            .parse::<AgentFrontmatter>(&content)
+            .parse::<F>(&content)
             .with_context(|| format!("failed to parse frontmatter in {}", path.display()))?;
         let frontmatter = parsed
             .data
             .ok_or_else(|| anyhow!("missing spec for {}", path.display()))?;
-        let body = parsed.content;
+        specs.push(make(path, frontmatter, parsed.content));
+    }
+    Ok(specs)
+}
 
-        specs.push(Spec::Agent(AgentSpec {
+fn load_agent_specs(
+    dir: &Path,
+    ignore: &IgnoreMatcher,
+    anchor: &Path,
+    report: &mut LoadReport,
+) -> Result<Vec<Spec>> {
+    load_md_specs(dir, ignore, anchor, report, |path, frontmatter, body| {
+        Spec::Agent(AgentSpec {
             path,
             frontmatter,
             body,
-        }));
-    }
-
-    Ok(specs)
+        })
+    })
 }
 
 fn load_skill_specs(
@@ -963,43 +979,13 @@ fn load_rule_specs(
     anchor: &Path,
     report: &mut LoadReport,
 ) -> Result<Vec<Spec>> {
-    if !admit_spec_dir(dir, ignore, anchor, report)? {
-        return Ok(Vec::new());
-    }
-
-    let mut md_paths = Vec::new();
-    walk_spec_tree(dir, ignore, anchor, report, |entry| {
-        if entry.file_type().is_file() && entry.path().extension().is_some_and(|ext| ext == "md") {
-            md_paths.push(entry.into_path());
-        }
-        Ok(())
-    })?;
-    md_paths.sort();
-
-    let matter = Matter::<YAML>::new();
-
-    let mut specs = Vec::new();
-
-    for path in md_paths {
-        let content = fs::read_to_string(&path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
-
-        let parsed = matter
-            .parse::<RuleFrontmatter>(&content)
-            .with_context(|| format!("failed to parse frontmatter in {}", path.display()))?;
-        let frontmatter = parsed
-            .data
-            .ok_or_else(|| anyhow!("missing spec for {}", path.display()))?;
-        let body = parsed.content;
-
-        specs.push(Spec::Rule(RuleSpec {
+    load_md_specs(dir, ignore, anchor, report, |path, frontmatter, body| {
+        Spec::Rule(RuleSpec {
             path,
             frontmatter,
             body,
-        }));
-    }
-
-    Ok(specs)
+        })
+    })
 }
 
 /// On-disk shape of `hooks.toml`.
