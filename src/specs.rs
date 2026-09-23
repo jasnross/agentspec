@@ -17,6 +17,7 @@ use crate::spec::{
     AgentSpec, HookFrontmatter, HookSpec, RuleSpec, SkillFrontmatter, SkillSpec, Spec,
     SupportingFile,
 };
+use crate::symlink::{dangling_symlink, is_symlink, resolve_dir_entry, unresolvable_symlink};
 use crate::validate::{ValidationError, validate_semantics};
 
 // ---------------------------------------------------------------------------
@@ -563,18 +564,6 @@ fn spec_root_present(path: &Path, kind: RootKind) -> Result<bool> {
     }
 }
 
-/// The diagnostic message for a symlink whose target could not be stat'd, named
-/// on the link rather than on whatever the caller was reaching for through it.
-fn unresolvable_symlink(path: &Path, e: &std::io::Error) -> String {
-    let source = path.display();
-    if e.kind() == std::io::ErrorKind::NotFound {
-        return dangling_symlink(path);
-    }
-    // A cycle lands here as the platform's `ELOOP`, whose `ErrorKind` is still
-    // unstable, as do `EACCES` and `ENOTDIR`. Let the OS supply the reason.
-    format!("{source}: symlink target could not be resolved: {e}")
-}
-
 /// Builds an error reading `message`, with `hint` trailing it.
 ///
 /// Not `anyhow::Context`, which would make the hint the headline and demote the
@@ -583,38 +572,6 @@ fn unresolvable_symlink(path: &Path, e: &std::io::Error) -> String {
 /// from discarding a cause chain: there is none to discard.
 fn with_hint(message: &str, hint: &str) -> anyhow::Error {
     anyhow!("{message} ({hint})")
-}
-
-/// The diagnostic message for a symlink with nothing at its target.
-fn dangling_symlink(path: &Path) -> String {
-    format!("{}: symlink target does not exist", path.display())
-}
-
-/// Resolves the `read_dir` entry at `path` through any symlink, returning the
-/// file type of the target.
-///
-/// [`fs::DirEntry::file_type`] describes the link itself, so a symlinked skill
-/// directory or spec file reports neither `is_dir` nor `is_file` and would drop
-/// out of a filter written against it. Resolving through the link also means an
-/// unresolvable target surfaces as an error here rather than as a silent skip,
-/// matching the contract [`walk_spec_tree`] holds for the `WalkDir` passes.
-/// Both paths share [`unresolvable_symlink`], so a cycle reads the same either
-/// way — except where `walkdir` catches one through its own ancestor tracking,
-/// which can also name the directory the link cycles back to.
-fn resolve_dir_entry(path: &Path) -> Result<fs::FileType> {
-    let e = match path.metadata() {
-        Ok(metadata) => return Ok(metadata.file_type()),
-        Err(e) => e,
-    };
-    if is_symlink(path) {
-        return Err(anyhow!(unresolvable_symlink(path, &e)));
-    }
-    Err(e).with_context(|| format!("failed to read {}", path.display()))
-}
-
-fn is_symlink(path: &Path) -> bool {
-    path.symlink_metadata()
-        .is_ok_and(|m| m.file_type().is_symlink())
 }
 
 /// Stage 1: specs loaded from disk.
