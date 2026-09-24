@@ -6359,3 +6359,238 @@ claude = { model = "opus", effort = "high" }
         "expected an exact `effort: high` line in:\n{content}"
     );
 }
+
+/// Append `line` to the fixture's agent spec body, so a compile exercises the
+/// include it names.
+#[cfg(unix)]
+fn append_to_agent_body(dir: &Path, line: &str) {
+    let spec = dir.join("spec/agents/test-agent.md");
+    let read = std::fs::read_to_string(&spec);
+    assert!(read.is_ok(), "read agent spec: {read:?}");
+    let body = format!("{}\n{line}\n", read.unwrap_or_default());
+    let written = std::fs::write(&spec, body);
+    assert!(written.is_ok(), "write agent spec: {written:?}");
+}
+
+#[test]
+#[cfg(unix)]
+fn test_compile_resolves_symlinked_fragment_outside_sources() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    let pool = tmp.path().join("pool");
+    std::fs::create_dir_all(&pool).expect("create pool");
+    std::fs::write(pool.join("note.md"), "Pooled fragment text.\n").expect("write pooled fragment");
+    std::os::unix::fs::symlink(pool.join("note.md"), dir.join("spec/fragments/pooled.md"))
+        .expect("link fragment");
+
+    append_to_agent_body(&dir, "{% include \"fragments/pooled.md\" %}");
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    for provider in ["claude", "cursor", "opencode"] {
+        let generated = dir.join(format!("generated/{provider}/agents/test-agent.md"));
+        let body = std::fs::read_to_string(&generated)
+            .unwrap_or_else(|e| panic!("read {}: {e}", generated.display()));
+        assert!(
+            body.contains("Pooled fragment text."),
+            "{provider} output missing the pooled fragment:\n{body}"
+        );
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn test_compile_resolves_symlinked_template_outside_sources() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    let pool = tmp.path().join("pool");
+    std::fs::create_dir_all(&pool).expect("create pool");
+    std::fs::write(
+        pool.join("critique.md"),
+        "# Pooled Critique\n\n{% block lenses required %}{% endblock %}\n",
+    )
+    .expect("write pooled template");
+
+    std::fs::create_dir_all(dir.join("spec/templates")).expect("create templates dir");
+    std::os::unix::fs::symlink(
+        pool.join("critique.md"),
+        dir.join("spec/templates/critique.md"),
+    )
+    .expect("link template");
+
+    std::fs::write(
+        dir.join("spec/agents/derived-agent.md"),
+        "---\nid: derived-agent\ndescription: An agent derived from a pooled template\n---\n\
+         {% extends \"templates/critique.md\" %}\n\
+         {% block lenses %}Derived lens body.{% endblock %}\n",
+    )
+    .expect("write derived agent");
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    let body = std::fs::read_to_string(dir.join("generated/claude/agents/derived-agent.md"))
+        .expect("read derived agent");
+    assert!(body.contains("# Pooled Critique"), "{body}");
+    assert!(body.contains("Derived lens body."), "{body}");
+}
+
+#[test]
+#[cfg(unix)]
+fn test_compile_resolves_symlinked_fragment_directory() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    let pool = tmp.path().join("pool");
+    std::fs::create_dir_all(&pool).expect("create pool");
+    std::fs::write(pool.join("note.md"), "Text from the linked directory.\n")
+        .expect("write pooled fragment");
+    std::os::unix::fs::symlink(&pool, dir.join("spec/fragments/pool")).expect("link directory");
+
+    append_to_agent_body(&dir, "{% include \"fragments/pool/note.md\" %}");
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+
+    let body = std::fs::read_to_string(dir.join("generated/claude/agents/test-agent.md"))
+        .expect("read agent");
+    assert!(body.contains("Text from the linked directory."), "{body}");
+}
+
+#[test]
+#[cfg(unix)]
+fn test_compile_fails_on_dangling_fragment_symlink() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    std::os::unix::fs::symlink(
+        tmp.path().join("nowhere/note.md"),
+        dir.join("spec/fragments/pooled.md"),
+    )
+    .expect("link fragment");
+    append_to_agent_body(&dir, "{% include \"fragments/pooled.md\" %}");
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "a dangling fragment link must not compile:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("symlink target does not exist"),
+        "stderr: {stderr}"
+    );
+    assert!(stderr.contains("fragments/pooled.md"), "stderr: {stderr}");
+}
+
+#[test]
+#[cfg(unix)]
+fn test_compile_fails_on_broken_fragment_directory_symlink() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    std::os::unix::fs::symlink(tmp.path().join("nowhere"), dir.join("spec/fragments/pool"))
+        .expect("link directory");
+    append_to_agent_body(&dir, "{% include \"fragments/pool/note.md\" %}");
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "a broken fragment directory link must not compile:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("symlink target does not exist"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("fragments/pool"),
+        "stderr must name the directory link: {stderr}"
+    );
+    assert!(
+        !stderr.contains("template not found"),
+        "stderr must not report the leaf as absent: {stderr}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn test_compile_fails_on_dangling_fragment_symlink_under_ignore_missing() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    std::os::unix::fs::symlink(
+        tmp.path().join("nowhere/note.md"),
+        dir.join("spec/fragments/pooled.md"),
+    )
+    .expect("link fragment");
+    append_to_agent_body(&dir, "{% include \"fragments/pooled.md\" ignore missing %}");
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "`ignore missing` must not suppress a broken link:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("symlink target does not exist"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn test_compile_fails_on_absolute_include_path() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    let outside = tmp.path().join("outside.md");
+    std::fs::write(&outside, "Outside content.\n").expect("write outside file");
+    append_to_agent_body(&dir, &format!("{{% include \"{}\" %}}", outside.display()));
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "an absolute include path must not compile:\n{stderr}"
+    );
+    assert!(stderr.contains("must be relative"), "stderr: {stderr}");
+    assert!(
+        stderr.contains(&outside.display().to_string()),
+        "stderr must name the path: {stderr}"
+    );
+}

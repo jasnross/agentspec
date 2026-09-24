@@ -248,7 +248,7 @@ If your spec set contains hooks and `[sync.opencode]` is configured, agents/skil
 
 ### Sharing spec content
 
-A spec, or a file a spec brings with it, may be a symlink. agentspec follows it at load time and emits the target's content as a regular file at the symlink's own path, so a skill's instructions reference a shared script exactly as they would a local one. This applies to everything the load stage reads: `spec/agents/`, `spec/skills/`, `spec/rules/`, `spec/hooks/hooks.toml`, and `spec/hooks/scripts/`. Fragments resolved by `{% include %}` are read later, by the templating layer, which still requires the target to stay inside the include root.
+A spec, or a file a spec brings with it, may be a symlink. agentspec follows it at load time and emits the target's content as a regular file at the symlink's own path, so a skill's instructions reference a shared script exactly as they would a local one. This applies to everything the load stage reads: `spec/agents/`, `spec/skills/`, `spec/rules/`, `spec/hooks/hooks.toml`, and `spec/hooks/scripts/`. A fragment or template reached by `{% include %}` or `{% extends %}` follows the same rule: the link resolves to its target wherever that target lives, and a link that does not resolve is a compile-time error naming the link and the target it points at. A directory link works too, so one link can supply a whole pool of fragments.
 
 The target may live anywhere, including outside `sources_dir`. This is how several spec directories share one pool of helper scripts:
 
@@ -263,7 +263,7 @@ A spec directory is trusted input, the way an executable is. agentspec reads wha
 
 Prefer relative symlinks that stay inside the repository, since those survive a clone. A directory link whose target encloses the directory the link sits in is refused before the walk descends into it — at each spec root, at each entry under `skills/`, and at each directory a walk reaches — and the error names the link.
 
-A dangling target or a symlink loop is a compile-time error that has to be repaired or removed, so a target that exists only on one machine fails loudly elsewhere rather than producing incomplete output. `[spec].ignore` is what takes a path out of that: a pattern decides membership in the loaded set before anything is resolved, so naming a broken or looping link — or any directory above it — keeps the load off it entirely.
+A dangling target or a symlink loop is a compile-time error that has to be repaired or removed, so a target that exists only on one machine fails loudly elsewhere rather than producing incomplete output. `[spec].ignore` is what takes a path out of that at load time: a pattern decides membership in the loaded set before anything is resolved, so naming a broken or looping link — or any directory above it — keeps the load off it entirely. An include resolves at render time, against a name rather than a member of that set, so a pattern does not exempt a broken link an `{% include %}` reaches. Neither does `ignore missing`, which suppresses a name with no file at it and not a link that fails to resolve.
 
 `sources_dir` itself is held to the same standard, and must exist: every spec directory is a path underneath it, so a `sources_dir` that is missing, unreadable, or a broken link would otherwise look like a spec library that had become empty — and `sync` would remove every file an earlier run installed. `agentspec remove` reads the manifest rather than the spec directory, so it still uninstalls when the sources are gone.
 
@@ -277,6 +277,8 @@ repo/
 ```
 
 A spec's `id` comes from its frontmatter, so sharing one spec into two spec directories is unremarkable — they compile separately. Symlinking the same spec twice into one directory is a duplicate id, reported as the usual validation error.
+
+Content shared into more than one spec directory should address its own includes through a prefix every consumer registers — an `extra_include_dirs` name, or a directory symlink both consumers create under the same name — rather than by a bare path each consumer has to happen to satisfy. Sharing a file does not share what that file includes: a bare include name resolves against whichever tree is compiling, so a consumer holding a different file at that path renders the shared content differently, and agentspec reports nothing, because it compiles one tree at a time and cannot see how the name resolved anywhere else. A consumer holding no file at that path is the loud case, and fails the compile.
 
 ### Frontmatter reference
 
@@ -419,7 +421,7 @@ spec/skills/code-review/
 
 Both syntaxes resolve to the same file. `./` includes can nest — a colocated file that itself uses `{% include "./subsection.md" %}` resolves relative to its own directory.
 
-`../` is not supported — use full paths for cross-directory references.
+`../` is not supported — use full paths for cross-directory references. An absolute include path is an error for the same reason. A symlink, or a directory registered under `extra_include_dirs`, is how an include reaches outside the spec tree.
 
 #### Variables
 

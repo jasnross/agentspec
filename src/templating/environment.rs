@@ -7,6 +7,7 @@ use minijinja::Environment;
 use super::ExtraIncludeDir;
 use crate::provider::Provider;
 use crate::spec::{Spec, ToolFrontmatter};
+use crate::symlink::{is_symlink, unresolvable_symlink};
 
 /// Build a `MiniJinja` environment for `spec` with a lazy loader that
 /// resolves include paths relative to `sources_dir`, plus named extra dirs.
@@ -60,16 +61,30 @@ pub fn build_environment(
     env
 }
 
-/// Resolve an include path to file content, with two-tier error handling:
-/// author mistakes return `Err` (actionable); security boundaries return
-/// `Ok(None)` (silent).
+/// Resolve an include path to file content.
+///
+/// Every refusal returns `Err` naming its cause, so none of them is
+/// suppressible by `ignore missing`. `Ok(None)` carries the single meaning
+/// that no file sits at `name` and no component of it below the include root
+/// is a broken symlink — which is what `ignore missing` exists to suppress,
+/// and what lets this function fall through to the next `extra_include_dirs`
+/// prefix.
 pub(super) fn resolve_include(
     name: &str,
     sources_dir: &Path,
     extra_dirs: &[ExtraIncludeDir],
 ) -> Result<Option<String>, minijinja::Error> {
-    if Path::new(name).has_root() {
-        return Ok(None);
+    // Matched on the leading component rather than through `has_root`, which
+    // reads as total but is false for a drive-relative name like `C:x.md` —
+    // a name `join` would resolve against the process working directory.
+    if matches!(
+        Path::new(name).components().next(),
+        Some(std::path::Component::Prefix(_) | std::path::Component::RootDir)
+    ) {
+        return Err(minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!("include paths must be relative, got absolute path \"{name}\""),
+        ));
     }
 
     if Path::new(name)
@@ -93,7 +108,7 @@ pub(super) fn resolve_include(
     }
 
     let full = sources_dir.join(name);
-    if let Some(content) = read_if_within(sources_dir, &full)? {
+    if let Some(content) = read_optional(sources_dir, &full)? {
         return Ok(Some(content));
     }
 
@@ -101,7 +116,7 @@ pub(super) fn resolve_include(
         let prefix = format!("{}/", extra.name);
         if let Some(rest) = name.strip_prefix(&prefix) {
             let full = extra.path.join(rest);
-            if let Some(content) = read_if_within(&extra.path, &full)? {
+            if let Some(content) = read_optional(&extra.path, &full)? {
                 return Ok(Some(content));
             }
         }
@@ -110,40 +125,68 @@ pub(super) fn resolve_include(
     Ok(None)
 }
 
-fn read_if_within(root: &Path, full: &Path) -> Result<Option<String>, minijinja::Error> {
-    let canonical_root = match std::fs::canonicalize(root) {
-        Ok(p) => p,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => {
-            return Err(minijinja::Error::new(
-                minijinja::ErrorKind::InvalidOperation,
-                format!("failed to resolve include root directory: {e}"),
-            ));
-        }
-    };
-    let canonical_full = match std::fs::canonicalize(full) {
-        Ok(p) => p,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => {
-            return Err(minijinja::Error::new(
-                minijinja::ErrorKind::InvalidOperation,
-                format!("failed to resolve include path: {e}"),
-            ));
-        }
-    };
-
-    if !canonical_full.starts_with(&canonical_root) {
-        return Ok(None);
-    }
-
-    match std::fs::read_to_string(&canonical_full) {
+/// Read the file at `path`, distinguishing a broken symlink from a name with
+/// nothing at it.
+///
+/// `Ok(None)` means no file sits at `path` and no component of it below `root`
+/// is a broken symlink. That is what lets [`resolve_include`] try an
+/// `extra_include_dirs` prefix next, and what `ignore missing` suppresses.
+///
+/// A symlink loop reaches the general error arm rather than
+/// [`broken_link_below`]: `read_to_string` reports it as the platform's
+/// `ELOOP`, not as `NotFound`, and that arm already names the path.
+fn read_optional(root: &Path, path: &Path) -> Result<Option<String>, minijinja::Error> {
+    match std::fs::read_to_string(path) {
         Ok(content) => Ok(Some(content)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => match broken_link_below(root, path) {
+            Some(message) => Err(minijinja::Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                message,
+            )),
+            None => Ok(None),
+        },
         Err(e) => Err(minijinja::Error::new(
             minijinja::ErrorKind::InvalidOperation,
-            format!("failed to read include file: {e}"),
+            format!("failed to read include file {}: {e}", path.display()),
         )),
     }
+}
+
+/// The diagnostic for the first component of `path` below `root` that is a
+/// symlink which does not resolve, or `None` when every component resolves and
+/// the path is simply absent.
+///
+/// The search stops at `root` because a root that does not resolve is rejected
+/// before any include is read — by `SpecDirs::new` for `sources_dir`, and by the
+/// `is_dir` check in `Templating::new` for each `extra_include_dirs` path. A
+/// link naming a target that is itself a broken link is reported at the in-tree
+/// link, which is the one the author can repair.
+fn broken_link_below(root: &Path, path: &Path) -> Option<String> {
+    // Every caller builds `path` by joining onto `root`, and `resolve_include`
+    // has already rejected a name with a root or a `..` component, so the
+    // prefix always matches. Losing the diagnostic is the right fallback for a
+    // path that is somehow not below the root, but a caller that supplies one
+    // is a wiring bug worth catching in debug.
+    debug_assert!(
+        path.starts_with(root),
+        "broken_link_below expects a path below its root"
+    );
+    let relative = path.strip_prefix(root).ok()?;
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        current.push(component);
+        let Err(e) = std::fs::metadata(&current) else {
+            continue;
+        };
+        if is_symlink(&current) {
+            let message = unresolvable_symlink(&current, &e);
+            return Some(match std::fs::read_link(&current) {
+                Ok(target) => format!("{message} (target: {})", target.display()),
+                Err(_) => message,
+            });
+        }
+    }
+    None
 }
 
 fn resolve_script(
@@ -1380,10 +1423,10 @@ mod tests {
     #[test]
     fn test_absolute_path_rejection() {
         let result = resolve_include("/etc/passwd", Path::new("/tmp"), &[]);
-        assert!(
-            result.expect("should return Ok").is_none(),
-            "absolute path should be silently rejected"
-        );
+        let err = result.expect_err("expected absolute path error");
+        let msg = err.to_string();
+        assert!(msg.contains("must be relative"), "error: {msg}");
+        assert!(msg.contains("/etc/passwd"), "error: {msg}");
     }
 
     #[test]
@@ -1394,25 +1437,204 @@ mod tests {
         assert!(msg.contains("must use .md extension"), "error: {msg}");
     }
 
+    #[cfg(unix)]
     #[test]
-    fn test_symlink_containment() {
+    fn test_symlink_resolves_outside_root() {
         let tmp = tempfile::tempdir().expect("expected value");
         let outside = tempfile::tempdir().expect("expected value");
-        std::fs::write(outside.path().join("secret.md"), "secret").expect("expected value");
+        std::fs::write(outside.path().join("pooled.md"), "pooled content").expect("expected value");
 
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(
-                outside.path().join("secret.md"),
-                tmp.path().join("escape.md"),
-            )
+        std::os::unix::fs::symlink(
+            outside.path().join("pooled.md"),
+            tmp.path().join("escape.md"),
+        )
+        .expect("expected value");
+
+        let result = resolve_include("escape.md", tmp.path(), &[]).expect("should return Ok");
+        assert_eq!(result.as_deref(), Some("pooled content"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_dangling_symlink_include_errors() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let target = tmp.path().join("nowhere/pooled.md");
+        std::os::unix::fs::symlink(&target, tmp.path().join("dangling.md"))
             .expect("expected value");
 
-            let result = resolve_include("escape.md", tmp.path(), &[]).expect("should return Ok");
-            assert!(
-                result.is_none(),
-                "symlink escape should be silently rejected"
-            );
-        }
+        let err = resolve_include("dangling.md", tmp.path(), &[])
+            .expect_err("expected dangling symlink error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("symlink target does not exist"),
+            "error: {msg}"
+        );
+        assert!(msg.contains("dangling.md"), "error: {msg}");
+        assert!(
+            msg.contains(&target.display().to_string()),
+            "error should name the target: {msg}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_broken_directory_symlink_above_leaf_errors() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        std::fs::create_dir_all(tmp.path().join("fragments")).expect("expected value");
+        let target = tmp.path().join("nowhere");
+        std::os::unix::fs::symlink(&target, tmp.path().join("fragments/pool"))
+            .expect("expected value");
+
+        let err = resolve_include("fragments/pool/note.md", tmp.path(), &[])
+            .expect_err("expected broken directory symlink error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("symlink target does not exist"),
+            "error: {msg}"
+        );
+        assert!(
+            msg.contains("fragments/pool"),
+            "error should name the directory link, not the leaf: {msg}"
+        );
+        assert!(
+            !msg.contains("note.md"),
+            "error should not name the leaf: {msg}"
+        );
+    }
+
+    /// The walk starts at the include root and only descends, so it never
+    /// stats the root itself and cannot attribute a fault to it. A root
+    /// reached through a symlink is the case that would expose the opposite:
+    /// the root's own path is a link, and reporting on it would turn every
+    /// absent name under a linked root into a spurious broken-link error.
+    #[cfg(unix)]
+    #[test]
+    fn test_absent_leaf_under_symlinked_root_returns_none() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let real_root = tmp.path().join("real");
+        std::fs::create_dir_all(&real_root).expect("expected value");
+        let linked_root = tmp.path().join("linked");
+        std::os::unix::fs::symlink(&real_root, &linked_root).expect("expected value");
+
+        let result = resolve_include("absent.md", &linked_root, &[]).expect("should return Ok");
+        assert!(result.is_none(), "absent file should resolve to Ok(None)");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_symlink_loop_include_errors() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        std::os::unix::fs::symlink(tmp.path().join("b.md"), tmp.path().join("a.md"))
+            .expect("expected value");
+        std::os::unix::fs::symlink(tmp.path().join("a.md"), tmp.path().join("b.md"))
+            .expect("expected value");
+
+        let err =
+            resolve_include("a.md", tmp.path(), &[]).expect_err("expected symlink loop error");
+        let msg = err.to_string();
+        assert!(msg.contains("a.md"), "error should name the link: {msg}");
+        // A loop arrives as the platform's `ELOOP`, not as `NotFound`, so it
+        // takes the general read arm and never reaches `broken_link_below`.
+        // Its message is therefore the OS reason, not the dangling-target one.
+        assert!(
+            !msg.contains("symlink target does not exist"),
+            "a loop must not be reported as a missing target: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_missing_file_returns_none() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        std::fs::create_dir_all(tmp.path().join("fragments")).expect("expected value");
+
+        let result =
+            resolve_include("fragments/absent.md", tmp.path(), &[]).expect("should return Ok");
+        assert!(result.is_none(), "absent file should resolve to Ok(None)");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_broken_link_suppresses_extra_dir_fallback() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let extra = tempfile::tempdir().expect("expected value");
+        std::fs::create_dir_all(tmp.path().join("shared")).expect("expected value");
+        std::fs::write(extra.path().join("note.md"), "from the extra dir").expect("expected value");
+        std::os::unix::fs::symlink(
+            tmp.path().join("nowhere.md"),
+            tmp.path().join("shared/note.md"),
+        )
+        .expect("expected value");
+
+        let extra_dirs = vec![ExtraIncludeDir {
+            name: "shared".to_string(),
+            path: extra.path().to_path_buf(),
+        }];
+        let err = resolve_include("shared/note.md", tmp.path(), &extra_dirs)
+            .expect_err("a broken in-tree link must not fall through to an extra dir");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("symlink target does not exist"),
+            "error: {msg}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_symlinked_directory_supplies_includes() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let pool = tempfile::tempdir().expect("expected value");
+        std::fs::write(pool.path().join("note.md"), "pooled note").expect("expected value");
+        std::fs::create_dir_all(tmp.path().join("fragments")).expect("expected value");
+        std::os::unix::fs::symlink(pool.path(), tmp.path().join("fragments/pool"))
+            .expect("expected value");
+
+        let result = resolve_include("fragments/pool/note.md", tmp.path(), &[])
+            .expect("should resolve through the directory link");
+        assert_eq!(result.as_deref(), Some("pooled note"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extra_dir_symlink_resolves_outside_its_root() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let extra = tempfile::tempdir().expect("expected value");
+        let outside = tempfile::tempdir().expect("expected value");
+        std::fs::write(outside.path().join("pooled.md"), "outside the extra dir")
+            .expect("expected value");
+        std::os::unix::fs::symlink(
+            outside.path().join("pooled.md"),
+            extra.path().join("note.md"),
+        )
+        .expect("expected value");
+
+        let extra_dirs = vec![ExtraIncludeDir {
+            name: "shared".to_string(),
+            path: extra.path().to_path_buf(),
+        }];
+        let result = resolve_include("shared/note.md", tmp.path(), &extra_dirs)
+            .expect("should resolve outside the extra dir");
+        assert_eq!(result.as_deref(), Some("outside the extra dir"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_broken_directory_symlink_inside_extra_dir_errors() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let extra = tempfile::tempdir().expect("expected value");
+        std::os::unix::fs::symlink(extra.path().join("nowhere"), extra.path().join("pool"))
+            .expect("expected value");
+
+        let extra_dirs = vec![ExtraIncludeDir {
+            name: "shared".to_string(),
+            path: extra.path().to_path_buf(),
+        }];
+        let err = resolve_include("shared/pool/note.md", tmp.path(), &extra_dirs)
+            .expect_err("the component walk must run for an extra dir root too");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("symlink target does not exist"),
+            "error: {msg}"
+        );
+        assert!(msg.contains("pool"), "error: {msg}");
     }
 }

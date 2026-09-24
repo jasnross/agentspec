@@ -25,9 +25,14 @@ pub fn resolve_fragments(
     let mut resolved = Vec::with_capacity(specs.len());
 
     for mut spec in specs {
+        // The spec trails the fault rather than heading it: every other
+        // diagnostic `validate_child_blocks` raises already names the spec
+        // itself, and wrapping the call would demote each of those to a
+        // `Caused by` line. Only a resolver failure arrives without one.
+        let spec_path = spec.path().display().to_string();
         let resolver = |name: &str| -> Result<Option<String>> {
             resolve_include(name, templating.sources_dir(), templating.extra_dirs())
-                .map_err(|e| anyhow::anyhow!("{e}"))
+                .map_err(|e| anyhow::anyhow!("{e} (extended by {spec_path})"))
         };
         validate_child_blocks(spec.body(), &resolver, spec.path())?;
 
@@ -446,6 +451,51 @@ mod tests {
             panic!("expected Agent variant")
         };
         assert_eq!(s.body, "Header\ncustom body\nFooter");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_resolve_fragments_broken_extends_link_names_the_spec() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        fs::create_dir_all(tmp.path().join("templates")).expect("expected value");
+        std::os::unix::fs::symlink(
+            tmp.path().join("nowhere.md"),
+            tmp.path().join("templates/base.md"),
+        )
+        .expect("expected value");
+        let templating = make_templating(tmp.path());
+
+        let specs = vec![Spec::Agent(AgentSpec {
+            path: tmp.path().join("derived.md"),
+            frontmatter: AgentFrontmatter {
+                id: "derived".to_string(),
+                description: "derived".to_string(),
+                tags: None,
+                execution: None,
+                capabilities: None,
+            },
+            body: concat!(
+                "{% extends \"templates/base.md\" %}",
+                "{% block body %}custom body{% endblock %}"
+            )
+            .to_string(),
+        })];
+
+        let err = resolve_fragments(specs, &templating, None, &empty_context())
+            .expect_err("expected error for a broken extends link");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("symlink target does not exist"),
+            "error should state the fault first: {msg}"
+        );
+        assert!(
+            msg.contains("templates/base.md"),
+            "error should name the link: {msg}"
+        );
+        assert!(
+            msg.contains("derived.md"),
+            "error should name the spec that extends it: {msg}"
+        );
     }
 
     #[test]
