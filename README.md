@@ -478,6 +478,8 @@ A file in that directory is then included under its registered prefix:
 {% include "shared/note.md" %}
 ```
 
+A registered `name` may not match a directory at the top level of `sources_dir`, and a symlinked directory counts as one. Both would answer to the same include prefix, so the name is rejected at validate time rather than left to resolve against whichever tree the loader reaches first. Registering any name also means a top-level entry that does not resolve — a dangling link — is reported, since a name missing from the comparison is a collision that goes unnoticed. With no `extra_include_dirs` there is nothing to compare against, so the top level is not scanned at all.
+
 #### Built-in variables
 
 In addition to user-defined `{% with %}` variables, agentspec provides built-in variables that expose metadata about all specs in the library.

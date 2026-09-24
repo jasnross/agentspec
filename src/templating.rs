@@ -6,7 +6,7 @@ mod validation;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 pub use context::TemplateContext;
 use environment::build_environment;
 pub use fragments::resolve_fragments;
@@ -42,6 +42,11 @@ impl Templating {
     /// Checks that extra dir paths exist and are directories, that extra dir
     /// names are unique, and that no extra dir name collides with a top-level
     /// directory under `sources_dir`.
+    ///
+    /// That last check reads `sources_dir`, so it also fails on an entry there
+    /// that will not resolve — see [`collect_top_level_dirs`]. It runs only
+    /// when `extra_dirs` is non-empty, since with no name to compare against
+    /// there is nothing the scan could decide.
     pub fn new(sources_dir: &Path, extra_dirs: &[ExtraIncludeDir]) -> Result<Self> {
         for extra in extra_dirs {
             if extra.name.trim().is_empty() {
@@ -78,15 +83,20 @@ impl Templating {
             }
         }
 
-        let top_level = collect_top_level_dirs(sources_dir);
-        for extra in extra_dirs {
-            if top_level.contains(&extra.name) {
-                bail!(
-                    "extra include directory name \"{}\" collides with top-level \
-                     directory under {}",
-                    extra.name,
-                    sources_dir.display(),
-                );
+        // Scanned only when there is a name to compare against, so a spec
+        // library with no extra dirs never fails on a `sources_dir` entry it
+        // had no reason to read.
+        if !extra_dirs.is_empty() {
+            let top_level = collect_top_level_dirs(sources_dir)?;
+            for extra in extra_dirs {
+                if top_level.contains(&extra.name) {
+                    bail!(
+                        "extra include directory name \"{}\" collides with top-level \
+                         directory under {}",
+                        extra.name,
+                        sources_dir.display(),
+                    );
+                }
             }
         }
 
@@ -120,13 +130,42 @@ impl Templating {
     }
 }
 
-fn collect_top_level_dirs(sources_dir: &Path) -> HashSet<String> {
-    let Ok(entries) = std::fs::read_dir(sources_dir) else {
-        return HashSet::new();
-    };
-    entries
-        .filter_map(Result::ok)
-        .filter(|e| e.file_type().is_ok_and(|ft| ft.is_dir()))
-        .filter_map(|e| e.file_name().to_str().map(String::from))
-        .collect()
+/// The names of the directories at the top level of `sources_dir`, which an
+/// `extra_include_dirs` name may not collide with.
+///
+/// Each entry is resolved through any symlink, so a linked directory is in the
+/// set — a name matching one would otherwise pass the gate and then resolve
+/// includes against the wrong tree. An entry that will not resolve is an error
+/// rather than an omission, for the same reason: a set quietly missing a name
+/// is a gate that quietly admits it.
+///
+/// A name that is not valid UTF-8 is the one entry still left out. It cannot
+/// mask a collision, because the names it would be compared against come from
+/// TOML and are always valid UTF-8.
+///
+/// `[spec].ignore` does not reach here. A pattern decides membership in the
+/// loaded set, and the top level of `sources_dir` is not part of that set —
+/// only the four spec roots beneath it are walked, each reached by a join
+/// rather than through this scan. So a broken entry here has no pattern that
+/// exempts it, and needs repairing or removing.
+fn collect_top_level_dirs(sources_dir: &Path) -> Result<HashSet<String>> {
+    let entries = std::fs::read_dir(sources_dir).with_context(|| {
+        format!(
+            "failed to read {} to check it for a name an extra include directory collides with",
+            sources_dir.display()
+        )
+    })?;
+    let mut names = HashSet::new();
+    for entry in entries {
+        let entry = entry
+            .with_context(|| format!("failed to read an entry of {}", sources_dir.display()))?;
+        let path = entry.path();
+        if !crate::symlink::resolve_dir_entry(&path)?.is_dir() {
+            continue;
+        }
+        if let Some(name) = entry.file_name().to_str() {
+            names.insert(name.to_string());
+        }
+    }
+    Ok(names)
 }

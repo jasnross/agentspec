@@ -6594,3 +6594,45 @@ fn test_compile_fails_on_absolute_include_path() {
         "stderr must name the path: {stderr}"
     );
 }
+
+#[test]
+#[cfg(unix)]
+fn test_validate_fails_on_extra_dir_name_colliding_with_symlinked_dir() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    // A pool linked in under `spec/shared`, and an `extra_include_dirs` entry
+    // claiming the same prefix. Without resolution the link is invisible to
+    // the gate, and `shared/note.md` then resolves against whichever tree the
+    // loader reaches first.
+    let pool = tmp.path().join("pool");
+    std::fs::create_dir_all(&pool).expect("create pool");
+    std::os::unix::fs::symlink(&pool, dir.join("spec/shared")).expect("link pool");
+
+    let external = tmp.path().join("external");
+    std::fs::create_dir_all(&external).expect("create external");
+
+    let mut config = std::fs::read_to_string(dir.join("agentspec.toml")).expect("read config");
+    config = config.replace(
+        "sources_dir = \"spec\"",
+        &format!(
+            "sources_dir = \"spec\"\nextra_include_dirs = [{{ name = \"shared\", path = \"{}\" }}]",
+            external.display()
+        ),
+    );
+    std::fs::write(dir.join("agentspec.toml"), config).expect("write config");
+
+    let output = std::process::Command::new(agentspec())
+        .arg("validate")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec validate");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "a name colliding with a symlinked top-level directory must not validate:\n{stderr}"
+    );
+    assert!(stderr.contains("collides"), "stderr: {stderr}");
+    assert!(stderr.contains("shared"), "stderr: {stderr}");
+}

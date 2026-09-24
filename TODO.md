@@ -1,4 +1,4 @@
-<!-- next: 42 -->
+<!-- next: 44 -->
 
 - #1 Consider deriving id from path instead of requiring in frontmatter
    - Currently `id` is a required `String` in all frontmatter structs; missing it causes a parse error at load time
@@ -191,13 +191,15 @@
   - **Drift already happened, on the first commit.** Review of `6300f76` found the arms diverging on the load-report display: `compile --verbose` passes `ReportDisplay::Full` and prints the `[spec].ignore` listing, `inspect` passes `WarningsOnly` unconditionally. That one is deliberate and commented — on `inspect`, `--verbose` means "list the specs behind each counted loss" — but it shows the arms drift on their own, and the next divergence may not be intentional.
   - **Likely shape:** a helper taking `(&AgentspecConfig, &SpecDirs, &CommonArgs)` and returning `(Vec<Provider>, CompileResult, CompileDiagnostics)`, so both arms resolve providers and compile through one path and can only differ in what they do with the result. `run_compile` (`:444`) is not that helper — it wraps `compile::run` to print the "compiled N files" line, which `inspect` must not print because it performs no write.
   - Raised in review of the delivery-ledger work; deferred rather than done because extracting it as the last step of that plan would have traded verified correctness for tidiness. See `$THOUGHTS_DIR/plans/.done/2026-09-05-agentspec-inspect-surface-and-delivery-ledger.md`.
-- #39 **`collect_top_level_dirs` does not follow symlinks, so `extra_include_dirs` collisions go undetected.** The same non-traversing `DirEntry::file_type()` call the load stage replaced with `resolve_dir_entry`.
-  - `src/templating.rs:123` filters `read_dir` entries by the link's own type, so a symlinked top-level directory under `sources_dir` is invisible to the gate that rejects an `extra_include_dirs` name colliding with a real directory
-  - The collision then surfaces later as an include resolving to the wrong tree, with a clean `agentspec validate`
-  - The last place the templating layer has not caught up with the load stage's symlink handling; include resolution itself now follows a link wherever it points
 - #40 **Nothing bounds how much a symlink can pull into the load.** Every walked file is read into memory as a `SupportingFile` and written to `generated/`, and a link's target may resolve anywhere.
   - Measured: a skill whose `scripts/data` links to a pool holding one 400 MB file exits `agentspec validate` successfully at 430 MB RSS. A mistyped link (`-> ~`, `-> /usr`) has the same shape with no terminating condition short of OOM
   - `reject_ancestor_loop` bounds only the case where the target encloses the directory the link sits in — the accident of linking to an ancestor. A link to a large tree elsewhere is not a loop and is walked in full
   - The in-tree constraint this branch removed was the only thing that had bounded it, incidentally rather than by design. README documents the trust consequence of following out-of-tree links; the resource consequence is undocumented and unguarded
   - **Likely shape:** a per-file size cap and a total-bytes cap, each failing with a diagnostic naming the link and the file rather than an allocator abort. Open: what thresholds, since neither has measurement behind it — a cap chosen blind rejects legitimate large spec sets
   - Raised in review of `feat!: follow symlinks in every spec load walk`; deferred to keep that change set to symlink-following. Raised 2026-09-12.
+- #42 **Relocate the `Templating::new` tests out of `src/templating/environment.rs`.** They exercise a constructor defined in `src/templating.rs`, so they sit in the wrong file. That module has no `#[cfg(test)] mod` of its own — its only `#[cfg(test)]` item is the `from_sources` constructor — so the group has stayed where it was first written, and the symlink-resolution work added to it rather than splitting one function's tests across two homes. Moving them means giving `src/templating.rs` a test module and carrying the whole group over at once. Raised 2026-09-23.
+- #43 **Evaluate whether `extra_include_dirs` still earns its place.** A directory symlink now covers the same ground: an include resolves through a link wherever its target lives, so `spec/_shared -> ../../pool` supplies a prefix exactly as a registered name does.
+  - The one capability still unique to the config key is a pool outside the repository named by a home-relative (`~/`) path, which survives a clone where an absolute symlink does not
+  - All three `jasnross/agentconfig` configurations use in-repo relative paths, which a directory symlink would cover
+  - What keeps it is an argument from preference — some authors would rather declare a pool in config than create a filesystem artifact — recorded in `$THOUGHTS_DIR/ideas/2026-09-17-agentspec-symlinked-fragment-includes.md`. That is weaker than a capability argument, and testing it is what this item is for
+  - Removing it is breaking, and the collision gate, the name validation, and the prefix loop in `resolve_include` all go with it. Raised 2026-09-23.

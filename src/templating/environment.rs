@@ -1380,6 +1380,66 @@ mod tests {
             .expect("foo..bar should be accepted — not a path traversal");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn test_extra_dir_name_colliding_with_symlinked_dir_rejected() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let extra = tmp.path().join("external");
+        std::fs::create_dir_all(&extra).expect("expected value");
+        let pool = tmp.path().join("pool");
+        std::fs::create_dir_all(&pool).expect("expected value");
+        std::os::unix::fs::symlink(&pool, tmp.path().join("shared")).expect("expected value");
+
+        let extra_dirs = vec![super::ExtraIncludeDir {
+            name: "shared".to_string(),
+            path: extra,
+        }];
+        let err = crate::templating::Templating::new(tmp.path(), &extra_dirs)
+            .expect_err("a symlinked top-level directory must be seen by the gate");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("collides"),
+            "error should mention collision: {msg}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_unresolvable_top_level_entry_errors() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let extra = tmp.path().join("external");
+        std::fs::create_dir_all(&extra).expect("expected value");
+        std::os::unix::fs::symlink(tmp.path().join("nowhere"), tmp.path().join("dangling"))
+            .expect("expected value");
+
+        let extra_dirs = vec![super::ExtraIncludeDir {
+            name: "shared".to_string(),
+            path: extra,
+        }];
+        let err = crate::templating::Templating::new(tmp.path(), &extra_dirs)
+            .expect_err("an entry that will not resolve must be an error, not an omission");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("symlink target does not exist"),
+            "error: {msg}"
+        );
+        assert!(
+            msg.contains("dangling"),
+            "error should name the link: {msg}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_no_extra_dirs_skips_top_level_scan() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        std::os::unix::fs::symlink(tmp.path().join("nowhere"), tmp.path().join("dangling"))
+            .expect("expected value");
+
+        crate::templating::Templating::new(tmp.path(), &[])
+            .expect("no extra dirs means no reason to scan sources_dir");
+    }
+
     #[test]
     fn test_missing_extra_dir_path() {
         let tmp = tempfile::tempdir().expect("expected value");
