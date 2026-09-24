@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.6.0](https://github.com/jasnross/agentspec/compare/v0.5.0...v0.6.0) (2026-09-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* **templating:** Two reversals in how include paths resolve. A symlink reached by `{% include %}` or `{% extends %}` now resolves to its target wherever that target lives, rather than being refused for leaving the include root. And an absolute include path is now an error rather than a silent miss — such an include contributed nothing to compiled output before, so a spec set carrying one was already producing something its author did not intend, but it now fails the build and must be rewritten as a relative path, a symlink, or an `extra_include_dirs` prefix.
+* `IgnoredPath` loses its `pruned` field, so a consumer reading it no longer compiles, and `LoadReport` gains a private field. `--verbose` drops the `(N pruned subtrees)` parenthetical and the `, pruned` suffix, and now lists plain files under `skills/` and ignored roots that do not exist. A spec tree whose `hooks.toml` declares an ignored script exits non-zero where it previously exited 0 — remove the pattern or remove the hook entry.
+* A symlinked .md spec under agents/ or rules/, or a symlinked skill directory under skills/, now loads instead of being silently ignored, so a spec tree containing one emits specs it did not before. A dangling symlink under the spec tree is now a compile-time error rather than a silent skip.
+* `CompileDiagnostics` gains a `losses` channel. `DegradationKind` loses `HooksUnsupported` and `PathScopedRulesUnsupported`, and `Degradation` loses `for_spec`. `Adapter` loses `emits_hooks` and `supports_path_scoped_rules`; the session-start parity gate reads `carriable(FileKind::Hooks)` instead.
+* `Adapter::carriable` is a new required trait method with no default body, so every external `Adapter` implementation must supply its table. `GeneratedFile` gains a public `spec_id` field and `AdapterOutput` gains a public `deliveries` field, so struct-literal construction of either must supply them.
+
+### Features
+
+* add `agentspec inspect` and move the loss report off the default run ([6300f76](https://github.com/jasnross/agentspec/commit/6300f76c03fb5c1a842ea28f97d90505c71aaff3))
+* decide `[spec].ignore` membership before resolving anything ([8466e74](https://github.com/jasnross/agentspec/commit/8466e7404b1c3364c18a7ee4fcfde7feaebd294e))
+* derive dropped values by subtraction instead of adapter assertion ([bfe9987](https://github.com/jasnross/agentspec/commit/bfe998737492fa6eea758e5dd24dadcc912947d3))
+* follow symlinks in every spec load walk ([2df4981](https://github.com/jasnross/agentspec/commit/2df4981eef8c03821dbced6228387afef1e69bcd))
+* record what each adapter delivers into generated files ([3542fad](https://github.com/jasnross/agentspec/commit/3542fad0302f87e306ba39957b0e3265d8835777))
+* **templating:** resolve includes through symlinks, and name every refusal ([37497ea](https://github.com/jasnross/agentspec/commit/37497ea84aa9a1eacf7b09a402d31dff17c9405a))
+* **templating:** resolve the extra include dir collision gate through symlinks ([680ff2b](https://github.com/jasnross/agentspec/commit/680ff2b203fbce6b79079c83a59bdacb776ce12c))
+
+
+### Refactoring
+
+* **specs:** collapse the twin markdown loaders into one generic ([896c7d1](https://github.com/jasnross/agentspec/commit/896c7d1d6b735ef9b38ffc01ded7aec2949b9a95))
+* **symlink:** move the load stage's symlink helpers into src/symlink.rs ([82032f3](https://github.com/jasnross/agentspec/commit/82032f3f29d15d492c3d7d2fbe0eb43aa1b5e159))
+
+
+### Documentation
+
+* **readme:** correct stale claims and document missing surface ([7fd1f96](https://github.com/jasnross/agentspec/commit/7fd1f9673038376fdc92906e5dcd1d9ebbf9f32c))
+
+
+### Miscellaneous Chores
+
+* add TODO.md to .prettierignore ([59eb0aa](https://github.com/jasnross/agentspec/commit/59eb0aa7e8e061acc97116295457542d24c1eb5f))
+* migrate TODO.md to new format ([a1c5fa0](https://github.com/jasnross/agentspec/commit/a1c5fa07d7b1f118e2be04812225c11dca26ecd0))
+* **mise:** add rust-analyzer ([74a43eb](https://github.com/jasnross/agentspec/commit/74a43ebd8df0f8c1c39f4910a44a4bd16689bdfe))
+* **todos:** capture the compile/inspect setup duplication ([4002b5d](https://github.com/jasnross/agentspec/commit/4002b5d43834eda16a24a2e703929067b7f4c04b))
+* **todos:** drop the completed hook-args and warnings-system entries ([eab6c29](https://github.com/jasnross/agentspec/commit/eab6c291f994caacd6f2cbef2504d47c5888d37f))
+* **todos:** drop the completed ignore-prune-first entry ([cd75a04](https://github.com/jasnross/agentspec/commit/cd75a04f39d4ae29448ad18e698eac0fd8adb31d))
+
 ## [0.5.0](https://github.com/jasnross/agentspec/compare/v0.4.0...v0.5.0) (2026-09-01)
 
 
