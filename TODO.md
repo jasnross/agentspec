@@ -41,8 +41,6 @@
 - #10 Consider caching template reads between validation and rendering
     - `validate_child_blocks` reads template files from disk to walk the parent chain; MiniJinja's loader reads the same files again during render
     - Negligible for small template sets but duplicated I/O worth awareness as template usage grows
-- #11 _Done — see `$THOUGHTS_DIR/designs/2026-08-20-agentspec-claude-effort-probe-packages.md`._
-- #12 _Done — see `$THOUGHTS_DIR/designs/.done/2026-08-22-agentspec-adapter-originated-degradation-warnings.md`._
 - #13 Cursor subagent identity in canonical hook input may be wrong for `subagentStart`/`subagentStop`
     - `from_cursor` (`src/hooks_canonical.rs`) reconstructs canonical `session_id`/`agent_id` on the documented assumption that "Cursor renews `conversation_id` per subagent and carries the parent link as `parent_conversation_id`". Captured payloads falsify that for the two subagent lifecycle events
     - Observed on every `subagentStart` and `subagentStop` (Cursor 3.15.19 / 3.16.17): `conversation_id`, `parent_conversation_id`, and `session_id` all hold the **same** value — the parent conversation. The child identity is in `subagent_id` (e.g. `tool_13007703-…`), which agentspec ignores entirely
