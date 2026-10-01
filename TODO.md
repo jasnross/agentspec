@@ -1,4 +1,4 @@
-<!-- next: 44 -->
+<!-- next: 45 -->
 
 - #1 Consider deriving id from path instead of requiring in frontmatter
    - Currently `id` is a required `String` in all frontmatter structs; missing it causes a parse error at load time
@@ -201,3 +201,11 @@
   - All three `jasnross/agentconfig` configurations use in-repo relative paths, which a directory symlink would cover
   - What keeps it is an argument from preference — some authors would rather declare a pool in config than create a filesystem artifact — recorded in `$THOUGHTS_DIR/ideas/2026-09-17-agentspec-symlinked-fragment-includes.md`. That is weaker than a capability argument, and testing it is what this item is for
   - Removing it is breaking, and the collision gate, the name validation, and the prefix loop in `resolve_include` all go with it. Raised 2026-09-23.
+- #44 **OpenCode agents keep every MCP tool when `capabilities.tools` is declared; Claude agents keep none.**
+  - `build_tool_map` (`src/adapters/opencode.rs:662`) sets `false` only for the 12 canonical ids, so any tool outside them — every MCP tool (`<server>_<tool>`), custom tools, `apply_patch`, `lsp` — stays enabled. Claude's `tools` is an allowlist, so the same spec yields an agent with no MCP access there.
+  - A spec reading `tools: [read]` therefore means "no MCP" on Claude and "all MCP" on OpenCode, in the shipped binary today.
+  - Research (`$THOUGHTS_DIR/research/2026-10-01-agentspec-mcp-tool-grants-across-providers.md`, OpenCode source at `a79ecfe`) says the fix works: OpenCode converts `tools` keys into wildcard `permission` rules resolved last-match-wins in authored key order, so `{"*": false, "read": true, …}` hides every tool not listed. The reverse order hides the listed tools too.
+  - Likely shape: `build_tool_map` emits `"*": false` first, then `true` for each listed tool; the per-canonical `false` entries become redundant and can be dropped. Place `*` first explicitly — `sort_keys()` happens to put `*` (0x2A) ahead of letters, but that ordering is an accident and the precedence is load-bearing. Pin it with a test.
+  - Behavior change: `"*": false` also hides non-canonical built-ins (`lsp`, custom tools) on agents that declare `capabilities.tools`, matching Claude's allowlist. Note it in the changelog.
+  - Probe before shipping: `opencode debug agent` (free, resolved-config) is weak evidence here — TODO #14 shows OpenCode's reported keys and accepted keys diverge — so confirm the model-visible tool set if the harness can reach outbound-request depth for OpenCode. OpenCode deprecates agent `tools` in favor of `permission`; whether to switch fields overlaps TODO #14.
+  - Blocks the fourth goal of `$THOUGHTS_DIR/ideas/2026-10-01-agentspec-mcp-tools-in-capabilities.md`, whose grant semantics depend on the answer.
