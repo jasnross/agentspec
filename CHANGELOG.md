@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.7.0](https://github.com/jasnross/agentspec/compare/v0.6.0...v0.7.0) (2026-10-02)
+
+
+### Features
+
+* **templating:** expose agent_invocable on skill entries in the specs variable ([eee340f](https://github.com/jasnross/agentspec/commit/eee340f883a08f2ed782223877076ce81a9e746a))
+
+
+### Tests
+
+* **pipeline:** make the missing-spec reference test reach template rendering ([ec1b954](https://github.com/jasnross/agentspec/commit/ec1b954626779133a639278d6a817ff62e1d7926))
+
+
+### Miscellaneous Chores
+
+* **todos:** remove done items ([7935590](https://github.com/jasnross/agentspec/commit/79355903586bbfeb589415a0124b4a86d793389c))
+
 ## [0.6.0](https://github.com/jasnross/agentspec/compare/v0.5.0...v0.6.0) (2026-09-24)
 
 
