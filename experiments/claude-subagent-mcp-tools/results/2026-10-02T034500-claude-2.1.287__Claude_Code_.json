@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "provider": "claude",
+  "status": "confirmed",
+  "depth": "outbound-request",
+  "date": "2026-10-02",
+  "tool_version": "2.1.287 (Claude Code)",
+  "assertion": {
+    "projection": "def governed: [.[] | select(.system | tostring | contains(\"AGENTSPEC-PROBE-MARKER-CCMCP4T\"))]; def shape: {direct: ([.[] | .tools[]?.name | select(startswith(\"mcp__\"))] | unique), deferred: ([.[] | .. | strings | select(contains(\"The following deferred tools are now available via ToolSearch\")) | split(\"\\n\")[] | select(startswith(\"mcp__\"))] | unique), tool_search: any(.[]; any(.tools[]?; .name == \"ToolSearch\"))}; with_entries(.value |= (governed | if length == 0 then \"arm-had-no-governed-request\" else shape end))",
+    "expected": {
+      "inherit": {
+        "direct": [],
+        "deferred": [
+          "mcp__fx__alpha",
+          "mcp__fx__beta"
+        ],
+        "tool_search": true
+      },
+      "read": {
+        "direct": [],
+        "deferred": [],
+        "tool_search": false
+      },
+      "exact": {
+        "direct": [
+          "mcp__fx__alpha"
+        ],
+        "deferred": [],
+        "tool_search": false
+      },
+      "exact_search": {
+        "direct": [],
+        "deferred": [
+          "mcp__fx__alpha"
+        ],
+        "tool_search": true
+      },
+      "server": {
+        "direct": [
+          "mcp__fx__alpha",
+          "mcp__fx__beta"
+        ],
+        "deferred": [],
+        "tool_search": false
+      },
+      "server_glob": {
+        "direct": [
+          "mcp__fx__alpha",
+          "mcp__fx__beta"
+        ],
+        "deferred": [],
+        "tool_search": false
+      }
+    },
+    "observed": {
+      "inherit": {
+        "direct": [],
+        "deferred": [
+          "mcp__fx__alpha",
+          "mcp__fx__beta"
+        ],
+        "tool_search": true
+      },
+      "read": {
+        "direct": [],
+        "deferred": [],
+        "tool_search": false
+      },
+      "exact": {
+        "direct": [
+          "mcp__fx__alpha"
+        ],
+        "deferred": [],
+        "tool_search": false
+      },
+      "exact_search": {
+        "direct": [],
+        "deferred": [
+          "mcp__fx__alpha"
+        ],
+        "tool_search": true
+      },
+      "server": {
+        "direct": [
+          "mcp__fx__alpha",
+          "mcp__fx__beta"
+        ],
+        "deferred": [],
+        "tool_search": false
+      },
+      "server_glob": {
+        "direct": [
+          "mcp__fx__alpha",
+          "mcp__fx__beta"
+        ],
+        "deferred": [],
+        "tool_search": false
+      }
+    }
+  }
+}
