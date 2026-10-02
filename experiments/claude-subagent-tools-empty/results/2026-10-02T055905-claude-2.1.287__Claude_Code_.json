@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "provider": "claude",
+  "status": "confirmed",
+  "depth": "outbound-request",
+  "date": "2026-10-02",
+  "tool_version": "2.1.287 (Claude Code)",
+  "assertion": {
+    "projection": "def governed: [.[] | select(.system | tostring | contains(\"AGENTSPEC-PROBE-MARKER-CCEMPTY8\"))]; def offered: governed | map({direct: ([.tools[]?.name] | sort), deferred: ([.. | strings | select(contains(\"The following deferred tools are now available via ToolSearch\"))] | length > 0)}) | unique | if length == 0 then \"arm-had-no-governed-request\" elif length == 1 then .[0] else {inconsistent: .} end; (.empty | offered) as $e | (.inherit | offered) as $i | {empty: (if ($e | type) == \"string\" then $e elif $e == {direct: [], deferred: false} then \"no-tools\" elif $e == $i then \"same-as-inherit\" else $e end)}",
+    "expected": {
+      "empty": "no-tools"
+    },
+    "observed": {
+      "empty": "no-tools"
+    }
+  }
+}
