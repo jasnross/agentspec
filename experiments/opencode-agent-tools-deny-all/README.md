@@ -2,7 +2,7 @@
 
 **Question.** When an OpenCode agent's `tools` map puts `"*": false` before an allowed MCP tool, does the model request carry only that tool, and does putting `"*": false` after it carry no tools at all?
 
-**Why it matters.** agentspec's OpenCode adapter writes `false` for the twelve canonical tool ids an agent does not declare, so every tool outside them — every MCP tool among them — stays enabled on an agent that declares `capabilities.tools`. The same spec yields an agent with no MCP access on Claude, whose `tools` is an allowlist. `TODO.md` #44 proposes emitting `"*": false` first and then `true` for each listed tool, which depends on OpenCode resolving the map's keys last-match-wins in authored order. The fourth goal of `$THOUGHTS_DIR/ideas/2026-10-01-agentspec-mcp-tools-in-capabilities.md` — an agent granting no MCP tools has no MCP access on every provider that can restrict tools — depends on the same answer.
+**Why it matters.** agentspec's OpenCode adapter wrote `false` for the twelve canonical tool ids an agent did not declare, so every tool outside them — every MCP tool among them — stayed enabled on an agent that declared `capabilities.tools`, while the same spec yields an agent with no MCP access on Claude, whose `tools` is an allowlist. The fix emits a deny-all first and then allows each listed tool, which depends on OpenCode resolving the map's keys last-match-wins in authored order. The adapter now writes that shape to the agent `permission` field rather than `tools`; `experiments/opencode-agent-permission-deny-all/` measures that field directly. The fourth goal of `$THOUGHTS_DIR/ideas/2026-10-01-agentspec-mcp-tools-in-capabilities.md` — an agent granting no MCP tools has no MCP access on every provider that can restrict tools — depends on the same answer.
 
 **Driver:** `unattended`. No human step, no credentials, no network, and no model quota: OpenCode talks only to a fake provider on loopback. **Depth:** `outbound-request`.
 
@@ -82,6 +82,6 @@ Against the same saved view, `record.sh --dry-run` printed `refuted` for two alt
 
 ## Related
 
-- `TODO.md` #44 — the `build_tool_map` fix this measurement gates.
+- `experiments/opencode-agent-permission-deny-all/` — the same deny-all under the agent `permission` field, which is what the adapter emits.
 - `TODO.md` #14 — OpenCode's resolved tool map and the keys it honors diverge.
 - `experiments/opencode-skill-frontmatter-discard/` — OpenCode discards `tools` on the skill surface entirely, at `resolved-config` depth.

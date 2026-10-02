@@ -343,6 +343,9 @@ impl Degradation {
             DegradationKind::PartialOutputImpl => format!(
                 "{name} does not surface a hook's canonical `user_facing_message`; a denial shows a generic message in the {name} UI instead. See docs/hooks-canonical.md#documented-limitations."
             ),
+            DegradationKind::EditWriteCoupled => format!(
+                "{name} grants `edit` and `write` together through one `edit` permission, so an agent declaring only one of them in `capabilities.tools` receives both. See experiments/opencode-agent-permission-deny-all/."
+            ),
         }
     }
 }
@@ -370,13 +373,18 @@ pub enum DegradationKind {
     /// Pushed by the adapter whose `fully_implements_canonical_output()` is
     /// `false`.
     PartialOutputImpl,
+    /// At least one agent spec declares exactly one of `edit` and `write` for a
+    /// provider that grants both through one permission. Pushed by the adapter
+    /// whose provider couples them — only `OpenCode` does, and the message
+    /// names its `edit` permission and cites its probe accordingly.
+    EditWriteCoupled,
 }
 
 impl DegradationKind {
     /// How the report renders a `(provider, kind)` group.
     pub fn presentation(self) -> Presentation {
         match self {
-            Self::PartialOutputImpl => Presentation::Warning,
+            Self::PartialOutputImpl | Self::EditWriteCoupled => Presentation::Warning,
         }
     }
 }

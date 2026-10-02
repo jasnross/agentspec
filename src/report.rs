@@ -186,10 +186,10 @@ fn format_limitations(diagnostics: &CompileDiagnostics) -> Vec<String> {
         let Some(head) = group.first() else { continue };
         match head.kind().presentation() {
             Presentation::Warning => lines.push(format!("  {}", head.message())),
-            // Unreachable: `PartialOutputImpl` is the only `DegradationKind`
-            // and selects `Warning`. The loss renderer is `CountedSubjects`'
-            // only writer. Rendering the head keeps the match total without
-            // pretending to a shape this section has no subjects for —
+            // Unreachable: no `DegradationKind` selects `CountedSubjects`.
+            // The loss renderer is `CountedSubjects`' only writer. Rendering
+            // the head keeps the match total without pretending to a shape
+            // this section has no subjects for —
             // `Degradation` carries at most one subject and `message()` does
             // not include it, so a per-member loop would emit duplicates.
             Presentation::CountedSubjects { .. } => {

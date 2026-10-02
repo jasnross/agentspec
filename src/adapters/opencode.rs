@@ -6,11 +6,11 @@ use indexmap::IndexMap;
 use jsonc_parser::ParseOptions;
 use jsonc_parser::cst::{CstInputValue, CstObject, CstRootNode};
 use serde::Serialize;
-use strum::VariantArray as _;
 
 use super::hooks_helpers::has_agentspec_entries;
 use super::{
-    Adapter, AdapterOutput, CompileCtx, Delivery, RemovalOutput, RemoveCtx, SyncDestinationMode,
+    Adapter, AdapterOutput, CompileCtx, Degradation, DegradationKind, Delivery, RemovalOutput,
+    RemoveCtx, SyncDestinationMode,
 };
 use crate::compile::{AdapterConfig, GeneratedFile};
 use crate::plan::{FileKind, ForwardPatch, RemovePatchReport, ReversePatch};
@@ -20,6 +20,7 @@ use crate::setting::{Carries, SettingKey, SettingKind};
 use crate::spec::{AgentSpec, HookEvent, RuleSpec, SkillSpec, Spec, ToolFrontmatter};
 
 // See: https://opencode.ai/docs/agents/#markdown
+// See: https://opencode.ai/docs/agents/#permissions
 #[serde_with::skip_serializing_none]
 #[derive(Serialize)]
 struct OpenCodeAgentFrontmatter {
@@ -27,23 +28,30 @@ struct OpenCodeAgentFrontmatter {
     mode: &'static str,
     model: Option<String>,
     variant: Option<String>,
-    tools: IndexMap<String, bool>,
+    permission: Option<IndexMap<String, OpenCodePermission>>,
+}
+
+/// An `OpenCode` permission action. Serialized lowercase, as `OpenCode`'s
+/// `permission` field spells it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum OpenCodePermission {
+    Allow,
+    Ask,
+    Deny,
 }
 
 impl Carries for OpenCodeAgentFrontmatter {
     fn carried(&self) -> Vec<SettingKey> {
-        // `tools` is unconditional because it is a non-`Option` map that
-        // `build_tool_map` populates on every agent file — every canonical
-        // tool set to `false`, the declared ones flipped to `true` — so the
-        // file always carries a tool map. A spec that declared no tools
-        // raises no `Tools` intent, so the extra delivery is inert.
+        // The `permission` map is present exactly when the spec declares
+        // `capabilities.tools`.
         [
             self.model.as_ref().map(|_| SettingKey::Model),
             self.variant.as_ref().map(|_| SettingKey::Variant),
+            self.permission.as_ref().map(|_| SettingKey::Tools),
         ]
         .into_iter()
         .flatten()
-        .chain(std::iter::once(SettingKey::Tools))
         .collect()
     }
 }
@@ -104,9 +112,21 @@ impl Adapter for OpenCodeAdapter {
     fn compile(&self, specs: &[Spec], ctx: &CompileCtx<'_>) -> Result<AdapterOutput> {
         let mut files = Vec::new();
         let mut deliveries = Vec::new();
+        let mut degradations = Vec::new();
         for spec in specs {
             match spec {
                 Spec::Agent(s) => {
+                    if s.frontmatter
+                        .capabilities
+                        .as_ref()
+                        .and_then(|c| c.tools.as_deref())
+                        .is_some_and(splits_edit_write)
+                    {
+                        degradations.push(Degradation::provider_wide(
+                            Provider::OpenCode,
+                            DegradationKind::EditWriteCoupled,
+                        ));
+                    }
                     let (f, d) = adapt_agent_spec(s.clone(), ctx.presets, ctx.adapter_config)?;
                     files.extend(f);
                     deliveries.extend(d);
@@ -170,11 +190,9 @@ impl Adapter for OpenCodeAdapter {
             files,
             patches,
             dest_root,
-            // `OpenCode` makes no claim about its runtime acting on bytes
-            // agentspec delivered. What it does not emit — hooks, and a
-            // rule's `paths` — is reported by the orchestrator's subtraction
-            // against this adapter's `carriable` table instead.
-            degradations: Vec::new(),
+            // `OpenCode`'s one runtime claim: it grants `edit` and `write`
+            // together, whichever of the two an agent's `permission` map allows.
+            degradations,
             deliveries,
         })
     }
@@ -213,8 +231,9 @@ impl Adapter for OpenCodeAdapter {
             .collect()
     }
 
-    /// Resolve a canonical tool to the name an `OpenCode` spec body (or
-    /// frontmatter tool map) should reference.
+    /// Resolve a canonical tool to the name an `OpenCode` spec body should
+    /// reference. Body content only: agent frontmatter names permissions,
+    /// which `permission_key` resolves.
     fn body_tool_name(&self, tool: &ToolFrontmatter) -> &'static str {
         match tool {
             ToolFrontmatter::Read => "read",
@@ -324,22 +343,18 @@ fn adapt_agent_spec(
     let model = preset.as_ref().and_then(|x| x.model.clone());
     let variant = preset.as_ref().and_then(|x| x.variant.clone());
 
-    let tools: Vec<ToolFrontmatter> = spec
+    let permission = spec
         .frontmatter
         .capabilities
         .and_then(|x| x.tools)
-        .into_iter()
-        .flatten()
-        .collect();
-
-    let tools = build_tool_map(&tools);
+        .map(|tools| build_permission_map(&tools));
 
     let frontmatter = OpenCodeAgentFrontmatter {
         description,
         mode: "subagent",
         model,
         variant,
-        tools,
+        permission,
     };
 
     let frontmatter_str = serde_yml::to_string(&frontmatter)?;
@@ -653,25 +668,61 @@ fn tidy_instructions(top: &CstObject, rules_dest_dir: &Path) -> TidyResult {
     }
 }
 
-/// Build the boolean tool map used by `OpenCode` agents and agent-invocable skills.
+/// Build the `permission` map for an `OpenCode` agent whose spec declares
+/// `capabilities.tools`.
 ///
-/// Initializes all `ToolFrontmatter`-expressible `OpenCode` tools to false, then enables
-/// the ones listed in the spec. User-facing `OpenCode` tools outside this set
-/// (`apply_patch`, `lsp`) are omitted and fall back to `OpenCode`'s default behavior
-/// (enabled when not explicitly disabled).
-fn build_tool_map(tools: &[ToolFrontmatter]) -> IndexMap<String, bool> {
-    let mut map: IndexMap<String, bool> = ToolFrontmatter::VARIANTS
-        .iter()
-        .map(|t| (OpenCodeAdapter.body_tool_name(t).to_string(), false))
-        .collect();
+/// The map is an allowlist. `OpenCode` resolves these keys as rules, last match
+/// wins in authored order, so `"*": "deny"` leads — the reverse order denies the
+/// declared tools too (`experiments/opencode-agent-permission-deny-all/`). `*`
+/// matches every permission, not only tools, so `external_directory` and
+/// `doom_loop` are restated after the allows. Without them, any access outside
+/// the project fails with no prompt
+/// (`experiments/opencode-agent-permission-external-read/`).
+fn build_permission_map(tools: &[ToolFrontmatter]) -> IndexMap<String, OpenCodePermission> {
+    let mut allowed: Vec<&'static str> = tools.iter().map(permission_key).collect();
+    allowed.sort_unstable();
+    allowed.dedup();
 
-    for tool in tools {
-        map.insert(OpenCodeAdapter.body_tool_name(tool).to_string(), true);
+    std::iter::once(("*", OpenCodePermission::Deny))
+        .chain(
+            allowed
+                .into_iter()
+                .map(|key| (key, OpenCodePermission::Allow)),
+        )
+        .chain([
+            ("external_directory", OpenCodePermission::Ask),
+            ("doom_loop", OpenCodePermission::Ask),
+        ])
+        .map(|(key, action)| (key.to_owned(), action))
+        .collect()
+}
+
+/// The `OpenCode` permission that governs a canonical tool. Permission names
+/// match tool ids except that `edit`, `write`, and `apply_patch` share `edit`,
+/// so `Write` maps to `edit` — never to a `write` or `apply_patch` key, which
+/// `OpenCode` would accept and ignore (TODO #14).
+fn permission_key(tool: &ToolFrontmatter) -> &'static str {
+    match tool {
+        ToolFrontmatter::Read => "read",
+        ToolFrontmatter::Write | ToolFrontmatter::Edit => "edit",
+        ToolFrontmatter::Grep => "grep",
+        ToolFrontmatter::Glob => "glob",
+        ToolFrontmatter::Shell => "bash",
+        ToolFrontmatter::WebFetch => "webfetch",
+        ToolFrontmatter::WebSearch => "websearch",
+        ToolFrontmatter::Question => "question",
+        ToolFrontmatter::Tasks => "todowrite",
+        ToolFrontmatter::Subagent => "task",
+        ToolFrontmatter::Skill => "skill",
     }
+}
 
-    map.sort_keys();
-
-    map
+/// Whether a declared tool list names exactly one of `edit` and `write`, which
+/// `OpenCode` grants together.
+fn splits_edit_write(tools: &[ToolFrontmatter]) -> bool {
+    let edit = tools.iter().any(|t| matches!(t, ToolFrontmatter::Edit));
+    let write = tools.iter().any(|t| matches!(t, ToolFrontmatter::Write));
+    edit != write
 }
 
 /// Shared ownership predicate: returns `true` if `entry_path` (a string from
@@ -786,20 +837,18 @@ mod tests {
         SkillFrontmatter, SkillSpec,
     };
 
-    /// `tools` is a non-`Option` map that `build_tool_map` populates on every
-    /// agent file, so the file carries a tool map whether or not the spec
-    /// declared one. Pinned so the behavior is a decision rather than an
-    /// accident of the field's type.
+    /// An agent whose spec declares no tools gets no `permission` map, so the
+    /// file carries no tool setting at all.
     #[test]
-    fn test_agent_frontmatter_carries_tools_with_none_declared() {
+    fn test_agent_frontmatter_carries_no_tools_when_none_declared() {
         let frontmatter = OpenCodeAgentFrontmatter {
             description: "d".to_owned(),
             mode: "subagent",
             model: None,
             variant: None,
-            tools: build_tool_map(&[]),
+            permission: None,
         };
-        assert_eq!(frontmatter.carried(), vec![SettingKey::Tools]);
+        assert!(frontmatter.carried().is_empty());
     }
 
     #[test]
@@ -809,11 +858,11 @@ mod tests {
             mode: "subagent",
             model: Some("anthropic/claude-opus-5".to_owned()),
             variant: Some("thinking".to_owned()),
-            tools: build_tool_map(&[]),
+            permission: None,
         };
         assert_eq!(
             frontmatter.carried(),
-            vec![SettingKey::Model, SettingKey::Variant, SettingKey::Tools]
+            vec![SettingKey::Model, SettingKey::Variant]
         );
     }
 
@@ -892,17 +941,145 @@ mod tests {
         );
     }
 
+    /// An agent spec with no preset, declaring `capabilities.tools` when
+    /// `tools` is `Some` and no `capabilities` block otherwise.
+    fn agent_spec(id: &str, tools: Option<Vec<ToolFrontmatter>>) -> Spec {
+        Spec::Agent(AgentSpec {
+            path: format!("{id}.md").into(),
+            frontmatter: AgentFrontmatter {
+                id: id.to_string(),
+                description: "An agent".to_string(),
+                tags: None,
+                execution: None,
+                capabilities: tools.map(|tools| CapabilitiesFrontmatter { tools: Some(tools) }),
+            },
+            body: "Body.".to_string(),
+        })
+    }
+
+    /// The frontmatter block of a generated file, parsed as a YAML mapping.
+    fn frontmatter_of(file: &GeneratedFile) -> serde_yml::Mapping {
+        let content = String::from_utf8(file.content.clone()).expect("utf8");
+        let yaml = content
+            .strip_prefix("---\n")
+            .and_then(|rest| rest.split_once("---\n"))
+            .map(|(yaml, _)| yaml)
+            .expect("frontmatter block");
+        serde_yml::from_str(yaml).expect("frontmatter parses")
+    }
+
     #[test]
-    fn test_build_tool_map_keys_are_sorted() {
-        let tools = &[ToolFrontmatter::Write, ToolFrontmatter::Read];
-        let map = build_tool_map(tools);
+    fn test_build_permission_map_leads_with_deny_all_then_allows_then_restatements() {
+        let map = build_permission_map(&[
+            ToolFrontmatter::Write,
+            ToolFrontmatter::Read,
+            ToolFrontmatter::Edit,
+            ToolFrontmatter::Write,
+        ]);
         let keys: Vec<&str> = map.keys().map(String::as_str).collect();
-        let mut sorted = keys.clone();
-        sorted.sort_unstable();
+        let values: Vec<OpenCodePermission> = map.values().copied().collect();
         assert_eq!(
-            keys, sorted,
-            "tool map keys should be in alphabetical order"
+            keys,
+            ["*", "edit", "read", "external_directory", "doom_loop"]
         );
+        assert_eq!(
+            values,
+            [
+                OpenCodePermission::Deny,
+                OpenCodePermission::Allow,
+                OpenCodePermission::Allow,
+                OpenCodePermission::Ask,
+                OpenCodePermission::Ask,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_build_permission_map_empty_list_denies_all() {
+        let map = build_permission_map(&[]);
+        let keys: Vec<&str> = map.keys().map(String::as_str).collect();
+        assert_eq!(keys, ["*", "external_directory", "doom_loop"]);
+    }
+
+    #[test]
+    fn test_permission_key_shares_edit_for_write_and_edit() {
+        assert_eq!(permission_key(&ToolFrontmatter::Write), "edit");
+        assert_eq!(permission_key(&ToolFrontmatter::Edit), "edit");
+    }
+
+    #[test]
+    fn test_adapt_agent_without_tools_emits_no_permission() {
+        let files = compile_one(agent_spec("plain-agent", None), None);
+        let content = String::from_utf8(files[0].content.clone()).expect("utf8");
+        assert!(
+            !content.contains("permission:") && !content.contains("tools:"),
+            "an agent declaring no tools must carry no tool map, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn test_adapt_agent_with_tools_emits_deny_all_first() {
+        let spec = agent_spec(
+            "restricted-agent",
+            Some(vec![ToolFrontmatter::Shell, ToolFrontmatter::Read]),
+        );
+        let files = compile_one(spec, None);
+        let frontmatter = frontmatter_of(&files[0]);
+
+        assert!(frontmatter.get("tools").is_none());
+        let permission = frontmatter
+            .get("permission")
+            .and_then(serde_yml::Value::as_mapping)
+            .expect("permission mapping");
+        let entries: Vec<(&str, &str)> = permission
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.as_str().expect("string key"),
+                    v.as_str().expect("string value"),
+                )
+            })
+            .collect();
+        assert_eq!(
+            entries,
+            [
+                ("*", "deny"),
+                ("bash", "allow"),
+                ("read", "allow"),
+                ("external_directory", "ask"),
+                ("doom_loop", "ask"),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_compile_pushes_edit_write_degradation_only_when_split() {
+        let presets = HashMap::new();
+        let ctx = CompileCtx {
+            mode: SyncDestinationMode::Compile,
+            home: Path::new("/tmp/home"),
+            cwd: Path::new("/tmp/cwd"),
+            target_dir: None,
+            presets: &presets,
+            adapter_config: None,
+            overwrite: false,
+        };
+        let kinds = |tools: Vec<ToolFrontmatter>| -> Vec<DegradationKind> {
+            OpenCodeAdapter
+                .compile(&[agent_spec("a", Some(tools))], &ctx)
+                .expect("compile")
+                .degradations
+                .iter()
+                .map(Degradation::kind)
+                .collect()
+        };
+
+        assert_eq!(
+            kinds(vec![ToolFrontmatter::Read, ToolFrontmatter::Edit]),
+            [DegradationKind::EditWriteCoupled]
+        );
+        assert!(kinds(vec![ToolFrontmatter::Edit, ToolFrontmatter::Write]).is_empty());
+        assert!(kinds(vec![ToolFrontmatter::Read]).is_empty());
     }
 
     #[test]
@@ -926,19 +1103,6 @@ mod tests {
             "---\n",
             "description: Test agent\n",
             "mode: subagent\n",
-            "tools:\n",
-            "  bash: false\n",
-            "  edit: false\n",
-            "  glob: false\n",
-            "  grep: false\n",
-            "  question: false\n",
-            "  read: false\n",
-            "  skill: false\n",
-            "  task: false\n",
-            "  todowrite: false\n",
-            "  webfetch: false\n",
-            "  websearch: false\n",
-            "  write: false\n",
             "---\n",
             "\n",
             "Body.",
@@ -975,19 +1139,6 @@ mod tests {
             "mode: subagent\n",
             "model: anthropic/claude-sonnet-4-5\n",
             "variant: high\n",
-            "tools:\n",
-            "  bash: false\n",
-            "  edit: false\n",
-            "  glob: false\n",
-            "  grep: false\n",
-            "  question: false\n",
-            "  read: false\n",
-            "  skill: false\n",
-            "  task: false\n",
-            "  todowrite: false\n",
-            "  webfetch: false\n",
-            "  websearch: false\n",
-            "  write: false\n",
             "---\n",
             "\n",
             "Body.",
