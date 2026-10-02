@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "provider": "opencode",
+  "driver": "unattended",
+  "depth": "outbound-request",
+  "question": "When an OpenCode agent's `tools` map puts `\"*\": false` before an allowed MCP tool, does the model request carry only that tool, and does putting `\"*\": false` after it carry no tools at all?",
+  "version_source": { "kind": "command", "command": "opencode --version" },
+  "assertion": {
+    "projection": "def governed: [.[] | select(any(.messages[]?; .role == \"system\" and (.content | tostring | contains(\"AGENTSPEC-PROBE-MARKER-OCDENY7\"))))]; def toolset: governed | map([.tools[]?.function.name] | sort) | unique | if length == 0 then \"arm-had-no-governed-request\" elif length == 1 then .[0] else {inconsistent: .} end; {allow_one: (.allow_one | toolset), reversed: (.reversed | toolset)}",
+    "expected": { "allow_one": ["fx_alpha"], "reversed": [] }
+  }
+}
