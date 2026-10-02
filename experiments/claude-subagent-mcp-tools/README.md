@@ -105,7 +105,18 @@ At `outbound-request`, this is evidence about what reached the model.
 - **The server name alone grants every tool of that server.** `mcp__fx` and `mcp__fx__*` both granted `alpha` and `beta`.
 - **An allowlist without MCP entries grants none.** `read` received no fx tool in either place.
 
-The record is `refuted` because `expected` assumed tool search would defer every granted MCP tool. The `exact`, `server`, and `server_glob` arms show it defers only when the subagent's tool set includes `ToolSearch`. Under the contract's "life of a refutation", `expected` stays as written until the finding has been acted on.
+The first Sonnet record is `refuted` because `expected` assumed tool search would defer every granted MCP tool. The `exact`, `server`, and `server_glob` arms show it defers only when the subagent's tool set includes `ToolSearch`.
+
+## History
+
+**2026-10-02, Claude Code 2.1.287: the deferral belief was refuted, and `expected` now holds the measured value.**
+
+- **Old belief.** Tool search defers every granted MCP tool, and a granted tool always arrives with `ToolSearch`. The `exact`, `server`, and `server_glob` arms expected `{direct: [], deferred: [<granted>], tool_search: true}`.
+- **Measured** (`results/2026-10-02T012920-claude-2.1.287__Claude_Code_.json`). Without `ToolSearch` in the allowlist, those arms received the granted tools directly in `tools[]`, with no deferred listing and no `ToolSearch`. The `inherit`, `read`, and `exact_search` arms matched the old belief.
+- **Acted on.** No adapter or capability accessor encoded the old belief. The MCP-tools idea (`$THOUGHTS_DIR/ideas/2026-10-01-agentspec-mcp-tools-in-capabilities.md`) records the measured result, and it removes any need for agentspec to emit `ToolSearch` alongside an MCP grant.
+- **Not determined.** Whether the model calls a directly loaded MCP tool successfully. This probe stops at the request.
+
+The `refuted` record stays, because records are append-only. `just probe-status` keeps reporting it until a `just probe-run --billed` run records under the corrected `expected`.
 
 ## Oracle limits
 
