@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "provider": "claude",
+  "driver": "billed",
+  "depth": "outbound-request",
+  "question": "Does a Claude subagent whose `tools` field is an empty list receive no tools, or the same tools as a subagent with no `tools` field?",
+  "version_source": { "kind": "command", "command": "claude --version" },
+  "assertion": {
+    "projection": "def governed: [.[] | select(.system | tostring | contains(\"AGENTSPEC-PROBE-MARKER-CCEMPTY8\"))]; def offered: governed | map({direct: ([.tools[]?.name] | sort), deferred: ([.. | strings | select(contains(\"The following deferred tools are now available via ToolSearch\"))] | length > 0)}) | unique | if length == 0 then \"arm-had-no-governed-request\" elif length == 1 then .[0] else {inconsistent: .} end; (.empty | offered) as $e | (.inherit | offered) as $i | {empty: (if ($e | type) == \"string\" then $e elif $e == {direct: [], deferred: false} then \"no-tools\" elif $e == $i then \"same-as-inherit\" else $e end)}",
+    "expected": { "empty": "no-tools" }
+  }
+}

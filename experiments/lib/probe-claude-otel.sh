@@ -6,10 +6,11 @@
 # this; they differ only in their fixtures, arms, prompts, and which field the
 # fixture governs (see gate 2) — the same consolidation `probe-common.sh` made
 # for the five manual packages. `claude-subagent-mcp-tools` drives it too, with
-# gates 1 and 2 but not the effort-specific gate 3. Gates 4 to 6 — the
-# deferred-listing, model, and MCP-connected gates — have that one caller, and
-# live here anyway because they evaluate jq over a request view, which is exactly
-# what bats can exercise for free.
+# gates 1 and 2 but not the effort-specific gate 3, and so does
+# `claude-subagent-tools-empty`, with gates 1, 2, and 5. Gates 4 and 6 — the
+# deferred-listing and MCP-connected gates — have one caller, and gate 5, the
+# model gate, has two; they live here anyway because they evaluate jq over a
+# request view, which is exactly what bats can exercise for free.
 # Writing the gates twice would put the safety-critical part of a billed
 # apparatus in two files that can drift, which is the failure
 # `manifest-contract.sh` exists to prevent, turned inward again. As library
@@ -69,8 +70,9 @@ probe_claude_arm() {
 	# make the probe measure the operator's shell. `--setting-sources project`
 	# excludes the user tier outright rather than out-ranking it. This helper
 	# passes no `--effort`, which would outrank frontmatter too; the effort
-	# packages pass none either, while `claude-subagent-mcp-tools`, which
-	# measures no effort, passes `--effort low` through `"$@"`.
+	# packages pass none either, while `claude-subagent-mcp-tools` and
+	# `claude-subagent-tools-empty`, which measure no effort, pass `--effort low`
+	# through `"$@"`.
 	(
 		cd "$project" &&
 			env -u CLAUDE_CODE_EFFORT_LEVEL \
