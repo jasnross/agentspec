@@ -309,6 +309,15 @@ Content shared into more than one spec directory should address its own includes
 | `subagent`  | Dispatch work to a subagent                   |
 | `skill`     | Invoke a named skill                          |
 
+`capabilities.tools` on an agent is an allowlist: a declared list gives the agent those tools and no others, MCP tools included. Omitting the field gives the agent every tool its provider offers, and an empty list gives it no tools at all. On OpenCode, agentspec writes a declared list as the agent's `permission` map, with these consequences:
+
+- A restricted agent is asked before it touches a path outside the project. That prompt replaces OpenCode's automatic allows for its tmp, tool-output, and skill directories, and any `external_directory` rules in your own OpenCode config.
+- A declared tool's `allow` also overrides your OpenCode config's rules for that permission, such as a `bash` pattern deny, because agent rules take precedence over config rules.
+- `edit` and `write` share one OpenCode permission, so declaring either grants both. `agentspec inspect` warns when any agent declares only one; the warning does not name the agent.
+- `read` also grants every connected MCP server's resources.
+
+Cursor applies no tool restriction at all; see [Execution presets reach skill files on Claude only](#execution-presets-reach-skill-files-on-claude-only).
+
 ### Templating
 
 Spec bodies support [MiniJinja](https://docs.rs/minijinja/latest/minijinja/syntax/index.html) template syntax. This is primarily useful for including shared fragments across specs, but the full syntax is available (`{% if %}`, `{% for %}`, filters, etc.).
@@ -679,7 +688,7 @@ For the same reason as the bracket ban, none of `[`, `]`, `,`, or `=` may appear
 
 This covers `model` as well as `effort`. Cursor's skill schema has no model field at all, so nothing from a preset's Cursor block reaches a generated Cursor skill file. OpenCode reads `variant` on agents and commands but does not surface it on skills, so a skill that is only agent-invocable carries neither `model` nor `variant` in its generated OpenCode file, whatever its preset sets. Only Claude's `SKILL.md` carries them. A preset set on a skill spec is silently inert on the other two providers.
 
-The same is true of `capabilities.tools`: OpenCode reads a tool map on agents but not on skills, so declared tools do not reach a generated OpenCode skill file either.
+The same is true of `capabilities.tools`: OpenCode reads a `permission` map on agents but no tool restriction on skills, so declared tools do not reach a generated OpenCode skill file either.
 
 **Cursor reads no tool restriction on any file kind.** Its documented subagent fields are `name`, `description`, `model`, `readonly`, and `is_background`, and a subagent inherits every tool from the parent conversation; Custom Modes, which could restrict tools per mode, were removed in Cursor 2.1, and every remaining control gates approval rather than availability. So `capabilities.tools` reaches no generated Cursor file at all — not an agent file, not a skill file. `agentspec inspect` reports this as a loss against each spec that declares tools; on a library of any size it is the largest single group in the report.
 

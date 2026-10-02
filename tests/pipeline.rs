@@ -4742,6 +4742,78 @@ fn test_compile_does_not_emit_cursor_warning_when_only_claude_targeted() {
     );
 }
 
+/// Give the fixture's `test-agent` a `capabilities` block declaring `read` and
+/// `edit` — exactly one of the two tools `OpenCode` couples.
+fn declare_read_edit_on_test_agent(dir: &Path) {
+    let path = dir.join("spec/agents/test-agent.md");
+    let content = std::fs::read_to_string(&path);
+    assert!(content.is_ok(), "read test-agent spec: {content:?}");
+    let content = content.unwrap_or_default();
+    let edited = content.replacen(
+        "tags:\n",
+        "capabilities:\n  tools:\n    - read\n    - edit\ntags:\n",
+        1,
+    );
+    assert_ne!(content, edited, "test-agent spec must carry a `tags:` line");
+    let r = std::fs::write(&path, edited);
+    assert!(r.is_ok(), "write test-agent spec: {r:?}");
+}
+
+#[test]
+fn test_compile_warns_on_opencode_edit_write_coupling() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    declare_read_edit_on_test_agent(&dir);
+
+    let output = std::process::Command::new(agentspec())
+        .args(["compile", "--provider", "opencode", "--verbose"])
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec compile spawn");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+    assert!(
+        stderr.contains("OpenCode grants `edit` and `write` together"),
+        "expected the OpenCode edit/write limitation on stderr, got:\n{stderr}"
+    );
+
+    // The bytes OpenCode parses: the deny-all leads, quoted so YAML reads `*`
+    // as a key rather than an alias, and the restatements follow the allows.
+    let agent = std::fs::read_to_string(dir.join("generated/opencode/agents/test-agent.md"));
+    assert!(agent.is_ok(), "read generated agent: {agent:?}");
+    let agent = agent.unwrap_or_default();
+    assert!(
+        agent.contains(concat!(
+            "permission:\n",
+            "  '*': deny\n",
+            "  edit: allow\n",
+            "  read: allow\n",
+            "  external_directory: ask\n",
+            "  doom_loop: ask\n",
+        )) && !agent.contains("tools:"),
+        "expected a deny-all-first permission map and no tools map, got:\n{agent}"
+    );
+}
+
+#[test]
+fn test_compile_no_edit_write_warning_for_claude() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    declare_read_edit_on_test_agent(&dir);
+
+    let output = std::process::Command::new(agentspec())
+        .args(["compile", "--provider", "claude", "--verbose"])
+        .current_dir(&dir)
+        .output()
+        .expect("agentspec compile spawn");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "compile failed:\n{stderr}");
+    assert!(
+        !stderr.contains("grants `edit` and `write` together"),
+        "Claude compile must not surface the OpenCode edit/write limitation, got:\n{stderr}"
+    );
+}
+
 #[test]
 fn test_compile_emits_session_start_asymmetry_warning_for_cross_provider_fixture() {
     // session_start asymmetry warning fires only when BOTH Claude AND

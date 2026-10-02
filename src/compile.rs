@@ -569,13 +569,16 @@ fn derive_losses(
             // What holds it: no adapter conditionally omits a field its
             // `carriable` table declares for a kind it emitted. Each `carried()`
             // reads `Some`-ness off the struct just built, and every declared
-            // field is populated unconditionally for that kind — Cursor's
-            // bracket keys come from the composing expression, OpenCode's
-            // `tools` map is non-`Option`. `test_carriable_agrees_with_carried`
-            // checks the weaker existential claim (some spec delivered each
-            // declared setting), so it narrows this rather than proving it; a
-            // future adapter that gates a declared field on a spec predicate
-            // would trip this assert, which is the intended signal.
+            // field is populated whenever the spec raises its intent — Cursor's
+            // bracket keys come from the composing expression, and OpenCode's
+            // `permission` map is `Some` exactly when `capabilities.tools` is,
+            // the same predicate `Spec::declares_tools` raises the `Tools`
+            // intent on. `test_carriable_agrees_with_carried` checks the weaker
+            // existential claim (some spec delivered each declared setting),
+            // so it narrows this rather than proving it; a future adapter that
+            // gates a declared field on a predicate narrower than the one
+            // raising its intent would trip this assert, which is the intended
+            // signal.
             //
             // A `Body` loss carries `kind: None` and is exempt by construction.
             debug_assert!(
