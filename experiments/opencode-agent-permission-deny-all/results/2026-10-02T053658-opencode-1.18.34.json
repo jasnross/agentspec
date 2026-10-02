@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "provider": "opencode",
+  "status": "confirmed",
+  "depth": "outbound-request",
+  "date": "2026-10-02",
+  "tool_version": "1.18.34",
+  "assertion": {
+    "projection": "def governed: [.[] | select(any(.messages[]?; .role == \"system\" and (.content | tostring | contains(\"AGENTSPEC-PROBE-MARKER-OCPERM5\"))))]; def toolset: governed | map([.tools[]?.function.name] | sort) | unique | if length == 0 then \"arm-had-no-governed-request\" elif length == 1 then .[0] else {inconsistent: .} end; {read_edit_bash: (.read_edit_bash | toolset), edit_only: (.edit_only | toolset), mcp_one: (.mcp_one | toolset), reversed: (.reversed | toolset)}",
+    "expected": {
+      "read_edit_bash": [
+        "bash",
+        "edit",
+        "read",
+        "write"
+      ],
+      "edit_only": [
+        "edit",
+        "write"
+      ],
+      "mcp_one": [
+        "fx_alpha"
+      ],
+      "reversed": []
+    },
+    "observed": {
+      "read_edit_bash": [
+        "bash",
+        "edit",
+        "read",
+        "write"
+      ],
+      "edit_only": [
+        "edit",
+        "write"
+      ],
+      "mcp_one": [
+        "fx_alpha"
+      ],
+      "reversed": []
+    }
+  }
+}
