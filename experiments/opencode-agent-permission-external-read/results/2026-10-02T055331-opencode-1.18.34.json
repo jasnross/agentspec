@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "provider": "opencode",
+  "status": "confirmed",
+  "depth": "outbound-request",
+  "date": "2026-10-02",
+  "tool_version": "1.18.34",
+  "assertion": {
+    "projection": "def governed: [.[] | select(any(.messages[]?; .role == \"system\" and (.content | tostring | contains(\"AGENTSPEC-PROBE-MARKER-OCEXTR6\"))))]; def toolset: governed | map([.tools[]?.function.name] | sort) | unique | if length == 0 then \"arm-had-no-governed-request\" elif length == 1 then .[0] else {inconsistent: .} end; def outcome: [governed[] | .messages[]? | select(.role == \"tool\") | .content | tostring] | if length == 0 then \"no-tool-result\" elif any(.[]; contains(\"AGENTSPEC-OUTSIDE-CONTENT-OCEXTR6\")) then \"read\" elif any(.[]; contains(\"The user rejected permission\")) then \"ask-rejected\" elif any(.[]; contains(\"The user has specified a rule\")) then \"rule-denied\" else {unrecognized: .} end; {restated: {tools: (.restated | toolset), external_read: (.restated | outcome)}, bare: {tools: (.bare | toolset), external_read: (.bare | outcome)}}",
+    "expected": {
+      "restated": {
+        "tools": [
+          "read"
+        ],
+        "external_read": "ask-rejected"
+      },
+      "bare": {
+        "tools": [
+          "read"
+        ],
+        "external_read": "rule-denied"
+      }
+    },
+    "observed": {
+      "restated": {
+        "tools": [
+          "read"
+        ],
+        "external_read": "ask-rejected"
+      },
+      "bare": {
+        "tools": [
+          "read"
+        ],
+        "external_read": "rule-denied"
+      }
+    }
+  }
+}

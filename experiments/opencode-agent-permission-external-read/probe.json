@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "provider": "opencode",
+  "driver": "unattended",
+  "depth": "outbound-request",
+  "question": "Under an OpenCode agent `permission` map that leads with `\"*\": \"deny\"` and allows `read`, does a read of a file outside the project raise a permission prompt when `external_directory: \"ask\"` follows the allow, and fail on the rule when it does not?",
+  "version_source": { "kind": "command", "command": "opencode --version" },
+  "assertion": {
+    "projection": "def governed: [.[] | select(any(.messages[]?; .role == \"system\" and (.content | tostring | contains(\"AGENTSPEC-PROBE-MARKER-OCEXTR6\"))))]; def toolset: governed | map([.tools[]?.function.name] | sort) | unique | if length == 0 then \"arm-had-no-governed-request\" elif length == 1 then .[0] else {inconsistent: .} end; def outcome: [governed[] | .messages[]? | select(.role == \"tool\") | .content | tostring] | if length == 0 then \"no-tool-result\" elif any(.[]; contains(\"AGENTSPEC-OUTSIDE-CONTENT-OCEXTR6\")) then \"read\" elif any(.[]; contains(\"The user rejected permission\")) then \"ask-rejected\" elif any(.[]; contains(\"The user has specified a rule\")) then \"rule-denied\" else {unrecognized: .} end; {restated: {tools: (.restated | toolset), external_read: (.restated | outcome)}, bare: {tools: (.bare | toolset), external_read: (.bare | outcome)}}",
+    "expected": {
+      "restated": { "tools": ["read"], "external_read": "ask-rejected" },
+      "bare": { "tools": ["read"], "external_read": "rule-denied" }
+    }
+  }
+}
