@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Coverage for the three gates and view assembly in `probe-claude-otel.sh`.
+# Coverage for the six gates and view assembly in `probe-claude-otel.sh`.
 #
 # Every test drives fabricated views and fabricated sink directories, so the
 # suite runs with no `claude` on PATH and costs nothing. That is the point of
@@ -321,4 +321,205 @@ ungoverned() {
 	[ "$status" -eq 0 ]
 	[[ "$output" != *'"status": "confirmed"'* ]]
 	[[ "$output" == *"arm-had-no-governed-request"* ]]
+}
+
+# A subagent request under tool search: `ToolSearch` in `tools[]`, and each MCP
+# tool named on its own line in the deferred-tools text block. Arguments are the
+# deferred tool names; `MODEL` overrides the model.
+deferred_request() {
+	jq -n -c --arg m "$MARKER" --arg model "${MODEL:-pinned-model}" '
+		{
+			model: $model,
+			system: $m,
+			tools: [{name: "Read"}, {name: "ToolSearch"}],
+			messages: [{role: "user", content: [{type: "text",
+				text: (["The following deferred tools are now available via ToolSearch:"] + $ARGS.positional | join("\n"))}]}]
+		}' --args "$@"
+}
+
+# The same subagent with tool search off: every MCP tool sits in `tools[]`.
+direct_request() {
+	jq -n -c --arg m "$MARKER" '
+		{model: "pinned-model", system: $m, tools: ([{name: "Read"}] + ($ARGS.positional | map({name: .})))}
+	' --args "$@"
+}
+
+@test "gate_deferred_mcp passes when the governed request lists every tool as deferred and carries ToolSearch" {
+	write_view "inherit=[$(deferred_request mcp__fx__alpha mcp__fx__beta)]"
+
+	run run_helper "probe_claude_gate_deferred_mcp '$VIEW' '$MARKER' inherit mcp__fx__alpha mcp__fx__beta"
+	[ "$status" -eq 0 ]
+}
+
+@test "gate_deferred_mcp fails when the tools sit in tools[] instead (tool search off)" {
+	# The model-fallback trigger: the package measures default tool search, and a
+	# model Claude does not enable it for produces a readable view of something
+	# else. The diagnostic must say which, because it decides the next step.
+	write_view "inherit=[$(direct_request mcp__fx__alpha mcp__fx__beta)]"
+
+	run run_helper "probe_claude_gate_deferred_mcp '$VIEW' '$MARKER' inherit mcp__fx__alpha mcp__fx__beta"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"tool search was not enabled"* ]]
+}
+
+@test "gate_deferred_mcp fails when a named tool is missing from the deferred listing" {
+	write_view "inherit=[$(deferred_request mcp__fx__alpha)]"
+
+	run run_helper "probe_claude_gate_deferred_mcp '$VIEW' '$MARKER' inherit mcp__fx__alpha mcp__fx__beta"
+	[ "$status" -ne 0 ]
+	[[ "$output" != *"tool search was not enabled"* ]]
+}
+
+@test "gate_deferred_mcp ignores a deferred listing on an ungoverned (main-thread) request" {
+	# The main thread carries its own deferred listing. Read on a bare request,
+	# it would satisfy the gate for a subagent that never received one.
+	main=$(MARKER="main thread" deferred_request mcp__fx__alpha mcp__fx__beta)
+	write_view "inherit=[$main,$(direct_request)]"
+
+	run run_helper "probe_claude_gate_deferred_mcp '$VIEW' '$MARKER' inherit mcp__fx__alpha mcp__fx__beta"
+	[ "$status" -ne 0 ]
+}
+
+@test "gate_deferred_mcp fails when the deferred listing is complete but ToolSearch is absent" {
+	# A deferred tool with no `ToolSearch` cannot be loaded, so the listing alone
+	# is not default tool search working. Pins the gate's second clause.
+	no_search=$(deferred_request mcp__fx__alpha mcp__fx__beta | jq -c '.tools = [{name: "Read"}]')
+	write_view "inherit=[$no_search]"
+
+	run run_helper "probe_claude_gate_deferred_mcp '$VIEW' '$MARKER' inherit mcp__fx__alpha mcp__fx__beta"
+	[ "$status" -ne 0 ]
+}
+
+@test "gate_deferred_mcp fails when the tools sit in tools[] beside ToolSearch, with no listing" {
+	# Pins the header match: without it, the walk over every string in the
+	# request would read `tools[].name` as a deferred listing.
+	direct_with_search=$(direct_request mcp__fx__alpha mcp__fx__beta | jq -c '.tools += [{name: "ToolSearch"}]')
+	write_view "inherit=[$direct_with_search]"
+
+	run run_helper "probe_claude_gate_deferred_mcp '$VIEW' '$MARKER' inherit mcp__fx__alpha mcp__fx__beta"
+	[ "$status" -ne 0 ]
+}
+
+@test "gate_deferred_mcp and gate_model read a .system sent as an array of text blocks" {
+	# Real requests send `.system` as an array of blocks; the fabricated views
+	# above use a string. Both gates match through `tostring`, which this pins.
+	blocks=$(deferred_request mcp__fx__alpha mcp__fx__beta | jq -c '.system = [{type: "text", text: "preamble"}, {type: "text", text: .system}]')
+	write_view "inherit=[$blocks]"
+
+	run run_helper "probe_claude_gate_deferred_mcp '$VIEW' '$MARKER' inherit mcp__fx__alpha mcp__fx__beta"
+	[ "$status" -eq 0 ]
+
+	run run_helper "probe_claude_gate_model '$VIEW' '$MARKER' pinned-model"
+	[ "$status" -eq 0 ]
+}
+
+@test "gate_model passes when every governed request carries the pinned model" {
+	write_view "a=[$(deferred_request mcp__fx__alpha)]" "b=[$(direct_request)]"
+
+	run run_helper "probe_claude_gate_model '$VIEW' '$MARKER' pinned-model"
+	[ "$status" -eq 0 ]
+}
+
+@test "gate_model fails when one governed request carries a different model" {
+	# A delegation call's own `model` parameter outranks the agent's
+	# frontmatter, and only the request shows that it was passed.
+	write_view "a=[$(deferred_request mcp__fx__alpha)]" "b=[$(MODEL=other-model deferred_request mcp__fx__alpha)]"
+
+	run run_helper "probe_claude_gate_model '$VIEW' '$MARKER' pinned-model"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"arm b: other-model"* ]]
+}
+
+@test "gate_model ignores an ungoverned request on a different model" {
+	# The main thread's title sidecar runs on another model by design.
+	sidecar='{"model":"sidecar-model","system":"generate a title","tools":[]}'
+	write_view "a=[$(deferred_request mcp__fx__alpha),$sidecar]"
+
+	run run_helper "probe_claude_gate_model '$VIEW' '$MARKER' pinned-model"
+	[ "$status" -eq 0 ]
+}
+
+# A main-thread request: unmarked, offering `Agent`, with the arguments listed
+# as deferred tools.
+main_thread() {
+	deferred_request "$@" | jq -c '.system = "main thread" | .tools = [{name: "Agent"}, {name: "ToolSearch"}]'
+}
+
+@test "gate_mcp_connected passes when every arm's main thread lists the tools, deferred or direct" {
+	direct_main='{"system":"main thread","tools":[{"name":"Agent"},{"name":"mcp__fx__alpha"},{"name":"mcp__fx__beta"}]}'
+	write_view "a=[$(main_thread mcp__fx__alpha mcp__fx__beta),$(direct_request)]" "b=[$direct_main]"
+
+	run run_helper "probe_claude_gate_mcp_connected '$VIEW' '$MARKER' mcp__fx__alpha mcp__fx__beta"
+	[ "$status" -eq 0 ]
+}
+
+@test "gate_mcp_connected fails when one main-thread request lacks a tool" {
+	# The server connecting after the delegation would show as a later request
+	# listing the tools and an earlier one not; any-one would pass that.
+	write_view "a=[$(main_thread mcp__fx__alpha mcp__fx__beta),$(main_thread mcp__fx__alpha)]"
+
+	run run_helper "probe_claude_gate_mcp_connected '$VIEW' '$MARKER' mcp__fx__alpha mcp__fx__beta"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"may not have connected"* ]]
+}
+
+@test "gate_mcp_connected fails and names an arm with no request offering Agent" {
+	write_view "a=[$(main_thread mcp__fx__alpha)]" "b=[$(direct_request mcp__fx__alpha)]"
+
+	run run_helper "probe_claude_gate_mcp_connected '$VIEW' '$MARKER' mcp__fx__alpha"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"arm b: no ungoverned request offered Agent"* ]]
+}
+
+@test "gate_mcp_connected ignores governed and Agent-less requests" {
+	# The subagent's own request and the title sidecar say nothing about the
+	# main thread, so an empty tool set on either must not fail the gate.
+	sidecar='{"system":"generate a title","tools":[]}'
+	write_view "a=[$(main_thread mcp__fx__alpha),$(direct_request),$sidecar]"
+
+	run run_helper "probe_claude_gate_mcp_connected '$VIEW' '$MARKER' mcp__fx__alpha"
+	[ "$status" -eq 0 ]
+}
+
+@test "the committed MCP manifest's projection reads both direct and deferred tools" {
+	# The two places an MCP tool can reach a request: deferred, named in a text
+	# block, or loaded directly into `tools[]`. A projection reading only one
+	# would report the other as an absent grant.
+	manifest="$EXPERIMENTS/claude-subagent-mcp-tools/probe.json"
+	[ -f "$manifest" ] || skip "claude-subagent-mcp-tools is not present"
+	MARKER=$(sed -n 's/^\(AGENTSPEC-PROBE-MARKER-[A-Z0-9]*\)$/\1/p' \
+		"$EXPERIMENTS/claude-subagent-mcp-tools/fixtures/inherit/.claude/agents/probe-mcp-inherit.md" | head -1)
+	[ -n "$MARKER" ]
+
+	deferred=$(deferred_request mcp__fx__alpha)
+	direct=$(direct_request mcp__fx__beta)
+	write_view "inherit=[$deferred]" "read=[$direct]" "exact=[$deferred]" \
+		"exact_search=[$deferred]" "server=[$deferred]" "server_glob=[$deferred]"
+
+	run "$EXPERIMENTS/lib/record.sh" --manifest "$manifest" --view "$VIEW" --dry-run
+	[ "$status" -eq 0 ]
+	observed=$(printf '%s\n' "$output" | sed -n '/^{/,/^}/p' | jq -c '.assertion.observed')
+	[ "$(jq -c '.inherit' <<<"$observed")" = '{"direct":[],"deferred":["mcp__fx__alpha"],"tool_search":true}' ]
+	[ "$(jq -c '.read' <<<"$observed")" = '{"direct":["mcp__fx__beta"],"deferred":[],"tool_search":false}' ]
+}
+
+@test "the committed MCP manifest's projection does not confirm an unmeasured arm" {
+	# `read` expects no MCP tools and no ToolSearch — exactly what an arm with no
+	# governed request would project to if the projection reduced it the same
+	# way. The sentinel keeps an unmeasured `read` from confirming.
+	manifest="$EXPERIMENTS/claude-subagent-mcp-tools/probe.json"
+	[ -f "$manifest" ] || skip "claude-subagent-mcp-tools is not present"
+	MARKER=$(sed -n 's/^\(AGENTSPEC-PROBE-MARKER-[A-Z0-9]*\)$/\1/p' \
+		"$EXPERIMENTS/claude-subagent-mcp-tools/fixtures/inherit/.claude/agents/probe-mcp-inherit.md" | head -1)
+	[ -n "$MARKER" ]
+
+	both=$(deferred_request mcp__fx__alpha mcp__fx__beta)
+	alpha=$(deferred_request mcp__fx__alpha)
+	write_view "inherit=[$both]" 'read=[{"model":"pinned-model","system":"main thread","tools":[]}]' \
+		"exact=[$alpha]" "exact_search=[$alpha]" "server=[$both]" "server_glob=[$both]"
+
+	run "$EXPERIMENTS/lib/record.sh" --manifest "$manifest" --view "$VIEW" --dry-run
+	[ "$status" -eq 0 ]
+	[[ "$output" == *'"status": "refuted"'* ]]
+	[ "$(printf '%s\n' "$output" | sed -n '/^{/,/^}/p' | jq -r '.assertion.observed.read')" = "arm-had-no-governed-request" ]
 }
