@@ -42,7 +42,8 @@ impl TemplateContext {
     }
 }
 
-/// A single spec entry exposed to templates.
+/// The fields every spec entry exposed to templates carries, whatever its
+/// kind.
 #[derive(Clone, Debug, Serialize)]
 pub struct SpecEntry {
     /// The spec's name as the model sees it (may be prefixed).
@@ -51,6 +52,38 @@ pub struct SpecEntry {
     #[serde(rename = "type")]
     pub r#type: String,
     pub tags: Vec<String>,
+}
+
+/// A skill entry exposed to templates: the shared fields plus whether an
+/// agent may load the skill.
+#[derive(Clone, Debug, Serialize)]
+pub struct SkillEntry {
+    #[serde(flatten)]
+    pub entry: SpecEntry,
+    /// Whether an agent can load the skill on its own.
+    pub agent_invocable: bool,
+}
+
+/// An entry in `specs.all`, which mixes spec kinds.
+///
+/// Untagged, so each variant serializes as its inner entry and templates
+/// see the same flat object they would through the per-kind lists.
+#[derive(Clone, Debug, Serialize)]
+#[serde(untagged)]
+pub enum AnyEntry {
+    Agent(SpecEntry),
+    Skill(SkillEntry),
+    Rule(SpecEntry),
+}
+
+impl AnyEntry {
+    /// The fields every kind shares.
+    pub fn entry(&self) -> &SpecEntry {
+        match self {
+            AnyEntry::Agent(entry) | AnyEntry::Rule(entry) => entry,
+            AnyEntry::Skill(skill) => &skill.entry,
+        }
+    }
 }
 
 /// The `specs` variable available in templates.
@@ -64,12 +97,12 @@ pub struct SpecEntry {
 pub struct SpecsContext {
     // List access (for iteration)
     pub agents: Vec<SpecEntry>,
-    pub skills: Vec<SpecEntry>,
+    pub skills: Vec<SkillEntry>,
     pub rules: Vec<SpecEntry>,
-    pub all: Vec<SpecEntry>,
+    pub all: Vec<AnyEntry>,
     // Keyed access (for `{{ specs.skill.gh_safe.name }}`)
     pub agent: BTreeMap<String, SpecEntry>,
-    pub skill: BTreeMap<String, SpecEntry>,
+    pub skill: BTreeMap<String, SkillEntry>,
     pub rule: BTreeMap<String, SpecEntry>,
 }
 
@@ -99,7 +132,11 @@ fn build_specs_context(specs: &[Spec], name_fn: impl Fn(&Spec) -> String) -> Spe
                 agent_map.insert(key, entry.clone());
                 agents_list.push(entry);
             }
-            Spec::Skill(_) => {
+            Spec::Skill(skill) => {
+                let entry = SkillEntry {
+                    entry,
+                    agent_invocable: skill.frontmatter.agent_invocable,
+                };
                 skill_map.insert(key, entry.clone());
                 skills_list.push(entry);
             }
@@ -115,16 +152,17 @@ fn build_specs_context(specs: &[Spec], name_fn: impl Fn(&Spec) -> String) -> Spe
     }
 
     agents_list.sort_unstable_by(|a, b| a.name.cmp(&b.name));
-    skills_list.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+    skills_list.sort_unstable_by(|a, b| a.entry.name.cmp(&b.entry.name));
     rules_list.sort_unstable_by(|a, b| a.name.cmp(&b.name));
 
-    let mut all: Vec<SpecEntry> = agents_list
+    let mut all: Vec<AnyEntry> = agents_list
         .iter()
-        .chain(skills_list.iter())
-        .chain(rules_list.iter())
         .cloned()
+        .map(AnyEntry::Agent)
+        .chain(skills_list.iter().cloned().map(AnyEntry::Skill))
+        .chain(rules_list.iter().cloned().map(AnyEntry::Rule))
         .collect();
-    all.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+    all.sort_unstable_by(|a, b| a.entry().name.cmp(&b.entry().name));
 
     SpecsContext {
         agents: agents_list,
@@ -169,7 +207,7 @@ mod tests {
         })
     }
 
-    fn make_skill(id: &str, description: Option<&str>) -> Spec {
+    fn make_skill(id: &str, description: Option<&str>, agent_invocable: bool) -> Spec {
         Spec::Skill(SkillSpec {
             path: format!("{id}.md").into(),
             frontmatter: SkillFrontmatter {
@@ -177,7 +215,7 @@ mod tests {
                 description: description.map(ToOwned::to_owned),
                 tags: None,
                 user_invocable: false,
-                agent_invocable: false,
+                agent_invocable,
                 execution: None,
                 capabilities: None,
             },
@@ -204,7 +242,7 @@ mod tests {
         let specs = vec![
             make_agent("zeta-agent", "Zeta desc"),
             make_agent("alpha-agent", "Alpha desc"),
-            make_skill("beta-skill", Some("Beta desc")),
+            make_skill("beta-skill", Some("Beta desc"), false),
             make_rule("gamma-rule", Some("Gamma desc")),
         ];
 
@@ -215,26 +253,29 @@ mod tests {
         assert_eq!(ctx.specs.agents[1].name, "zeta-agent");
 
         assert_eq!(ctx.specs.skills.len(), 1);
-        assert_eq!(ctx.specs.skills[0].name, "beta-skill");
+        assert_eq!(ctx.specs.skills[0].entry.name, "beta-skill");
 
         assert_eq!(ctx.specs.rules.len(), 1);
         assert_eq!(ctx.specs.rules[0].name, "gamma-rule");
 
         // `all` is sorted across all types
         assert_eq!(ctx.specs.all.len(), 4);
-        assert_eq!(ctx.specs.all[0].name, "alpha-agent");
-        assert_eq!(ctx.specs.all[1].name, "beta-skill");
-        assert_eq!(ctx.specs.all[2].name, "gamma-rule");
-        assert_eq!(ctx.specs.all[3].name, "zeta-agent");
+        assert_eq!(ctx.specs.all[0].entry().name, "alpha-agent");
+        assert_eq!(ctx.specs.all[1].entry().name, "beta-skill");
+        assert_eq!(ctx.specs.all[2].entry().name, "gamma-rule");
+        assert_eq!(ctx.specs.all[3].entry().name, "zeta-agent");
     }
 
     #[test]
     fn test_none_description_produces_empty_string() {
-        let specs = vec![make_skill("no-desc", None), make_rule("also-no-desc", None)];
+        let specs = vec![
+            make_skill("no-desc", None, false),
+            make_rule("also-no-desc", None),
+        ];
 
         let ctx = TemplateContext::from_specs(&specs);
 
-        assert_eq!(ctx.specs.skills[0].description, "");
+        assert_eq!(ctx.specs.skills[0].entry.description, "");
         assert_eq!(ctx.specs.rules[0].description, "");
     }
 
@@ -242,16 +283,16 @@ mod tests {
     fn test_all_contains_all_types() {
         let specs = vec![
             make_agent("a", "desc"),
-            make_skill("b", Some("desc")),
+            make_skill("b", Some("desc"), false),
             make_rule("c", Some("desc")),
         ];
 
         let ctx = TemplateContext::from_specs(&specs);
 
         assert_eq!(ctx.specs.all.len(), 3);
-        assert_eq!(ctx.specs.all[0].r#type, "agent");
-        assert_eq!(ctx.specs.all[1].r#type, "skill");
-        assert_eq!(ctx.specs.all[2].r#type, "rule");
+        assert_eq!(ctx.specs.all[0].entry().r#type, "agent");
+        assert_eq!(ctx.specs.all[1].entry().r#type, "skill");
+        assert_eq!(ctx.specs.all[2].entry().r#type, "rule");
     }
 
     #[test]
@@ -282,7 +323,7 @@ mod tests {
     fn test_from_specs_populates_keyed_maps() {
         let specs = vec![
             make_agent("my-agent", "Agent desc"),
-            make_skill("gh-safe", Some("Skill desc")),
+            make_skill("gh-safe", Some("Skill desc"), false),
             make_rule("git-conventions", Some("Rule desc")),
         ];
 
@@ -294,7 +335,7 @@ mod tests {
             Some("my-agent")
         );
         assert_eq!(
-            ctx.specs.skill.get("gh_safe").map(|e| &*e.name),
+            ctx.specs.skill.get("gh_safe").map(|e| &*e.entry.name),
             Some("gh-safe")
         );
         assert_eq!(
@@ -310,7 +351,7 @@ mod tests {
     fn test_from_specs_for_provider_claude_with_prefix() {
         let specs = vec![
             make_agent("my-agent", "Agent desc"),
-            make_skill("gh-safe", Some("Skill desc")),
+            make_skill("gh-safe", Some("Skill desc"), false),
         ];
 
         let cfg = AdapterConfig {
@@ -325,20 +366,20 @@ mod tests {
             Some("tw-my-agent")
         );
         assert_eq!(
-            ctx.specs.skill.get("gh_safe").map(|e| &*e.name),
+            ctx.specs.skill.get("gh_safe").map(|e| &*e.entry.name),
             Some("tw-gh-safe")
         );
 
         // Lists also have prefixed names
         assert_eq!(ctx.specs.agents[0].name, "tw-my-agent");
-        assert_eq!(ctx.specs.skills[0].name, "tw-gh-safe");
+        assert_eq!(ctx.specs.skills[0].entry.name, "tw-gh-safe");
     }
 
     #[test]
     fn test_from_specs_for_provider_opencode_skills_unprefixed() {
         let specs = vec![
             make_agent("my-agent", "Agent desc"),
-            make_skill("gh-safe", Some("Skill desc")),
+            make_skill("gh-safe", Some("Skill desc"), false),
         ];
 
         let cfg = AdapterConfig {
@@ -354,7 +395,7 @@ mod tests {
         );
         // OpenCode skills: unprefixed (identity from frontmatter name)
         assert_eq!(
-            ctx.specs.skill.get("gh_safe").map(|e| &*e.name),
+            ctx.specs.skill.get("gh_safe").map(|e| &*e.entry.name),
             Some("gh-safe")
         );
     }
@@ -363,7 +404,7 @@ mod tests {
     fn test_from_specs_for_provider_no_prefix() {
         let specs = vec![
             make_agent("my-agent", "Agent desc"),
-            make_skill("gh-safe", Some("Skill desc")),
+            make_skill("gh-safe", Some("Skill desc"), false),
         ];
 
         let ctx = TemplateContext::from_specs_for_provider(&specs, Provider::Claude, None);
@@ -374,7 +415,7 @@ mod tests {
             Some("my-agent")
         );
         assert_eq!(
-            ctx.specs.skill.get("gh_safe").map(|e| &*e.name),
+            ctx.specs.skill.get("gh_safe").map(|e| &*e.entry.name),
             Some("gh-safe")
         );
     }
@@ -383,7 +424,7 @@ mod tests {
     fn test_from_specs_for_provider_claude_with_content_prefix() {
         let specs = vec![
             make_agent("my-agent", "Agent desc"),
-            make_skill("gh-safe", Some("Skill desc")),
+            make_skill("gh-safe", Some("Skill desc"), false),
         ];
 
         let cfg = AdapterConfig {
@@ -398,7 +439,7 @@ mod tests {
             Some("tw:my-agent")
         );
         assert_eq!(
-            ctx.specs.skill.get("gh_safe").map(|e| &*e.name),
+            ctx.specs.skill.get("gh_safe").map(|e| &*e.entry.name),
             Some("tw:gh-safe")
         );
     }
@@ -407,7 +448,7 @@ mod tests {
     fn test_from_specs_for_provider_opencode_with_content_prefix() {
         let specs = vec![
             make_agent("my-agent", "Agent desc"),
-            make_skill("gh-safe", Some("Skill desc")),
+            make_skill("gh-safe", Some("Skill desc"), false),
         ];
 
         let cfg = AdapterConfig {
@@ -423,8 +464,71 @@ mod tests {
         );
         // OpenCode skills: always unprefixed (ignores prefix for skills)
         assert_eq!(
-            ctx.specs.skill.get("gh_safe").map(|e| &*e.name),
+            ctx.specs.skill.get("gh_safe").map(|e| &*e.entry.name),
             Some("gh-safe")
         );
+    }
+
+    #[test]
+    fn test_skill_entries_carry_agent_invocable() {
+        let specs = vec![
+            make_skill("user-only", Some("d"), false),
+            make_skill("agent-loadable", Some("d"), true),
+        ];
+
+        let ctx = TemplateContext::from_specs(&specs);
+
+        assert!(!ctx.specs.skill["user_only"].agent_invocable);
+        assert!(ctx.specs.skill["agent_loadable"].agent_invocable);
+
+        let listed = |name: &str| {
+            ctx.specs
+                .skills
+                .iter()
+                .find(|s| s.entry.name == name)
+                .map(|s| s.agent_invocable)
+        };
+        assert_eq!(listed("user-only"), Some(false));
+        assert_eq!(listed("agent-loadable"), Some(true));
+    }
+
+    #[test]
+    fn test_all_skill_entries_serialize_agent_invocable() {
+        let specs = vec![
+            make_agent("a", "desc"),
+            make_skill("b", Some("desc"), false),
+            make_rule("c", Some("desc")),
+        ];
+
+        let ctx = TemplateContext::from_specs(&specs);
+        let objects: Vec<serde_json::Value> = ctx
+            .specs
+            .all
+            .iter()
+            .map(|e| serde_json::to_value(e).expect("entry serializes"))
+            .collect();
+
+        let skill = &objects[1];
+        assert_eq!(skill["type"], "skill");
+        assert_eq!(skill["agent_invocable"], serde_json::Value::Bool(false));
+        for key in ["name", "description", "type", "tags"] {
+            assert!(
+                skill.get(key).is_some(),
+                "skill entry lacks top-level `{key}`"
+            );
+        }
+
+        for other in [&objects[0], &objects[2]] {
+            assert!(
+                other.get("agent_invocable").is_none(),
+                "non-skill entry carries agent_invocable: {other}"
+            );
+        }
+        for object in &objects {
+            assert!(
+                object.get("user_invocable").is_none(),
+                "entry carries user_invocable: {object}"
+            );
+        }
     }
 }

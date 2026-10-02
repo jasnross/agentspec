@@ -386,6 +386,113 @@ mod tests {
         assert_eq!(s.body, "Agent: tw-test-agent");
     }
 
+    fn invocable_context() -> TemplateContext {
+        let skill = |id: &str, user_invocable: bool, agent_invocable: bool| {
+            Spec::Skill(SkillSpec {
+                path: format!("{id}.md").into(),
+                frontmatter: SkillFrontmatter {
+                    id: id.to_owned(),
+                    description: Some("Skill description".to_owned()),
+                    tags: None,
+                    user_invocable,
+                    agent_invocable,
+                    execution: None,
+                    capabilities: None,
+                },
+                body: String::new(),
+                supporting_files: IndexMap::new(),
+            })
+        };
+
+        TemplateContext::from_specs(&[
+            Spec::Agent(AgentSpec {
+                path: "a-agent.md".into(),
+                frontmatter: AgentFrontmatter {
+                    id: "a-agent".to_owned(),
+                    description: "Agent description".to_owned(),
+                    tags: None,
+                    execution: None,
+                    capabilities: None,
+                },
+                body: String::new(),
+            }),
+            skill("critique-design", true, false),
+            skill("helper", false, true),
+            Spec::Rule(RuleSpec {
+                path: "z-rule.md".into(),
+                frontmatter: RuleFrontmatter {
+                    id: "z-rule".to_owned(),
+                    description: Some("Rule description".to_owned()),
+                    tags: None,
+                    paths: None,
+                },
+                body: String::new(),
+            }),
+        ])
+    }
+
+    #[test]
+    fn test_specs_skill_agent_invocable_renders_user_only_note() {
+        let ctx = invocable_context();
+        let tmp = tempfile::tempdir().expect("expected value");
+        let templating = make_templating(tmp.path());
+
+        let specs = vec![Spec::Agent(AgentSpec {
+            path: tmp.path().join("test.md"),
+            frontmatter: AgentFrontmatter {
+                id: "test".to_owned(),
+                description: "test".to_owned(),
+                tags: None,
+                execution: None,
+                capabilities: None,
+            },
+            body: concat!(
+                "`/{{ specs.skill.critique_design.name }}`{% if not specs.skill.critique_design.agent_invocable %} (only the user can start it){% endif %}\n",
+                "`/{{ specs.skill.helper.name }}`{% if not specs.skill.helper.agent_invocable %} (only the user can start it){% endif %}",
+            )
+            .to_owned(),
+        })];
+
+        let resolved = resolve_fragments(specs, &templating, None, &ctx).expect("expected value");
+        let Spec::Agent(ref s) = resolved[0] else {
+            panic!("expected Agent variant")
+        };
+        assert_eq!(
+            s.body,
+            "`/critique-design` (only the user can start it)\n`/helper`"
+        );
+    }
+
+    #[test]
+    fn test_specs_all_exposes_agent_invocable() {
+        let ctx = invocable_context();
+        let tmp = tempfile::tempdir().expect("expected value");
+        let templating = make_templating(tmp.path());
+
+        let specs = vec![Spec::Agent(AgentSpec {
+            path: tmp.path().join("test.md"),
+            frontmatter: AgentFrontmatter {
+                id: "test".to_owned(),
+                description: "test".to_owned(),
+                tags: None,
+                execution: None,
+                capabilities: None,
+            },
+            body: "{% for s in specs.all %}{{ s.name }}={{ s.agent_invocable }}\n{% endfor %}"
+                .to_owned(),
+        })];
+
+        let resolved = resolve_fragments(specs, &templating, None, &ctx).expect("expected value");
+        let Spec::Agent(ref s) = resolved[0] else {
+            panic!("expected Agent variant")
+        };
+        // Agent and rule entries carry no `agent_invocable`, so it renders empty.
+        assert_eq!(
+            s.body,
+            "a-agent=\ncritique-design=false\nhelper=true\nz-rule=\n"
+        );
+    }
+
     #[test]
     fn test_resolve_fragments_errors_for_non_skill_script() {
         use crate::provider::Provider;

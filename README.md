@@ -287,7 +287,7 @@ Content shared into more than one spec directory should address its own includes
 | `id` | required | required | required | Unique identifier. Must be unique across all spec types. |
 | `description` | required | optional | optional | Short description of what this spec does. |
 | `user_invocable` | — | required | — | Whether users can invoke this skill directly (e.g., via `/commit`). |
-| `agent_invocable` | — | required | — | Whether agents can invoke this skill. At least one of `user_invocable` or `agent_invocable` must be `true`. |
+| `agent_invocable` | — | required | — | Whether agents can invoke this skill. At least one of `user_invocable` or `agent_invocable` must be `true`. Exposed in the `specs` template variable. |
 | `execution.preset` | optional | optional | — | Name of a model preset defined in `agentspec.toml`. See [Model presets](#model-presets). |
 | `tags` | optional | optional | optional | List of string tags for categorization. Exposed in the `specs` template variable. |
 | `capabilities.tools` | optional | optional | — | List of tools the agent/skill can use. See [Tools reference](#tools-reference) below. |
@@ -516,6 +516,14 @@ Each entry has:
 | `type` | One of `agent`, `skill`, or `rule` |
 | `tags` | List of tags from frontmatter (empty list if not set) |
 
+Skill entries also have:
+
+| Field | Description |
+| --- | --- |
+| `agent_invocable` | Whether an agent can load the skill on its own, from frontmatter |
+
+Agent and rule entries do not have this field. A skill entry carries it in `specs.skills`, `specs.skill`, and `specs.all` alike. When iterating `specs.all`, check `spec.type == "skill"` before reading `agent_invocable`: on an agent or rule entry the field is undefined, which is falsy in conditions (it renders empty and does not equal `false`), so `{% if not spec.agent_invocable %}` is true for every agent and rule.
+
 When compiled with a sync prefix, the `name` field resolves to the prefix-aware model-facing name. By default this is `{prefix}-{id}` (e.g., `tw-gh-safe`), but when `content-prefix` is set explicitly (e.g., `"tw:"`), the `name` uses that format instead (e.g., `tw:gh-safe`). Without any prefix, `name` is the canonical ID.
 
 > **Best practice**: Use keyed references (`{{ specs.skill.gh_safe.name }}`) instead of hardcoding spec names in body text. This ensures references stay correct when the sync prefix changes, and produces a compile error if the referenced spec is renamed or removed.
@@ -546,6 +554,12 @@ Example — listing all specs with their type:
 {% for spec in specs.all %}
 - [{{ spec.type }}] {{ spec.name }}
 {% endfor %}
+```
+
+Example — noting a skill only the user can start:
+
+```
+`/{{ specs.skill.critique_design.name }}`{% if not specs.skill.critique_design.agent_invocable %} (only the user can start it){% endif %}
 ```
 
 Built-in variables are available in both spec bodies and included fragments. Additional built-in variables may be added in future versions.

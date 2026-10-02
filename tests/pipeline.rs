@@ -1128,6 +1128,55 @@ fn test_compile_nonexistent_spec_reference_errors() {
 }
 
 #[test]
+fn test_compile_skill_agent_invocable_reaches_templates() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+
+    // Reference one fixture skill an agent cannot load (`basic-skill`) and
+    // one it can (`agent-invocable-skill`); only the first gets the note.
+    let skill_dir = dir.join("spec/skills/invocable-ref");
+    std::fs::create_dir_all(&skill_dir).expect("failed to create skill dir");
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        concat!(
+            "---\nid: invocable-ref\ndescription: References skill invocability\n",
+            "user_invocable: true\nagent_invocable: false\n---\n",
+            "User-only: `/{{ specs.skill.basic_skill.name }}`{% if not specs.skill.basic_skill.agent_invocable %} (only the user can start it){% endif %}\n",
+            "Agent-loadable: `{{ specs.skill.agent_invocable_skill.name }}`{% if not specs.skill.agent_invocable_skill.agent_invocable %} (only the user can start it){% endif %}\n",
+        ),
+    )
+    .expect("failed to write invocable-ref skill");
+
+    let output = std::process::Command::new(agentspec())
+        .arg("compile")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run agentspec compile");
+
+    assert!(
+        output.status.success(),
+        "compile failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let content =
+        std::fs::read_to_string(dir.join("generated/claude/skills/invocable-ref/SKILL.md"))
+            .expect("failed to read compiled invocable-ref skill");
+    assert!(
+        content.contains("User-only: `/basic-skill` (only the user can start it)"),
+        "user-only skill should carry the note, got:\n{content}"
+    );
+    assert!(
+        content.contains("Agent-loadable: `agent-invocable-skill`"),
+        "agent-loadable skill should render its name, got:\n{content}"
+    );
+    assert!(
+        !content.contains("`agent-invocable-skill` (only the user can start it)"),
+        "agent-loadable skill should not carry the note, got:\n{content}"
+    );
+}
+
+#[test]
 fn test_sync_content_prefix_without_file_prefix() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
