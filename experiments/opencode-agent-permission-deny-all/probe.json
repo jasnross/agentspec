@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "provider": "opencode",
+  "driver": "unattended",
+  "depth": "outbound-request",
+  "question": "When an OpenCode agent's `permission` map leads with `\"*\": \"deny\"`, which tools does the model request carry for re-allowed built-ins, a lone `edit`, and a re-allowed MCP tool, and does putting `\"*\": \"deny\"` after the allow carry no tools?",
+  "version_source": { "kind": "command", "command": "opencode --version" },
+  "assertion": {
+    "projection": "def governed: [.[] | select(any(.messages[]?; .role == \"system\" and (.content | tostring | contains(\"AGENTSPEC-PROBE-MARKER-OCPERM5\"))))]; def toolset: governed | map([.tools[]?.function.name] | sort) | unique | if length == 0 then \"arm-had-no-governed-request\" elif length == 1 then .[0] else {inconsistent: .} end; {read_edit_bash: (.read_edit_bash | toolset), edit_only: (.edit_only | toolset), mcp_one: (.mcp_one | toolset), reversed: (.reversed | toolset)}",
+    "expected": {
+      "read_edit_bash": ["bash", "edit", "read", "write"],
+      "edit_only": ["edit", "write"],
+      "mcp_one": ["fx_alpha"],
+      "reversed": []
+    }
+  }
+}
