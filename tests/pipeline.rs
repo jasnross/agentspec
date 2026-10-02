@@ -1098,7 +1098,7 @@ fn test_compile_nonexistent_spec_reference_errors() {
     std::fs::create_dir_all(&skill_dir).expect("failed to create skill dir");
     std::fs::write(
         skill_dir.join("SKILL.md"),
-        "---\nid: bad-ref\ndescription: References a nonexistent spec\nuser_invocable: true\n---\n{{ specs.skill.nonexistent_skill.name }}\n",
+        "---\nid: bad-ref\ndescription: References a nonexistent spec\nuser_invocable: true\nagent_invocable: false\n---\n{{ specs.skill.nonexistent_skill.name }}\n",
     )
     .expect("failed to write bad-ref skill");
 
@@ -1116,6 +1116,14 @@ fn test_compile_nonexistent_spec_reference_errors() {
     assert!(
         stderr.contains("bad-ref"),
         "error should mention the spec with the bad reference, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("failed to render template"),
+        "error should come from template rendering, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("undefined value"),
+        "error should name the undefined reference, got:\n{stderr}"
     );
 }
 
