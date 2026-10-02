@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "provider": "claude",
+  "driver": "billed",
+  "depth": "outbound-request",
+  "question": "For each spelling of an MCP grant in a Claude subagent's `tools` field, which MCP tools does the subagent's model request carry, directly or as deferred, and does `ToolSearch` come with them?",
+  "version_source": { "kind": "command", "command": "claude --version" },
+  "assertion": {
+    "projection": "def governed: [.[] | select(.system | tostring | contains(\"AGENTSPEC-PROBE-MARKER-CCMCP4T\"))]; def shape: {direct: ([.[] | .tools[]?.name | select(startswith(\"mcp__\"))] | unique), deferred: ([.[] | .. | strings | select(contains(\"The following deferred tools are now available via ToolSearch\")) | split(\"\\n\")[] | select(startswith(\"mcp__\"))] | unique), tool_search: any(.[]; any(.tools[]?; .name == \"ToolSearch\"))}; with_entries(.value |= (governed | if length == 0 then \"arm-had-no-governed-request\" else shape end))",
+    "expected": {
+      "inherit": {
+        "direct": [],
+        "deferred": ["mcp__fx__alpha", "mcp__fx__beta"],
+        "tool_search": true
+      },
+      "read": { "direct": [], "deferred": [], "tool_search": false },
+      "exact": {
+        "direct": [],
+        "deferred": ["mcp__fx__alpha"],
+        "tool_search": true
+      },
+      "exact_search": {
+        "direct": [],
+        "deferred": ["mcp__fx__alpha"],
+        "tool_search": true
+      },
+      "server": {
+        "direct": [],
+        "deferred": ["mcp__fx__alpha", "mcp__fx__beta"],
+        "tool_search": true
+      },
+      "server_glob": {
+        "direct": [],
+        "deferred": ["mcp__fx__alpha", "mcp__fx__beta"],
+        "tool_search": true
+      }
+    }
+  }
+}

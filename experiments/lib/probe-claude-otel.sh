@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # Shared apparatus for the billed Claude probes: arm invocation, view assembly,
-# and the three gates.
+# and six gates.
 #
 # `claude-agent-effort` and `claude-skill-effort` both drive `claude -p` through
 # this; they differ only in their fixtures, arms, prompts, and which field the
 # fixture governs (see gate 2) — the same consolidation `probe-common.sh` made
-# for the five manual packages.
+# for the five manual packages. `claude-subagent-mcp-tools` drives it too, with
+# gates 1 and 2 but not the effort-specific gate 3. Gates 4 to 6 — the
+# deferred-listing, model, and MCP-connected gates — have that one caller, and
+# live here anyway because they evaluate jq over a request view, which is exactly
+# what bats can exercise for free.
 # Writing the gates twice would put the safety-critical part of a billed
 # apparatus in two files that can drift, which is the failure
 # `manifest-contract.sh` exists to prevent, turned inward again. As library
@@ -24,16 +28,17 @@
 #   2. Every helper signals failure with `return 1` and prints its own
 #      diagnostic; none of them exits. The runner owns the exit and the
 #      workspace-kept message, so that message is written once rather than
-#      duplicated at every call site. This is uniform across all four, so a
+#      duplicated at every call site. This is uniform across every helper, so a
 #      reader who has checked one call site has checked them all.
 #
 # Note that `set -e` is in force via `probe-common.sh`, so every call site must
 # be wrapped — an unwrapped `return 1` would abort the runner before its
 # workspace-kept diagnostic ran.
 #
-# No gate here names an effort level. The assertion is relational: each arm is
-# compared against the requests nothing governed in the same run, so nothing
-# depends on the model's default effort or on the operator's subscription tier.
+# No gate here names an effort level. The effort packages' assertion is
+# relational: each arm is compared against the requests nothing governed in the
+# same run, so nothing depends on the model's default effort or on the
+# operator's subscription tier.
 #
 # This file is meant to be sourced, not executed.
 
@@ -62,8 +67,10 @@ probe_claude_arm() {
 
 	# `CLAUDE_CODE_EFFORT_LEVEL` outranks frontmatter, so an exported one would
 	# make the probe measure the operator's shell. `--setting-sources project`
-	# excludes the user tier outright rather than out-ranking it. No `--effort`
-	# is passed; it would outrank frontmatter too.
+	# excludes the user tier outright rather than out-ranking it. This helper
+	# passes no `--effort`, which would outrank frontmatter too; the effort
+	# packages pass none either, while `claude-subagent-mcp-tools`, which
+	# measures no effort, passes `--effort low` through `"$@"`.
 	(
 		cd "$project" &&
 			env -u CLAUDE_CODE_EFFORT_LEVEL \
@@ -182,5 +189,124 @@ probe_claude_gate_control() {
 	printf 'probe: the ungoverned control set is empty or internally inconsistent.\n' >&2
 	printf 'probe: the assertion compares each arm against that set, so it cannot be read.\n' >&2
 	printf 'probe: this is a statement about the run, not about Claude. No record written.\n' >&2
+	return 1
+}
+
+# Gate 4, for `claude-subagent-mcp-tools`: under tool search, the named arm's
+# governed requests list every named MCP tool as *deferred*, and carry
+# `ToolSearch` to load them. Claude does not put a deferred tool in `tools[]`;
+# it names each one on its own line in a text block that opens with the
+# sentence matched below, and `ToolSearch` is the only tool in `tools[]` that
+# can bring one in. Measured at 2.1.284.
+#
+# The package's assertion reads both places, so this gate does not decide the
+# answer. It decides whether the run measured what the package claims to:
+# Claude under its *default* tool search. Claude turns tool search off for some
+# models and endpoints, and a run on one of those would record a valid-looking
+# view of a different configuration. The arm named is one whose expected tool
+# set is unconditional — every server tool, with no allowlist — so a failure
+# here is about the run rather than about the allowlist under test.
+#
+# The price is that the named arm's cell is a precondition, not a finding: a
+# run that recorded has it by construction. A Claude that stopped deferring for
+# an unrestricted subagent would surface here as a gate failure, never as a
+# `refuted` record, so the diagnostic names that possibility alongside a model
+# without tool search.
+#
+# This gate also pins the listing's exact format, one bare tool name per line.
+# The package's projection reads the same lines through `startswith("mcp__")`,
+# which would silently drop an indented or `\r`-terminated name; it is this
+# gate failing on such a format that keeps the projection honest. Loosen the
+# two together or not at all.
+#
+# Governed means the marker in `.system`, as in gate 2: the main thread also
+# carries a deferred listing, of its own tools, and that must not satisfy the
+# gate for a subagent that never received one.
+probe_claude_gate_deferred_mcp() {
+	local view="$1" marker="$2" arm="$3"
+	shift 3
+	local tools
+	tools=$(jq -n -c '$ARGS.positional' --args "$@")
+
+	jq -e --arg m "$marker" --arg arm "$arm" --argjson t "$tools" '
+		[ .[$arm][] | select(.system | tostring | contains($m)) ] as $g
+		| ([ $g[] | .. | strings
+		     | select(contains("The following deferred tools are now available via ToolSearch"))
+		     | split("\n")[] ] | unique) as $deferred
+		| ($t - $deferred | length) == 0
+		  and any($g[]; any(.tools[]?; .name == "ToolSearch"))
+	' "$view" >/dev/null && return 0
+
+	printf "probe: the %s arm's governed requests do not list %s as deferred tools alongside ToolSearch.\n" \
+		"$arm" "$*" >&2
+	if jq -e --arg m "$marker" --arg arm "$arm" --argjson t "$tools" '
+		[ .[$arm][] | select(.system | tostring | contains($m)) | .tools[]?.name ] as $direct
+		| ($t - $direct | length) == 0
+	' "$view" >/dev/null; then
+		printf "probe: they sit in tools[] instead: tool search was not enabled for this subagent — off for this run's model, or Claude Code changed when it defers MCP tools.\n" >&2
+	fi
+	printf 'probe: the package measures Claude under default tool search, so this run cannot be read. No record written.\n' >&2
+	return 1
+}
+
+# Gate 5: every governed request, in every arm, ran on the pinned model. The
+# subagent's model decides whether tool search is on, and Claude resolves it
+# from the delegation call's own `model` parameter before the agent's
+# frontmatter — so a main thread that chose to pass one would move the subagent
+# off the pinned model, and only the request itself shows that. Ungoverned
+# requests are excluded because the main thread's title sidecar runs on a
+# different model by design.
+probe_claude_gate_model() {
+	local view="$1" marker="$2" model="$3"
+	jq -e --arg m "$marker" --arg model "$model" '
+		all(.[]; all(.[] | select(.system | tostring | contains($m)); .model == $model))
+	' "$view" >/dev/null && return 0
+
+	printf 'probe: a governed request ran on a model other than %s:\n' "$model" >&2
+	jq -r --arg m "$marker" --arg model "$model" '
+		to_entries[] | .key as $arm
+		| .value[] | select(.system | tostring | contains($m)) | select(.model != $model)
+		| "probe:   arm \($arm): \(.model)"
+	' "$view" >&2
+	printf "probe: tool search depends on the subagent's model, so this run cannot be read. No record written.\n" >&2
+	return 1
+}
+
+# Gate 6: in every arm, the main thread's requests list every named MCP tool,
+# directly in `tools[]` or as deferred. The main thread is identified as the
+# ungoverned requests that offer `Agent`; the request that delegates is one of
+# them, so it saw the server's tools before the subagent existed.
+#
+# Without this, an arm whose expected value is "no MCP tools" — an allowlist
+# naming none — reads identically to "the server had not connected when the
+# subagent's tool set was built". The per-arm stamp the runner checks proves
+# only that the server answered `tools/list` at some point during the arm.
+# Every main-thread request rather than any one, because a later request
+# listing the tools would not show they were there when the delegation ran.
+probe_claude_gate_mcp_connected() {
+	local view="$1" marker="$2"
+	shift 2
+	local tools
+	tools=$(jq -n -c '$ARGS.positional' --args "$@")
+
+	jq -e --arg m "$marker" --argjson t "$tools" '
+		def listed: [ .tools[]?.name ]
+			+ [ .. | strings
+			    | select(contains("The following deferred tools are now available via ToolSearch"))
+			    | split("\n")[] ];
+		all(.[];
+			[ .[] | select((.system | tostring | contains($m)) | not)
+			      | select(any(.tools[]?; .name == "Agent")) ] as $main
+			| ($main | length) > 0 and all($main[]; ($t - listed | length) == 0))
+	' "$view" >/dev/null && return 0
+
+	printf "probe: an arm's main thread did not list %s on every request that could delegate.\n" "$*" >&2
+	jq -r --arg m "$marker" '
+		to_entries[]
+		| select([ .value[] | select((.system | tostring | contains($m)) | not)
+		           | select(any(.tools[]?; .name == "Agent")) ] | length == 0)
+		| "probe:   arm \(.key): no ungoverned request offered Agent"
+	' "$view" >&2
+	printf 'probe: the server may not have connected before the subagent spawned, so an empty tool set describes nothing. No record written.\n' >&2
 	return 1
 }
