@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "provider": "opencode",
+  "driver": "unattended",
+  "depth": "outbound-request",
+  "question": "Under an OpenCode agent `permission` map that leads with `\"*\": \"deny\"`, which tools does a `fx_*` allow offer when servers `fx` and `fx_extra` are both connected?",
+  "version_source": { "kind": "command", "command": "opencode --version" },
+  "assertion": {
+    "projection": "def governed: [.[] | select(any(.messages[]?; .role == \"system\" and (.content | tostring | contains(\"AGENTSPEC-PROBE-MARKER-OCGLOB2\"))))]; def toolset: governed | map([.tools[]?.function.name] | sort) | unique | if length == 0 then \"arm-had-no-governed-request\" elif length == 1 then .[0] else {inconsistent: .} end; {server_glob: (.server_glob | toolset)}",
+    "expected": {
+      "server_glob": ["fx_alpha", "fx_beta", "fx_extra_alpha", "fx_extra_beta"]
+    }
+  }
+}
