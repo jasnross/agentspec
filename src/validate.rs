@@ -7,7 +7,7 @@ use strum::VariantArray as _;
 
 use crate::declarations::Declarations;
 use crate::provider::Provider;
-use crate::spec::Spec;
+use crate::spec::{Spec, ToolFrontmatter};
 
 /// A validation error (spec semantics or config shape).
 #[derive(Debug)]
@@ -70,6 +70,16 @@ pub fn validate_semantics(
                 message: "at least one of user_invocable or agent_invocable must be true"
                     .to_string(),
             });
+        }
+
+        let tools = match spec {
+            Spec::Agent(agent_spec) => agent_spec.frontmatter.capabilities.as_ref(),
+            Spec::Skill(skill_spec) => skill_spec.frontmatter.capabilities.as_ref(),
+            Spec::Rule(_) | Spec::Hook(_) => None,
+        }
+        .and_then(|capabilities| capabilities.tools.as_deref());
+        if let Some(tools) = tools {
+            validate_unique_tools(spec.path(), tools, &mut errors);
         }
 
         if let Spec::Hook(hook_spec) = spec
@@ -183,6 +193,29 @@ fn validate_config_declarations(
         .collect()
 }
 
+/// Reject a `capabilities.tools` list that names a tool twice.
+///
+/// A repeat usually stands where the author meant a different tool, and it
+/// otherwise compiles without complaint. One error per repeated tool, in the
+/// order each first repeats.
+fn validate_unique_tools(
+    path: &Path,
+    tools: &[ToolFrontmatter],
+    errors: &mut Vec<ValidationError>,
+) {
+    let mut reported: Vec<&ToolFrontmatter> = Vec::new();
+    for (i, tool) in tools.iter().enumerate() {
+        if tools[..i].contains(tool) && !reported.contains(&tool) {
+            reported.push(tool);
+            let name: &'static str = tool.into();
+            errors.push(ValidationError {
+                path: path.to_path_buf(),
+                message: format!("`capabilities.tools` lists '{name}' more than once"),
+            });
+        }
+    }
+}
+
 fn validate_hook_matcher(hook_spec: &crate::spec::HookSpec, errors: &mut Vec<ValidationError>) {
     let bad_events: Vec<_> = hook_spec
         .frontmatter
@@ -266,8 +299,8 @@ mod tests {
     use super::*;
     use crate::presets::{ProviderPresets, ProviderPresetsMap};
     use crate::spec::{
-        AgentFrontmatter, AgentSpec, ExecutionFrontmatter, HookEvent, HookFrontmatter, HookSpec,
-        RuleFrontmatter, RuleSpec, SkillFrontmatter, SkillSpec,
+        AgentFrontmatter, AgentSpec, CapabilitiesFrontmatter, ExecutionFrontmatter, HookEvent,
+        HookFrontmatter, HookSpec, RuleFrontmatter, RuleSpec, SkillFrontmatter, SkillSpec,
     };
 
     // -- Helpers --
@@ -429,6 +462,72 @@ mod tests {
         presets.insert("fast".to_string(), ProviderPresets::default());
         let errors = validate_semantics(&[spec], &Declarations { presets }, test_config_path());
         assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
+    }
+
+    fn with_tools(mut spec: Spec, tools: Vec<ToolFrontmatter>) -> Spec {
+        let capabilities = Some(CapabilitiesFrontmatter { tools: Some(tools) });
+        match &mut spec {
+            Spec::Agent(a) => a.frontmatter.capabilities = capabilities,
+            Spec::Skill(s) => s.frontmatter.capabilities = capabilities,
+            Spec::Rule(_) | Spec::Hook(_) => panic!("only agents and skills declare tools"),
+        }
+        spec
+    }
+
+    #[test]
+    fn test_semantics_duplicate_builtin_tool_rejected() {
+        for spec in [make_agent("a", "body"), make_skill("s", "body")] {
+            let spec = with_tools(
+                spec,
+                vec![
+                    ToolFrontmatter::Read,
+                    ToolFrontmatter::Grep,
+                    ToolFrontmatter::Read,
+                    ToolFrontmatter::Read,
+                ],
+            );
+            let errors = validate_semantics(&[spec], &Declarations::default(), test_config_path());
+            assert_eq!(errors.len(), 1, "errors: {errors:?}");
+            assert_eq!(
+                errors[0].message,
+                "`capabilities.tools` lists 'read' more than once"
+            );
+        }
+    }
+
+    /// One error per repeated tool, in the order each first repeats, and each
+    /// named in its authored spelling — `webfetch` pins strum's rendering of a
+    /// multi-word variant against serde's.
+    #[test]
+    fn test_semantics_duplicate_builtin_tools_each_reported_once() {
+        let spec = with_tools(
+            make_agent("a", "body"),
+            vec![
+                ToolFrontmatter::WebFetch,
+                ToolFrontmatter::Grep,
+                ToolFrontmatter::Grep,
+                ToolFrontmatter::WebFetch,
+            ],
+        );
+        let errors = validate_semantics(&[spec], &Declarations::default(), test_config_path());
+        let messages: Vec<&str> = errors.iter().map(|e| e.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            [
+                "`capabilities.tools` lists 'grep' more than once",
+                "`capabilities.tools` lists 'webfetch' more than once",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_semantics_distinct_builtin_tools_pass() {
+        let spec = with_tools(
+            make_agent("a", "body"),
+            vec![ToolFrontmatter::Read, ToolFrontmatter::Grep],
+        );
+        let errors = validate_semantics(&[spec], &Declarations::default(), test_config_path());
+        assert!(errors.is_empty(), "errors: {errors:?}");
     }
 
     #[test]

@@ -290,7 +290,7 @@ Content shared into more than one spec directory should address its own includes
 | `agent_invocable` | — | required | — | Whether agents can invoke this skill. At least one of `user_invocable` or `agent_invocable` must be `true`. Exposed in the `specs` template variable. |
 | `execution.preset` | optional | optional | — | Name of a model preset defined in `agentspec.toml`. See [Model presets](#model-presets). |
 | `tags` | optional | optional | optional | List of string tags for categorization. Exposed in the `specs` template variable. |
-| `capabilities.tools` | optional | optional | — | List of tools the agent/skill can use. See [Tools reference](#tools-reference) below. |
+| `capabilities.tools` | optional | optional | — | List of tools the agent/skill can use. Each tool may appear once. See [Tools reference](#tools-reference) below. |
 
 ### Tools reference
 
