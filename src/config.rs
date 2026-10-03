@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use agentspec::compile::{AdapterConfig, PluginAuthor, PluginManifest};
 use agentspec::declarations::Declarations;
+use agentspec::mcp::McpServers;
 use agentspec::presets::ProviderPresets;
 use agentspec::provider::Provider;
 use agentspec::validate::ValidationError;
@@ -23,6 +24,13 @@ pub struct AgentspecConfig {
     /// (`model`, `effort`, `variant`, etc.).
     #[serde(default)]
     pub presets: HashMap<String, ProviderPresets>,
+
+    /// MCP servers: logical server name → per-provider registration.
+    ///
+    /// Specs grant a server's tools from `capabilities.mcp` by its logical
+    /// name; each provider block overrides how that provider registers it.
+    #[serde(default)]
+    pub mcp: McpServers,
 
     /// Per-provider sync target configuration (e.g., `[sync.claude]`).
     #[serde(default)]
@@ -116,6 +124,7 @@ impl AgentspecConfig {
     pub fn declarations(&self) -> Declarations {
         Declarations {
             presets: self.presets.clone(),
+            mcp: self.mcp.clone(),
         }
     }
 
@@ -297,6 +306,7 @@ impl Default for AgentspecConfig {
             spec: SpecConfig::default(),
             compile: CompileConfig::default(),
             presets: HashMap::new(),
+            mcp: McpServers::new(),
             sync: HashMap::new(),
             root_dir: PathBuf::new(),
             config_file: PathBuf::new(),
@@ -538,6 +548,7 @@ impl SyncFlags {
 mod tests {
     use std::fs;
 
+    use agentspec::mcp::{ClaudeMcpServer, McpServer, OpenCodeMcpServer};
     use agentspec::presets::{ClaudeEffort, ClaudePreset, CursorPreset, OpenCodePreset};
 
     use super::*;
@@ -616,6 +627,65 @@ claude = "opus"
         let full = format!("{err:#}");
         assert!(full.contains("failed to parse"), "error: {full}");
         assert!(full.contains("presets.bad.claude"), "error: {full}");
+    }
+
+    fn discover_toml(toml_content: &str) -> Result<AgentspecConfig> {
+        let tmp = tempfile::tempdir().expect("expected value");
+        fs::write(tmp.path().join("agentspec.toml"), toml_content).expect("expected value");
+        AgentspecConfig::discover(tmp.path())
+    }
+
+    #[test]
+    fn test_discover_parses_empty_mcp_table_as_default_server() {
+        let config = discover_toml("[mcp.quip]\n").expect("expected value");
+        assert_eq!(config.mcp["quip"], McpServer::default());
+        assert_eq!(config.declarations().mcp, config.mcp);
+    }
+
+    #[test]
+    fn test_discover_parses_mcp_design_example() {
+        let config = discover_toml(
+            r#"
+[presets.deep]
+claude = { model = "claude-opus-5-5", effort = "high" }
+
+[mcp.quip]
+
+[mcp.atlassian.claude]
+plugin = "work-tools"
+
+[mcp.atlassian.opencode]
+server = "jira"
+"#,
+        )
+        .expect("expected value");
+        assert_eq!(
+            config.mcp,
+            McpServers::from([
+                ("quip".to_owned(), McpServer::default()),
+                (
+                    "atlassian".to_owned(),
+                    McpServer {
+                        claude: Some(ClaudeMcpServer {
+                            server: None,
+                            plugin: Some("work-tools".to_owned()),
+                        }),
+                        cursor: None,
+                        opencode: Some(OpenCodeMcpServer {
+                            server: Some("jira".to_owned()),
+                        }),
+                    },
+                ),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_discover_rejects_unknown_mcp_field() {
+        let err = discover_toml("[mcp.x]\nfoo = 1\n").expect_err("expected parse error");
+        let full = format!("{err:#}");
+        assert!(full.contains("mcp.x.foo"), "error: {full}");
+        assert!(full.contains("unknown field"), "error: {full}");
     }
 
     #[test]

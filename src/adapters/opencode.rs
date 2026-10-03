@@ -14,6 +14,7 @@ use super::{
 };
 use crate::compile::{AdapterConfig, GeneratedFile};
 use crate::declarations::Declarations;
+use crate::mcp::{McpServer, McpServers, OpenCodeMcpServer, is_mcp_name};
 use crate::plan::{FileKind, ForwardPatch, RemovePatchReport, ReversePatch};
 use crate::presets::{ProviderPresets, ProviderPresetsMap};
 use crate::provider::Provider;
@@ -293,7 +294,7 @@ impl Adapter for OpenCodeAdapter {
     }
 
     fn validate_declarations(&self, declarations: &Declarations) -> Vec<String> {
-        let Declarations { presets } = declarations;
+        let Declarations { presets, mcp } = declarations;
         // An `opencode` preset block has no cross-field constraint: a
         // `variant` with no `model` is accepted and inert. The binding is what
         // makes a new provider block a compile error here.
@@ -304,7 +305,27 @@ impl Adapter for OpenCodeAdapter {
                 opencode: _,
             } = preset;
         }
-        Vec::new()
+
+        let mut errors = Vec::new();
+        for (name, server) in mcp {
+            let McpServer {
+                claude: _,
+                cursor: _,
+                opencode,
+            } = server;
+            if let Some(OpenCodeMcpServer {
+                server: Some(override_name),
+            }) = opencode
+                && !is_mcp_name(override_name)
+            {
+                errors.push(format!(
+                    "[mcp.{name}.opencode] `server` must match [A-Za-z0-9_-]+ \
+                     (got {override_name:?})"
+                ));
+            }
+        }
+        errors.extend(mcp_name_overlaps(mcp));
+        errors
     }
 
     /// Unreachable rather than meaningful: `OpenCode` emits no hooks — its
@@ -705,12 +726,106 @@ fn build_permission_map(tools: &[ToolFrontmatter]) -> IndexMap<String, OpenCodeP
                 .into_iter()
                 .map(|key| (key, OpenCodePermission::Allow)),
         )
-        .chain([
-            ("external_directory", OpenCodePermission::Ask),
-            ("doom_loop", OpenCodePermission::Ask),
-        ])
+        .chain(
+            RESTATED_PERMISSIONS
+                .into_iter()
+                .map(|key| (key, OpenCodePermission::Ask)),
+        )
         .map(|(key, action)| (key.to_owned(), action))
         .collect()
+}
+
+/// The permissions every agent `permission` map restates as `ask` after its
+/// allows, because the leading `"*": "deny"` matches them too
+/// (`experiments/opencode-agent-permission-external-read/`).
+const RESTATED_PERMISSIONS: [&str; 2] = ["external_directory", "doom_loop"];
+
+/// `OpenCode`'s built-in permissions, other than the restated ones, whose
+/// names contain `_` — so a server name they extend would grant them through
+/// a `<server>_*` or `<server>_<tool>` key. Both default to `deny`, which such
+/// a grant would silently lift. Listed as `OpenCode` 1.18.34 resolves them in
+/// `opencode debug agent`.
+const UNDERSCORED_PERMISSIONS: [&str; 2] = ["plan_enter", "plan_exit"];
+
+/// The name `OpenCode` registers a declared MCP server under: the
+/// `[mcp.<name>.opencode] server` override, or the logical name.
+fn resolved_server<'a>(logical: &'a str, server: &'a McpServer) -> &'a str {
+    let McpServer {
+        claude: _,
+        cursor: _,
+        opencode,
+    } = server;
+    opencode
+        .as_ref()
+        .and_then(|o| o.server.as_deref())
+        .unwrap_or(logical)
+}
+
+/// Reject declared servers whose `OpenCode` names overlap each other or a
+/// reserved permission — a restated one, or one of
+/// [`UNDERSCORED_PERMISSIONS`].
+///
+/// `OpenCode` names an MCP tool `<server>_<tool>`, so a grant's permission key
+/// for one server also matches tools of any server whose name extends it past
+/// an underscore: `fx_*` matches `fx_extra`'s tools, `external_*` would
+/// match `external_directory`, and `plan_*` would match `plan_enter`. Each unordered pair is checked once, against
+/// both prefix directions, so declaration order cannot decide whether a
+/// collision is found.
+fn mcp_name_overlaps(mcp: &McpServers) -> Vec<String> {
+    // A name that breaks the neutral rule is already reported, by `validate.rs`
+    // or by the override check above; checking it here would report it twice.
+    let servers: Vec<(String, &str)> = mcp
+        .iter()
+        .map(|(name, server)| (format!("[mcp.{name}]"), resolved_server(name, server)))
+        .filter(|(_, resolved)| is_mcp_name(resolved))
+        .collect();
+    let server_count = servers.len();
+    let entries: Vec<(String, &str)> = servers
+        .into_iter()
+        .chain(
+            RESTATED_PERMISSIONS
+                .iter()
+                .map(|p| (format!("the `{p}` permission agentspec restates"), *p)),
+        )
+        .chain(
+            UNDERSCORED_PERMISSIONS
+                .iter()
+                .map(|p| (format!("OpenCode's built-in `{p}` permission"), *p)),
+        )
+        .collect();
+
+    // A reserved permission is an exact key, never a `_*` glob or a tool's
+    // prefix, so it collides only with a server name it extends.
+    let overlaps = |x: &str, y: &str, y_is_reserved: bool| {
+        if y_is_reserved {
+            extends_past_underscore(y, x)
+        } else {
+            x == y || extends_past_underscore(y, x) || extends_past_underscore(x, y)
+        }
+    };
+
+    let mut errors = Vec::new();
+    for i in 0..server_count {
+        for j in (i + 1)..entries.len() {
+            let (first, x) = &entries[i];
+            let (second, y) = &entries[j];
+            if overlaps(x, y, j >= server_count) {
+                errors.push(format!(
+                    "{first} and {second} overlap as OpenCode names (`{x}` and `{y}`): \
+                     OpenCode names an MCP tool `<server>_<tool>`, so a permission key \
+                     for one would also match the other; set a distinct `server` under \
+                     [mcp.<name>.opencode]"
+                ));
+            }
+        }
+    }
+    errors
+}
+
+/// Whether `name` is `prefix` followed by `_`.
+fn extends_past_underscore(name: &str, prefix: &str) -> bool {
+    name.strip_prefix(prefix)
+        .is_some_and(|rest| rest.starts_with('_'))
 }
 
 /// The `OpenCode` permission that governs a canonical tool. Permission names
@@ -904,6 +1019,7 @@ mod tests {
             cwd,
             target_dir: None,
             presets,
+            mcp_servers: &McpServers::new(),
             adapter_config: cfg,
             overwrite: false,
         };
@@ -967,7 +1083,10 @@ mod tests {
                 description: "An agent".to_string(),
                 tags: None,
                 execution: None,
-                capabilities: tools.map(|tools| CapabilitiesFrontmatter { tools: Some(tools) }),
+                capabilities: tools.map(|tools| CapabilitiesFrontmatter {
+                    tools: Some(tools),
+                    mcp: None,
+                }),
             },
             body: "Body.".to_string(),
         })
@@ -1077,6 +1196,7 @@ mod tests {
             cwd: Path::new("/tmp/cwd"),
             target_dir: None,
             presets: &presets,
+            mcp_servers: &McpServers::new(),
             adapter_config: None,
             overwrite: false,
         };
@@ -1300,6 +1420,7 @@ mod tests {
                 }),
                 capabilities: Some(CapabilitiesFrontmatter {
                     tools: Some(vec![ToolFrontmatter::Read, ToolFrontmatter::Grep]),
+                    mcp: None,
                 }),
                 user_invocable: false,
                 agent_invocable: true,
@@ -1723,6 +1844,7 @@ mod tests {
             cwd,
             target_dir: None,
             presets: &presets,
+            mcp_servers: &McpServers::new(),
             adapter_config: None,
             overwrite: false,
         };
@@ -1744,6 +1866,7 @@ mod tests {
             cwd,
             target_dir: None,
             presets: &presets,
+            mcp_servers: &McpServers::new(),
             adapter_config: None,
             overwrite: false,
         };
@@ -1949,6 +2072,7 @@ mod tests {
             cwd: Path::new("/should-not-be-consulted"),
             target_dir: Some(dest_root),
             presets: &presets,
+            mcp_servers: &McpServers::new(),
             adapter_config: Some(&cfg),
             overwrite: false,
         };
@@ -2041,6 +2165,7 @@ mod tests {
             cwd: Path::new("/should-not-be-consulted"),
             target_dir: Some(dest_root),
             presets: &presets,
+            mcp_servers: &McpServers::new(),
             adapter_config: Some(&cfg),
             overwrite: false,
         };
@@ -2101,6 +2226,7 @@ mod tests {
             cwd: Path::new("/work"),
             target_dir: None,
             presets: &presets,
+            mcp_servers: &McpServers::new(),
             adapter_config: None,
             overwrite: false,
         };
@@ -2161,5 +2287,142 @@ mod tests {
             &["--strict".to_string()],
         );
         assert_eq!(preview, "");
+    }
+}
+
+#[cfg(test)]
+mod mcp_declaration_tests {
+    use super::*;
+
+    fn opencode_server(name: &str) -> McpServer {
+        McpServer {
+            opencode: Some(OpenCodeMcpServer {
+                server: Some(name.to_owned()),
+            }),
+            ..McpServer::default()
+        }
+    }
+
+    fn messages(servers: &[(&str, McpServer)]) -> Vec<String> {
+        let declarations = Declarations {
+            mcp: servers
+                .iter()
+                .map(|(n, s)| ((*n).to_owned(), s.clone()))
+                .collect(),
+            ..Declarations::default()
+        };
+        OpenCodeAdapter.validate_declarations(&declarations)
+    }
+
+    /// The `BTreeMap` visits `fx` before `fx_extra`, so the shorter name is
+    /// declared first here.
+    #[test]
+    fn test_mcp_overlap_rejects_prefix_declared_first() {
+        let errors = messages(&[
+            ("fx", McpServer::default()),
+            ("fx_extra", McpServer::default()),
+        ]);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].contains("[mcp.fx] and [mcp.fx_extra]"),
+            "{}",
+            errors[0]
+        );
+    }
+
+    /// `zz_a` resolves to `fy` and sorts after `fy_b`, so the shorter resolved
+    /// name is visited second.
+    #[test]
+    fn test_mcp_overlap_rejects_prefix_declared_second() {
+        let errors = messages(&[
+            ("fy_b", McpServer::default()),
+            ("zz_a", opencode_server("fy")),
+        ]);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].contains("[mcp.fy_b] and [mcp.zz_a]"),
+            "{}",
+            errors[0]
+        );
+        assert!(errors[0].contains("`fy_b` and `fy`"), "{}", errors[0]);
+    }
+
+    #[test]
+    fn test_mcp_overlap_rejects_two_servers_resolving_to_one_name() {
+        let errors = messages(&[
+            ("atlassian", opencode_server("jira")),
+            ("jira", McpServer::default()),
+        ]);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains("`jira` and `jira`"), "{}", errors[0]);
+    }
+
+    #[test]
+    fn test_mcp_overlap_rejects_restated_permission() {
+        let errors = messages(&[("external", McpServer::default())]);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].contains("`external_directory` permission"),
+            "{}",
+            errors[0]
+        );
+    }
+
+    #[test]
+    fn test_mcp_overlap_rejects_underscored_builtin_permission() {
+        let errors = messages(&[("plan", McpServer::default())]);
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        assert!(
+            errors[0].contains("built-in `plan_enter` permission"),
+            "{}",
+            errors[0]
+        );
+        assert!(
+            errors[1].contains("built-in `plan_exit` permission"),
+            "{}",
+            errors[1]
+        );
+    }
+
+    /// A restated permission is an exact key, so a server named after it, or
+    /// extending it, collides with nothing.
+    #[test]
+    fn test_mcp_overlap_accepts_names_equal_to_or_extending_restated_permissions() {
+        assert_eq!(
+            messages(&[
+                ("doom_loop_x", McpServer::default()),
+                ("external_directory", McpServer::default()),
+            ]),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn test_mcp_overlap_accepts_names_sharing_a_prefix_without_underscore() {
+        assert_eq!(
+            messages(&[("fx", McpServer::default()), ("fxa", McpServer::default())]),
+            Vec::<String>::new()
+        );
+    }
+
+    /// A name the neutral rule rejects is reported there, not again here.
+    #[test]
+    fn test_mcp_overlap_skips_names_failing_the_neutral_rule() {
+        assert_eq!(
+            messages(&[("doom_loop_.x", McpServer::default())]),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            messages(&[("q", opencode_server("")), ("r", opencode_server("_x"))]),
+            ["[mcp.q.opencode] `server` must match [A-Za-z0-9_-]+ (got \"\")"]
+        );
+    }
+
+    #[test]
+    fn test_mcp_opencode_server_override_must_be_mcp_name() {
+        assert_eq!(
+            messages(&[("quip", opencode_server("a.b"))]),
+            ["[mcp.quip.opencode] `server` must match [A-Za-z0-9_-]+ (got \"a.b\")"]
+        );
     }
 }

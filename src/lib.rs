@@ -4,6 +4,7 @@ pub mod cst_io;
 pub mod declarations;
 pub mod hooks_canonical;
 pub mod hooks_merge;
+pub mod mcp;
 pub mod plan;
 pub mod presets;
 pub mod provider;

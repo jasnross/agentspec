@@ -492,6 +492,9 @@ fn intents(
         if spec.declares_paths() {
             configured.push(SettingKey::Paths);
         }
+        if let Some(grants) = spec.mcp_grants() {
+            configured.extend(grants.keys().map(|server| SettingKey::Mcp(server.clone())));
+        }
 
         for key in configured {
             for &kind in &emitted {
@@ -709,6 +712,7 @@ pub(crate) fn compile_specs(
             cwd,
             target_dir: target.target_dir.as_deref(),
             presets: &declarations.presets,
+            mcp_servers: &declarations.mcp,
             adapter_config,
             overwrite: target.overwrite,
         };
@@ -808,6 +812,8 @@ pub(crate) fn compile_specs(
 
 #[cfg(test)]
 mod loss_tests {
+    use std::collections::BTreeMap;
+
     use indexmap::IndexMap;
 
     use super::{GeneratedFile, Loss, derive_losses};
@@ -817,8 +823,8 @@ mod loss_tests {
     use crate::provider::Provider;
     use crate::setting::SettingKey;
     use crate::spec::{
-        CapabilitiesFrontmatter, ExecutionFrontmatter, SkillFrontmatter, SkillSpec, Spec,
-        ToolFrontmatter,
+        CapabilitiesFrontmatter, ExecutionFrontmatter, McpGrant, McpTools, SkillFrontmatter,
+        SkillSpec, Spec, ToolFrontmatter,
     };
 
     const PROVIDER: Provider = Provider::OpenCode;
@@ -851,6 +857,7 @@ mod loss_tests {
                 }),
                 capabilities: with_tools.then(|| CapabilitiesFrontmatter {
                     tools: Some(vec![ToolFrontmatter::Read]),
+                    mcp: None,
                 }),
             },
             body: "Body.".to_owned(),
@@ -915,6 +922,37 @@ mod loss_tests {
         assert!(
             losses.iter().all(|l| l.kind() != Some(FileKind::Commands)),
             "the command file carried both settings, so it loses nothing: {losses:#?}"
+        );
+    }
+
+    /// A grant raises one `mcp.<server>` intent per emitted kind, so an
+    /// adapter that carries none loses it on each.
+    #[test]
+    fn test_mcp_grant_with_no_delivery_is_lost_on_each_emitted_kind() {
+        let mut spec = skill("s", false, false);
+        if let Spec::Skill(s) = &mut spec {
+            s.frontmatter.capabilities = Some(CapabilitiesFrontmatter {
+                tools: None,
+                mcp: Some(BTreeMap::from([(
+                    "quip".to_owned(),
+                    McpGrant {
+                        tools: McpTools::All,
+                    },
+                )])),
+            });
+        }
+        let files = [file("s", FileKind::Commands), file("s", FileKind::Skills)];
+        let losses = losses_for(&[spec], &files, Vec::new());
+        let lost: Vec<(String, Option<FileKind>)> = losses
+            .iter()
+            .map(|l| (l.setting().label().into_owned(), l.kind()))
+            .collect();
+        assert_eq!(
+            lost,
+            [
+                ("mcp.quip".to_owned(), Some(FileKind::Commands)),
+                ("mcp.quip".to_owned(), Some(FileKind::Skills)),
+            ]
         );
     }
 

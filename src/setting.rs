@@ -26,6 +26,9 @@ pub enum SettingKey {
     Param(String),
     Tools,
     Paths,
+    /// A `capabilities.mcp` grant, keyed by the logical server name the spec
+    /// granted from.
+    Mcp(String),
 }
 
 impl SettingKey {
@@ -43,6 +46,7 @@ impl SettingKey {
             Self::Param(_) => SettingKind::Param,
             Self::Tools => SettingKind::Tools,
             Self::Paths => SettingKind::Paths,
+            Self::Mcp(_) => SettingKind::Mcp,
         }
     }
 
@@ -62,6 +66,7 @@ impl SettingKey {
             Self::Param(key) => Cow::Owned(format!("params.{key}")),
             Self::Tools => Cow::Borrowed("tools"),
             Self::Paths => Cow::Borrowed("paths"),
+            Self::Mcp(server) => Cow::Owned(format!("mcp.{server}")),
         }
     }
 }
@@ -84,6 +89,9 @@ pub enum SettingKind {
     Param,
     Tools,
     Paths,
+    /// Every [`SettingKey::Mcp`] payload maps here, so declaring `Mcp` says the
+    /// adapter can carry a grant from any declared server.
+    Mcp,
 }
 
 /// The settings a frontmatter struct is carrying, as populated.

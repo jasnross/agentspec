@@ -6765,3 +6765,118 @@ fn test_validate_fails_on_extra_dir_name_colliding_with_symlinked_dir() {
     assert!(stderr.contains("collides"), "stderr: {stderr}");
     assert!(stderr.contains("shared"), "stderr: {stderr}");
 }
+
+/// Append `extra` to the fixture's own `agentspec.toml`, so everything it
+/// already declares stays declared.
+fn install_agentspec_toml_with(dir: &Path, extra: &str) {
+    let path = dir.join("agentspec.toml");
+    let base = std::fs::read_to_string(&path);
+    assert!(base.is_ok(), "read agentspec.toml: {base:?}");
+    let base = base.unwrap_or_default();
+    install_agentspec_toml(dir, &format!("{base}\n{extra}"));
+}
+
+/// Replace the fixture agent's frontmatter capabilities with `capabilities`,
+/// a YAML block indented under the `capabilities:` key.
+fn install_agent_with_capabilities(dir: &Path, capabilities: &str) {
+    let r = std::fs::write(
+        dir.join("spec/agents/test-agent.md"),
+        format!(
+            "---\n\
+             id: test-agent\n\
+             description: A test agent for fixture testing\n\
+             capabilities:\n{capabilities}\
+             ---\n\n\
+             # Test Agent\n\n\
+             Agent instructions here.\n"
+        ),
+    );
+    assert!(r.is_ok(), "write test-agent.md: {r:?}");
+}
+
+fn run_in(dir: &Path, args: &[&str]) -> (bool, String, String) {
+    let output = std::process::Command::new(agentspec())
+        .args(args)
+        .current_dir(dir)
+        .output();
+    assert!(output.is_ok(), "agentspec spawn: {output:?}");
+    let Ok(output) = output else {
+        return (false, String::new(), String::new());
+    };
+    (
+        output.status.success(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+/// No adapter carries a grant yet, so every provider reports it lost on the
+/// agent file.
+#[test]
+fn test_inspect_mcp_grant_not_delivered() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_agentspec_toml_with(&dir, "[mcp.quip]\n");
+    install_agent_with_capabilities(
+        &dir,
+        "  tools: [read]\n  mcp:\n    quip: { tools: [search_documents] }\n",
+    );
+
+    let (ok, stdout, stderr) = run_in(&dir, &["inspect"]);
+    assert!(ok, "inspect failed:\n{stderr}");
+    for provider in ["claude", "cursor", "opencode"] {
+        assert!(
+            stdout.contains(&format!(
+                "{provider}: 1 spec lost `mcp.quip` — no {provider} agents file carries `mcp.quip`"
+            )),
+            "{provider}:\n{stdout}"
+        );
+    }
+}
+
+#[test]
+fn test_validate_mcp_rejects_unknown_server() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_agent_with_capabilities(&dir, "  tools: []\n  mcp:\n    quip: { tools: all }\n");
+
+    let (ok, _, stderr) = run_in(&dir, &["validate"]);
+    assert!(!ok, "validate should fail");
+    assert!(stderr.contains("unknown MCP server 'quip'"), "{stderr}");
+}
+
+#[test]
+fn test_validate_mcp_rejects_agent_grant_without_tools() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_agentspec_toml_with(&dir, "[mcp.quip]\n");
+    install_agent_with_capabilities(&dir, "  mcp:\n    quip: { tools: all }\n");
+
+    let (ok, _, stderr) = run_in(&dir, &["validate"]);
+    assert!(!ok, "validate should fail");
+    assert!(
+        stderr.contains(
+            "an agent that declares `capabilities.mcp` must declare `capabilities.tools`"
+        ),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn test_validate_mcp_rejects_mistyped_grant() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_agentspec_toml_with(&dir, "[mcp.quip]\n");
+    install_agent_with_capabilities(
+        &dir,
+        "  tools: []\n  mcp:\n    quip: { tools: everything }\n",
+    );
+
+    let (ok, _, stderr) = run_in(&dir, &["validate"]);
+    assert!(!ok, "validate should fail");
+    assert!(stderr.contains("capabilities.mcp.quip"), "{stderr}");
+    assert!(
+        stderr.contains("expected the keyword `all` or a list of tool names"),
+        "{stderr}"
+    );
+}

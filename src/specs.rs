@@ -630,8 +630,9 @@ pub struct ValidatedSpecs {
     ///
     /// This closes the `compile::run` path only. `Provider::adapter()` and
     /// `Adapter::compile` are public, so a consumer invoking an adapter directly
-    /// still supplies its own `CompileCtx.presets` and is guarded only by the
-    /// adapter's `debug_assert!`s.
+    /// still supplies its own `CompileCtx.presets` and `CompileCtx.mcp_servers`,
+    /// skipping every declaration check — the MCP name-collision checks among
+    /// them — and is guarded only by the adapter's `debug_assert!`s.
     declarations: Declarations,
 }
 

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -6,8 +6,9 @@ use globset::GlobBuilder;
 use strum::VariantArray as _;
 
 use crate::declarations::Declarations;
+use crate::mcp::{McpServers, is_mcp_name};
 use crate::provider::Provider;
-use crate::spec::{Spec, ToolFrontmatter};
+use crate::spec::{McpGrant, McpTools, Spec, ToolFrontmatter};
 
 /// A validation error (spec semantics or config shape).
 #[derive(Debug)]
@@ -72,15 +73,7 @@ pub fn validate_semantics(
             });
         }
 
-        let tools = match spec {
-            Spec::Agent(agent_spec) => agent_spec.frontmatter.capabilities.as_ref(),
-            Spec::Skill(skill_spec) => skill_spec.frontmatter.capabilities.as_ref(),
-            Spec::Rule(_) | Spec::Hook(_) => None,
-        }
-        .and_then(|capabilities| capabilities.tools.as_deref());
-        if let Some(tools) = tools {
-            validate_unique_tools(spec.path(), tools, &mut errors);
-        }
+        validate_capabilities(spec, &declarations.mcp, &mut errors);
 
         if let Spec::Hook(hook_spec) = spec
             && hook_spec.frontmatter.matcher.is_some()
@@ -161,8 +154,9 @@ pub fn validate_semantics(
     errors
 }
 
-/// Each adapter's checks on its own provider's blocks in every declaration
-/// section, reported against the config file.
+/// The provider-neutral rule on every declared MCP server name, then each
+/// adapter's checks on its own provider's blocks in every declaration section,
+/// all reported against the config file.
 ///
 /// Lives here, in the library, rather than beside the binary's other config
 /// checks: `compile::run` is public API, so a consumer that never touches the
@@ -183,14 +177,52 @@ fn validate_config_declarations(
     declarations: &Declarations,
     config_path: &Path,
 ) -> Vec<ValidationError> {
-    Provider::VARIANTS
-        .iter()
-        .flat_map(|provider| provider.adapter().validate_declarations(declarations))
+    // The neutral rule on every logical name comes first; adapters check only
+    // the overrides they can see, so one bad name yields one error.
+    let neutral = declarations
+        .mcp
+        .keys()
+        .filter(|name| !is_mcp_name(name))
+        .map(|name| format!("[mcp.{name}] the server name must match [A-Za-z0-9_-]+"));
+    neutral
+        .chain(
+            Provider::VARIANTS
+                .iter()
+                .flat_map(|provider| provider.adapter().validate_declarations(declarations)),
+        )
         .map(|message| ValidationError {
             path: config_path.to_path_buf(),
             message,
         })
         .collect()
+}
+
+/// Check an agent's or skill's `capabilities`: the built-in tool list, each
+/// MCP grant, and that an agent granting MCP tools also declares its built-in
+/// tools.
+fn validate_capabilities(spec: &Spec, servers: &McpServers, errors: &mut Vec<ValidationError>) {
+    let capabilities = match spec {
+        Spec::Agent(agent_spec) => agent_spec.frontmatter.capabilities.as_ref(),
+        Spec::Skill(skill_spec) => skill_spec.frontmatter.capabilities.as_ref(),
+        Spec::Rule(_) | Spec::Hook(_) => None,
+    };
+    if let Some(tools) = capabilities.and_then(|c| c.tools.as_deref()) {
+        validate_unique_tools(spec.path(), tools, errors);
+    }
+
+    let Some(grants) = spec.mcp_grants() else {
+        return;
+    };
+    validate_mcp_grants(spec.path(), grants, servers, errors);
+    if matches!(spec, Spec::Agent(_)) && !spec.declares_tools() {
+        errors.push(ValidationError {
+            path: spec.path().to_path_buf(),
+            message: "an agent that declares `capabilities.mcp` must declare \
+                      `capabilities.tools`; use `tools: []` to grant only the MCP \
+                      tools, or remove `mcp` to give the agent every tool"
+                .to_string(),
+        });
+    }
 }
 
 /// Reject a `capabilities.tools` list that names a tool twice.
@@ -212,6 +244,54 @@ fn validate_unique_tools(
                 path: path.to_path_buf(),
                 message: format!("`capabilities.tools` lists '{name}' more than once"),
             });
+        }
+    }
+}
+
+/// Check each `capabilities.mcp` grant against the declared servers and the
+/// provider-neutral name rule.
+///
+/// Only the neutral rule applies here: whether a name collides with another
+/// once a provider composes it is that provider's check, in its adapter's
+/// `validate_declarations`.
+fn validate_mcp_grants(
+    path: &Path,
+    grants: &BTreeMap<String, McpGrant>,
+    servers: &McpServers,
+    errors: &mut Vec<ValidationError>,
+) {
+    let mut push = |message: String| {
+        errors.push(ValidationError {
+            path: path.to_path_buf(),
+            message,
+        });
+    };
+    for (server, McpGrant { tools }) in grants {
+        if !servers.contains_key(server) {
+            push(format!("unknown MCP server '{server}'"));
+        }
+        let McpTools::Named(named) = tools else {
+            continue;
+        };
+        if named.is_empty() {
+            push(format!(
+                "`capabilities.mcp.{server}.tools` must list at least one tool, or be `all`"
+            ));
+        }
+        let mut reported: Vec<&String> = Vec::new();
+        for (i, tool) in named.iter().enumerate() {
+            if !is_mcp_name(tool) {
+                push(format!(
+                    "`capabilities.mcp.{server}.tools` names '{tool}', which must match \
+                     [A-Za-z0-9_-]+"
+                ));
+            }
+            if named[..i].contains(tool) && !reported.contains(&tool) {
+                reported.push(tool);
+                push(format!(
+                    "`capabilities.mcp.{server}.tools` lists '{tool}' more than once"
+                ));
+            }
         }
     }
 }
@@ -297,6 +377,7 @@ mod tests {
     use indexmap::IndexMap;
 
     use super::*;
+    use crate::mcp::McpServer;
     use crate::presets::{ProviderPresets, ProviderPresetsMap};
     use crate::spec::{
         AgentFrontmatter, AgentSpec, CapabilitiesFrontmatter, ExecutionFrontmatter, HookEvent,
@@ -441,7 +522,14 @@ mod tests {
         });
         let mut presets = ProviderPresetsMap::new();
         presets.insert("known".to_string(), ProviderPresets::default());
-        let errors = validate_semantics(&[spec], &Declarations { presets }, test_config_path());
+        let errors = validate_semantics(
+            &[spec],
+            &Declarations {
+                presets,
+                ..Declarations::default()
+            },
+            test_config_path(),
+        );
         assert!(
             errors
                 .iter()
@@ -460,12 +548,22 @@ mod tests {
         });
         let mut presets = ProviderPresetsMap::new();
         presets.insert("fast".to_string(), ProviderPresets::default());
-        let errors = validate_semantics(&[spec], &Declarations { presets }, test_config_path());
+        let errors = validate_semantics(
+            &[spec],
+            &Declarations {
+                presets,
+                ..Declarations::default()
+            },
+            test_config_path(),
+        );
         assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
     }
 
     fn with_tools(mut spec: Spec, tools: Vec<ToolFrontmatter>) -> Spec {
-        let capabilities = Some(CapabilitiesFrontmatter { tools: Some(tools) });
+        let capabilities = Some(CapabilitiesFrontmatter {
+            tools: Some(tools),
+            mcp: None,
+        });
         match &mut spec {
             Spec::Agent(a) => a.frontmatter.capabilities = capabilities,
             Spec::Skill(s) => s.frontmatter.capabilities = capabilities,
@@ -517,6 +615,145 @@ mod tests {
                 "`capabilities.tools` lists 'grep' more than once",
                 "`capabilities.tools` lists 'webfetch' more than once",
             ]
+        );
+    }
+
+    fn with_mcp(
+        mut spec: Spec,
+        tools: Option<Vec<ToolFrontmatter>>,
+        grants: &[(&str, McpTools)],
+    ) -> Spec {
+        let capabilities = Some(CapabilitiesFrontmatter {
+            tools,
+            mcp: Some(
+                grants
+                    .iter()
+                    .map(|(server, tools)| {
+                        (
+                            (*server).to_owned(),
+                            McpGrant {
+                                tools: tools.clone(),
+                            },
+                        )
+                    })
+                    .collect(),
+            ),
+        });
+        match &mut spec {
+            Spec::Agent(a) => a.frontmatter.capabilities = capabilities,
+            Spec::Skill(s) => s.frontmatter.capabilities = capabilities,
+            Spec::Rule(_) | Spec::Hook(_) => panic!("only agents and skills declare grants"),
+        }
+        spec
+    }
+
+    fn named(tools: &[&str]) -> McpTools {
+        McpTools::Named(tools.iter().map(|t| (*t).to_owned()).collect())
+    }
+
+    fn mcp_declarations(servers: &[&str]) -> Declarations {
+        Declarations {
+            mcp: servers
+                .iter()
+                .map(|s| ((*s).to_owned(), McpServer::default()))
+                .collect(),
+            ..Declarations::default()
+        }
+    }
+
+    fn mcp_messages(spec: Spec, declarations: &Declarations) -> Vec<String> {
+        validate_semantics(&[spec], declarations, test_config_path())
+            .into_iter()
+            .map(|e| e.message)
+            .collect()
+    }
+
+    #[test]
+    fn test_semantics_valid_mcp_grant_passes() {
+        let spec = with_mcp(
+            make_agent("a", "body"),
+            Some(vec![]),
+            &[
+                ("quip", named(&["search_documents"])),
+                ("jira", McpTools::All),
+            ],
+        );
+        assert_eq!(
+            mcp_messages(spec, &mcp_declarations(&["quip", "jira"])),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn test_semantics_mcp_grant_unknown_server_rejected() {
+        let spec = with_mcp(make_skill("s", "body"), None, &[("quip", McpTools::All)]);
+        assert_eq!(
+            mcp_messages(spec, &mcp_declarations(&[])),
+            ["unknown MCP server 'quip'"]
+        );
+    }
+
+    #[test]
+    fn test_semantics_mcp_grant_bad_tool_name_rejected() {
+        let spec = with_mcp(make_skill("s", "body"), None, &[("quip", named(&["a.b"]))]);
+        assert_eq!(
+            mcp_messages(spec, &mcp_declarations(&["quip"])),
+            ["`capabilities.mcp.quip.tools` names 'a.b', which must match [A-Za-z0-9_-]+"]
+        );
+    }
+
+    #[test]
+    fn test_semantics_mcp_grant_empty_list_rejected() {
+        let spec = with_mcp(make_skill("s", "body"), None, &[("quip", named(&[]))]);
+        assert_eq!(
+            mcp_messages(spec, &mcp_declarations(&["quip"])),
+            ["`capabilities.mcp.quip.tools` must list at least one tool, or be `all`"]
+        );
+    }
+
+    #[test]
+    fn test_semantics_mcp_grant_repeated_tool_rejected() {
+        let spec = with_mcp(
+            make_skill("s", "body"),
+            None,
+            &[("quip", named(&["a", "b", "a", "a"]))],
+        );
+        assert_eq!(
+            mcp_messages(spec, &mcp_declarations(&["quip"])),
+            ["`capabilities.mcp.quip.tools` lists 'a' more than once"]
+        );
+    }
+
+    #[test]
+    fn test_semantics_mcp_grant_on_agent_without_tools_rejected() {
+        let spec = with_mcp(make_agent("a", "body"), None, &[("quip", McpTools::All)]);
+        let messages = mcp_messages(spec, &mcp_declarations(&["quip"]));
+        assert_eq!(messages.len(), 1, "{messages:?}");
+        assert!(
+            messages[0].starts_with(
+                "an agent that declares `capabilities.mcp` must declare `capabilities.tools`"
+            ),
+            "{}",
+            messages[0]
+        );
+    }
+
+    #[test]
+    fn test_semantics_mcp_grant_on_skill_without_tools_passes() {
+        let spec = with_mcp(make_skill("s", "body"), None, &[("quip", McpTools::All)]);
+        assert_eq!(
+            mcp_messages(spec, &mcp_declarations(&["quip"])),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn test_validate_config_declarations_rejects_bad_mcp_server_name() {
+        let errors = validate_config_declarations(&mcp_declarations(&["a.b"]), test_config_path());
+        let messages: Vec<&str> = errors.iter().map(|e| e.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            ["[mcp.a.b] the server name must match [A-Za-z0-9_-]+"]
         );
     }
 
@@ -839,7 +1076,10 @@ mod preset_config_tests {
             },
         );
         let errors = validate_config_declarations(
-            &Declarations { presets },
+            &Declarations {
+                presets,
+                ..Declarations::default()
+            },
             Path::new("/tmp/agentspec.toml"),
         );
         assert_eq!(errors.len(), 1, "errors: {errors:?}");
@@ -864,7 +1104,10 @@ mod preset_config_tests {
         );
         let errors = validate_semantics(
             &[],
-            &Declarations { presets },
+            &Declarations {
+                presets,
+                ..Declarations::default()
+            },
             Path::new("/tmp/agentspec.toml"),
         );
         assert_eq!(errors.len(), 1, "errors: {errors:?}");
@@ -893,6 +1136,7 @@ mod preset_config_tests {
             let errors = validate_config_declarations(
                 &Declarations {
                     presets: presets_with_cursor("x", preset),
+                    ..Declarations::default()
                 },
                 Path::new("/tmp/agentspec.toml"),
             );
@@ -922,7 +1166,10 @@ mod preset_config_tests {
         );
         assert!(
             validate_config_declarations(
-                &Declarations { presets },
+                &Declarations {
+                    presets,
+                    ..Declarations::default()
+                },
                 Path::new("/tmp/agentspec.toml")
             )
             .is_empty()
@@ -951,7 +1198,10 @@ mod preset_config_tests {
         ]);
 
         let errors = validate_config_declarations(
-            &Declarations { presets },
+            &Declarations {
+                presets,
+                ..Declarations::default()
+            },
             Path::new("/tmp/agentspec.toml"),
         );
         assert_eq!(errors.len(), 3, "errors: {errors:?}");

@@ -21,6 +21,7 @@ use crate::compile::{
 };
 use crate::declarations::Declarations;
 use crate::hooks_merge::{merge_owned, remove_owned};
+use crate::mcp::{ClaudeMcpServer, McpServer, is_mcp_name};
 use crate::plan::{FileKind, ForwardPatch, ReversePatch};
 use crate::presets::{ClaudeEffort, ProviderPresets, ProviderPresetsMap};
 use crate::provider::Provider;
@@ -309,7 +310,7 @@ impl Adapter for ClaudeAdapter {
     }
 
     fn validate_declarations(&self, declarations: &Declarations) -> Vec<String> {
-        let Declarations { presets } = declarations;
+        let Declarations { presets, mcp } = declarations;
         // Claude's `effort` is independent of `model` (measured by
         // `experiments/claude-agent-effort/` and `experiments/claude-skill-effort/`
         // with no `model` key), so a `claude` preset block has no cross-field
@@ -322,7 +323,30 @@ impl Adapter for ClaudeAdapter {
                 opencode: _,
             } = preset;
         }
-        Vec::new()
+
+        // Only explicit overrides: `validate.rs` checks every logical name, so
+        // checking the resolved name here would report one bad name twice.
+        let mut errors = Vec::new();
+        for (name, server) in mcp {
+            let McpServer {
+                claude,
+                cursor: _,
+                opencode: _,
+            } = server;
+            let Some(ClaudeMcpServer { server, plugin }) = claude else {
+                continue;
+            };
+            for (field, value) in [("server", server), ("plugin", plugin)] {
+                if let Some(value) = value
+                    && !is_mcp_name(value)
+                {
+                    errors.push(format!(
+                        "[mcp.{name}.claude] `{field}` must match [A-Za-z0-9_-]+ (got {value:?})"
+                    ));
+                }
+            }
+        }
+        errors
     }
 
     fn plugin_manifest_dir(&self) -> Option<&'static str> {
@@ -916,6 +940,7 @@ mod tests {
     use serde::Deserialize;
 
     use super::*;
+    use crate::mcp::McpServers;
     use crate::presets::{ClaudePreset, ProviderPresets};
     use crate::spec::{
         AgentFrontmatter, AgentSpec, CapabilitiesFrontmatter, ExecutionFrontmatter,
@@ -1026,6 +1051,7 @@ mod tests {
             cwd,
             target_dir: None,
             presets,
+            mcp_servers: &McpServers::new(),
             adapter_config: cfg,
             overwrite: false,
         };
@@ -1068,6 +1094,7 @@ mod tests {
                     ToolFrontmatter::Read,
                     ToolFrontmatter::Shell,
                 ]),
+                mcp: None,
             }),
         );
 
@@ -1604,6 +1631,7 @@ mod tests {
             cwd,
             target_dir: None,
             presets: &presets,
+            mcp_servers: &McpServers::new(),
             adapter_config: None,
             overwrite: false,
         };
@@ -1716,6 +1744,7 @@ mod tests {
             cwd,
             target_dir: Some(Path::new("/out")),
             presets: &presets,
+            mcp_servers: &McpServers::new(),
             adapter_config: Some(&cfg),
             overwrite: false,
         };
@@ -1759,6 +1788,7 @@ mod tests {
             cwd,
             target_dir: None,
             presets: &presets,
+            mcp_servers: &McpServers::new(),
             adapter_config: Some(&cfg),
             overwrite: false,
         };
@@ -1922,6 +1952,50 @@ mod tests {
         assert!(
             !preview.contains("scripts/scripts/"),
             "scripts/ prefix should not double up, got: {preview}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod mcp_declaration_tests {
+    use super::*;
+    use crate::mcp::McpServers;
+
+    #[test]
+    fn test_mcp_claude_overrides_must_be_mcp_names() {
+        let declarations = Declarations {
+            mcp: McpServers::from([(
+                "quip".to_owned(),
+                McpServer {
+                    claude: Some(ClaudeMcpServer {
+                        server: Some("a.b".to_owned()),
+                        plugin: Some("work tools".to_owned()),
+                    }),
+                    ..McpServer::default()
+                },
+            )]),
+            ..Declarations::default()
+        };
+        assert_eq!(
+            ClaudeAdapter.validate_declarations(&declarations),
+            [
+                "[mcp.quip.claude] `server` must match [A-Za-z0-9_-]+ (got \"a.b\")",
+                "[mcp.quip.claude] `plugin` must match [A-Za-z0-9_-]+ (got \"work tools\")",
+            ]
+        );
+    }
+
+    /// Only overrides: a bad logical name is the neutral check's to report.
+    #[test]
+    fn test_mcp_claude_ignores_logical_name() {
+        let declarations = Declarations {
+            mcp: McpServers::from([("a.b".to_owned(), McpServer::default())]),
+            ..Declarations::default()
+        };
+        assert!(
+            ClaudeAdapter
+                .validate_declarations(&declarations)
+                .is_empty()
         );
     }
 }

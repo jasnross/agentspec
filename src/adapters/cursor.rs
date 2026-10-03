@@ -20,6 +20,7 @@ use crate::compile::{
 };
 use crate::declarations::Declarations;
 use crate::hooks_merge::{merge_owned, remove_owned};
+use crate::mcp::{CursorMcpServer, McpServer, is_mcp_name};
 use crate::plan::{FileKind, ForwardPatch, ReversePatch};
 use crate::presets::{CursorPreset, ProviderPresets, ProviderPresetsMap};
 use crate::provider::Provider;
@@ -302,17 +303,18 @@ impl Adapter for CursorAdapter {
         }
     }
 
-    /// Cursor's bracket grammar for each preset's `cursor` block.
+    /// Cursor's bracket grammar for each preset's `cursor` block, then each
+    /// MCP server's `cursor.server` override.
     ///
     /// Presets are keyed by a `HashMap`, so iteration order is
     /// nondeterministic and a multi-error run would report differently each
     /// time. Sort by preset name first. At most one error per preset —
     /// `validate_cursor_preset` reports its first failing check.
     fn validate_declarations(&self, declarations: &Declarations) -> Vec<String> {
-        let Declarations { presets } = declarations;
+        let Declarations { presets, mcp } = declarations;
         let mut names: Vec<&String> = presets.keys().collect();
         names.sort();
-        names
+        let mut errors: Vec<String> = names
             .into_iter()
             .filter_map(|name| {
                 let ProviderPresets {
@@ -324,7 +326,28 @@ impl Adapter for CursorAdapter {
                     .err()
                     .map(|e| e.to_string())
             })
-            .collect()
+            .collect();
+
+        // Only explicit overrides: `validate.rs` checks every logical name, so
+        // checking the resolved name here would report one bad name twice.
+        for (name, server) in mcp {
+            let McpServer {
+                claude: _,
+                cursor,
+                opencode: _,
+            } = server;
+            if let Some(CursorMcpServer {
+                server: Some(override_name),
+            }) = cursor
+                && !is_mcp_name(override_name)
+            {
+                errors.push(format!(
+                    "[mcp.{name}.cursor] `server` must match [A-Za-z0-9_-]+ \
+                     (got {override_name:?})"
+                ));
+            }
+        }
+        errors
     }
 
     fn plugin_manifest_dir(&self) -> Option<&'static str> {
@@ -1096,6 +1119,7 @@ mod tests {
     use indexmap::IndexMap;
 
     use super::*;
+    use crate::mcp::McpServers;
     use crate::presets::ProviderPresets;
     use crate::spec::{
         AgentFrontmatter, AgentSpec, ExecutionFrontmatter, RuleFrontmatter, RuleSpec,
@@ -1115,6 +1139,7 @@ mod tests {
             cwd,
             target_dir: None,
             presets,
+            mcp_servers: &McpServers::new(),
             adapter_config: cfg,
             overwrite: false,
         };
@@ -1793,6 +1818,7 @@ mod tests {
             cwd: Path::new("/tmp/cwd"),
             target_dir: Some(Path::new("/out")),
             presets: &presets,
+            mcp_servers: &McpServers::new(),
             adapter_config: Some(&cfg),
             overwrite: false,
         };
@@ -1819,6 +1845,7 @@ mod tests {
             cwd: Path::new("/tmp/cwd"),
             target_dir: Some(Path::new("/out")),
             presets: &presets,
+            mcp_servers: &McpServers::new(),
             adapter_config: None,
             overwrite: false,
         };
@@ -1857,6 +1884,7 @@ mod tests {
             cwd,
             target_dir: None,
             presets: &presets,
+            mcp_servers: &McpServers::new(),
             adapter_config: None,
             overwrite: false,
         };
@@ -1875,6 +1903,7 @@ mod tests {
             cwd,
             target_dir: None,
             presets: &presets,
+            mcp_servers: &McpServers::new(),
             adapter_config: None,
             overwrite: false,
         };
@@ -2267,5 +2296,31 @@ mod preset_validation_tests {
     fn test_cursor_validate_accepts_empty() {
         validate_cursor_preset(&CursorPreset::default(), "x")
             .expect("empty preset should validate");
+    }
+}
+
+#[cfg(test)]
+mod mcp_declaration_tests {
+    use super::*;
+    use crate::mcp::McpServers;
+
+    #[test]
+    fn test_mcp_cursor_server_override_must_be_mcp_name() {
+        let declarations = Declarations {
+            mcp: McpServers::from([(
+                "quip".to_owned(),
+                McpServer {
+                    cursor: Some(CursorMcpServer {
+                        server: Some("a:b".to_owned()),
+                    }),
+                    ..McpServer::default()
+                },
+            )]),
+            ..Declarations::default()
+        };
+        assert_eq!(
+            CursorAdapter.validate_declarations(&declarations),
+            ["[mcp.quip.cursor] `server` must match [A-Za-z0-9_-]+ (got \"a:b\")"]
+        );
     }
 }

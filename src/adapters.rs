@@ -20,6 +20,7 @@ pub use opencode::OpenCodeAdapter;
 
 use crate::compile::{AdapterConfig, GeneratedFile, HookEmitMode};
 use crate::declarations::Declarations;
+use crate::mcp::McpServers;
 use crate::plan::{FileKind, ForwardPatch, ReversePatch, expand_tilde};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
@@ -134,6 +135,10 @@ pub struct CompileCtx<'a> {
     /// Preset library — adapters consume per-provider presets when applying
     /// frontmatter transforms.
     pub presets: &'a ProviderPresetsMap,
+    /// Declared MCP servers — adapters resolve each `capabilities.mcp` grant's
+    /// logical server name to their provider's registration when composing tool
+    /// ids.
+    pub mcp_servers: &'a McpServers,
     /// Per-provider `AdapterConfig` for prefix/strip transforms. `None` means
     /// "use canonical (unprefixed) defaults" — the same convention as today's
     /// `AdapterConfig` parameter.
@@ -664,6 +669,7 @@ mod tests {
 
     use super::{CompileCtx, Degradation, DegradationKind, SyncDestinationMode};
     use crate::declarations::Declarations;
+    use crate::mcp::{ClaudeMcpServer, McpServer, McpServers};
     use crate::plan::FileKind;
     use crate::presets::{
         ClaudeEffort, ClaudePreset, CursorPreset, OpenCodePreset, ProviderPresets,
@@ -673,8 +679,8 @@ mod tests {
     use crate::setting::{SettingKey, SettingKind};
     use crate::spec::{
         AgentFrontmatter, AgentSpec, CapabilitiesFrontmatter, ExecutionFrontmatter, HookEvent,
-        HookFrontmatter, HookSpec, RuleFrontmatter, RuleSpec, SkillFrontmatter, SkillSpec, Spec,
-        ToolFrontmatter,
+        HookFrontmatter, HookSpec, McpGrant, McpTools, RuleFrontmatter, RuleSpec, SkillFrontmatter,
+        SkillSpec, Spec, ToolFrontmatter,
     };
 
     const PRESET: &str = "maximal";
@@ -705,6 +711,43 @@ mod tests {
         )])
     }
 
+    /// One server registered under its logical name everywhere, and one
+    /// bundled in a Claude plugin, so both of Claude's spellings are composed.
+    fn maximal_mcp_servers() -> McpServers {
+        McpServers::from([
+            ("fx".to_owned(), McpServer::default()),
+            (
+                "fxp".to_owned(),
+                McpServer {
+                    claude: Some(ClaudeMcpServer {
+                        server: None,
+                        plugin: Some("fxp".to_owned()),
+                    }),
+                    ..McpServer::default()
+                },
+            ),
+        ])
+    }
+
+    /// A named grant and a whole-server grant, so each adapter's two
+    /// spellings are both composed.
+    fn maximal_grants() -> BTreeMap<String, McpGrant> {
+        BTreeMap::from([
+            (
+                "fx".to_owned(),
+                McpGrant {
+                    tools: McpTools::Named(vec!["alpha".to_owned()]),
+                },
+            ),
+            (
+                "fxp".to_owned(),
+                McpGrant {
+                    tools: McpTools::All,
+                },
+            ),
+        ])
+    }
+
     fn skill(id: &str, user_invocable: bool, agent_invocable: bool) -> Spec {
         Spec::Skill(SkillSpec {
             path: PathBuf::from("test.md"),
@@ -719,6 +762,7 @@ mod tests {
                 }),
                 capabilities: Some(CapabilitiesFrontmatter {
                     tools: Some(vec![ToolFrontmatter::Read]),
+                    mcp: Some(maximal_grants()),
                 }),
             },
             body: "Body.".to_owned(),
@@ -742,6 +786,7 @@ mod tests {
                     }),
                     capabilities: Some(CapabilitiesFrontmatter {
                         tools: Some(vec![ToolFrontmatter::Read]),
+                        mcp: Some(maximal_grants()),
                     }),
                 },
                 body: "Body.".to_owned(),
@@ -787,6 +832,7 @@ mod tests {
     fn test_carriable_agrees_with_carried() {
         let specs = spec_set();
         let presets = maximal_presets();
+        let mcp_servers = maximal_mcp_servers();
         // `SyncDestinationMode::Compile` maps to `HookEmitMode::Bundled`, so
         // Claude and Cursor emit `hooks/hooks.json`. Under a merged mode they
         // would emit no hook file at all and the emitted-kind assertion below
@@ -797,6 +843,7 @@ mod tests {
             cwd: Path::new("/tmp/cwd"),
             target_dir: None,
             presets: &presets,
+            mcp_servers: &mcp_servers,
             adapter_config: None,
             overwrite: false,
         };
@@ -877,7 +924,10 @@ mod tests {
                 ..CursorPreset::default()
             });
         }
-        let declarations = Declarations { presets };
+        let declarations = Declarations {
+            presets,
+            ..Declarations::default()
+        };
 
         for provider in Provider::VARIANTS {
             let messages = provider.adapter().validate_declarations(&declarations);

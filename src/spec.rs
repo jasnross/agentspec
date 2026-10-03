@@ -1,7 +1,11 @@
+use std::collections::BTreeMap;
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
-use serde::{Deserialize, Serialize};
+use serde::de::{self, MapAccess, SeqAccess, Unexpected, Visitor};
+use serde::ser::SerializeMap;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Clone, Debug)]
 pub enum Spec {
@@ -89,6 +93,16 @@ impl Spec {
             Spec::Rule(_) | Spec::Hook(_) => None,
         };
         capabilities.is_some_and(|c| c.tools.is_some())
+    }
+
+    /// This spec's `capabilities.mcp` grants, keyed by declared server name.
+    pub fn mcp_grants(&self) -> Option<&BTreeMap<String, McpGrant>> {
+        let capabilities = match self {
+            Spec::Agent(s) => s.frontmatter.capabilities.as_ref(),
+            Spec::Skill(s) => s.frontmatter.capabilities.as_ref(),
+            Spec::Rule(_) | Spec::Hook(_) => None,
+        };
+        capabilities.and_then(|c| c.mcp.as_ref())
     }
 
     /// Whether this spec declares `paths`. Only rules carry the field.
@@ -286,6 +300,170 @@ impl HookEvent {
 #[serde(deny_unknown_fields)]
 pub struct CapabilitiesFrontmatter {
     pub tools: Option<Vec<ToolFrontmatter>>,
+    /// MCP grants: declared logical server name → the tools granted from it.
+    #[serde(default, deserialize_with = "deserialize_mcp_grants")]
+    pub mcp: Option<BTreeMap<String, McpGrant>>,
+}
+
+/// The tools one spec is granted from one declared MCP server.
+///
+/// A struct rather than a bare [`McpTools`] so a later grant of the server's
+/// MCP resources is an added key, not a change of shape.
+///
+/// `Deserialize` is written by hand, driven by `deserialize_any`: frontmatter
+/// is parsed through `gray_matter`'s `Pod` deserializer, whose
+/// `deserialize_struct` fails any non-map with "Type error, expected: hash
+/// map" and never consults a derived visitor's `expecting` text. Only
+/// `deserialize_any` dispatches on the value's actual type, which is what lets
+/// a mistyped grant name the forms it accepts.
+#[derive(Clone, Debug, PartialEq)]
+pub struct McpGrant {
+    pub tools: McpTools,
+}
+
+/// Which of a server's tools a grant names.
+#[derive(Clone, Debug, PartialEq)]
+pub enum McpTools {
+    /// `tools: all` — every tool the server offers.
+    All,
+    /// `tools: [<tool>, ...]` — exactly these tools.
+    Named(Vec<String>),
+}
+
+impl<'de> Deserialize<'de> for McpGrant {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct GrantVisitor;
+
+        impl<'de> Visitor<'de> for GrantVisitor {
+            type Value = McpGrant;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("an MCP grant table, `{ tools: [<tool>, ...] }` or `{ tools: all }`")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<McpGrant, A::Error> {
+                let mut tools: Option<McpTools> = None;
+                while let Some(key) = map.next_key::<String>()? {
+                    if key != "tools" {
+                        return Err(de::Error::unknown_field(&key, &["tools"]));
+                    }
+                    if tools.is_some() {
+                        return Err(de::Error::duplicate_field("tools"));
+                    }
+                    tools = Some(map.next_value()?);
+                }
+                let tools = tools.ok_or_else(|| de::Error::missing_field("tools"))?;
+                Ok(McpGrant { tools })
+            }
+        }
+
+        deserializer.deserialize_any(GrantVisitor)
+    }
+}
+
+impl Serialize for McpGrant {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let Self { tools } = self;
+        let mut map = serializer.serialize_map(Some(1))?;
+        map.serialize_entry("tools", tools)?;
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for McpTools {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ToolsVisitor;
+
+        impl<'de> Visitor<'de> for ToolsVisitor {
+            type Value = McpTools;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("the keyword `all` or a list of tool names")
+            }
+
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<McpTools, E> {
+                if v == "all" {
+                    Ok(McpTools::All)
+                } else {
+                    Err(E::invalid_value(Unexpected::Str(v), &self))
+                }
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<McpTools, A::Error> {
+                let mut tools = Vec::new();
+                while let Some(tool) = seq.next_element::<String>()? {
+                    tools.push(tool);
+                }
+                Ok(McpTools::Named(tools))
+            }
+        }
+
+        deserializer.deserialize_any(ToolsVisitor)
+    }
+}
+
+impl Serialize for McpTools {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::All => serializer.serialize_str("all"),
+            Self::Named(tools) => tools.serialize(serializer),
+        }
+    }
+}
+
+/// `capabilities.mcp`, keyed by server, with each value read as an
+/// [`McpGrant`].
+///
+/// A value error is rewrapped to name `capabilities.mcp.<server>`, because
+/// frontmatter is parsed with no `serde_path_to_error` and the error would
+/// otherwise name neither the field nor the server.
+fn deserialize_mcp_grants<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<BTreeMap<String, McpGrant>>, D::Error> {
+    struct GrantsVisitor;
+
+    impl<'de> Visitor<'de> for GrantsVisitor {
+        type Value = Option<BTreeMap<String, McpGrant>>;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("`capabilities.mcp` as a table of MCP grants keyed by declared server name")
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        /// Reads every entry before failing, and reports the failing grant
+        /// whose server sorts first: `gray_matter` hands the map over in hash
+        /// order, so stopping at the first failure would report a different
+        /// grant from run to run. An empty table grants nothing, as `null`
+        /// does.
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+            let mut grants = BTreeMap::new();
+            let mut first_error: Option<(String, String)> = None;
+            while let Some(server) = map.next_key::<String>()? {
+                match map.next_value::<McpGrant>() {
+                    Ok(grant) => {
+                        grants.insert(server, grant);
+                    }
+                    Err(e) => {
+                        if first_error
+                            .as_ref()
+                            .is_none_or(|(first, _)| server < *first)
+                        {
+                            first_error = Some((server, e.to_string()));
+                        }
+                    }
+                }
+            }
+            if let Some((server, e)) = first_error {
+                return Err(de::Error::custom(format!("capabilities.mcp.{server}: {e}")));
+            }
+            Ok((!grants.is_empty()).then_some(grants))
+        }
+    }
+
+    deserializer.deserialize_any(GrantsVisitor)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -476,5 +654,137 @@ mod tests {
             assert_eq!(original.body(), cloned.body());
             assert_eq!(original.path(), cloned.path());
         }
+    }
+}
+
+#[cfg(test)]
+mod mcp_grant_parsing_tests {
+    use gray_matter::Matter;
+    use gray_matter::engine::YAML;
+
+    use super::{AgentFrontmatter, McpGrant, McpTools};
+
+    /// Parses through `gray_matter`, as the loader does: a derived visitor's
+    /// error text behaves differently there than under `serde_yml`.
+    fn parse(mcp_yaml: &str) -> Result<AgentFrontmatter, String> {
+        let content = format!(
+            "---\nid: a\ndescription: d\ncapabilities:\n  tools: []\n  mcp:\n    {mcp_yaml}\n---\nBody.\n"
+        );
+        Matter::<YAML>::new()
+            .parse::<AgentFrontmatter>(&content)
+            .map_err(|e| format!("{e:#}"))?
+            .data
+            .ok_or_else(|| "no frontmatter".to_owned())
+    }
+
+    fn grant(frontmatter: &AgentFrontmatter, server: &str) -> McpGrant {
+        frontmatter
+            .capabilities
+            .as_ref()
+            .and_then(|c| c.mcp.as_ref())
+            .and_then(|m| m.get(server))
+            .cloned()
+            .expect("grant present")
+    }
+
+    #[test]
+    fn test_mcp_grant_parses_all_and_named() {
+        let all = parse("quip: { tools: all }").expect("parses");
+        assert_eq!(grant(&all, "quip").tools, McpTools::All);
+
+        let named = parse("quip: { tools: [a, b] }").expect("parses");
+        assert_eq!(
+            grant(&named, "quip").tools,
+            McpTools::Named(vec!["a".to_owned(), "b".to_owned()])
+        );
+    }
+
+    #[test]
+    fn test_mcp_grant_rejects_unknown_keyword() {
+        let err = parse("quip: { tools: everything }").expect_err("rejected");
+        assert!(err.contains("capabilities.mcp.quip"), "{err}");
+        assert!(err.contains("`all`"), "{err}");
+        assert!(err.contains("list of tool names"), "{err}");
+    }
+
+    #[test]
+    fn test_mcp_grant_rejects_non_table_value() {
+        for value in ["quip: [a]", "quip: all"] {
+            let err = parse(value).expect_err("rejected");
+            assert!(err.contains("capabilities.mcp.quip"), "{value}: {err}");
+            assert!(err.contains("MCP grant table"), "{value}: {err}");
+        }
+    }
+
+    #[test]
+    fn test_mcp_grant_rejects_unknown_field() {
+        let err = parse("quip: { tool: [a] }").expect_err("rejected");
+        assert!(err.contains("capabilities.mcp.quip"), "{err}");
+        assert!(err.contains("`tool`"), "{err}");
+    }
+
+    /// Parses a whole `mcp:` value, rather than one grant under it.
+    fn parse_mcp(mcp_value: &str) -> Result<AgentFrontmatter, String> {
+        let content = format!(
+            "---\nid: a\ndescription: d\ncapabilities:\n  tools: []\n  mcp: {mcp_value}\n---\nBody.\n"
+        );
+        Matter::<YAML>::new()
+            .parse::<AgentFrontmatter>(&content)
+            .map_err(|e| format!("{e:#}"))?
+            .data
+            .ok_or_else(|| "no frontmatter".to_owned())
+    }
+
+    #[test]
+    fn test_mcp_null_and_empty_table_grant_nothing() {
+        for value in ["", "null", "{}"] {
+            let parsed = parse_mcp(value).expect("parses");
+            let mcp = parsed.capabilities.as_ref().and_then(|c| c.mcp.as_ref());
+            assert!(mcp.is_none(), "{value:?}: {mcp:?}");
+        }
+    }
+
+    #[test]
+    fn test_mcp_non_table_names_the_field() {
+        for value in ["[quip]", "quip"] {
+            let err = parse_mcp(value).expect_err("rejected");
+            assert!(
+                err.contains("`capabilities.mcp` as a table"),
+                "{value}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_mcp_grant_rejects_non_string_tool_and_missing_tools() {
+        for value in ["quip: { tools: [1] }", "quip: {}"] {
+            let err = parse(value).expect_err("rejected");
+            assert!(err.contains("capabilities.mcp.quip"), "{value}: {err}");
+        }
+        let missing = parse("quip: {}").expect_err("rejected");
+        assert!(missing.contains("missing field `tools`"), "{missing}");
+    }
+
+    /// `gray_matter` hands the map over in hash order; the report must not
+    /// depend on it.
+    #[test]
+    fn test_mcp_grant_reports_first_failing_server_by_name() {
+        for _ in 0..8 {
+            let err = parse("zz: { tools: x }\n    aa: { tools: y }\n    mm: { tools: all }")
+                .expect_err("rejected");
+            assert!(err.contains("capabilities.mcp.aa"), "{err}");
+        }
+    }
+
+    #[test]
+    fn test_mcp_grant_serializes_as_authored() {
+        let parsed = parse("quip: { tools: [a] }\n    jira: { tools: all }").expect("parses");
+        let mcp = parsed
+            .capabilities
+            .as_ref()
+            .and_then(|c| c.mcp.as_ref())
+            .expect("grants present");
+        let yaml = serde_yml::to_string(mcp).expect("serializes");
+        assert_eq!(yaml, "jira:\n  tools: all\nquip:\n  tools:\n  - a\n");
     }
 }

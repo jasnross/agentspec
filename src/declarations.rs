@@ -1,3 +1,4 @@
+use crate::mcp::McpServers;
 use crate::presets::ProviderPresetsMap;
 
 /// The `agentspec.toml` sections specs refer to by name, carried across the
@@ -12,4 +13,6 @@ use crate::presets::ProviderPresetsMap;
 pub struct Declarations {
     /// `[presets.<name>]`: preset name → per-provider model config.
     pub presets: ProviderPresetsMap,
+    /// `[mcp.<name>]`: logical server name → per-provider registration.
+    pub mcp: McpServers,
 }

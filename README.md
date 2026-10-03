@@ -291,6 +291,7 @@ Content shared into more than one spec directory should address its own includes
 | `execution.preset` | optional | optional | — | Name of a model preset defined in `agentspec.toml`. See [Model presets](#model-presets). |
 | `tags` | optional | optional | optional | List of string tags for categorization. Exposed in the `specs` template variable. |
 | `capabilities.tools` | optional | optional | — | List of tools the agent/skill can use. Each tool may appear once. See [Tools reference](#tools-reference) below. |
+| `capabilities.mcp` | optional | optional | — | MCP tools granted per declared server: `<server>: { tools: [<tool>, ...] }` or `<server>: { tools: all }`. An agent that declares it must declare `capabilities.tools`. See [MCP grants](#mcp-grants) below. |
 
 ### Tools reference
 
@@ -317,6 +318,20 @@ Content shared into more than one spec directory should address its own includes
 - `read` also grants every connected MCP server's resources.
 
 Cursor applies no tool restriction at all; see [Execution presets reach skill files on Claude only](#execution-presets-reach-skill-files-on-claude-only).
+
+#### MCP grants
+
+`capabilities.mcp` grants MCP tools, keyed by the logical name of a server declared under [`[mcp.<name>]`](#mcp-servers):
+
+```yaml
+capabilities:
+  tools: [read, grep] # required on an agent that declares mcp; [] means only MCP tools
+  mcp:
+    quip: { tools: [search_documents, get_document] }
+    atlassian: { tools: all }
+```
+
+A grant names its tools as a list, each tool at most once, or grants every tool the server offers with `all`. On an agent, `capabilities.mcp` adds to the `capabilities.tools` allowlist, so an agent that declares `mcp` must also declare `tools`: `tools: []` grants the MCP tools alone, and leaving out both fields gives the agent every tool. On a skill, a grant pre-approves the granted tools for the turn that runs the skill, as the skill's built-in `tools` do. `agentspec inspect` reports each grant a provider cannot carry as `mcp.<server>` not delivered.
 
 ### Templating
 
@@ -706,6 +721,36 @@ description: Example agent
 execution:
   preset: architect # Refers to a preset in your `agentspec.toml`
 ```
+
+## MCP servers
+
+A spec grants an MCP server's tools by the server's logical name, which `agentspec.toml` declares once under `[mcp.<name>]`. Each provider block says how that provider registers the server, when it differs from the logical name:
+
+```toml
+# Registered as `quip` by every provider, outside any plugin. An empty
+# table is a complete declaration.
+[mcp.quip]
+
+# Bundled in the Claude plugin `work-tools`, registered as `jira` in
+# OpenCode, and as `atlassian` (the logical name) on Cursor.
+[mcp.atlassian.claude]
+plugin = "work-tools"
+
+[mcp.atlassian.opencode]
+server = "jira"
+```
+
+| Block | Keys | Default |
+| --- | --- | --- |
+| `[mcp.<name>.claude]` | `server`, `plugin` | `server` is the logical name; no plugin |
+| `[mcp.<name>.opencode]` | `server` | the logical name |
+| `[mcp.<name>.cursor]` | `server` | the logical name |
+
+An absent block, or a block with no `server`, means the provider registers the server under its logical name. Every name — the logical name, each `server`, and `plugin` — must match `[A-Za-z0-9_-]+`, the only characters every provider leaves unchanged in a tool id.
+
+**OpenCode server names must not overlap.** OpenCode names an MCP tool `<server>_<tool>`, so the permission key granting one server's tools also matches the tools of any server whose name extends it past an underscore. `agentspec validate` rejects two declared servers whose OpenCode names are equal, or where one is the other followed by `_` (`fx` beside `fx_extra`), and asks for a distinct `[mcp.<name>.opencode] server`. The same rule reserves the names of the two permissions agentspec writes into every restricted agent's map, `external_directory` and `doom_loop`, and of OpenCode's built-in `plan_enter` and `plan_exit`, so a server named `external` or `plan` is rejected too.
+
+**Declared names are a contract the generated output places on whoever runs it**, such as a published plugin's consumers or a teammate who clones the project. agentspec never checks them against the MCP servers installed on the machine that compiles, which in CI is usually none.
 
 ## Sync
 
