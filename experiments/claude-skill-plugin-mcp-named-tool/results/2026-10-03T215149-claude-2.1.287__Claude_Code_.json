@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "provider": "claude",
+  "status": "confirmed",
+  "depth": "outbound-request",
+  "date": "2026-10-03",
+  "tool_version": "2.1.287 (Claude Code)",
+  "assertion": {
+    "projection": "def classify($tool): [.[] | .content[]? | select(type == \"object\" and .type == \"tool_use\" and .name == $tool) | .id] as $ids | [.[] | .messages[]? | select(.role == \"user\") | .content | if type == \"array\" then .[] else empty end | select(type == \"object\" and .type == \"tool_result\") | select(.tool_use_id as $i | any($ids[]; . == $i))] as $r | ($r | map([.content] | flatten | map(if type == \"object\" then .text // \"\" else tostring end) | join(\"\"))) as $texts | if any($texts[]; contains(\"AGENTSPEC-FX-REPLY-CCSKPN9\")) then \"called\" elif ($r | length) > 0 and all($r[]; .is_error == true) and all($texts[]; contains(\"Permission for this tool use was denied\")) then \"denied\" else {unrecognized: $texts} end; {plugin_none: (.plugin_none | classify(\"mcp__plugin_fxp_fx__alpha\")), plugin_named: (.plugin_named | classify(\"mcp__plugin_fxp_fx__alpha\"))}",
+    "expected": {
+      "plugin_none": "denied",
+      "plugin_named": "called"
+    },
+    "observed": {
+      "plugin_none": "denied",
+      "plugin_named": "called"
+    }
+  }
+}
