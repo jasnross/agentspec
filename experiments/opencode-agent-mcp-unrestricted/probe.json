@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "provider": "opencode",
+  "driver": "unattended",
+  "depth": "outbound-request",
+  "question": "Is an OpenCode agent with no `permission` map offered every tool of a connected MCP server, where an agent whose map is only `\"*\": \"deny\"` with `external_directory` and `doom_loop` restated is offered none?",
+  "version_source": {
+    "kind": "command",
+    "command": "opencode --version"
+  },
+  "assertion": {
+    "projection": "def governed: [.[] | select(any(.messages[]?; .role == \"system\" and (.content | tostring | contains(\"AGENTSPEC-PROBE-MARKER-OCMCPU1\"))))]; def mcp: governed | map([.tools[]?.function.name | select(startswith(\"fx_\"))] | sort) | unique | if length == 0 then \"arm-had-no-governed-request\" elif length == 1 then .[0] else {inconsistent: .} end; {no_map: (.no_map | mcp), deny_all: (.deny_all | mcp)}",
+    "expected": {
+      "no_map": ["fx_alpha", "fx_beta"],
+      "deny_all": []
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "provider": "opencode",
+  "status": "confirmed",
+  "depth": "outbound-request",
+  "date": "2026-10-03",
+  "tool_version": "1.18.34",
+  "assertion": {
+    "projection": "def governed: [.[] | select(any(.messages[]?; .role == \"system\" and (.content | tostring | contains(\"AGENTSPEC-PROBE-MARKER-OCMCPU1\"))))]; def mcp: governed | if length == 0 then \"arm-had-no-governed-request\" else [.[] | .tools[]?.function.name | select(startswith(\"fx_\"))] | unique end; {no_map: (.no_map | mcp), deny_all: (.deny_all | mcp)}",
+    "expected": {
+      "no_map": [
+        "fx_alpha",
+        "fx_beta"
+      ],
+      "deny_all": []
+    },
+    "observed": {
+      "no_map": [
+        "fx_alpha",
+        "fx_beta"
+      ],
+      "deny_all": []
+    }
+  }
+}
