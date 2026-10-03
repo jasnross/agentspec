@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "provider": "opencode",
+  "status": "confirmed",
+  "depth": "outbound-request",
+  "date": "2026-10-03",
+  "tool_version": "1.18.34",
+  "assertion": {
+    "projection": "def governed: [.[] | select(any(.messages[]?; .role == \"system\" and (.content | tostring | contains(\"AGENTSPEC-PROBE-MARKER-OCRES3\"))))]; def toolset: governed | map([.tools[]?.function.name] | sort) | unique | if length == 0 then \"arm-had-no-governed-request\" elif length == 1 then .[0] else {inconsistent: .} end; def outcome: [governed[] | .messages[]? | select(.role == \"tool\") | .content | tostring] | if length == 0 then \"no-tool-result\" elif any(.[]; contains(\"The user has specified a rule\")) then \"rule-denied\" elif any(.[]; contains(\"The user rejected permission\")) then \"ask-rejected\" elif any(.[]; contains(\"AGENTSPEC-RESOURCE-CONTENT-OCRES3\") or contains(\"probe-doc\") or contains(\"probe-template\") or contains(\"AGENTSPEC-FILE-CONTENT-OCRES3\")) then \"succeeded\" else {unrecognized: .} end; with_entries(.value |= {tools: toolset, call: outcome})",
+    "expected": {
+      "map_read_resource": {
+        "tools": [
+          "list_mcp_resource_templates",
+          "list_mcp_resources",
+          "read",
+          "read_mcp_resource"
+        ],
+        "call": "rule-denied"
+      },
+      "map_list_resources": {
+        "tools": [
+          "list_mcp_resource_templates",
+          "list_mcp_resources",
+          "read",
+          "read_mcp_resource"
+        ],
+        "call": "rule-denied"
+      },
+      "map_list_templates": {
+        "tools": [
+          "list_mcp_resource_templates",
+          "list_mcp_resources",
+          "read",
+          "read_mcp_resource"
+        ],
+        "call": "rule-denied"
+      },
+      "map_read_file": {
+        "tools": [
+          "list_mcp_resource_templates",
+          "list_mcp_resources",
+          "read",
+          "read_mcp_resource"
+        ],
+        "call": "succeeded"
+      },
+      "plain_read_resource": {
+        "tools": [
+          "list_mcp_resource_templates",
+          "list_mcp_resources",
+          "read",
+          "read_mcp_resource"
+        ],
+        "call": "succeeded"
+      },
+      "plain_list_resources": {
+        "tools": [
+          "list_mcp_resource_templates",
+          "list_mcp_resources",
+          "read",
+          "read_mcp_resource"
+        ],
+        "call": "succeeded"
+      },
+      "plain_list_templates": {
+        "tools": [
+          "list_mcp_resource_templates",
+          "list_mcp_resources",
+          "read",
+          "read_mcp_resource"
+        ],
+        "call": "succeeded"
+      }
+    },
+    "observed": {
+      "map_read_resource": {
+        "tools": [
+          "list_mcp_resource_templates",
+          "list_mcp_resources",
+          "read",
+          "read_mcp_resource"
+        ],
+        "call": "rule-denied"
+      },
+      "map_list_resources": {
+        "tools": [
+          "list_mcp_resource_templates",
+          "list_mcp_resources",
+          "read",
+          "read_mcp_resource"
+        ],
+        "call": "rule-denied"
+      },
+      "map_list_templates": {
+        "tools": [
+          "list_mcp_resource_templates",
+          "list_mcp_resources",
+          "read",
+          "read_mcp_resource"
+        ],
+        "call": "rule-denied"
+      },
+      "map_read_file": {
+        "tools": [
+          "list_mcp_resource_templates",
+          "list_mcp_resources",
+          "read",
+          "read_mcp_resource"
+        ],
+        "call": "succeeded"
+      },
+      "plain_read_resource": {
+        "tools": [
+          "list_mcp_resource_templates",
+          "list_mcp_resources",
+          "read",
+          "read_mcp_resource"
+        ],
+        "call": "succeeded"
+      },
+      "plain_list_resources": {
+        "tools": [
+          "list_mcp_resource_templates",
+          "list_mcp_resources",
+          "read",
+          "read_mcp_resource"
+        ],
+        "call": "succeeded"
+      },
+      "plain_list_templates": {
+        "tools": [
+          "list_mcp_resource_templates",
+          "list_mcp_resources",
+          "read",
+          "read_mcp_resource"
+        ],
+        "call": "succeeded"
+      }
+    }
+  }
+}

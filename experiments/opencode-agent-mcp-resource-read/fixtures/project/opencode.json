@@ -1,0 +1,28 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "fake": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "http://127.0.0.1:{{PORT}}/v1",
+        "apiKey": "fake"
+      },
+      "models": {
+        "m": {
+          "name": "m"
+        }
+      }
+    }
+  },
+  "model": "fake/m",
+  "small_model": "fake/m",
+  "experimental": {
+    "continue_loop_on_deny": true
+  },
+  "mcp": {
+    "fx": {
+      "type": "local",
+      "command": ["python3", "{{FX_SERVER}}", "{{FX_STAMP}}"]
+    }
+  }
+}

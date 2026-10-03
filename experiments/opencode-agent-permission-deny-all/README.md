@@ -83,7 +83,7 @@ Every measured arm differs from `baseline`. Against the same saved view, `record
 - It shows what OpenCode sends to a provider using the `@ai-sdk/openai-compatible` package with a model id containing no `gpt-`, so `apply_patch` is never offered. A different provider package could, in principle, filter tools differently.
 - `websearch` and `question` never appear in this setup, with or without a map, so their absence says nothing about the deny-all.
 - `edit_only` offering `write` is OpenCode's own coupling: the `edit`, `write`, and `apply_patch` tools all answer to one `edit` permission.
-- `fx_server.py` offers no MCP resources, so `read_edit_bash`'s value says nothing about `list_mcp_resources`, `list_mcp_resource_templates`, and `read_mcp_resource`, which OpenCode checks against the `read` permission and so keeps for any agent allowed `read`.
+- `fx_server.py` offers no MCP resources, so `read_edit_bash`'s value says nothing about `list_mcp_resources`, `list_mcp_resource_templates`, and `read_mcp_resource`, which OpenCode checks against the `read` permission and so keeps for any agent allowed `read`. `experiments/opencode-agent-mcp-resource-read/` measures them under `read: allow` and under a `read` pattern map that denies `mcp:*`.
 - Title-generation requests are excluded by the marker, so this says nothing about the tools those carry.
 - One OpenCode version per record. The key order the answer depends on is OpenCode's resolution order for `permission` keys, which a release can change.
 
