@@ -13,8 +13,9 @@ use super::{
     RemoveCtx, SyncDestinationMode,
 };
 use crate::compile::{AdapterConfig, GeneratedFile};
+use crate::declarations::Declarations;
 use crate::plan::{FileKind, ForwardPatch, RemovePatchReport, ReversePatch};
-use crate::presets::ProviderPresetsMap;
+use crate::presets::{ProviderPresets, ProviderPresetsMap};
 use crate::provider::Provider;
 use crate::setting::{Carries, SettingKey, SettingKind};
 use crate::spec::{AgentSpec, HookEvent, RuleSpec, SkillSpec, Spec, ToolFrontmatter};
@@ -289,6 +290,21 @@ impl Adapter for OpenCodeAdapter {
             FileKind::Skills | FileKind::Rules => &[SettingKind::Body],
             FileKind::Hooks | FileKind::PluginManifest => &[],
         }
+    }
+
+    fn validate_declarations(&self, declarations: &Declarations) -> Vec<String> {
+        let Declarations { presets } = declarations;
+        // An `opencode` preset block has no cross-field constraint: a
+        // `variant` with no `model` is accepted and inert. The binding is what
+        // makes a new provider block a compile error here.
+        for preset in presets.values() {
+            let ProviderPresets {
+                claude: _,
+                cursor: _,
+                opencode: _,
+            } = preset;
+        }
+        Vec::new()
     }
 
     /// Unreachable rather than meaningful: `OpenCode` emits no hooks — its

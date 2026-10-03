@@ -19,9 +19,10 @@ use crate::compile::{
     AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode,
     PluginManifest as SpecPluginManifest,
 };
+use crate::declarations::Declarations;
 use crate::hooks_merge::{merge_owned, remove_owned};
 use crate::plan::{FileKind, ForwardPatch, ReversePatch};
-use crate::presets::{ClaudeEffort, ProviderPresetsMap};
+use crate::presets::{ClaudeEffort, ProviderPresets, ProviderPresetsMap};
 use crate::provider::Provider;
 use crate::setting::{Carries, SettingKey, SettingKind};
 use crate::spec::{AgentSpec, HookEvent, HookSpec, RuleSpec, SkillSpec, Spec, ToolFrontmatter};
@@ -305,6 +306,23 @@ impl Adapter for ClaudeAdapter {
             FileKind::Hooks => &[SettingKind::Body],
             FileKind::Commands | FileKind::PluginManifest => &[],
         }
+    }
+
+    fn validate_declarations(&self, declarations: &Declarations) -> Vec<String> {
+        let Declarations { presets } = declarations;
+        // Claude's `effort` is independent of `model` (measured by
+        // `experiments/claude-agent-effort/` and `experiments/claude-skill-effort/`
+        // with no `model` key), so a `claude` preset block has no cross-field
+        // constraint. The binding is what makes a new provider block a compile
+        // error here.
+        for preset in presets.values() {
+            let ProviderPresets {
+                claude: _,
+                cursor: _,
+                opencode: _,
+            } = preset;
+        }
+        Vec::new()
     }
 
     fn plugin_manifest_dir(&self) -> Option<&'static str> {

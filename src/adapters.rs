@@ -19,6 +19,7 @@ pub use cursor::CursorAdapter;
 pub use opencode::OpenCodeAdapter;
 
 use crate::compile::{AdapterConfig, GeneratedFile, HookEmitMode};
+use crate::declarations::Declarations;
 use crate::plan::{FileKind, ForwardPatch, ReversePatch, expand_tilde};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
@@ -537,6 +538,20 @@ pub trait Adapter: std::fmt::Debug + Send + Sync {
     /// Returns an empty slice for a [`FileKind`] this adapter never emits.
     fn carriable(&self, kind: FileKind) -> &'static [SettingKind];
 
+    /// Check this provider's blocks in every `agentspec.toml` declaration
+    /// section.
+    ///
+    /// Each adapter checks only its own provider's blocks. It destructures
+    /// every block struct (`ProviderPresets { claude, cursor, opencode }`)
+    /// rather than reading its own field, so adding a provider block is a
+    /// compile error in every adapter until each decides whether the block is
+    /// its own.
+    ///
+    /// Each returned string is one failure, which `validate.rs` reports
+    /// against the config file. An empty vec means every block passed.
+    /// Composition trusts this gate and re-checks only with `debug_assert!`.
+    fn validate_declarations(&self, declarations: &Declarations) -> Vec<String>;
+
     /// Directory name under the sync destination root where this provider's
     /// plugin manifest file lives (e.g. `".claude-plugin"` for Claude,
     /// `".cursor-plugin"` for Cursor). Returns `None` for providers without
@@ -648,6 +663,7 @@ mod tests {
     use strum::VariantArray as _;
 
     use super::{CompileCtx, Degradation, DegradationKind, SyncDestinationMode};
+    use crate::declarations::Declarations;
     use crate::plan::FileKind;
     use crate::presets::{
         ClaudeEffort, ClaudePreset, CursorPreset, OpenCodePreset, ProviderPresets,
@@ -844,6 +860,38 @@ mod tests {
                             .any(|d| d.kind() == kind && d.setting().kind() == *declared_kind),
                         "{provider} declares {declared_kind:?} on {kind} but recorded no such delivery"
                     );
+                }
+            }
+        }
+    }
+
+    /// Each adapter checks only its own provider's blocks: a preset whose
+    /// Cursor block breaks Cursor's bracket grammar draws exactly one message,
+    /// from the Cursor adapter.
+    #[test]
+    fn test_validate_declarations_reports_only_cursor_blocks() {
+        let mut presets = maximal_presets();
+        if let Some(preset) = presets.get_mut(PRESET) {
+            preset.cursor = Some(CursorPreset {
+                model: Some("claude-opus-5[effort=high]".to_owned()),
+                ..CursorPreset::default()
+            });
+        }
+        let declarations = Declarations { presets };
+
+        for provider in Provider::VARIANTS {
+            let messages = provider.adapter().validate_declarations(&declarations);
+            match provider {
+                Provider::Cursor => {
+                    assert_eq!(messages.len(), 1, "{messages:?}");
+                    assert!(
+                        messages[0].contains("presets.maximal.cursor"),
+                        "{}",
+                        messages[0]
+                    );
+                }
+                Provider::Claude | Provider::OpenCode => {
+                    assert!(messages.is_empty(), "{provider}: {messages:?}");
                 }
             }
         }

@@ -386,7 +386,7 @@ fn load_and_validate(
     let (specs, report) = Specs::load(dirs)?;
     let config_path = config.config_file_path();
     let validated = specs
-        .validate(&config.presets, &config_path)
+        .validate(&config.declarations(), &config_path)
         .map_err(|errors| {
             for e in &errors {
                 eprintln!("error: {e}");

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use agentspec::compile::{AdapterConfig, PluginAuthor, PluginManifest};
+use agentspec::declarations::Declarations;
 use agentspec::presets::ProviderPresets;
 use agentspec::provider::Provider;
 use agentspec::validate::ValidationError;
@@ -108,6 +109,13 @@ impl AgentspecConfig {
             self.root_dir.join("agentspec.toml")
         } else {
             self.config_file.clone()
+        }
+    }
+
+    /// The declaration sections specs refer to by name, for `Specs::validate`.
+    pub fn declarations(&self) -> Declarations {
+        Declarations {
+            presets: self.presets.clone(),
         }
     }
 

@@ -1,7 +1,7 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use jsonc_parser::cst::{CstInputValue, CstObject};
 use serde::Serialize;
 
@@ -18,9 +18,10 @@ use crate::compile::{
     AdapterConfig, EmittedHookEntry, GeneratedFile, HookEmitMode,
     PluginManifest as SpecPluginManifest,
 };
+use crate::declarations::Declarations;
 use crate::hooks_merge::{merge_owned, remove_owned};
 use crate::plan::{FileKind, ForwardPatch, ReversePatch};
-use crate::presets::{CursorPreset, ProviderPresetsMap};
+use crate::presets::{CursorPreset, ProviderPresets, ProviderPresetsMap};
 use crate::provider::Provider;
 use crate::setting::{Carries, SettingKey, SettingKind};
 use crate::spec::{AgentSpec, HookEvent, HookSpec, RuleSpec, SkillSpec, Spec, ToolFrontmatter};
@@ -299,6 +300,31 @@ impl Adapter for CursorAdapter {
             FileKind::Skills | FileKind::Hooks => &[SettingKind::Body],
             FileKind::Commands | FileKind::PluginManifest => &[],
         }
+    }
+
+    /// Cursor's bracket grammar for each preset's `cursor` block.
+    ///
+    /// Presets are keyed by a `HashMap`, so iteration order is
+    /// nondeterministic and a multi-error run would report differently each
+    /// time. Sort by preset name first. At most one error per preset —
+    /// `validate_cursor_preset` reports its first failing check.
+    fn validate_declarations(&self, declarations: &Declarations) -> Vec<String> {
+        let Declarations { presets } = declarations;
+        let mut names: Vec<&String> = presets.keys().collect();
+        names.sort();
+        names
+            .into_iter()
+            .filter_map(|name| {
+                let ProviderPresets {
+                    claude: _,
+                    cursor,
+                    opencode: _,
+                } = presets.get(name)?;
+                validate_cursor_preset(cursor.as_ref()?, name)
+                    .err()
+                    .map(|e| e.to_string())
+            })
+            .collect()
     }
 
     fn plugin_manifest_dir(&self) -> Option<&'static str> {
@@ -624,6 +650,169 @@ fn count_user_entries(top: &CstObject) -> usize {
     count
 }
 
+/// The characters Cursor's `model[k=v,k=v]` grammar uses as delimiters.
+///
+/// None may appear in a `model` id or in an option value, because agentspec
+/// composes the bracket by concatenation and Cursor documents no escaping
+/// syntax to compose against. Without this, a single field forges a second
+/// option — `effort = "high,context=1m"` emits `model[effort=high,context=1m]`
+/// — which is exactly the "two spellings of one option cannot coexist"
+/// guarantee the bracket ban exists to provide.
+const CURSOR_BRACKET_DELIMITERS: [char; 4] = ['[', ']', ',', '='];
+
+/// Option ids that have a named `CursorPreset` field. A `params` key matching
+/// one of these — in any case — is rejected rather than merged, so an option can
+/// only be spelled one way.
+///
+/// Hand-maintained, unlike the destructuring bindings that guard the validation
+/// and composition sites. `test_named_cursor_options_are_real_fields` catches a
+/// rename or removal by round-tripping each entry through `deny_unknown_fields`;
+/// a field *added* without being listed here is not caught, and would let
+/// `params` re-spell it into a duplicate option. See that test for why.
+const NAMED_CURSOR_OPTIONS: [&str; 3] = ["effort", "fast", "context"];
+
+/// Cross-field checks on one preset's `cursor` block, reached via
+/// `validate_declarations` from `Specs::validate`, so every command that loads
+/// specs surfaces them. `ValidatedSpecs` carries the declarations it was
+/// validated against and `compile::run` reads presets from there, so on that
+/// path the map reaching `adapt_agent_spec` is one that passed here.
+///
+/// A consumer calling `Provider::adapter().compile(...)` directly supplies
+/// its own presets and bypasses this; the `debug_assert!`s in
+/// `adapt_agent_spec` are all that stand there, and they compile out in
+/// release.
+fn validate_cursor_preset(preset: &CursorPreset, preset_name: &str) -> Result<()> {
+    if let Some(model) = preset.model.as_deref() {
+        if model.contains(CURSOR_BRACKET_DELIMITERS) {
+            bail!(
+                "[presets.{preset_name}.cursor] `model` must be a bare model id \
+                 with no `[`, `]`, `,`, or `=`; set the `effort`, `fast`, or \
+                 `context` field instead of Cursor's `[k=v]` syntax"
+            );
+        }
+        check_composable("model", model, preset_name)?;
+    }
+    for (field, value) in [
+        ("effort", preset.effort.as_deref()),
+        ("context", preset.context.as_deref()),
+    ] {
+        let Some(value) = value else { continue };
+        check_bracket_safe(field, value, preset_name)?;
+    }
+
+    // `params` keys must not collide with each other either, on the same
+    // reasoning as the named-field check below: `optimize_for` beside
+    // `Optimize_For` is one option spelled twice whichever way Cursor folds
+    // ids. `BTreeMap` orders by byte, so case variants are not adjacent —
+    // this needs a set, not a neighbour compare.
+    let mut folded: HashMap<String, &String> = HashMap::new();
+    for key in preset.params.keys() {
+        if let Some(first) = folded.insert(key.to_ascii_lowercase(), key) {
+            bail!(
+                "[presets.{preset_name}.cursor] `params` keys `{first}` and \
+                 `{key}` differ only in case; Cursor's option ids are not \
+                 known to be case-folded, so one of them would be a silently \
+                 duplicated option"
+            );
+        }
+    }
+
+    for (key, value) in &preset.params {
+        // Case-insensitive: whether Cursor folds option-id case is
+        // unmeasured, and both readings are bad. If it folds, an untyped
+        // `params` entry silently overrides the typed field; if it does not,
+        // the user gets an option they believe is set and Cursor ignores.
+        // Either way `[effort=high,Effort=low]` is one option spelled twice.
+        if let Some(named) = NAMED_CURSOR_OPTIONS
+            .iter()
+            .find(|n| n.eq_ignore_ascii_case(key))
+        {
+            bail!(
+                "[presets.{preset_name}.cursor] `params.{key}` duplicates the \
+                 `{named}` field; set one or the other, not both — two \
+                 spellings of one option cannot coexist"
+            );
+        }
+        // Labelled separately so a malformed key is distinguishable from a
+        // malformed value — an empty key would otherwise report as
+        // `params.`, naming nothing.
+        check_bracket_safe(&format!("params key {key:?}"), key, preset_name)?;
+        check_bracket_safe(&format!("params.{key}"), value, preset_name)?;
+    }
+    if preset.model.is_none() && any_option_set(preset) {
+        bail!(
+            "[presets.{preset_name}.cursor] model options require `model` \
+             (Cursor encodes them as bracket options: `model[effort=high]`)"
+        );
+    }
+    Ok(())
+}
+
+/// True when any bracket option is configured.
+///
+/// The destructuring binding is load-bearing: adding a fourth option to
+/// `CursorPreset` fails to compile here until it is accounted for. A plain
+/// `preset.effort.is_some() || …` chain would compile against the new field
+/// and silently under-report, which is the failure this function exists to
+/// prevent — an option set with no `model` would then pass validation and
+/// be dropped at composition time with nothing said.
+fn any_option_set(preset: &CursorPreset) -> bool {
+    let CursorPreset {
+        model: _,
+        effort,
+        fast,
+        context,
+        params,
+    } = preset;
+    effort.is_some() || fast.is_some() || context.is_some() || !params.is_empty()
+}
+
+/// `check_composable` plus the delimiter ban — the full set of rules a bracket
+/// option id or value must satisfy.
+fn check_bracket_safe(field: &str, value: &str, preset_name: &str) -> Result<()> {
+    if value.contains(CURSOR_BRACKET_DELIMITERS) {
+        bail!(
+            "[presets.{preset_name}.cursor] `{field}` must not contain \
+             `[`, `]`, `,`, or `=` — agentspec composes Cursor's bracket \
+             syntax from these fields, and a delimiter here would forge \
+             an option the preset did not declare"
+        );
+    }
+    check_composable(field, value, preset_name)
+}
+
+/// Reject a `model` id or option value that cannot survive bracket composition.
+///
+/// Empty and whitespace-bearing values both compose something malformed, and
+/// Cursor rejects nothing — so the result is silently discarded, plausibly
+/// taking the well-formed options beside it down with the whole bracket:
+///
+/// - `model = ""` composes `[effort=high]`, a bracket with no model in front.
+///   An empty `model` is still `Some`, so it satisfies the model-less-options
+///   check without this.
+/// - `effort = ""` composes `model[effort=]`.
+/// - `model = " claude-opus-5 "` composes ` claude-opus-5 [effort=high]`, which
+///   serde then emits as a *quoted* scalar — changing the model id itself.
+///
+/// No Cursor model id or documented option value contains whitespace, so
+/// rejecting it outright costs nothing and needs no trimming rule to explain.
+fn check_composable(field: &str, value: &str, preset_name: &str) -> Result<()> {
+    if value.is_empty() {
+        bail!(
+            "[presets.{preset_name}.cursor] `{field}` must not be empty; \
+             omit the key entirely to leave it unset"
+        );
+    }
+    if value.contains(char::is_whitespace) {
+        bail!(
+            "[presets.{preset_name}.cursor] `{field}` must not contain whitespace \
+             (got {value:?}) — agentspec composes Cursor's bracket syntax by \
+             concatenation, and Cursor silently discards a malformed bracket"
+        );
+    }
+    Ok(())
+}
+
 fn adapt_agent_spec(
     spec: AgentSpec,
     presets: &ProviderPresetsMap,
@@ -649,7 +838,7 @@ fn adapt_agent_spec(
     // Authors cannot produce a different order, so one deterministic order is
     // enough — and a stable order is what keeps the byte-level tests meaningful.
     //
-    // The destructuring binding mirrors `CursorPreset::any_option_set`: a fourth
+    // The destructuring binding mirrors `any_option_set`: a fourth
     // option added to the struct fails to compile here rather than being
     // silently dropped from the bracket after passing validation as "set".
     //
@@ -682,7 +871,7 @@ fn adapt_agent_spec(
                 // Named options first in their fixed order, then `params` —
                 // a `BTreeMap`, so its own order is already deterministic and
                 // needs no sort here. A `params` key cannot collide with a
-                // named option; `CursorPreset::validate` rejects that.
+                // named option; `validate_cursor_preset` rejects that.
                 .chain(
                     params
                         .iter()
@@ -695,24 +884,24 @@ fn adapt_agent_spec(
 
     let base = cursor_preset.and_then(|p| p.model);
 
-    // Defense-in-depth only: `CursorPreset::validate` is the user-facing gate,
+    // Defense-in-depth only: `validate_cursor_preset` is the user-facing gate,
     // reached from `Specs::validate` before any adapter runs. These mirror all
     // four of its rules rather than a subset, so a direct `Adapter::compile`
     // call — the one route the gate cannot cover — trips on any of them in a
     // debug build. They still compile out in release.
     debug_assert!(
         base.as_deref()
-            .is_none_or(|m| !m.contains(crate::presets::CURSOR_BRACKET_DELIMITERS)),
-        "delimiter-bearing Cursor model should have been rejected by CursorPreset::validate"
+            .is_none_or(|m| !m.contains(CURSOR_BRACKET_DELIMITERS)),
+        "delimiter-bearing Cursor model should have been rejected by validate_cursor_preset"
     );
     debug_assert!(
         base.as_deref()
             .is_none_or(|m| !m.is_empty() && !m.contains(char::is_whitespace)),
-        "empty or whitespace-bearing Cursor model should have been rejected by CursorPreset::validate"
+        "empty or whitespace-bearing Cursor model should have been rejected by validate_cursor_preset"
     );
     debug_assert!(
         base.is_some() || opts.is_empty(),
-        "model-less Cursor options should have been rejected by CursorPreset::validate"
+        "model-less Cursor options should have been rejected by validate_cursor_preset"
     );
     // Checked on the composed `k=v` fragments rather than the fields, so one
     // assertion covers every option without naming them — and so a fourth
@@ -729,7 +918,7 @@ fn adapt_agent_spec(
                 && !opt.ends_with('=')
                 && !opt.starts_with('=')
         }),
-        "malformed Cursor bracket option should have been rejected by CursorPreset::validate: {opts:?}"
+        "malformed Cursor bracket option should have been rejected by validate_cursor_preset: {opts:?}"
     );
 
     // `Model` is recorded from `base`, not from the composed `model` value,
@@ -738,7 +927,7 @@ fn adapt_agent_spec(
     // The one shape where this record and the emitted value could disagree is
     // options with no `model`: the composition below drops the whole bracket
     // while these keys still record as delivered, hiding a real loss.
-    // `CursorPreset::validate` rejects that preset outright and the
+    // `validate_cursor_preset` rejects that preset outright and the
     // `base.is_some() || opts.is_empty()` assertion above re-checks it, so the
     // shape does not reach here — but it is the one to preserve those gates
     // for.
@@ -1790,5 +1979,293 @@ mod tests {
             !preview.contains("scripts/scripts/"),
             "scripts/ prefix should not double up, got: {preview}"
         );
+    }
+}
+
+#[cfg(test)]
+mod preset_validation_tests {
+    use super::*;
+
+    fn cursor(model: Option<&str>) -> CursorPreset {
+        CursorPreset {
+            model: model.map(str::to_string),
+            ..CursorPreset::default()
+        }
+    }
+
+    #[test]
+    fn test_cursor_validate_rejects_bracketed_model() {
+        let preset = cursor(Some("claude-opus-5[effort=high]"));
+        let err = validate_cursor_preset(&preset, "x").expect_err("expected rejection");
+        let msg = err.to_string();
+        assert!(msg.contains("presets.x.cursor"), "error: {msg}");
+        assert!(msg.contains("bare model id"), "error: {msg}");
+    }
+
+    /// Every option arm exercised separately, so `any_option_set` cannot pass
+    /// by covering only the first field.
+    #[test]
+    fn test_cursor_validate_rejects_each_option_without_model() {
+        let cases: [(&str, CursorPreset); 3] = [
+            (
+                "effort",
+                CursorPreset {
+                    effort: Some("high".to_string()),
+                    ..CursorPreset::default()
+                },
+            ),
+            (
+                "fast",
+                CursorPreset {
+                    fast: Some(true),
+                    ..CursorPreset::default()
+                },
+            ),
+            (
+                "context",
+                CursorPreset {
+                    context: Some("300k".to_string()),
+                    ..CursorPreset::default()
+                },
+            ),
+        ];
+
+        for (field, preset) in cases {
+            let Err(err) = validate_cursor_preset(&preset, "x") else {
+                panic!("{field} alone should be rejected");
+            };
+            let msg = err.to_string();
+            assert!(msg.contains("presets.x.cursor"), "{field}: {msg}");
+            assert!(msg.contains("require `model`"), "{field}: {msg}");
+        }
+    }
+
+    /// An empty value composes a malformed bracket rather than being skipped:
+    /// `model = ""` yields `[effort=high]` and `effort = ""` yields
+    /// `model[effort=]`. Cursor rejects nothing, so both degrade silently.
+    #[test]
+    fn test_cursor_validate_rejects_empty_values() {
+        let cases: [(&str, CursorPreset); 4] = [
+            ("model", cursor(Some(""))),
+            ("model", cursor(Some("   "))),
+            (
+                "effort",
+                CursorPreset {
+                    model: Some("claude-opus-5".to_string()),
+                    effort: Some(String::new()),
+                    ..CursorPreset::default()
+                },
+            ),
+            (
+                "context",
+                CursorPreset {
+                    model: Some("claude-opus-5".to_string()),
+                    context: Some("  ".to_string()),
+                    ..CursorPreset::default()
+                },
+            ),
+        ];
+
+        for (field, preset) in cases {
+            let Err(err) = validate_cursor_preset(&preset, "x") else {
+                panic!("empty {field} should be rejected");
+            };
+            let msg = err.to_string();
+            assert!(msg.contains("presets.x.cursor"), "{field}: {msg}");
+            assert!(
+                msg.contains("must not be empty") || msg.contains("must not contain whitespace"),
+                "{field}: {msg}"
+            );
+        }
+    }
+
+    /// Whitespace anywhere in a value composes a malformed bracket, and a
+    /// leading space additionally forces serde to emit a quoted scalar —
+    /// changing the model id rather than only the option suffix.
+    #[test]
+    fn test_cursor_validate_rejects_whitespace_in_values() {
+        let cases: [(&str, CursorPreset); 3] = [
+            ("model", cursor(Some(" claude-opus-5 "))),
+            (
+                "effort",
+                CursorPreset {
+                    model: Some("claude-opus-5".to_string()),
+                    effort: Some("high 5".to_string()),
+                    ..CursorPreset::default()
+                },
+            ),
+            (
+                "context",
+                CursorPreset {
+                    model: Some("claude-opus-5".to_string()),
+                    context: Some("300 k".to_string()),
+                    ..CursorPreset::default()
+                },
+            ),
+        ];
+
+        for (field, preset) in cases {
+            let Err(err) = validate_cursor_preset(&preset, "x") else {
+                panic!("whitespace in {field} should be rejected");
+            };
+            let msg = err.to_string();
+            assert!(msg.contains("presets.x.cursor"), "{field}: {msg}");
+            assert!(
+                msg.contains("must not contain whitespace"),
+                "{field}: {msg}"
+            );
+        }
+    }
+
+    /// Every `NAMED_CURSOR_OPTIONS` entry names a real `CursorPreset` field.
+    ///
+    /// Deserializing `<name> = 0` fails either way — the three fields are
+    /// `String`, `bool`, `String` — but the *error* distinguishes the cases: a
+    /// live field gives a type error, a renamed or removed one gives
+    /// `unknown field` under `deny_unknown_fields`. So renaming `context` to
+    /// `thinking` without updating the array fails here, which is the drift that
+    /// would otherwise let `params.context` re-spell a named option.
+    ///
+    /// The destructuring binding below is the other half: adding a field is a
+    /// compile error here, forcing whoever adds it to look at this test. What
+    /// neither half catches is a fourth field added, bound as `_`, and left out
+    /// of the array — Rust has no field-name reflection to close that without a
+    /// macro, so it is a known limit rather than a covered case.
+    #[test]
+    fn test_named_cursor_options_are_real_fields() {
+        let CursorPreset {
+            model: _,
+            effort: _,
+            fast: _,
+            context: _,
+            params: _,
+        } = CursorPreset::default();
+
+        for name in NAMED_CURSOR_OPTIONS {
+            let err = toml::from_str::<CursorPreset>(&format!("{name} = 0"))
+                .expect_err("0 is the wrong type for every named option")
+                .to_string();
+            assert!(
+                !err.contains("unknown field"),
+                "`{name}` is in NAMED_CURSOR_OPTIONS but is not a CursorPreset field: {err}"
+            );
+        }
+    }
+
+    /// `params` keys must not collide with each other, not just with the named
+    /// fields — `BTreeMap` orders by byte, so case variants are not adjacent.
+    #[test]
+    fn test_cursor_validate_rejects_params_keys_colliding_with_each_other() {
+        let preset = CursorPreset {
+            model: Some("auto-smart".to_string()),
+            params: BTreeMap::from([
+                ("optimize_for".to_string(), "cost".to_string()),
+                ("Optimize_For".to_string(), "balanced".to_string()),
+            ]),
+            ..CursorPreset::default()
+        };
+        let Err(err) = validate_cursor_preset(&preset, "x") else {
+            panic!("params keys differing only in case should collide");
+        };
+        assert!(err.to_string().contains("differ only in case"), "{err}");
+    }
+
+    /// Case-insensitive, because `[effort=high,Effort=low]` is one option
+    /// spelled twice whichever way Cursor folds ids.
+    #[test]
+    fn test_cursor_validate_rejects_params_key_colliding_case_insensitively() {
+        let preset = CursorPreset {
+            model: Some("claude-opus-5".to_string()),
+            effort: Some("high".to_string()),
+            params: BTreeMap::from([("Effort".to_string(), "low".to_string())]),
+            ..CursorPreset::default()
+        };
+        let Err(err) = validate_cursor_preset(&preset, "x") else {
+            panic!("differently-cased params key should collide");
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("params.Effort"), "{msg}");
+        assert!(msg.contains("`effort` field"), "{msg}");
+    }
+
+    /// A `params` key that duplicates a named field would give one option two
+    /// spellings — the exact thing the bracket ban exists to prevent.
+    #[test]
+    fn test_cursor_validate_rejects_params_key_colliding_with_named_field() {
+        for named in ["effort", "fast", "context"] {
+            let preset = CursorPreset {
+                model: Some("claude-opus-5".to_string()),
+                params: BTreeMap::from([(named.to_string(), "x".to_string())]),
+                ..CursorPreset::default()
+            };
+            let Err(err) = validate_cursor_preset(&preset, "x") else {
+                panic!("params.{named} should collide with the named field");
+            };
+            let msg = err.to_string();
+            assert!(msg.contains(&format!("params.{named}")), "{named}: {msg}");
+            assert!(msg.contains("duplicates"), "{named}: {msg}");
+        }
+    }
+
+    /// Keys are composed into the bracket just like values, so they carry the
+    /// same delimiter and whitespace rules.
+    #[test]
+    fn test_cursor_validate_rejects_malformed_params_key_or_value() {
+        let cases = [
+            ("bad=key", "cost"),
+            ("optimize for", "cost"),
+            ("optimize_for", "co,st"),
+            ("optimize_for", ""),
+        ];
+        for (key, value) in cases {
+            let preset = CursorPreset {
+                model: Some("claude-opus-5".to_string()),
+                params: BTreeMap::from([(key.to_string(), value.to_string())]),
+                ..CursorPreset::default()
+            };
+            assert!(
+                validate_cursor_preset(&preset, "x").is_err(),
+                "params {key:?}={value:?} should be rejected"
+            );
+        }
+    }
+
+    /// `params` alone still requires a `model` — Cursor cannot express a bracket
+    /// option apart from the id it suffixes.
+    #[test]
+    fn test_cursor_validate_rejects_params_without_model() {
+        let preset = CursorPreset {
+            params: BTreeMap::from([("optimize_for".to_string(), "cost".to_string())]),
+            ..CursorPreset::default()
+        };
+        let Err(err) = validate_cursor_preset(&preset, "x") else {
+            panic!("params with no model should be rejected");
+        };
+        assert!(err.to_string().contains("require `model`"), "{err}");
+    }
+
+    #[test]
+    fn test_cursor_validate_accepts_bare_model() {
+        validate_cursor_preset(&cursor(Some("claude-opus-5")), "x")
+            .expect("bare model should validate");
+    }
+
+    #[test]
+    fn test_cursor_validate_accepts_model_with_all_options() {
+        let preset = CursorPreset {
+            model: Some("claude-opus-5".to_string()),
+            effort: Some("high".to_string()),
+            fast: Some(false),
+            context: Some("300k".to_string()),
+            params: BTreeMap::from([("optimize_for".to_string(), "cost".to_string())]),
+        };
+        validate_cursor_preset(&preset, "x").expect("model plus all options should validate");
+    }
+
+    /// A preset configuring nothing at all is inert, not invalid.
+    #[test]
+    fn test_cursor_validate_accepts_empty() {
+        validate_cursor_preset(&CursorPreset::default(), "x")
+            .expect("empty preset should validate");
     }
 }

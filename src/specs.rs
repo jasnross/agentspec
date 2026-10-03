@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use walkdir::WalkDir;
 
-use crate::presets::ProviderPresetsMap;
+use crate::declarations::Declarations;
 use crate::spec::{
     AgentSpec, HookFrontmatter, HookSpec, RuleSpec, SkillFrontmatter, SkillSpec, Spec,
     SupportingFile,
@@ -600,14 +600,14 @@ impl Specs {
     /// format and report them; returns `Ok(ValidatedSpecs)` if all checks pass.
     pub fn validate(
         self,
-        presets: &ProviderPresetsMap,
+        declarations: &Declarations,
         config_path: &Path,
     ) -> Result<ValidatedSpecs, Vec<ValidationError>> {
-        let errors = validate_semantics(&self.specs, presets, config_path);
+        let errors = validate_semantics(&self.specs, declarations, config_path);
         if errors.is_empty() {
             Ok(ValidatedSpecs {
                 specs: self.specs,
-                presets: presets.clone(),
+                declarations: declarations.clone(),
             })
         } else {
             Err(errors)
@@ -621,18 +621,18 @@ impl Specs {
 /// resolution internally before dispatching to provider adapters.
 pub struct ValidatedSpecs {
     specs: Vec<Spec>,
-    /// The preset map these specs were validated against.
+    /// The declarations these specs were validated against.
     ///
     /// Carried rather than re-supplied at compile time so `compile::run` cannot
-    /// be handed a map that never passed [`Specs::validate`]. Taking it as a
-    /// separate parameter let a caller validate one map and compile with
-    /// another.
+    /// be handed declarations that never passed [`Specs::validate`]. Taking
+    /// them as a separate parameter would let a caller validate one set and
+    /// compile with another.
     ///
     /// This closes the `compile::run` path only. `Provider::adapter()` and
     /// `Adapter::compile` are public, so a consumer invoking an adapter directly
     /// still supplies its own `CompileCtx.presets` and is guarded only by the
     /// adapter's `debug_assert!`s.
-    presets: ProviderPresetsMap,
+    declarations: Declarations,
 }
 
 impl ValidatedSpecs {
@@ -643,9 +643,9 @@ impl ValidatedSpecs {
         self.specs
     }
 
-    /// The preset map these specs were validated against.
-    pub fn presets(&self) -> &ProviderPresetsMap {
-        &self.presets
+    /// The declarations these specs were validated against.
+    pub fn declarations(&self) -> &Declarations {
+        &self.declarations
     }
 
     /// Access the validated specs directly (e.g. for the `validate` command).

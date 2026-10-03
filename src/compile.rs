@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use crate::adapters::{CompileCtx, Degradation, Delivery, SyncDestinationMode};
+use crate::declarations::Declarations;
 use crate::plan::{FileKind, ForwardPatch};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
@@ -632,12 +633,13 @@ fn derive_losses(
 /// could not honor, and the cross-provider `ParityWarning` gates that only the
 /// full active provider set can evaluate.
 ///
-/// Presets come from `validated`, not a parameter, so the map compiled against
-/// is the one [`Specs::validate`](crate::specs::Specs::validate) checked — a
-/// caller cannot validate one map and compile with another. Calling an adapter
-/// directly through [`Provider::adapter`](crate::provider::Provider::adapter)
-/// bypasses that entirely and supplies its own presets, guarded only by
-/// `debug_assert!`s that compile out in release.
+/// Declarations come from `validated`, not a parameter, so the ones compiled
+/// against are the ones [`Specs::validate`](crate::specs::Specs::validate)
+/// checked — a caller cannot validate one set and compile with another.
+/// Calling an adapter directly through
+/// [`Provider::adapter`](crate::provider::Provider::adapter) bypasses that
+/// entirely and supplies its own presets, guarded only by `debug_assert!`s
+/// that compile out in release.
 pub fn run(
     validated: &ValidatedSpecs,
     templating: &Templating,
@@ -650,7 +652,7 @@ pub fn run(
     compile_specs(
         validated.specs(),
         templating,
-        validated.presets(),
+        validated.declarations(),
         providers,
         adapter_configs,
         compile_targets,
@@ -663,7 +665,7 @@ pub fn run(
 /// the slice is cloned once per provider so that each provider gets its own
 /// template-resolved copy with the correct prefix-aware names.
 // Eight params, one over the clippy default, and each carries a distinct
-// stage-input concern (specs, templating, presets, providers, adapter configs,
+// stage-input concern (specs, templating, declarations, providers, adapter configs,
 // per-provider compile targets, home, cwd). Bundling them into a context struct
 // would just rename the noise — see CLAUDE.md "config structs at module
 // boundaries".
@@ -671,7 +673,7 @@ pub fn run(
 pub(crate) fn compile_specs(
     specs: &[Spec],
     templating: &Templating,
-    presets: &ProviderPresetsMap,
+    declarations: &Declarations,
     providers: &[Provider],
     adapter_configs: &HashMap<Provider, AdapterConfig>,
     compile_targets: &HashMap<Provider, ProviderCompileTarget>,
@@ -706,7 +708,7 @@ pub(crate) fn compile_specs(
             home,
             cwd,
             target_dir: target.target_dir.as_deref(),
-            presets,
+            presets: &declarations.presets,
             adapter_config,
             overwrite: target.overwrite,
         };
@@ -738,7 +740,13 @@ pub(crate) fn compile_specs(
     // capabilities, and paths pass through untouched, so both sides agree on
     // spec identity and on what the author configured. A resolution step that
     // ever rewrote frontmatter would make every setting read as lost.
-    let losses = derive_losses(specs, presets, &sorted_providers, &files, &deliveries);
+    let losses = derive_losses(
+        specs,
+        &declarations.presets,
+        &sorted_providers,
+        &files,
+        &deliveries,
+    );
 
     // Cross-provider parity warning. Evaluated after the per-provider compile
     // loop so the active provider set is fully known — this is the one
