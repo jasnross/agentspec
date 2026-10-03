@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Coverage for the six gates and view assembly in `probe-claude-otel.sh`.
+# Coverage for the seven gates and view assembly in `probe-claude-otel.sh`.
 #
 # Every test drives fabricated views and fabricated sink directories, so the
 # suite runs with no `claude` on PATH and costs nothing. That is the point of
@@ -478,6 +478,41 @@ main_thread() {
 	write_view "a=[$(main_thread mcp__fx__alpha),$(direct_request),$sidecar]"
 
 	run run_helper "probe_claude_gate_mcp_connected '$VIEW' '$MARKER' mcp__fx__alpha"
+	[ "$status" -eq 0 ]
+}
+
+@test "gate_mcp_absent passes when no main-thread request lists a tool with the prefix" {
+	plugin_main='{"system":"main thread","tools":[{"name":"Agent"},{"name":"mcp__plugin_fxp_fx__alpha"}]}'
+	write_view "a=[$plugin_main,$(direct_request)]" "b=[$(main_thread mcp__plugin_fxp_fx__beta)]"
+
+	run run_helper "probe_claude_gate_mcp_absent '$VIEW' '$MARKER' mcp__fx__"
+	[ "$status" -eq 0 ]
+}
+
+@test "gate_mcp_absent fails and names the tool when a main thread lists it directly" {
+	foreign_main='{"system":"main thread","tools":[{"name":"Agent"},{"name":"mcp__fx__alpha"}]}'
+	write_view "a=[$(main_thread mcp__plugin_fxp_fx__alpha)]" "b=[$foreign_main]"
+
+	run run_helper "probe_claude_gate_mcp_absent '$VIEW' '$MARKER' mcp__fx__"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"arm b: mcp__fx__alpha"* ]]
+}
+
+@test "gate_mcp_absent fails when a main thread lists the tool as deferred" {
+	write_view "a=[$(main_thread mcp__plugin_fxp_fx__alpha mcp__fx__beta)]"
+
+	run run_helper "probe_claude_gate_mcp_absent '$VIEW' '$MARKER' mcp__fx__"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"arm a: mcp__fx__beta"* ]]
+}
+
+@test "gate_mcp_absent ignores governed and Agent-less requests" {
+	# A subagent's own grant is the finding, not a foreign server, and the title
+	# sidecar offers no Agent; neither may fail the gate.
+	sidecar='{"system":"generate a title","tools":[{"name":"mcp__fx__alpha"}]}'
+	write_view "a=[$(main_thread mcp__plugin_fxp_fx__alpha),$(direct_request mcp__fx__alpha),$sidecar]"
+
+	run run_helper "probe_claude_gate_mcp_absent '$VIEW' '$MARKER' mcp__fx__"
 	[ "$status" -eq 0 ]
 }
 

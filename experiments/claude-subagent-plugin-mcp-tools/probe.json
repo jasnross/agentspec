@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "provider": "claude",
+  "driver": "billed",
+  "depth": "outbound-request",
+  "question": "For each spelling of a grant for a plugin-bundled MCP server in a Claude subagent's `tools`, with the agent inside the plugin or in the project, which of that server's tools does the subagent's model request carry?",
+  "version_source": {
+    "kind": "command",
+    "command": "claude --version"
+  },
+  "assertion": {
+    "projection": "def governed: [.[] | select(.system | tostring | contains(\"AGENTSPEC-PROBE-MARKER-CCPLUG4\"))]; def offered: [(.[] | .tools[]?.name), (.[] | .. | strings | select(contains(\"The following deferred tools are now available via ToolSearch\")) | split(\"\\n\")[])] | map(select(startswith(\"mcp__plugin_fxp_fx__\") or startswith(\"mcp__fx__\"))) | unique; with_entries(.value |= (governed | if length == 0 then \"arm-had-no-governed-request\" else offered end))",
+    "expected": {
+      "read": [],
+      "plugin_exact": ["mcp__plugin_fxp_fx__alpha"],
+      "plugin_glob": ["mcp__plugin_fxp_fx__alpha", "mcp__plugin_fxp_fx__beta"],
+      "project_exact": ["mcp__plugin_fxp_fx__alpha"],
+      "project_glob": ["mcp__plugin_fxp_fx__alpha", "mcp__plugin_fxp_fx__beta"],
+      "project_unprefixed": []
+    }
+  }
+}

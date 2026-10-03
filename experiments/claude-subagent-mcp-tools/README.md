@@ -122,6 +122,6 @@ The `refuted` record stays, because records are append-only. `just probe-status`
 
 - **One model and one CLI version** per record. The deferral behavior depends on both.
 - **Default tool search only.** Claude with tool search off — the default for users behind a custom `ANTHROPIC_BASE_URL` — is unmeasured.
-- **User- and project-configured servers only.** Plugin-bundled servers use `mcp__plugin_<plugin>_<server>__<tool>` and are not measured.
+- **User- and project-configured servers only.** Plugin-bundled servers use `mcp__plugin_<plugin>_<server>__<tool>` and are not measured here; `experiments/claude-subagent-plugin-mcp-tools/` measures them.
 - **`inherit` is not evidence.** The deferred-listing gate requires its value, so no record can show it differing.
 - **Delegated subagents only.** A skill's `allowed-tools`, and an agent run as the session with `--agent`, are separate surfaces.

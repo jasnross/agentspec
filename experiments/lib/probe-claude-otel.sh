@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 # Shared apparatus for the billed Claude probes: arm invocation, view assembly,
-# and six gates.
+# and seven gates.
 #
 # `claude-agent-effort` and `claude-skill-effort` both drive `claude -p` through
 # this; they differ only in their fixtures, arms, prompts, and which field the
 # fixture governs (see gate 2) — the same consolidation `probe-common.sh` made
 # for the five manual packages. `claude-subagent-mcp-tools` drives it too, with
 # gates 1 and 2 but not the effort-specific gate 3, and so does
-# `claude-subagent-tools-empty`, with gates 1, 2, and 5. Gates 4 and 6 — the
-# deferred-listing and MCP-connected gates — have one caller, and gate 5, the
-# model gate, has two; they live here anyway because they evaluate jq over a
-# request view, which is exactly what bats can exercise for free.
+# `claude-subagent-tools-empty`, with gates 1, 2, and 5, and
+# `claude-subagent-plugin-mcp-tools`, with gates 1, 2, 5, 6, and 7. Gates 4 and
+# 7 — the deferred-listing and foreign-server gates — have one caller, gate 6,
+# the MCP-connected gate, has two, and gate 5, the model gate, has three; they
+# live here anyway because they evaluate jq over a request view, which is
+# exactly what bats can exercise for free.
 # Writing the gates twice would put the safety-critical part of a billed
 # apparatus in two files that can drift, which is the failure
 # `manifest-contract.sh` exists to prevent, turned inward again. As library
@@ -70,9 +72,9 @@ probe_claude_arm() {
 	# make the probe measure the operator's shell. `--setting-sources project`
 	# excludes the user tier outright rather than out-ranking it. This helper
 	# passes no `--effort`, which would outrank frontmatter too; the effort
-	# packages pass none either, while `claude-subagent-mcp-tools` and
-	# `claude-subagent-tools-empty`, which measure no effort, pass `--effort low`
-	# through `"$@"`.
+	# packages pass none either, while `claude-subagent-mcp-tools`,
+	# `claude-subagent-tools-empty`, and `claude-subagent-plugin-mcp-tools`, which
+	# measure no effort, pass `--effort low` through `"$@"`.
 	(
 		cd "$project" &&
 			env -u CLAUDE_CODE_EFFORT_LEVEL \
@@ -310,5 +312,48 @@ probe_claude_gate_mcp_connected() {
 		| "probe:   arm \(.key): no ungoverned request offered Agent"
 	' "$view" >&2
 	printf 'probe: the server may not have connected before the subagent spawned, so an empty tool set describes nothing. No record written.\n' >&2
+	return 1
+}
+
+# Gate 7: no main-thread request, in any arm, lists a tool whose name starts
+# with the given prefix, directly in `tools[]` or as deferred. The main thread
+# is identified as in gate 6.
+#
+# A package whose projection keeps names by prefix needs the session to hold no
+# server that prefix could match other than the one the fixture configures.
+# `claude-subagent-plugin-mcp-tools` cannot use `--strict-mcp-config`, which
+# would drop its plugin server, so a user-scope server named `fx` in the
+# operator's `~/.claude.json` still connects. Its `mcp__fx__alpha` would pass
+# that package's `mcp__fx__` filter and turn the arm that decides whether a
+# plain spelling matches a plugin server into a false `refuted`. A session-wide
+# server reaches the main thread whatever any subagent's allowlist says, so the
+# main thread is where its absence is checked.
+probe_claude_gate_mcp_absent() {
+	local view="$1" marker="$2" prefix="$3"
+
+	jq -e --arg m "$marker" --arg p "$prefix" '
+		def listed: [ .tools[]?.name ]
+			+ [ .. | strings
+			    | select(contains("The following deferred tools are now available via ToolSearch"))
+			    | split("\n")[] ];
+		all(.[];
+			all(.[] | select((.system | tostring | contains($m)) | not)
+			        | select(any(.tools[]?; .name == "Agent"));
+				all(listed[]; startswith($p) | not)))
+	' "$view" >/dev/null && return 0
+
+	printf "probe: a main-thread request listed a tool starting with %s:\n" "$prefix" >&2
+	jq -r --arg m "$marker" --arg p "$prefix" '
+		to_entries[] | .key as $arm
+		| [ .value[] | select((.system | tostring | contains($m)) | not)
+		    | select(any(.tools[]?; .name == "Agent"))
+		    | (.tools[]?.name),
+		      (.. | strings
+		       | select(contains("The following deferred tools are now available via ToolSearch"))
+		       | split("\n")[])
+		    | select(startswith($p)) ] | unique[]
+		| "probe:   arm \($arm): \(.)"
+	' "$view" >&2
+	printf "probe: a server outside the fixture shares that name, likely a user-scope server in ~/.claude.json, so the projection cannot tell its tools from the fixture's. No record written.\n" >&2
 	return 1
 }
