@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Coverage for the nine gates and view assembly in `probe-claude-otel.sh`.
+# Coverage for the ten gates and view assembly in `probe-claude-otel.sh`.
 #
 # Every test drives fabricated views and fabricated sink directories, so the
 # suite runs with no `claude` on PATH and costs nothing. That is the point of
@@ -681,6 +681,95 @@ delegation_sink() {
 	printf '{"system":"main thread","messages":[]}' >"$BATS_TEST_TMPDIR/ws/bg/sink/q.request.json"
 
 	run run_helper "probe_claude_gate_delegation_background '$BATS_TEST_TMPDIR/ws' bg true"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"captured 0 response and 1 request files"* ]]
+}
+
+# Adds to the arm's fabricated sink one main-thread request offering the
+# `Agent` tool, whose input schema declares `run_in_background` when the second
+# argument is `with` and leaves it out when it is `without`, as fork mode does.
+agent_schema_request() {
+	local arm="$1" param="$2"
+	local sink="$BATS_TEST_TMPDIR/ws/$arm/sink"
+	mkdir -p "$sink"
+	jq -n -c --arg param "$param" '
+		{prompt: {type: "string"}, subagent_type: {type: "string"}}
+		+ (if $param == "with" then {run_in_background: {type: "boolean"}} else {} end) as $props
+		| {system: "main thread", messages: [{role: "user", content: "delegate"}],
+		   tools: [{name: "Read", input_schema: {type: "object", properties: {}}},
+			   {name: "Agent", input_schema: {type: "object", properties: $props}}]}
+	' >"$sink/schema.request.json"
+}
+
+@test "gate_delegation_fork passes when the Agent schema lacks run_in_background and every call ran in the background" {
+	agent_schema_request fork without
+	delegation_sink fork t1:omit:async t2:omit:async-string
+
+	run run_helper "probe_claude_gate_delegation_fork '$BATS_TEST_TMPDIR/ws' fork"
+	[ "$status" -eq 0 ]
+}
+
+@test "gate_delegation_fork fails when the Agent schema declares run_in_background, though the call ran async" {
+	# With fork mode off, a call that leaves the field out also launches in the
+	# background (measured on 2.1.287), so only the schema tells the modes apart.
+	agent_schema_request fork with
+	delegation_sink fork t1:omit:async
+
+	run run_helper "probe_claude_gate_delegation_fork '$BATS_TEST_TMPDIR/ws' fork"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"declares run_in_background, so fork mode was off"* ]]
+	[[ "$output" == *"No record written"* ]]
+}
+
+@test "gate_delegation_fork fails when no request offers the Agent tool" {
+	delegation_sink fork t1:omit:async
+
+	run run_helper "probe_claude_gate_delegation_fork '$BATS_TEST_TMPDIR/ws' fork"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"has no request offering the Agent tool"* ]]
+}
+
+@test "gate_delegation_fork fails when a call's result is not asynchronous" {
+	agent_schema_request fork without
+	delegation_sink fork t1:omit:sync
+
+	run run_helper "probe_claude_gate_delegation_fork '$BATS_TEST_TMPDIR/ws' fork"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"did not run in the background"* ]]
+}
+
+@test "gate_delegation_fork fails when a call was never answered" {
+	agent_schema_request fork without
+	delegation_sink fork t1:omit:async t2:omit:none
+
+	run run_helper "probe_claude_gate_delegation_fork '$BATS_TEST_TMPDIR/ws' fork"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"did not run in the background"* ]]
+}
+
+@test "gate_delegation_fork fails when the arm made no Agent call" {
+	agent_schema_request fork without
+	printf '{"type":"message","role":"assistant","content":[{"type":"text","text":"ok"}]}' >"$BATS_TEST_TMPDIR/ws/fork/sink/r.response.json"
+
+	run run_helper "probe_claude_gate_delegation_fork '$BATS_TEST_TMPDIR/ws' fork"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"made no Agent call"* ]]
+}
+
+@test "gate_delegation_fork fails and says so when a response is not JSON" {
+	agent_schema_request fork without
+	delegation_sink fork t1:omit:async
+	printf 'not json' >"$BATS_TEST_TMPDIR/ws/fork/sink/bad.response.json"
+
+	run run_helper "probe_claude_gate_delegation_fork '$BATS_TEST_TMPDIR/ws' fork"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"jq could not evaluate the fork arm sink"* ]]
+}
+
+@test "gate_delegation_fork fails and says so when the sink holds no responses" {
+	agent_schema_request fork without
+
+	run run_helper "probe_claude_gate_delegation_fork '$BATS_TEST_TMPDIR/ws' fork"
 	[ "$status" -ne 0 ]
 	[[ "$output" == *"captured 0 response and 1 request files"* ]]
 }

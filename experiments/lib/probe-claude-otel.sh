@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Shared apparatus for the billed Claude probes: arm invocation, view assembly,
-# and nine gates.
+# and ten gates.
 #
 # `claude-agent-effort` and `claude-skill-effort` both drive `claude -p` through
 # this; they differ only in their fixtures, arms, prompts, and which field the
@@ -14,11 +14,14 @@
 #   - `claude-subagent-mcp-resource-tools`: gates 1, 2, 4, 5, and 6
 #   - `claude-background-subagent-mcp-tools`: gates 1, 2, 5, 6, and 8
 #   - `claude-skill-mcp-allowed-tools`: gates 1, 2, 5, and 9
+#   - `claude-skill-plugin-mcp-named-tool`: gates 1, 2, 5, and 9
+#   - `claude-fork-subagent-mcp-tools`: gates 1, 2, 5, 6, and 10
 #
-# Gates 7, 8, and 9 — the foreign-server, delegation-mode, and answered-call
-# gates — have one caller each, and gate 4, the deferred-listing gate, has
-# two; they live here anyway because they evaluate jq over a request view or
-# an arm's sink, which is exactly what bats can exercise for free.
+# Gates 7, 8, and 10 — the foreign-server, delegation-mode, and fork-delegation
+# gates — have one caller each, and gates 4 and 9, the deferred-listing and
+# answered-call gates, have two; they live here anyway because they evaluate jq
+# over a request view or an arm's sink, which is exactly what bats can exercise
+# for free.
 # Writing the gates twice would put the safety-critical part of a billed
 # apparatus in two files that can drift, which is the failure
 # `manifest-contract.sh` exists to prevent, turned inward again. As library
@@ -81,8 +84,9 @@ probe_claude_arm() {
 	# packages pass none either, while `claude-subagent-mcp-tools`,
 	# `claude-subagent-tools-empty`, `claude-subagent-plugin-mcp-tools`,
 	# `claude-subagent-mcp-resource-tools`,
-	# `claude-background-subagent-mcp-tools`, and
-	# `claude-skill-mcp-allowed-tools`, which measure no effort, pass
+	# `claude-background-subagent-mcp-tools`,
+	# `claude-skill-mcp-allowed-tools`, `claude-skill-plugin-mcp-named-tool`,
+	# and `claude-fork-subagent-mcp-tools`, which measure no effort, pass
 	# `--effort low` through `"$@"`.
 	(
 		cd "$project" &&
@@ -429,10 +433,10 @@ probe_claude_gate_delegation_background() {
 # answered. Some `tool_use` block in the arm's responses names the tool, and a
 # `tool_result` in its requests answers one of those calls' ids.
 #
-# `claude-skill-mcp-allowed-tools` reads what happened to a call — run or
-# denied — so an arm whose model never made the call, or whose turn ended
-# before the call was answered (a budget hit, an early exit), reads as neither
-# and must fail here rather than record. Like gate 8 it reads the arm's sink,
+# `claude-skill-mcp-allowed-tools` and `claude-skill-plugin-mcp-named-tool`
+# read what happened to a call — run or denied — so an arm whose model never
+# made the call, or whose turn ended before the call was answered (a budget
+# hit, an early exit), reads as neither and must fail here rather than record. Like gate 8 it reads the arm's sink,
 # because a request body carries no earlier assistant turn: the call appears
 # only in the responses.
 probe_claude_gate_tool_answered() {
@@ -464,5 +468,73 @@ probe_claude_gate_tool_answered() {
 	fi
 
 	printf 'probe: arm %s has no answered call to %s, so it says nothing about pre-approval. No record written.\n' "$arm" "$tool" >&2
+	return 1
+}
+
+# Gate 10: fork mode was on in the named arm, and the arm delegated under it.
+# Every request in the arm's sink that offers the `Agent` tool declares no
+# `run_in_background` parameter in its input schema, and there was at least
+# one; the arm's responses hold at least one `Agent` call; and every such call
+# was answered by a `tool_result` that opens "Async agent launched".
+#
+# `claude-fork-subagent-mcp-tools` sets `CLAUDE_CODE_FORK_SUBAGENT=1`. Fork mode
+# removes the `Agent` tool's `run_in_background` parameter and runs every
+# subagent in the background (code.claude.com/docs/en/sub-agents), so gate 8,
+# which requires that parameter to equal a boolean, cannot pass there. The
+# missing parameter in the tool's own schema is the positive signal that fork
+# mode was on: on 2.1.287 with fork mode off the schema declares it. A call
+# that merely leaves the field out proves nothing, because with fork mode off
+# such a call also launches in the background (see
+# `claude-background-subagent-mcp-tools`). The asynchronous answer shows the
+# subagent ran in the background, as fork mode documents.
+#
+# It reads the arm's sink rather than the assembled view: the schema from the
+# request files, and, like gate 8, the `Agent` call from the response files,
+# because a request body carries no earlier assistant turn.
+probe_claude_gate_delegation_fork() {
+	local ws="$1" arm="$2"
+	local sink="$ws/$arm/sink" saved_nullglob failed
+	local -a responses requests
+
+	saved_nullglob=$(shopt -p nullglob)
+	shopt -s nullglob
+	responses=("$sink"/*.response.json)
+	requests=("$sink"/*.request.json)
+	eval "$saved_nullglob"
+
+	if [ "${#responses[@]}" -eq 0 ] || [ "${#requests[@]}" -eq 0 ]; then
+		printf 'probe: the %s arm captured %s response and %s request files in %s, so its delegation cannot be read.\n' \
+			"$arm" "${#responses[@]}" "${#requests[@]}" "$sink" >&2
+		return 1
+	fi
+
+	# Prints the first condition that failed, or nothing when all hold.
+	failed=$(jq -r -n --slurpfile res <(cat "${responses[@]}") --slurpfile req <(cat "${requests[@]}") '
+		[ $req[] | .tools[]? | select(type == "object" and .name == "Agent")
+		  | (.input_schema.properties? // {}) | has("run_in_background") ] as $schemas
+		| [ $res[] | .content[]? | select(type == "object" and .type == "tool_use" and .name == "Agent") | .id ] as $calls
+		| [ $req[] | .messages[]? | select(type == "object" and .role == "user") | .content
+		    | if type == "array" then .[] else empty end
+		    | select(type == "object" and .type == "tool_result")
+		    | {id: .tool_use_id,
+		       async: ([.content] | flatten | map(if type == "object" then .text // "" else tostring end)
+		               | join("") | startswith("Async agent launched"))} ] as $results
+		| if ($schemas | length) == 0 then "has no request offering the Agent tool, so whether fork mode was on cannot be read"
+		  elif any($schemas[]; .) then "has a request whose Agent tool declares run_in_background, so fork mode was off"
+		  elif ($calls | length) == 0 then "made no Agent call"
+		  elif any($calls[]; . as $i | any($results[]; .id == $i and .async) | not) then
+		    "has an Agent call not answered with \"Async agent launched\", so it did not run in the background"
+		  else empty end
+	') || {
+		printf 'probe: jq could not evaluate the %s arm sink. No record written.\n' "$arm" >&2
+		return 1
+	}
+
+	if [ -z "$failed" ]; then
+		return 0
+	fi
+
+	printf 'probe: arm %s %s.\n' "$arm" "$failed" >&2
+	printf 'probe: the arm did not measure a fork-mode delegation, so its value describes nothing. No record written.\n' >&2
 	return 1
 }

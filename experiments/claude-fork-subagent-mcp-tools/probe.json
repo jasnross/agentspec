@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "provider": "claude",
+  "driver": "billed",
+  "depth": "outbound-request",
+  "question": "Under fork mode (`CLAUDE_CODE_FORK_SUBAGENT=1`, `-p`), is a Claude subagent whose `tools` is `Read` offered a connected MCP server's tools, where a subagent with no `tools` field is offered all of them?",
+  "version_source": {
+    "kind": "command",
+    "command": "claude --version"
+  },
+  "assertion": {
+    "projection": "def governed: [.[] | select(.system | tostring | contains(\"AGENTSPEC-PROBE-MARKER-CCFORK8\"))]; def offered: [(.[] | .tools[]?.name), (.[] | .. | strings | select(contains(\"The following deferred tools are now available via ToolSearch\")) | split(\"\\n\")[])] | map(select(startswith(\"mcp__fx__\"))) | unique; with_entries(.value |= (governed | if length == 0 then \"arm-had-no-governed-request\" else offered end))",
+    "expected": {
+      "fork_restricted": [],
+      "fork_inherit": ["mcp__fx__alpha", "mcp__fx__beta"]
+    }
+  }
+}
