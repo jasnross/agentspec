@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Coverage for the eight gates and view assembly in `probe-claude-otel.sh`.
+# Coverage for the nine gates and view assembly in `probe-claude-otel.sh`.
 #
 # Every test drives fabricated views and fabricated sink directories, so the
 # suite runs with no `claude` on PATH and costs nothing. That is the point of
@@ -684,3 +684,93 @@ delegation_sink() {
 	[ "$status" -ne 0 ]
 	[[ "$output" == *"captured 0 response and 1 request files"* ]]
 }
+
+# A fabricated sink for one arm under $BATS_TEST_TMPDIR/ws holding one
+# response whose assistant turn calls <tool> with id `c1`, and — unless the
+# third argument is `unanswered` — a request answering it.
+tool_call_sink() {
+	local arm="$1" tool="$2" answer="${3:-answered}"
+	local sink="$BATS_TEST_TMPDIR/ws/$arm/sink"
+	mkdir -p "$sink"
+	jq -n -c --arg tool "$tool" \
+		'{type: "message", role: "assistant", content: [{type: "tool_use", id: "c1", name: $tool, input: {}}]}' \
+		>"$sink/r.response.json"
+	case "$answer" in
+	unanswered)
+		printf '{"system":"x","messages":[{"role":"user","content":"hi"}]}' >"$sink/q.request.json"
+		;;
+	*)
+		printf '{"system":"x","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"c1","content":"ok"}]}]}' \
+			>"$sink/q.request.json"
+		;;
+	esac
+}
+
+@test "gate_tool_answered passes when the named tool was called and answered" {
+	tool_call_sink a mcp__fx__alpha
+
+	run run_helper "probe_claude_gate_tool_answered '$BATS_TEST_TMPDIR/ws' a mcp__fx__alpha"
+	[ "$status" -eq 0 ]
+}
+
+@test "gate_tool_answered fails when the call has no tool_result" {
+	tool_call_sink a mcp__fx__alpha unanswered
+
+	run run_helper "probe_claude_gate_tool_answered '$BATS_TEST_TMPDIR/ws' a mcp__fx__alpha"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"no answered call to mcp__fx__alpha"* ]]
+}
+
+@test "gate_tool_answered fails when only a different tool was called" {
+	tool_call_sink a ToolSearch
+
+	run run_helper "probe_claude_gate_tool_answered '$BATS_TEST_TMPDIR/ws' a mcp__fx__alpha"
+	[ "$status" -ne 0 ]
+}
+
+@test "gate_tool_answered fails when the name appears only in a user message's text" {
+	sink="$BATS_TEST_TMPDIR/ws/a/sink"
+	mkdir -p "$sink"
+	printf '{"type":"message","role":"assistant","content":[{"type":"text","text":"done"}]}' >"$sink/r.response.json"
+	printf '{"system":"x","messages":[{"role":"user","content":[{"type":"text","text":"Call the mcp__fx__alpha tool"}]}]}' \
+		>"$sink/q.request.json"
+
+	run run_helper "probe_claude_gate_tool_answered '$BATS_TEST_TMPDIR/ws' a mcp__fx__alpha"
+	[ "$status" -ne 0 ]
+}
+
+@test "gate_tool_answered fails and says so when the sink holds no responses" {
+	mkdir -p "$BATS_TEST_TMPDIR/ws/a/sink"
+	printf '{"system":"x","messages":[]}' >"$BATS_TEST_TMPDIR/ws/a/sink/q.request.json"
+
+	run run_helper "probe_claude_gate_tool_answered '$BATS_TEST_TMPDIR/ws' a mcp__fx__alpha"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"captured 0 response and 1 request files"* ]]
+}
+
+@test "gate_tool_answered fails when the only tool_result answers a different call" {
+	# The shape that matters in practice: the request answers the ToolSearch
+	# call, and the call to the named tool goes unanswered.
+	sink="$BATS_TEST_TMPDIR/ws/a/sink"
+	mkdir -p "$sink"
+	printf '{"type":"message","role":"assistant","content":[{"type":"tool_use","id":"s1","name":"ToolSearch","input":{}},{"type":"tool_use","id":"c1","name":"mcp__fx__alpha","input":{}}]}' \
+		>"$sink/r.response.json"
+	printf '{"system":"x","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"s1","content":"loaded"}]}]}' \
+		>"$sink/q.request.json"
+
+	run run_helper "probe_claude_gate_tool_answered '$BATS_TEST_TMPDIR/ws' a mcp__fx__alpha"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"no answered call to mcp__fx__alpha"* ]]
+}
+
+@test "gate_tool_answered fails and says so when the sink holds no requests" {
+	sink="$BATS_TEST_TMPDIR/ws/a/sink"
+	mkdir -p "$sink"
+	printf '{"type":"message","role":"assistant","content":[{"type":"tool_use","id":"c1","name":"mcp__fx__alpha","input":{}}]}' \
+		>"$sink/r.response.json"
+
+	run run_helper "probe_claude_gate_tool_answered '$BATS_TEST_TMPDIR/ws' a mcp__fx__alpha"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"captured 1 response and 0 request files"* ]]
+}
+

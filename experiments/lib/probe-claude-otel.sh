@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Shared apparatus for the billed Claude probes: arm invocation, view assembly,
-# and eight gates.
+# and nine gates.
 #
 # `claude-agent-effort` and `claude-skill-effort` both drive `claude -p` through
 # this; they differ only in their fixtures, arms, prompts, and which field the
@@ -13,11 +13,12 @@
 #   - `claude-subagent-plugin-mcp-tools`: gates 1, 2, 5, 6, and 7
 #   - `claude-subagent-mcp-resource-tools`: gates 1, 2, 4, 5, and 6
 #   - `claude-background-subagent-mcp-tools`: gates 1, 2, 5, 6, and 8
+#   - `claude-skill-mcp-allowed-tools`: gates 1, 2, 5, and 9
 #
-# Gates 7 and 8 — the foreign-server and delegation-mode gates — have one caller
-# each, and gate 4, the deferred-listing gate, has two; they live here anyway
-# because they evaluate jq over a request view or an arm's sink, which is
-# exactly what bats can exercise for free.
+# Gates 7, 8, and 9 — the foreign-server, delegation-mode, and answered-call
+# gates — have one caller each, and gate 4, the deferred-listing gate, has
+# two; they live here anyway because they evaluate jq over a request view or
+# an arm's sink, which is exactly what bats can exercise for free.
 # Writing the gates twice would put the safety-critical part of a billed
 # apparatus in two files that can drift, which is the failure
 # `manifest-contract.sh` exists to prevent, turned inward again. As library
@@ -79,8 +80,9 @@ probe_claude_arm() {
 	# passes no `--effort`, which would outrank frontmatter too; the effort
 	# packages pass none either, while `claude-subagent-mcp-tools`,
 	# `claude-subagent-tools-empty`, `claude-subagent-plugin-mcp-tools`,
-	# `claude-subagent-mcp-resource-tools`, and
-	# `claude-background-subagent-mcp-tools`, which measure no effort, pass
+	# `claude-subagent-mcp-resource-tools`,
+	# `claude-background-subagent-mcp-tools`, and
+	# `claude-skill-mcp-allowed-tools`, which measure no effort, pass
 	# `--effort low` through `"$@"`.
 	(
 		cd "$project" &&
@@ -420,5 +422,47 @@ probe_claude_gate_delegation_background() {
 
 	printf 'probe: arm %s did not delegate with run_in_background=%s, both as asked and as run, on every Agent call.\n' "$arm" "$expected" >&2
 	printf 'probe: the arm measured a different delegation mode than it claims, so its value describes nothing. No record written.\n' >&2
+	return 1
+}
+
+# Gate 9: the named arm's model called the named tool, and the call was
+# answered. Some `tool_use` block in the arm's responses names the tool, and a
+# `tool_result` in its requests answers one of those calls' ids.
+#
+# `claude-skill-mcp-allowed-tools` reads what happened to a call — run or
+# denied — so an arm whose model never made the call, or whose turn ended
+# before the call was answered (a budget hit, an early exit), reads as neither
+# and must fail here rather than record. Like gate 8 it reads the arm's sink,
+# because a request body carries no earlier assistant turn: the call appears
+# only in the responses.
+probe_claude_gate_tool_answered() {
+	local ws="$1" arm="$2" tool="$3"
+	local sink="$ws/$arm/sink" saved_nullglob
+	local -a responses requests
+
+	saved_nullglob=$(shopt -p nullglob)
+	shopt -s nullglob
+	responses=("$sink"/*.response.json)
+	requests=("$sink"/*.request.json)
+	eval "$saved_nullglob"
+
+	if [ "${#responses[@]}" -eq 0 ] || [ "${#requests[@]}" -eq 0 ]; then
+		printf 'probe: the %s arm captured %s response and %s request files in %s, so its call cannot be read.\n' \
+			"$arm" "${#responses[@]}" "${#requests[@]}" "$sink" >&2
+		return 1
+	fi
+
+	if jq -e -n --arg tool "$tool" \
+		--slurpfile res <(cat "${responses[@]}") --slurpfile req <(cat "${requests[@]}") '
+		[ $res[] | .content[]? | select(type == "object" and .type == "tool_use" and .name == $tool) | .id ] as $ids
+		| ($ids | length) > 0
+		  and any($req[] | .messages[]? | select(.role == "user") | .content
+		          | if type == "array" then .[] else empty end;
+		          type == "object" and .type == "tool_result" and (.tool_use_id as $i | any($ids[]; . == $i)))
+	' >/dev/null; then
+		return 0
+	fi
+
+	printf 'probe: arm %s has no answered call to %s, so it says nothing about pre-approval. No record written.\n' "$arm" "$tool" >&2
 	return 1
 }

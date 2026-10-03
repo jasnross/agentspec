@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "provider": "claude",
+  "status": "confirmed",
+  "depth": "outbound-request",
+  "date": "2026-10-03",
+  "tool_version": "2.1.287 (Claude Code)",
+  "assertion": {
+    "projection": "def classify($tool): [.[] | select(.type == \"message\" and .role == \"assistant\") | .content[]? | select(type == \"object\" and .type == \"tool_use\" and .name == $tool) | .id] as $ids | [.[] | .messages[]? | select(.role == \"user\") | .content | if type == \"array\" then .[] else empty end | select(type == \"object\" and .type == \"tool_result\") | select(.tool_use_id as $i | any($ids[]; . == $i))] as $r | ($r | map([.content] | flatten | map(if type == \"object\" then .text // \"\" else tostring end) | join(\"\"))) as $texts | if any($texts[]; contains(\"AGENTSPEC-FX-REPLY-CCSKILL7\")) then \"called\" elif ($r | length) > 0 and all($r[]; .is_error == true) then \"denied\" else {unrecognized: $texts} end; {none: (.none | classify(\"mcp__fx__alpha\")), exact: (.exact | classify(\"mcp__fx__alpha\")), server: (.server | classify(\"mcp__fx__alpha\")), server_glob: (.server_glob | classify(\"mcp__fx__alpha\")), plugin_glob: (.plugin_glob | classify(\"mcp__plugin_fxp_fx__alpha\"))}",
+    "expected": {
+      "none": "denied",
+      "exact": "called",
+      "server": "called",
+      "server_glob": "called",
+      "plugin_glob": "called"
+    },
+    "observed": {
+      "none": "denied",
+      "exact": "called",
+      "server": "called",
+      "server_glob": "called",
+      "plugin_glob": "called"
+    }
+  }
+}

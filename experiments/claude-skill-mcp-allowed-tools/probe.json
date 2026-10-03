@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "provider": "claude",
+  "driver": "billed",
+  "depth": "outbound-request",
+  "question": "Under `--permission-prompts none`, does a Claude skill whose `allowed-tools` names an MCP tool exactly, by server, by server wildcard, or by plugin-server wildcard let the skill's call to that tool run, where `allowed-tools: Read` gets the same call refused for permission, for a user-configured and a plugin-bundled server alike?",
+  "version_source": {
+    "kind": "command",
+    "command": "claude --version"
+  },
+  "assertion": {
+    "projection": "def classify($tool): [.[] | .content[]? | select(type == \"object\" and .type == \"tool_use\" and .name == $tool) | .id] as $ids | [.[] | .messages[]? | select(.role == \"user\") | .content | if type == \"array\" then .[] else empty end | select(type == \"object\" and .type == \"tool_result\") | select(.tool_use_id as $i | any($ids[]; . == $i))] as $r | ($r | map([.content] | flatten | map(if type == \"object\" then .text // \"\" else tostring end) | join(\"\"))) as $texts | if any($texts[]; contains(\"AGENTSPEC-FX-REPLY-CCSKILL7\")) then \"called\" elif ($r | length) > 0 and all($r[]; .is_error == true) and all($texts[]; contains(\"Permission for this tool use was denied\")) then \"denied\" else {unrecognized: $texts} end; {none: (.none | classify(\"mcp__fx__alpha\")), exact: (.exact | classify(\"mcp__fx__alpha\")), server: (.server | classify(\"mcp__fx__alpha\")), server_glob: (.server_glob | classify(\"mcp__fx__alpha\")), plugin_none: (.plugin_none | classify(\"mcp__plugin_fxp_fx__alpha\")), plugin_glob: (.plugin_glob | classify(\"mcp__plugin_fxp_fx__alpha\"))}",
+    "expected": {
+      "none": "denied",
+      "exact": "called",
+      "server": "called",
+      "server_glob": "called",
+      "plugin_none": "denied",
+      "plugin_glob": "called"
+    }
+  }
+}
