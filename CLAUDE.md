@@ -14,6 +14,16 @@ When weighing design decisions:
 
 This bias toward refactoring does not override scope discipline. Improve what you touch in service of the current task; surface larger structural changes as their own work rather than smuggling them into unrelated commits.
 
+## Deployment Scenarios
+
+agentspec's output usually runs somewhere other than the machine that compiled it. Three scenarios, matching the three sync modes:
+
+- **Plugin author → plugin** (`mode = "plugin"`). An author generates a Claude or Cursor plugin, often in CI, and publishes it. The people who install it never run agentspec.
+- **Single user → user config** (`mode = "user"`). One person syncs their own spec library into `~/.claude`, `~/.cursor`, or `~/.config/opencode`. Author and consumer are the same person, but often on several machines.
+- **Project → project settings** (`mode = "project"`). Generated files are committed to a repository and used by every collaborator who clones it.
+
+Design consequence: nothing agentspec does at validate, compile, sync, or inspect time may treat the compiling machine's provider installation as evidence about the runtime. That covers installed MCP servers, plugins, settings, and CLI versions. A CI runner usually has no provider installed at all. Values in `agentspec.toml` that name runtime things, such as a preset's model id or an `[mcp]` server name, are a contract the output places on whoever runs it, not facts agentspec can check locally.
+
 ## Commands
 
 ```sh
