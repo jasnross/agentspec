@@ -10,6 +10,7 @@ A useful test when writing a function: **could a new provider be added by writin
 - **Provider name literals (`".claude"`, `"cursor"`, `"opencode"`) outside adapters are a smell.** If a path or string is provider-specific, the adapter should produce it.
 - **Iterating providers is fine.** `Provider::VARIANTS`, `for provider in providers`, and `providers.map(...)` are all correct shapes — the violation is what happens _inside_ the loop body.
 - **Tests are exempt.** Integration tests and unit tests routinely name a specific provider to set up a scenario; that's not a leak.
+- **Config types may name providers in their fields.** They mirror a user-facing schema that already does; see [Config types that name providers](#config-types-that-name-providers) for where the line falls.
 
 ## Shared helpers under `src/adapters/` vs. adapter implementations
 
@@ -161,6 +162,14 @@ Same pattern — capability lookup via the trait, not a `match provider`.
 Note what the adapter does _not_ do. It records what it carried, as `Delivery` values taken from the frontmatter structs it serializes, and the orchestrator derives what was lost by subtracting those from what the author configured. **Recording a delivery is the job of whoever makes it.** An adapter never asserts "I dropped something here."
 
 That subtraction is not a re-scan of the kind this section warns about. The failure mode being guarded against is orchestrator-side _provider knowledge_ — `compile_specs` deciding, from a provider's name, what that provider must have dropped. Set arithmetic over two sets of adapter-supplied facts reasons about no provider at all: it does not know what OpenCode is, only that an intent was raised and no matching delivery came back. An earlier shape did have `compile_specs` re-scan the spec list after each adapter returned, pushing a diagnostic for every hook spec the provider could not emit; that read like orchestration but encoded which providers emit hooks in the wrong file.
+
+## Config types that name providers
+
+The user-facing config schema names providers — `[sync.claude]`, `[presets.<name>.cursor]`, `[mcp.<name>.opencode]` — so the library types that deserialize it do too. A struct with one typed field per provider (`ProviderPresets`, `McpServer`) is the expected shape, not a leak: it mirrors a schema that already names providers, and serde parses each block into its own type with `deny_unknown_fields` errors at the right path.
+
+What such a struct must not hold is the _interpretation_ of a block. Grammar checks, provider-specific defaults, and composition into output are provider knowledge and live in the adapter. The config type declares fields, and its methods only fan out to adapters by destructuring, so a new provider block is a compile error at the fan-out rather than a silently skipped arm. `ProviderPresets::validate` delegating each block to its adapter is the target shape; TODO #30 moves presets to it, since `CursorPreset::validate` still holds Cursor's grammar in `src/presets.rs`.
+
+Adding a provider therefore touches the config types — one field per provider-keyed section — and nothing else outside its adapter. The alternative, a `Provider → raw value` map parsed by each adapter, would make the adapter the only touch point at the cost of static typing and precise parse errors, for a schema that names providers regardless.
 
 ## When dispatch is unavoidable
 
