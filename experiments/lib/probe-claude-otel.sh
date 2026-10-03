@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
 # Shared apparatus for the billed Claude probes: arm invocation, view assembly,
-# and seven gates.
+# and eight gates.
 #
 # `claude-agent-effort` and `claude-skill-effort` both drive `claude -p` through
 # this; they differ only in their fixtures, arms, prompts, and which field the
 # fixture governs (see gate 2) — the same consolidation `probe-common.sh` made
-# for the five manual packages. `claude-subagent-mcp-tools` drives it too, with
-# gates 1 and 2 but not the effort-specific gate 3, and so does
-# `claude-subagent-tools-empty`, with gates 1, 2, and 5,
-# `claude-subagent-plugin-mcp-tools`, with gates 1, 2, 5, 6, and 7, and
-# `claude-subagent-mcp-resource-tools`, with gates 1, 2, 4, 5, and 6. Gate 7,
-# the foreign-server gate, has one caller, gate 4, the deferred-listing gate,
-# has two, gate 6, the MCP-connected gate, has three, and gate 5, the model
-# gate, has four; they live here anyway because they evaluate jq over a request
-# view, which is exactly what bats can exercise for free.
+# for the five manual packages. The MCP and tool-list packages drive it too,
+# without the effort-specific gate 3:
+#
+#   - `claude-subagent-mcp-tools`: gates 1, 2, 4, 5, and 6
+#   - `claude-subagent-tools-empty`: gates 1, 2, and 5
+#   - `claude-subagent-plugin-mcp-tools`: gates 1, 2, 5, 6, and 7
+#   - `claude-subagent-mcp-resource-tools`: gates 1, 2, 4, 5, and 6
+#   - `claude-background-subagent-mcp-tools`: gates 1, 2, 5, 6, and 8
+#
+# Gates 7 and 8 — the foreign-server and delegation-mode gates — have one caller
+# each, and gate 4, the deferred-listing gate, has two; they live here anyway
+# because they evaluate jq over a request view or an arm's sink, which is
+# exactly what bats can exercise for free.
 # Writing the gates twice would put the safety-critical part of a billed
 # apparatus in two files that can drift, which is the failure
 # `manifest-contract.sh` exists to prevent, turned inward again. As library
@@ -74,8 +78,9 @@ probe_claude_arm() {
 	# excludes the user tier outright rather than out-ranking it. This helper
 	# passes no `--effort`, which would outrank frontmatter too; the effort
 	# packages pass none either, while `claude-subagent-mcp-tools`,
-	# `claude-subagent-tools-empty`, `claude-subagent-plugin-mcp-tools`, and
-	# `claude-subagent-mcp-resource-tools`, which measure no effort, pass
+	# `claude-subagent-tools-empty`, `claude-subagent-plugin-mcp-tools`,
+	# `claude-subagent-mcp-resource-tools`, and
+	# `claude-background-subagent-mcp-tools`, which measure no effort, pass
 	# `--effort low` through `"$@"`.
 	(
 		cd "$project" &&
@@ -357,5 +362,63 @@ probe_claude_gate_mcp_absent() {
 		| "probe:   arm \($arm): \(.)"
 	' "$view" >&2
 	printf "probe: a server outside the fixture shares that name, likely a user-scope server in ~/.claude.json, so the projection cannot tell its tools from the fixture's. No record written.\n" >&2
+	return 1
+}
+
+# Gate 8: the named arm delegated in the expected mode, judged twice — by what
+# the model asked for and by how Claude Code ran it. Every `Agent` call in the
+# arm's responses set `run_in_background` to exactly the expected boolean, and
+# there was at least one; every such call was answered by a `tool_result`, and
+# that result opens "Async agent launched" exactly when the expected value is
+# `true`.
+#
+# `claude-background-subagent-mcp-tools` delegates in the background in one arm
+# and in the foreground in another. A model that ignored the prompt's mode
+# would record one mode's value under the other's name, and only the delegation
+# shows which way the subagent ran.
+#
+# It reads the arm's sink rather than the assembled view, for two reasons
+# measured on 2.1.287. A request body carries the latest user turn but no
+# earlier assistant turn, so the `Agent` call itself appears only in the
+# `*.response.json` files the view leaves out. And an `Agent` call with no
+# `run_in_background` field launched asynchronously, like `true`, so a missing
+# field cannot be read as `false`; the tool result is what shows how the call
+# actually ran.
+probe_claude_gate_delegation_background() {
+	local ws="$1" arm="$2" expected="$3"
+	local sink="$ws/$arm/sink" saved_nullglob
+	local -a responses requests
+
+	saved_nullglob=$(shopt -p nullglob)
+	shopt -s nullglob
+	responses=("$sink"/*.response.json)
+	requests=("$sink"/*.request.json)
+	eval "$saved_nullglob"
+
+	if [ "${#responses[@]}" -eq 0 ] || [ "${#requests[@]}" -eq 0 ]; then
+		printf 'probe: the %s arm captured %s response and %s request files in %s, so its delegation cannot be read.\n' \
+			"$arm" "${#responses[@]}" "${#requests[@]}" "$sink" >&2
+		return 1
+	fi
+
+	if jq -e -n --argjson want "$expected" \
+			--slurpfile res <(cat "${responses[@]}") --slurpfile req <(cat "${requests[@]}") '
+			[ $res[] | .content[]? | select(type == "object" and .type == "tool_use" and .name == "Agent")
+			  | {id, mode: .input.run_in_background} ] as $calls
+			| [ $req[] | .messages[]? | select(.role == "user") | .content
+			    | if type == "array" then .[] else empty end
+			    | select(type == "object" and .type == "tool_result")
+			    | {id: .tool_use_id,
+			       async: ([.content] | flatten | map(if type == "object" then .text // "" else tostring end)
+			               | join("") | startswith("Async agent launched"))} ] as $results
+			| ($calls | length) > 0
+			  and all($calls[]; .mode == $want)
+			  and all($calls[]; .id as $i | any($results[]; .id == $i and .async == $want))
+		' >/dev/null; then
+		return 0
+	fi
+
+	printf 'probe: arm %s did not delegate with run_in_background=%s, both as asked and as run, on every Agent call.\n' "$arm" "$expected" >&2
+	printf 'probe: the arm measured a different delegation mode than it claims, so its value describes nothing. No record written.\n' >&2
 	return 1
 }

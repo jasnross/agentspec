@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "provider": "claude",
+  "status": "refuted",
+  "depth": "outbound-request",
+  "date": "2026-10-03",
+  "tool_version": "2.1.287 (Claude Code)",
+  "assertion": {
+    "projection": "def governed: [.[] | select(.system | tostring | contains(\"AGENTSPEC-PROBE-MARKER-CCBG6\"))]; def offered: [(.[] | .tools[]?.name), (.[] | .. | strings | select(contains(\"The following deferred tools are now available via ToolSearch\")) | split(\"\\n\")[])] | map(select(startswith(\"mcp__fx__\"))) | unique; with_entries(.value |= (governed | if length == 0 then \"arm-had-no-governed-request\" else offered end))",
+    "expected": {
+      "foreground": [],
+      "background": [
+        "mcp__fx__alpha",
+        "mcp__fx__beta"
+      ],
+      "background_inherit": [
+        "mcp__fx__alpha",
+        "mcp__fx__beta"
+      ]
+    },
+    "observed": {
+      "foreground": [],
+      "background": [],
+      "background_inherit": [
+        "mcp__fx__alpha",
+        "mcp__fx__beta"
+      ]
+    }
+  }
+}

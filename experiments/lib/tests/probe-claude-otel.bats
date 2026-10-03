@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Coverage for the seven gates and view assembly in `probe-claude-otel.sh`.
+# Coverage for the eight gates and view assembly in `probe-claude-otel.sh`.
 #
 # Every test drives fabricated views and fabricated sink directories, so the
 # suite runs with no `claude` on PATH and costs nothing. That is the point of
@@ -557,4 +557,130 @@ main_thread() {
 	[ "$status" -eq 0 ]
 	[[ "$output" == *'"status": "refuted"'* ]]
 	[ "$(printf '%s\n' "$output" | sed -n '/^{/,/^}/p' | jq -r '.assertion.observed.read')" = "arm-had-no-governed-request" ]
+}
+
+# A fabricated sink for one arm under $BATS_TEST_TMPDIR/ws. Each argument is
+# `<id>:<mode>:<result>`: a response holding one `Agent` call with that id —
+# `run_in_background` set to <mode>, or left out when <mode> is `omit` — and,
+# unless <result> is `none`, a request answering it with a `tool_result` that
+# opens "Async agent launched" when <result> is `async` and carries a
+# subagent's report when it is `sync`. A <result> of `async-string` writes the
+# same text as a bare string rather than an array of text blocks.
+delegation_sink() {
+	local arm="$1"
+	shift
+	local sink="$BATS_TEST_TMPDIR/ws/$arm/sink" spec id mode result n=0
+	mkdir -p "$sink"
+	for spec in "$@"; do
+		IFS=: read -r id mode result <<<"$spec"
+		n=$((n + 1))
+		jq -n -c --arg id "$id" --arg mode "$mode" '
+			{type: "message", role: "assistant",
+			 content: [{type: "tool_use", id: $id, name: "Agent",
+				input: ({subagent_type: "x"} + (if $mode == "omit" then {} else {run_in_background: ($mode == "true")} end))}]}
+		' >"$sink/res$n.response.json"
+		case "$result" in
+		none) ;;
+		*)
+			jq -n -c --arg id "$id" --arg result "$result" '
+				(if $result == "sync" then "ok" else "Async agent launched successfully." end) as $text
+				| {system: "main thread", messages: [{role: "user", content: [{type: "tool_result", tool_use_id: $id,
+					content: (if $result == "async-string" then $text else [{type: "text", text: $text}] end)}]}]}
+			' >"$sink/req$n.request.json"
+			;;
+		esac
+	done
+}
+
+@test "gate_delegation_background passes for true when every call asked for and ran in the background" {
+	delegation_sink bg t1:true:async t2:true:async
+
+	run run_helper "probe_claude_gate_delegation_background '$BATS_TEST_TMPDIR/ws' bg true"
+	[ "$status" -eq 0 ]
+}
+
+@test "gate_delegation_background passes for false when the call set false and ran synchronously" {
+	delegation_sink fg t1:false:sync
+
+	run run_helper "probe_claude_gate_delegation_background '$BATS_TEST_TMPDIR/ws' fg false"
+	[ "$status" -eq 0 ]
+}
+
+@test "gate_delegation_background fails for false when the field is absent and the call ran async" {
+	# Measured on 2.1.287: a call with no `run_in_background` launched
+	# asynchronously, so absence is not the foreground. Both clauses reject this.
+	delegation_sink fg t1:omit:async
+
+	run run_helper "probe_claude_gate_delegation_background '$BATS_TEST_TMPDIR/ws' fg false"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"did not delegate with run_in_background=false"* ]]
+}
+
+@test "gate_delegation_background fails when the call asked for false but ran asynchronously" {
+	delegation_sink fg t1:false:async
+
+	run run_helper "probe_claude_gate_delegation_background '$BATS_TEST_TMPDIR/ws' fg false"
+	[ "$status" -ne 0 ]
+}
+
+@test "gate_delegation_background fails when the arm made no Agent call" {
+	mkdir -p "$BATS_TEST_TMPDIR/ws/bg/sink"
+	printf '{"type":"message","role":"assistant","content":[{"type":"text","text":"ok"}]}' >"$BATS_TEST_TMPDIR/ws/bg/sink/r.response.json"
+	printf '{"system":"main thread","messages":[{"role":"user","content":"hi"}]}' >"$BATS_TEST_TMPDIR/ws/bg/sink/q.request.json"
+
+	run run_helper "probe_claude_gate_delegation_background '$BATS_TEST_TMPDIR/ws' bg true"
+	[ "$status" -ne 0 ]
+}
+
+@test "gate_delegation_background fails when one of two calls disagrees" {
+	delegation_sink bg t1:true:async t2:false:sync
+
+	run run_helper "probe_claude_gate_delegation_background '$BATS_TEST_TMPDIR/ws' bg true"
+	[ "$status" -ne 0 ]
+}
+
+@test "gate_delegation_background fails when a call was never answered" {
+	delegation_sink bg t1:true:async t2:true:none
+
+	run run_helper "probe_claude_gate_delegation_background '$BATS_TEST_TMPDIR/ws' bg true"
+	[ "$status" -ne 0 ]
+}
+
+@test "gate_delegation_background fails for true when the field is absent even though the call ran async" {
+	# The realistic slip for a background arm: the model drops the field and the
+	# asynchronous default runs it anyway. Only the strict-boolean clause sees it.
+	delegation_sink bg t1:omit:async
+
+	run run_helper "probe_claude_gate_delegation_background '$BATS_TEST_TMPDIR/ws' bg true"
+	[ "$status" -ne 0 ]
+}
+
+@test "gate_delegation_background fails for false when the field is absent even though the call ran synchronously" {
+	delegation_sink fg t1:omit:sync
+
+	run run_helper "probe_claude_gate_delegation_background '$BATS_TEST_TMPDIR/ws' fg false"
+	[ "$status" -ne 0 ]
+}
+
+@test "gate_delegation_background fails when the call asked for true but ran synchronously" {
+	delegation_sink bg t1:true:sync
+
+	run run_helper "probe_claude_gate_delegation_background '$BATS_TEST_TMPDIR/ws' bg true"
+	[ "$status" -ne 0 ]
+}
+
+@test "gate_delegation_background reads a tool result whose content is a bare string" {
+	delegation_sink bg t1:true:async-string
+
+	run run_helper "probe_claude_gate_delegation_background '$BATS_TEST_TMPDIR/ws' bg true"
+	[ "$status" -eq 0 ]
+}
+
+@test "gate_delegation_background fails and says so when the sink holds no responses" {
+	mkdir -p "$BATS_TEST_TMPDIR/ws/bg/sink"
+	printf '{"system":"main thread","messages":[]}' >"$BATS_TEST_TMPDIR/ws/bg/sink/q.request.json"
+
+	run run_helper "probe_claude_gate_delegation_background '$BATS_TEST_TMPDIR/ws' bg true"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"captured 0 response and 1 request files"* ]]
 }
