@@ -5,6 +5,7 @@ use super::Templating;
 use super::context::TemplateContext;
 use super::environment::resolve_include;
 use super::validation::validate_child_blocks;
+use crate::mcp::McpServers;
 use crate::provider::Provider;
 use crate::spec::Spec;
 
@@ -15,9 +16,14 @@ use crate::spec::Spec;
 /// skills) are available only where appropriate. The template name is the
 /// spec's path relative to `sources_dir`, enabling `./`-prefixed self-relative
 /// includes via `MiniJinja`'s path join callback.
+///
+/// `mcp_servers` resolves `{{ mcp_tool(server, tool) }}`. Pass the validated
+/// declarations the specs will compile with, so body references and granted
+/// ids name servers the same way.
 pub fn resolve_fragments(
     specs: Vec<Spec>,
     templating: &Templating,
+    mcp_servers: &McpServers,
     provider: Option<Provider>,
     context: &TemplateContext,
 ) -> Result<Vec<Spec>> {
@@ -36,7 +42,7 @@ pub fn resolve_fragments(
         };
         validate_child_blocks(spec.body(), &resolver, spec.path())?;
 
-        let env = templating.build_environment(provider, &spec);
+        let env = templating.build_environment(mcp_servers, provider, &spec);
 
         let spec_name = spec
             .path()
@@ -102,8 +108,14 @@ mod tests {
             body: "Plain body with no template syntax.".to_string(),
         })];
 
-        let resolved =
-            resolve_fragments(specs, &templating, None, &empty_context()).expect("expected value");
+        let resolved = resolve_fragments(
+            specs,
+            &templating,
+            &McpServers::new(),
+            None,
+            &empty_context(),
+        )
+        .expect("expected value");
         let Spec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
@@ -128,8 +140,14 @@ mod tests {
             body: "Body.\n{% include \"footer.md\" %}".to_string(),
         })];
 
-        let resolved =
-            resolve_fragments(specs, &templating, None, &empty_context()).expect("expected value");
+        let resolved = resolve_fragments(
+            specs,
+            &templating,
+            &McpServers::new(),
+            None,
+            &empty_context(),
+        )
+        .expect("expected value");
         let Spec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
@@ -209,7 +227,8 @@ mod tests {
             body: "{{ specs.agents | length }}".to_owned(),
         })];
 
-        let resolved = resolve_fragments(specs, &templating, None, &ctx).expect("expected value");
+        let resolved = resolve_fragments(specs, &templating, &McpServers::new(), None, &ctx)
+            .expect("expected value");
         let Spec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
@@ -234,7 +253,8 @@ mod tests {
             body: "{% for agent in specs.agents %}{{ agent.name }}\n{% endfor %}".to_owned(),
         })];
 
-        let resolved = resolve_fragments(specs, &templating, None, &ctx).expect("expected value");
+        let resolved = resolve_fragments(specs, &templating, &McpServers::new(), None, &ctx)
+            .expect("expected value");
         let Spec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
@@ -259,7 +279,8 @@ mod tests {
             body: "{{ specs.all[0].type }}".to_owned(),
         })];
 
-        let resolved = resolve_fragments(specs, &templating, None, &ctx).expect("expected value");
+        let resolved = resolve_fragments(specs, &templating, &McpServers::new(), None, &ctx)
+            .expect("expected value");
         let Spec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
@@ -289,7 +310,8 @@ mod tests {
             body: "{% include \"listing.md\" %}".to_owned(),
         })];
 
-        let resolved = resolve_fragments(specs, &templating, None, &ctx).expect("expected value");
+        let resolved = resolve_fragments(specs, &templating, &McpServers::new(), None, &ctx)
+            .expect("expected value");
         let Spec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
@@ -314,7 +336,8 @@ mod tests {
             body: "Plain body with no template syntax.".to_owned(),
         })];
 
-        let resolved = resolve_fragments(specs, &templating, None, &ctx).expect("expected value");
+        let resolved = resolve_fragments(specs, &templating, &McpServers::new(), None, &ctx)
+            .expect("expected value");
         let Spec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
@@ -379,7 +402,8 @@ mod tests {
             supporting_files: IndexMap::new(),
         })];
 
-        let resolved = resolve_fragments(specs, &templating, None, &ctx).expect("expected value");
+        let resolved = resolve_fragments(specs, &templating, &McpServers::new(), None, &ctx)
+            .expect("expected value");
         let Spec::Skill(ref s) = resolved[0] else {
             panic!("expected Skill variant")
         };
@@ -511,8 +535,14 @@ mod tests {
             body: r#"{{ script("foo.sh") }}"#.to_owned(),
         })];
 
-        let err = resolve_fragments(specs, &templating, Some(Provider::Claude), &empty_context())
-            .expect_err("expected render error for script() in agent body");
+        let err = resolve_fragments(
+            specs,
+            &templating,
+            &McpServers::new(),
+            Some(Provider::Claude),
+            &empty_context(),
+        )
+        .expect_err("expected render error for script() in agent body");
         let msg = format!("{err:#}");
         assert!(
             msg.contains("failed to render template in"),
@@ -552,8 +582,14 @@ mod tests {
             .to_string(),
         })];
 
-        let resolved =
-            resolve_fragments(specs, &templating, None, &empty_context()).expect("expected value");
+        let resolved = resolve_fragments(
+            specs,
+            &templating,
+            &McpServers::new(),
+            None,
+            &empty_context(),
+        )
+        .expect("expected value");
         let Spec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
@@ -588,8 +624,14 @@ mod tests {
             .to_string(),
         })];
 
-        let err = resolve_fragments(specs, &templating, None, &empty_context())
-            .expect_err("expected error for a broken extends link");
+        let err = resolve_fragments(
+            specs,
+            &templating,
+            &McpServers::new(),
+            None,
+            &empty_context(),
+        )
+        .expect_err("expected error for a broken extends link");
         let msg = err.to_string();
         assert!(
             msg.contains("symlink target does not exist"),
@@ -632,8 +674,14 @@ mod tests {
             .to_string(),
         })];
 
-        let err = resolve_fragments(specs, &templating, None, &empty_context())
-            .expect_err("expected error for unrecognized block");
+        let err = resolve_fragments(
+            specs,
+            &templating,
+            &McpServers::new(),
+            None,
+            &empty_context(),
+        )
+        .expect_err("expected error for unrecognized block");
         let msg = err.to_string();
         assert!(msg.contains("typo"), "error should name the block: {msg}");
         assert!(

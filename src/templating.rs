@@ -13,6 +13,7 @@ pub use fragments::resolve_fragments;
 use minijinja::Environment;
 use serde::Deserialize;
 
+use crate::mcp::McpServers;
 use crate::provider::Provider;
 use crate::spec::Spec;
 
@@ -109,8 +110,23 @@ impl Templating {
     /// Build a `MiniJinja` environment for `spec` with all includes resolved
     /// lazily via the loader. See [`environment::build_environment`] for the
     /// full contract, including `script()` gating.
-    pub fn build_environment(&self, provider: Option<Provider>, spec: &Spec) -> Environment<'_> {
-        build_environment(&self.sources_dir, &self.extra_dirs, provider, spec)
+    ///
+    /// `mcp_servers` is a parameter rather than state so `compile_specs` can
+    /// pass the validated declarations its adapters compose grants from: a body
+    /// reference and a granted id then resolve servers from the same map.
+    pub fn build_environment(
+        &self,
+        mcp_servers: &McpServers,
+        provider: Option<Provider>,
+        spec: &Spec,
+    ) -> Environment<'_> {
+        build_environment(
+            &self.sources_dir,
+            &self.extra_dirs,
+            mcp_servers,
+            provider,
+            spec,
+        )
     }
 
     pub fn sources_dir(&self) -> &Path {

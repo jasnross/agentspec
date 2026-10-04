@@ -346,6 +346,10 @@ impl Adapter for ClaudeAdapter {
         }
     }
 
+    fn body_mcp_tool_name(&self, server: &McpServer, logical: &str, tool: &str) -> String {
+        compose_mcp_tool(server, logical, tool)
+    }
+
     fn body_skill_root(&self) -> Option<&'static str> {
         Some("${CLAUDE_SKILL_DIR}")
     }

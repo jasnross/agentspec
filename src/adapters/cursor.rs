@@ -271,6 +271,24 @@ impl Adapter for CursorAdapter {
         }
     }
 
+    /// `<server>:<tool>`, where `<server>` is `[mcp.<name>.cursor] server` or the
+    /// logical name. Descriptive: Cursor docs name no model-facing id for an MCP
+    /// tool, and `server:tool` is the only form they use to name one tool by
+    /// server and tool (its permission rules). Unlike a description, it reads
+    /// correctly inside backticks, where most tool references sit.
+    fn body_mcp_tool_name(&self, server: &McpServer, logical: &str, tool: &str) -> String {
+        let McpServer {
+            claude: _,
+            cursor,
+            opencode: _,
+        } = server;
+        let resolved = cursor
+            .as_ref()
+            .and_then(|c| c.server.as_deref())
+            .unwrap_or(logical);
+        format!("{resolved}:{tool}")
+    }
+
     fn body_skill_root(&self) -> Option<&'static str> {
         None
     }

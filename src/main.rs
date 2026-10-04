@@ -120,7 +120,15 @@ fn main() -> Result<()> {
 
             let templating = load_templating(&config, &dirs)?;
             let context = TemplateContext::from_specs(validated.specs());
-            resolve_fragments(validated.into_specs(), &templating, None, &context)?;
+            // Taken before `into_specs` consumes `validated`.
+            let mcp_servers = validated.declarations().mcp.clone();
+            resolve_fragments(
+                validated.into_specs(),
+                &templating,
+                &mcp_servers,
+                None,
+                &context,
+            )?;
             eprintln!("validation complete");
         }
         Command::Sync(sync_args) => {

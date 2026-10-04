@@ -20,7 +20,7 @@ pub use opencode::OpenCodeAdapter;
 
 use crate::compile::{AdapterConfig, GeneratedFile, HookEmitMode};
 use crate::declarations::Declarations;
-use crate::mcp::McpServers;
+use crate::mcp::{McpServer, McpServers};
 use crate::plan::{FileKind, ForwardPatch, ReversePatch, expand_tilde};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
@@ -507,6 +507,17 @@ pub trait Adapter: std::fmt::Debug + Send + Sync {
     /// in spec content (e.g. Claude's `"Read"`, Cursor's `"Read files"`,
     /// `OpenCode`'s `"read"`).
     fn body_tool_name(&self, tool: &ToolFrontmatter) -> &'static str;
+
+    /// Resolve one tool of a declared MCP server to the name this provider
+    /// expects in spec content — the sibling of [`Adapter::body_tool_name`]
+    /// for `{{ mcp_tool(server, tool) }}`. `logical` is the server's name in
+    /// `[mcp.<name>]`, and `server` its declaration.
+    ///
+    /// Returns an owned `String` because a composed id is not static. An
+    /// adapter that writes grants composes this through the same function
+    /// grant emission uses, so a body reference and a granted id cannot drift
+    /// apart.
+    fn body_mcp_tool_name(&self, server: &McpServer, logical: &str, tool: &str) -> String;
 
     /// Resolve a canonical tool to the name this provider expects in hook
     /// matcher values for tool-execute events (`PreToolUse`, `PostToolUse`,

@@ -708,7 +708,13 @@ pub(crate) fn compile_specs(
         // duplicated across adapters.
         let adapter_config = adapter_configs.get(&provider);
         let context = TemplateContext::from_specs_for_provider(specs, provider, adapter_config);
-        let resolved = resolve_fragments(specs.to_vec(), templating, Some(provider), &context)?;
+        let resolved = resolve_fragments(
+            specs.to_vec(),
+            templating,
+            &declarations.mcp,
+            Some(provider),
+            &context,
+        )?;
 
         let target = compile_targets.get(&provider).unwrap_or(&default_target);
         let ctx = CompileCtx {

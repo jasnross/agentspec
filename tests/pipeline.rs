@@ -6786,6 +6786,12 @@ fn install_agentspec_toml_with(dir: &Path, extra: &str) {
 /// Replace the fixture agent's frontmatter capabilities with `capabilities`,
 /// a YAML block indented under the `capabilities:` key.
 fn install_agent_with_capabilities(dir: &Path, capabilities: &str) {
+    install_agent_with_capabilities_and_body(dir, capabilities, "Agent instructions here.");
+}
+
+/// As [`install_agent_with_capabilities`], with `body` as the agent's
+/// instructions.
+fn install_agent_with_capabilities_and_body(dir: &Path, capabilities: &str, body: &str) {
     let r = std::fs::write(
         dir.join("spec/agents/test-agent.md"),
         format!(
@@ -6795,7 +6801,7 @@ fn install_agent_with_capabilities(dir: &Path, capabilities: &str) {
              capabilities:\n{capabilities}\
              ---\n\n\
              # Test Agent\n\n\
-             Agent instructions here.\n"
+             {body}\n"
         ),
     );
     assert!(r.is_ok(), "write test-agent.md: {r:?}");
@@ -7033,4 +7039,113 @@ fn test_compile_mcp_design_example_writes_opencode_permission() {
     .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
     .collect();
     assert_eq!(permission, expected);
+}
+
+/// The two-server fixture end to end: each provider's agent output, and each
+/// provider's rendering of `{{ mcp_tool("quip", "search_documents") }}` in the
+/// agent's body.
+#[test]
+fn test_compile_mcp_design_example_end_to_end() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_mcp_design_example(&dir);
+    install_agent_with_capabilities_and_body(
+        &dir,
+        "  tools: [read, grep]\n  mcp:\n    quip: { tools: [search_documents, get_document] }\n    atlassian: { tools: all }\n",
+        "Search with `{{ mcp_tool(\"quip\", \"search_documents\") }}`.",
+    );
+
+    let (ok, _, stderr) = run_in(&dir, &["compile"]);
+    assert!(ok, "compile failed:\n{stderr}");
+
+    let agent = |provider: &str| {
+        let path = dir.join(format!("generated/{provider}/agents/test-agent.md"));
+        let content = std::fs::read_to_string(&path);
+        assert!(content.is_ok(), "read {}: {content:?}", path.display());
+        content.unwrap_or_default()
+    };
+    let strings = |value: &serde_yml::Value| -> Vec<String> {
+        value
+            .as_sequence()
+            .map(|seq| {
+                seq.iter()
+                    .filter_map(|v| v.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    let claude = generated_frontmatter(&dir.join("generated/claude/agents/test-agent.md"));
+    assert_eq!(
+        strings(&claude["tools"]),
+        [
+            "Grep",
+            "Read",
+            "mcp__plugin_work-tools_atlassian__*",
+            "mcp__quip__get_document",
+            "mcp__quip__search_documents",
+        ]
+    );
+    let opencode = generated_frontmatter(&dir.join("generated/opencode/agents/test-agent.md"));
+    let keys: Vec<&str> = opencode["permission"]
+        .as_mapping()
+        .map(|m| m.keys().filter_map(serde_yml::Value::as_str).collect())
+        .unwrap_or_default();
+    assert_eq!(
+        keys,
+        [
+            "*",
+            "grep",
+            "read",
+            "jira_*",
+            "quip_get_document",
+            "quip_search_documents",
+            "external_directory",
+            "doom_loop",
+        ]
+    );
+    let cursor = generated_frontmatter(&dir.join("generated/cursor/agents/test-agent.md"));
+    assert!(
+        cursor.get("tools").is_none() && cursor.get("permission").is_none(),
+        "Cursor carries no tool restriction: {cursor:?}"
+    );
+
+    for (provider, rendered) in [
+        ("claude", "`mcp__quip__search_documents`"),
+        ("opencode", "`quip_search_documents`"),
+        ("cursor", "`quip:search_documents`"),
+    ] {
+        let content = agent(provider);
+        assert!(
+            content.contains(&format!("Search with {rendered}.")),
+            "{provider}:\n{content}"
+        );
+    }
+
+    let (ok, stdout, stderr) = run_in(&dir, &["inspect", "--provider", "cursor"]);
+    assert!(ok, "inspect failed:\n{stderr}");
+    for server in ["atlassian", "quip"] {
+        assert!(
+            stdout.contains(&format!("no cursor agents file carries `mcp.{server}`")),
+            "{server}:\n{stdout}"
+        );
+    }
+}
+
+#[test]
+fn test_validate_mcp_tool_rejects_undeclared_server_in_body() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_agent_with_capabilities_and_body(
+        &dir,
+        "  tools: [read]\n",
+        "Search with {{ mcp_tool(\"quip\", \"search_documents\") }}.",
+    );
+
+    let (ok, _, stderr) = run_in(&dir, &["validate"]);
+    assert!(!ok, "validate should fail");
+    assert!(
+        stderr.contains("unknown MCP server 'quip' in mcp_tool()"),
+        "{stderr}"
+    );
 }

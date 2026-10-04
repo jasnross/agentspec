@@ -588,6 +588,19 @@ Example — noting a skill only the user can start:
 
 Built-in variables are available in both spec bodies and included fragments. Additional built-in variables may be added in future versions.
 
+#### MCP tool names
+
+`{{ mcp_tool("<server>", "<tool>") }}` names one tool of a server declared under [`[mcp.<name>]`](#mcp-servers) in each provider's spelling, so a body can refer to a granted MCP tool without hardcoding one provider's id. For the declarations in [MCP servers](#mcp-servers):
+
+| Provider | `{{ mcp_tool("quip", "search_documents") }}` | `{{ mcp_tool("atlassian", "get_issue") }}` |
+| --- | --- | --- |
+| Claude | `mcp__quip__search_documents` | `mcp__plugin_work-tools_atlassian__get_issue` |
+| OpenCode | `quip_search_documents` | `jira_get_issue` |
+| Cursor | `quip:search_documents` | `atlassian:get_issue` |
+| none (`agentspec validate`) | `mcp.quip.search_documents` | `mcp.atlassian.get_issue` |
+
+Cursor documents no name its model sees for an MCP tool, so agentspec uses `<server>:<tool>`, the form Cursor's permission docs use; `[mcp.<name>.cursor] server` overrides `<server>`. The server must be declared and the tool name must match `[A-Za-z0-9_-]+`, or rendering fails. `mcp_tool()` does not check that the spec grants the tool it names, so pair each reference with a matching `capabilities.mcp` grant.
+
 ## Usage
 
 ```sh

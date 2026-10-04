@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use minijinja::Environment;
 
 use super::ExtraIncludeDir;
+use crate::mcp::{McpServers, is_mcp_name};
 use crate::provider::Provider;
 use crate::spec::{Spec, ToolFrontmatter};
 use crate::symlink::{is_symlink, unresolvable_symlink};
@@ -13,12 +14,14 @@ use crate::symlink::{is_symlink, unresolvable_symlink};
 /// resolves include paths relative to `sources_dir`, plus named extra dirs.
 ///
 /// Enables `{% include "fragments/shared.md" %}`, `{% include "./detail.md" %}`
-/// (self-relative), and `{{ tool("<canonical>") }}` calls in all specs.
+/// (self-relative), `{{ tool("<canonical>") }}`, and
+/// `{{ mcp_tool("<server>", "<tool>") }}` calls in all specs.
 ///
 /// `script()` is additionally registered when `spec` is `Spec::Skill(_)`.
 pub fn build_environment(
     sources_dir: &Path,
     extra_dirs: &[ExtraIncludeDir],
+    mcp_servers: &McpServers,
     provider: Option<Provider>,
     spec: &Spec,
 ) -> Environment<'static> {
@@ -51,6 +54,11 @@ pub fn build_environment(
     env.set_loader(move |name: &str| resolve_include(name, &sources_owned, &extra_owned));
 
     env.add_function("tool", move |name: String| resolve_tool(&name, provider));
+
+    let servers = mcp_servers.clone();
+    env.add_function("mcp_tool", move |server: String, tool: String| {
+        resolve_mcp_tool(&server, &tool, &servers, provider)
+    });
 
     if let Spec::Skill(s) = spec {
         let known_scripts: HashSet<PathBuf> = s.supporting_files.keys().cloned().collect();
@@ -244,6 +252,42 @@ fn resolve_tool(name: &str, provider: Option<Provider>) -> Result<String, miniji
     Ok(p.adapter().body_tool_name(&tool).to_owned())
 }
 
+/// Resolve `{{ mcp_tool(server, tool) }}` to the provider's name for one tool
+/// of a declared MCP server.
+///
+/// With no provider — only `agentspec validate` renders that way, and it
+/// discards the output — the result is `mcp.<server>.<tool>`, matching the
+/// `mcp.<server>` label `agentspec inspect` uses.
+///
+/// Does not check that the spec grants the tool; that is a separate concern
+/// from naming it.
+fn resolve_mcp_tool(
+    server: &str,
+    tool: &str,
+    servers: &McpServers,
+    provider: Option<Provider>,
+) -> Result<String, minijinja::Error> {
+    let Some(declaration) = servers.get(server) else {
+        return Err(minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!(
+                "unknown MCP server '{server}' in mcp_tool(); declare it under [mcp.{server}] \
+                 in agentspec.toml"
+            ),
+        ));
+    };
+    if !is_mcp_name(tool) {
+        return Err(minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!("mcp_tool() tool name '{tool}' must match [A-Za-z0-9_-]+"),
+        ));
+    }
+    let Some(p) = provider else {
+        return Ok(format!("mcp.{server}.{tool}"));
+    };
+    Ok(p.adapter().body_mcp_tool_name(declaration, server, tool))
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -346,7 +390,7 @@ mod tests {
 
     fn render_body(body: &str, provider: Option<Provider>, spec: &Spec) -> String {
         let tmp = tempfile::tempdir().expect("expected value");
-        let env = build_environment(tmp.path(), &[], provider, spec);
+        let env = build_environment(tmp.path(), &[], &McpServers::new(), provider, spec);
         let template = env.template_from_str(body).expect("expected value");
         template
             .render(minijinja::context! {})
@@ -361,7 +405,7 @@ mod tests {
     ) -> Result<String, String> {
         let tmp = tempfile::tempdir().map_err(|e| format!("{e:#}"))?;
         write_source_files(tmp.path(), files);
-        let env = build_environment(tmp.path(), &[], provider, spec);
+        let env = build_environment(tmp.path(), &[], &McpServers::new(), provider, spec);
         let template = env.template_from_str(body).map_err(|e| format!("{e:#}"))?;
         template
             .render(minijinja::context! {})
@@ -373,7 +417,13 @@ mod tests {
         let tmp = tempfile::tempdir().expect("expected value");
         std::fs::write(tmp.path().join("greeting.md"), "Hello, world!").expect("expected value");
 
-        let env = build_environment(tmp.path(), &[], None, &dummy_skill_spec());
+        let env = build_environment(
+            tmp.path(),
+            &[],
+            &McpServers::new(),
+            None,
+            &dummy_skill_spec(),
+        );
         let template = env
             .template_from_str("Before.\n{% include \"greeting.md\" %}\nAfter.")
             .expect("expected value");
@@ -389,7 +439,13 @@ mod tests {
         std::fs::write(tmp.path().join("greeting.md"), "Hello, {{ name }}!")
             .expect("expected value");
 
-        let env = build_environment(tmp.path(), &[], None, &dummy_skill_spec());
+        let env = build_environment(
+            tmp.path(),
+            &[],
+            &McpServers::new(),
+            None,
+            &dummy_skill_spec(),
+        );
         let template = env
             .template_from_str(
                 "{% with name = \"Alice\" %}{% include \"greeting.md\" %}{% endwith %}",
@@ -411,7 +467,13 @@ mod tests {
         )
         .expect("expected value");
 
-        let env = build_environment(tmp.path(), &[], None, &dummy_skill_spec());
+        let env = build_environment(
+            tmp.path(),
+            &[],
+            &McpServers::new(),
+            None,
+            &dummy_skill_spec(),
+        );
         let template = env
             .template_from_str("start {% include \"outer.md\" %} end")
             .expect("expected value");
@@ -424,7 +486,13 @@ mod tests {
     #[test]
     fn test_missing_fragment_errors() {
         let tmp = tempfile::tempdir().expect("expected value");
-        let env = build_environment(tmp.path(), &[], None, &dummy_skill_spec());
+        let env = build_environment(
+            tmp.path(),
+            &[],
+            &McpServers::new(),
+            None,
+            &dummy_skill_spec(),
+        );
         let template = env
             .template_from_str("{% include \"nonexistent.md\" %}")
             .expect("expected value");
@@ -438,7 +506,13 @@ mod tests {
         std::fs::write(tmp.path().join("rules.md"), "Rule 1\nRule 2\nRule 3")
             .expect("expected value");
 
-        let env = build_environment(tmp.path(), &[], None, &dummy_skill_spec());
+        let env = build_environment(
+            tmp.path(),
+            &[],
+            &McpServers::new(),
+            None,
+            &dummy_skill_spec(),
+        );
         let template = env
             .template_from_str(
                 "Items:\n   {% filter indent(3, first=false) %}{% include \"rules.md\" %}{% endfilter %}",
@@ -459,7 +533,13 @@ mod tests {
         )
         .expect("expected value");
 
-        let env = build_environment(tmp.path(), &[], None, &dummy_skill_spec());
+        let env = build_environment(
+            tmp.path(),
+            &[],
+            &McpServers::new(),
+            None,
+            &dummy_skill_spec(),
+        );
         let template = env
             .template_from_str(
                 "Message:\n    {% filter indent(4, first=false) %}{% with name = \"Alice\" %}{% include \"greeting.md\" %}{% endwith %}{% endfilter %}",
@@ -551,7 +631,13 @@ mod tests {
             r#"Use {{ tool("question") }}."#,
         )
         .expect("expected value");
-        let env = build_environment(tmp.path(), &[], Some(Provider::Claude), &dummy_skill_spec());
+        let env = build_environment(
+            tmp.path(),
+            &[],
+            &McpServers::new(),
+            Some(Provider::Claude),
+            &dummy_skill_spec(),
+        );
         let template = env
             .template_from_str(r#"{% include "tool-ref.md" %}"#)
             .expect("expected value");
@@ -564,7 +650,13 @@ mod tests {
     #[test]
     fn test_tool_unknown_name_errors() {
         let tmp = tempfile::tempdir().expect("expected value");
-        let env = build_environment(tmp.path(), &[], Some(Provider::Claude), &dummy_skill_spec());
+        let env = build_environment(
+            tmp.path(),
+            &[],
+            &McpServers::new(),
+            Some(Provider::Claude),
+            &dummy_skill_spec(),
+        );
         let template = env
             .template_from_str(r#"{{ tool("nope") }}"#)
             .expect("expected value");
@@ -601,7 +693,13 @@ mod tests {
     #[test]
     fn test_script_not_registered_for_agent_body() {
         let tmp = tempfile::tempdir().expect("expected value");
-        let env = build_environment(tmp.path(), &[], Some(Provider::Claude), &dummy_agent_spec());
+        let env = build_environment(
+            tmp.path(),
+            &[],
+            &McpServers::new(),
+            Some(Provider::Claude),
+            &dummy_agent_spec(),
+        );
         let template = env
             .template_from_str(r#"{{ script("foo.sh") }}"#)
             .expect("expected value");
@@ -622,7 +720,13 @@ mod tests {
     #[test]
     fn test_script_not_registered_for_rule_body() {
         let tmp = tempfile::tempdir().expect("expected value");
-        let env = build_environment(tmp.path(), &[], Some(Provider::Claude), &dummy_rule_spec());
+        let env = build_environment(
+            tmp.path(),
+            &[],
+            &McpServers::new(),
+            Some(Provider::Claude),
+            &dummy_rule_spec(),
+        );
         let template = env
             .template_from_str(r#"{{ script("foo.sh") }}"#)
             .expect("expected value");
@@ -643,7 +747,13 @@ mod tests {
     #[test]
     fn test_script_not_registered_for_hook_body() {
         let tmp = tempfile::tempdir().expect("expected value");
-        let env = build_environment(tmp.path(), &[], Some(Provider::Claude), &dummy_hook_spec());
+        let env = build_environment(
+            tmp.path(),
+            &[],
+            &McpServers::new(),
+            Some(Provider::Claude),
+            &dummy_hook_spec(),
+        );
         let template = env
             .template_from_str(r#"{{ script("foo.sh") }}"#)
             .expect("expected value");
@@ -670,7 +780,13 @@ mod tests {
     #[test]
     fn test_script_validate_mode_agent_errors() {
         let tmp = tempfile::tempdir().expect("expected value");
-        let env = build_environment(tmp.path(), &[], None, &dummy_agent_spec());
+        let env = build_environment(
+            tmp.path(),
+            &[],
+            &McpServers::new(),
+            None,
+            &dummy_agent_spec(),
+        );
         let template = env
             .template_from_str(r#"{{ script("foo.sh") }}"#)
             .expect("expected value");
@@ -692,7 +808,13 @@ mod tests {
     fn test_script_missing_file_errors() {
         let spec = dummy_skill_spec_with_files(&["exists.sh"]);
         let tmp = tempfile::tempdir().expect("expected value");
-        let env = build_environment(tmp.path(), &[], Some(Provider::Claude), &spec);
+        let env = build_environment(
+            tmp.path(),
+            &[],
+            &McpServers::new(),
+            Some(Provider::Claude),
+            &spec,
+        );
         let template = env
             .template_from_str(r#"{{ script("missing.sh") }}"#)
             .expect("expected value");
@@ -714,7 +836,7 @@ mod tests {
     fn test_script_missing_file_errors_in_validate_mode() {
         let spec = dummy_skill_spec_with_files(&["exists.sh"]);
         let tmp = tempfile::tempdir().expect("expected value");
-        let env = build_environment(tmp.path(), &[], None, &spec);
+        let env = build_environment(tmp.path(), &[], &McpServers::new(), None, &spec);
         let template = env
             .template_from_str(r#"{{ script("missing.sh") }}"#)
             .expect("expected value");
@@ -752,7 +874,13 @@ mod tests {
     #[test]
     fn test_script_rejects_parent_traversal() {
         let tmp = tempfile::tempdir().expect("expected value");
-        let env = build_environment(tmp.path(), &[], Some(Provider::Claude), &dummy_skill_spec());
+        let env = build_environment(
+            tmp.path(),
+            &[],
+            &McpServers::new(),
+            Some(Provider::Claude),
+            &dummy_skill_spec(),
+        );
         let template = env
             .template_from_str(r#"{{ script("../foo.sh") }}"#)
             .expect("expected value");
@@ -766,7 +894,13 @@ mod tests {
     #[test]
     fn test_script_rejects_absolute_path() {
         let tmp = tempfile::tempdir().expect("expected value");
-        let env = build_environment(tmp.path(), &[], Some(Provider::Claude), &dummy_skill_spec());
+        let env = build_environment(
+            tmp.path(),
+            &[],
+            &McpServers::new(),
+            Some(Provider::Claude),
+            &dummy_skill_spec(),
+        );
         let template = env
             .template_from_str(r#"{{ script("/etc/foo.sh") }}"#)
             .expect("expected value");
@@ -788,7 +922,13 @@ mod tests {
         let rule = dummy_rule_spec();
         let hook = dummy_hook_spec();
         for spec in [&agent, &skill, &rule, &hook] {
-            let env = build_environment(tmp.path(), &[], Some(Provider::Claude), spec);
+            let env = build_environment(
+                tmp.path(),
+                &[],
+                &McpServers::new(),
+                Some(Provider::Claude),
+                spec,
+            );
             let template = env
                 .template_from_str(r#"{{ tool("question") }}"#)
                 .expect("expected value");
@@ -1072,8 +1212,14 @@ mod tests {
         })];
 
         let ctx = crate::templating::TemplateContext::from_specs(&[]);
-        let err = crate::templating::resolve_fragments(specs, &templating, None, &ctx)
-            .expect_err("expected error for missing required block");
+        let err = crate::templating::resolve_fragments(
+            specs,
+            &templating,
+            &McpServers::new(),
+            None,
+            &ctx,
+        )
+        .expect_err("expected error for missing required block");
         let msg = format!("{err:#}");
         assert!(
             msg.contains("skills/my-spec.md"),
@@ -1114,7 +1260,13 @@ mod tests {
         )
         .expect("expected value");
 
-        let env = build_environment(tmp.path(), &[], None, &dummy_skill_spec());
+        let env = build_environment(
+            tmp.path(),
+            &[],
+            &McpServers::new(),
+            None,
+            &dummy_skill_spec(),
+        );
         let template = env
             .template_from_str("{% include \"skills/my-skill/detail.md\" %}")
             .expect("expected value");
@@ -1134,7 +1286,13 @@ mod tests {
         )
         .expect("expected value");
 
-        let env = build_environment(tmp.path(), &[], None, &dummy_skill_spec());
+        let env = build_environment(
+            tmp.path(),
+            &[],
+            &McpServers::new(),
+            None,
+            &dummy_skill_spec(),
+        );
         let template = env
             .template_from_named_str("skills/my-skill/SKILL.md", "{% include \"./detail.md\" %}")
             .expect("expected value");
@@ -1159,7 +1317,13 @@ mod tests {
         )
         .expect("expected value");
 
-        let env = build_environment(tmp.path(), &[], None, &dummy_skill_spec());
+        let env = build_environment(
+            tmp.path(),
+            &[],
+            &McpServers::new(),
+            None,
+            &dummy_skill_spec(),
+        );
         let template = env
             .template_from_named_str("skills/my-skill/SKILL.md", "{% include \"./detail.md\" %}")
             .expect("expected value");
@@ -1176,7 +1340,13 @@ mod tests {
         std::fs::write(tmp.path().join("skills/my-skill/sub/part.md"), "sub part")
             .expect("expected value");
 
-        let env = build_environment(tmp.path(), &[], None, &dummy_skill_spec());
+        let env = build_environment(
+            tmp.path(),
+            &[],
+            &McpServers::new(),
+            None,
+            &dummy_skill_spec(),
+        );
         let template = env
             .template_from_named_str(
                 "skills/my-skill/SKILL.md",
@@ -1196,7 +1366,13 @@ mod tests {
         std::fs::write(tmp.path().join("fragments/shared.md"), "shared content")
             .expect("expected value");
 
-        let env = build_environment(tmp.path(), &[], None, &dummy_skill_spec());
+        let env = build_environment(
+            tmp.path(),
+            &[],
+            &McpServers::new(),
+            None,
+            &dummy_skill_spec(),
+        );
         let template = env
             .template_from_named_str(
                 "skills/my-skill/SKILL.md",
@@ -1220,7 +1396,13 @@ mod tests {
             name: "ext".to_string(),
             path: extra,
         }];
-        let env = build_environment(tmp.path(), &extra_dirs, None, &dummy_skill_spec());
+        let env = build_environment(
+            tmp.path(),
+            &extra_dirs,
+            &McpServers::new(),
+            None,
+            &dummy_skill_spec(),
+        );
         let template = env
             .template_from_str("{% include \"ext/note.md\" %}")
             .expect("expected value");
@@ -1469,7 +1651,13 @@ mod tests {
         let tmp = tempfile::tempdir().expect("expected value");
         std::fs::create_dir_all(tmp.path().join("skills/my-skill")).expect("expected value");
 
-        let env = build_environment(tmp.path(), &[], None, &dummy_skill_spec());
+        let env = build_environment(
+            tmp.path(),
+            &[],
+            &McpServers::new(),
+            None,
+            &dummy_skill_spec(),
+        );
         let template = env
             .template_from_named_str("skills/my-skill/SKILL.md", "{% include \"../secret.md\" %}")
             .expect("expected value");
@@ -1696,5 +1884,155 @@ mod tests {
             "error: {msg}"
         );
         assert!(msg.contains("pool"), "error: {msg}");
+    }
+}
+
+#[cfg(test)]
+mod mcp_tool_tests {
+    use super::*;
+    use crate::mcp::{ClaudeMcpServer, CursorMcpServer, McpServer, OpenCodeMcpServer};
+    use crate::spec::{AgentFrontmatter, AgentSpec};
+
+    fn servers() -> McpServers {
+        McpServers::from([
+            ("quip".to_owned(), McpServer::default()),
+            (
+                "atlassian".to_owned(),
+                McpServer {
+                    claude: Some(ClaudeMcpServer {
+                        server: None,
+                        plugin: Some("work-tools".to_owned()),
+                    }),
+                    cursor: Some(CursorMcpServer {
+                        server: Some("atl".to_owned()),
+                    }),
+                    opencode: Some(OpenCodeMcpServer {
+                        server: Some("jira".to_owned()),
+                    }),
+                },
+            ),
+        ])
+    }
+
+    fn render(source: &str, provider: Option<Provider>) -> Result<String, minijinja::Error> {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let spec = Spec::Agent(AgentSpec {
+            path: PathBuf::from("a.md"),
+            frontmatter: AgentFrontmatter {
+                id: "a".to_owned(),
+                description: "d".to_owned(),
+                tags: None,
+                execution: None,
+                capabilities: None,
+            },
+            body: String::new(),
+        });
+        let templating =
+            crate::templating::Templating::from_sources(tmp.path().to_path_buf(), vec![]);
+        let env = templating.build_environment(&servers(), provider, &spec);
+        env.template_from_str(source)?
+            .render(minijinja::context! {})
+    }
+
+    #[test]
+    fn test_mcp_tool_renders_each_provider_spelling() {
+        let cases = [
+            (
+                Some(Provider::Claude),
+                "quip",
+                "mcp__quip__search_documents",
+            ),
+            (
+                Some(Provider::Claude),
+                "atlassian",
+                "mcp__plugin_work-tools_atlassian__search_documents",
+            ),
+            (Some(Provider::OpenCode), "quip", "quip_search_documents"),
+            (
+                Some(Provider::OpenCode),
+                "atlassian",
+                "jira_search_documents",
+            ),
+            (Some(Provider::Cursor), "quip", "quip:search_documents"),
+            (Some(Provider::Cursor), "atlassian", "atl:search_documents"),
+            (None, "quip", "mcp.quip.search_documents"),
+        ];
+        for (provider, server, expected) in cases {
+            let rendered = render(
+                &format!("{{{{ mcp_tool(\"{server}\", \"search_documents\") }}}}"),
+                provider,
+            )
+            .expect("renders");
+            assert_eq!(rendered, expected, "{provider:?} {server}");
+        }
+    }
+
+    /// Functions are registered on the environment, so a fragment reached through
+    /// `{% include %}` resolves `mcp_tool()` like the spec body does.
+    #[test]
+    fn test_mcp_tool_resolves_inside_an_included_fragment() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(tmp.path().join("fragments")).expect("mkdir");
+        std::fs::write(
+            tmp.path().join("fragments/search.md"),
+            "{{ mcp_tool(\"quip\", \"search_documents\") }}",
+        )
+        .expect("write fragment");
+        let spec = Spec::Agent(AgentSpec {
+            path: tmp.path().join("agents/a.md"),
+            frontmatter: AgentFrontmatter {
+                id: "a".to_owned(),
+                description: "d".to_owned(),
+                tags: None,
+                execution: None,
+                capabilities: None,
+            },
+            body: String::new(),
+        });
+        let templating =
+            crate::templating::Templating::from_sources(tmp.path().to_path_buf(), vec![]);
+        let env = templating.build_environment(&servers(), Some(Provider::OpenCode), &spec);
+        let rendered = env
+            .template_from_str("{% include \"fragments/search.md\" %}")
+            .and_then(|t| t.render(minijinja::context! {}))
+            .expect("renders");
+        assert_eq!(rendered, "quip_search_documents");
+    }
+
+    /// A Claude `server` override inside a plugin: the plugin prefix wraps the
+    /// overridden name, as in grant emission.
+    #[test]
+    fn test_mcp_tool_claude_server_and_plugin_override() {
+        let mut servers = servers();
+        servers.insert(
+            "both".to_owned(),
+            McpServer {
+                claude: Some(ClaudeMcpServer {
+                    server: Some("srv".to_owned()),
+                    plugin: Some("plg".to_owned()),
+                }),
+                ..McpServer::default()
+            },
+        );
+        assert_eq!(
+            resolve_mcp_tool("both", "t", &servers, Some(Provider::Claude)).expect("resolves"),
+            "mcp__plugin_plg_srv__t"
+        );
+    }
+
+    #[test]
+    fn test_mcp_tool_rejects_undeclared_server() {
+        let err =
+            render(r#"{{ mcp_tool("jira", "a") }}"#, Some(Provider::Claude)).expect_err("rejected");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("unknown MCP server 'jira'"), "{msg}");
+        assert!(msg.contains("[mcp.jira]"), "{msg}");
+    }
+
+    #[test]
+    fn test_mcp_tool_rejects_bad_tool_name() {
+        let err = render(r#"{{ mcp_tool("quip", "a b") }}"#, None).expect_err("rejected");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("tool name 'a b'"), "{msg}");
     }
 }
