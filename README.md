@@ -315,7 +315,7 @@ Content shared into more than one spec directory should address its own includes
 - A restricted agent is asked before it touches a path outside the project. That prompt replaces OpenCode's automatic allows for its tmp, tool-output, and skill directories, and any `external_directory` rules in your own OpenCode config.
 - A declared tool's `allow` also overrides your OpenCode config's rules for that permission, such as a `bash` pattern deny, because agent rules take precedence over config rules.
 - `edit` and `write` share one OpenCode permission, so declaring either grants both. `agentspec inspect` warns when any agent declares only one; the warning does not name the agent.
-- `read` also grants every connected MCP server's resources.
+- A restricted agent that declares `read` is offered OpenCode's three MCP resource tools and is refused every call to them, because agentspec writes `read` as `{"*": "allow", "mcp:*": "deny"}`. `agentspec inspect` reports this; the warning does not name the agent. The `mcp:*` pattern also refuses reads of a project file whose path starts with `mcp:`.
 
 Cursor applies no tool restriction at all; see [Execution presets reach skill files on Claude only](#execution-presets-reach-skill-files-on-claude-only).
 

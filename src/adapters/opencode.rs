@@ -30,7 +30,16 @@ struct OpenCodeAgentFrontmatter {
     mode: &'static str,
     model: Option<String>,
     variant: Option<String>,
-    permission: Option<IndexMap<String, OpenCodePermission>>,
+    permission: Option<IndexMap<String, OpenCodePermissionRule>>,
+}
+
+/// One `permission` map value: an action for every pattern of the permission,
+/// or a map of patterns to actions.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+enum OpenCodePermissionRule {
+    Action(OpenCodePermission),
+    Patterns(IndexMap<String, OpenCodePermission>),
 }
 
 /// An `OpenCode` permission action. Serialized lowercase, as `OpenCode`'s
@@ -118,15 +127,23 @@ impl Adapter for OpenCodeAdapter {
         for spec in specs {
             match spec {
                 Spec::Agent(s) => {
-                    if s.frontmatter
+                    let tools = s
+                        .frontmatter
                         .capabilities
                         .as_ref()
-                        .and_then(|c| c.tools.as_deref())
-                        .is_some_and(splits_edit_write)
-                    {
+                        .and_then(|c| c.tools.as_deref());
+                    if tools.is_some_and(splits_edit_write) {
                         degradations.push(Degradation::provider_wide(
                             Provider::OpenCode,
                             DegradationKind::EditWriteCoupled,
+                        ));
+                    }
+                    if tools.is_some_and(|t| {
+                        t.iter().any(|tool| permission_key(tool) == READ_PERMISSION)
+                    }) {
+                        degradations.push(Degradation::provider_wide(
+                            Provider::OpenCode,
+                            DegradationKind::McpResourceToolsOffered,
                         ));
                     }
                     let (f, d) = adapt_agent_spec(s.clone(), ctx.presets, ctx.adapter_config)?;
@@ -192,8 +209,9 @@ impl Adapter for OpenCodeAdapter {
             files,
             patches,
             dest_root,
-            // `OpenCode`'s one runtime claim: it grants `edit` and `write`
-            // together, whichever of the two an agent's `permission` map allows.
+            // `OpenCode`'s runtime claims: it grants `edit` and `write` together,
+            // and it still offers its MCP resource tools to an agent whose `read`
+            // pattern map refuses every call to them.
             degradations,
             deliveries,
         })
@@ -715,25 +733,47 @@ fn tidy_instructions(top: &CstObject, rules_dest_dir: &Path) -> TidyResult {
 /// `doom_loop` are restated after the allows. Without them, any access outside
 /// the project fails with no prompt
 /// (`experiments/opencode-agent-permission-external-read/`).
-fn build_permission_map(tools: &[ToolFrontmatter]) -> IndexMap<String, OpenCodePermission> {
+///
+/// `read` is written as a pattern map rather than `allow`, because `OpenCode`'s
+/// `read` permission also governs MCP resources (`mcp:<server>:<uri>` and
+/// `mcp:<server>:*` patterns). `{"*": "allow", "mcp:*": "deny"}` keeps file
+/// reads and refuses every resource; rules resolve last-match-wins, so
+/// `mcp:*` follows `*` (`experiments/opencode-agent-mcp-resource-read/`).
+fn build_permission_map(tools: &[ToolFrontmatter]) -> IndexMap<String, OpenCodePermissionRule> {
     let mut allowed: Vec<&'static str> = tools.iter().map(permission_key).collect();
     allowed.sort_unstable();
     allowed.dedup();
 
-    std::iter::once(("*", OpenCodePermission::Deny))
-        .chain(
-            allowed
-                .into_iter()
-                .map(|key| (key, OpenCodePermission::Allow)),
-        )
-        .chain(
-            RESTATED_PERMISSIONS
-                .into_iter()
-                .map(|key| (key, OpenCodePermission::Ask)),
-        )
-        .map(|(key, action)| (key.to_owned(), action))
-        .collect()
+    let allow = |key: &'static str| {
+        let rule = if key == READ_PERMISSION {
+            OpenCodePermissionRule::Patterns(IndexMap::from([
+                ("*".to_owned(), OpenCodePermission::Allow),
+                ("mcp:*".to_owned(), OpenCodePermission::Deny),
+            ]))
+        } else {
+            OpenCodePermissionRule::Action(OpenCodePermission::Allow)
+        };
+        (key, rule)
+    };
+
+    std::iter::once((
+        "*",
+        OpenCodePermissionRule::Action(OpenCodePermission::Deny),
+    ))
+    .chain(allowed.into_iter().map(allow))
+    .chain(
+        RESTATED_PERMISSIONS
+            .into_iter()
+            .map(|key| (key, OpenCodePermissionRule::Action(OpenCodePermission::Ask))),
+    )
+    .map(|(key, rule)| (key.to_owned(), rule))
+    .collect()
 }
+
+/// The permission that governs file reads and, through `mcp:` patterns, MCP
+/// resources. Both the `read` pattern map and the warning that accompanies it
+/// key on it, so they cannot disagree about which tools it covers.
+const READ_PERMISSION: &str = "read";
 
 /// The permissions every agent `permission` map restates as `ask` after its
 /// allows, because the leading `"*": "deny"` matches them too
@@ -1112,7 +1152,7 @@ mod tests {
             ToolFrontmatter::Write,
         ]);
         let keys: Vec<&str> = map.keys().map(String::as_str).collect();
-        let values: Vec<OpenCodePermission> = map.values().copied().collect();
+        let values: Vec<OpenCodePermissionRule> = map.values().cloned().collect();
         assert_eq!(
             keys,
             ["*", "edit", "read", "external_directory", "doom_loop"]
@@ -1120,13 +1160,25 @@ mod tests {
         assert_eq!(
             values,
             [
-                OpenCodePermission::Deny,
-                OpenCodePermission::Allow,
-                OpenCodePermission::Allow,
-                OpenCodePermission::Ask,
-                OpenCodePermission::Ask,
+                OpenCodePermissionRule::Action(OpenCodePermission::Deny),
+                OpenCodePermissionRule::Action(OpenCodePermission::Allow),
+                OpenCodePermissionRule::Patterns(IndexMap::from([
+                    ("*".to_owned(), OpenCodePermission::Allow),
+                    ("mcp:*".to_owned(), OpenCodePermission::Deny),
+                ])),
+                OpenCodePermissionRule::Action(OpenCodePermission::Ask),
+                OpenCodePermissionRule::Action(OpenCodePermission::Ask),
             ]
         );
+    }
+
+    /// `read` serializes as a pattern map with `mcp:*` after `*`: rules
+    /// resolve last-match-wins, so the reverse order would allow resources.
+    #[test]
+    fn test_build_permission_map_read_withholds_mcp_resources() {
+        let map = build_permission_map(&[ToolFrontmatter::Read]);
+        let json = serde_json::to_string(&map["read"]).expect("serializes");
+        assert_eq!(json, r#"{"*":"allow","mcp:*":"deny"}"#);
     }
 
     #[test]
@@ -1166,29 +1218,33 @@ mod tests {
             .get("permission")
             .and_then(serde_yml::Value::as_mapping)
             .expect("permission mapping");
-        let entries: Vec<(&str, &str)> = permission
+        // A pattern map renders as JSON, so its order is part of the comparison.
+        let entries: Vec<(&str, String)> = permission
             .iter()
             .map(|(k, v)| {
                 (
                     k.as_str().expect("string key"),
-                    v.as_str().expect("string value"),
+                    v.as_str().map_or_else(
+                        || serde_json::to_string(v).expect("serializes"),
+                        str::to_owned,
+                    ),
                 )
             })
             .collect();
         assert_eq!(
             entries,
             [
-                ("*", "deny"),
-                ("bash", "allow"),
-                ("read", "allow"),
-                ("external_directory", "ask"),
-                ("doom_loop", "ask"),
+                ("*", "deny".to_owned()),
+                ("bash", "allow".to_owned()),
+                ("read", r#"{"*":"allow","mcp:*":"deny"}"#.to_owned()),
+                ("external_directory", "ask".to_owned()),
+                ("doom_loop", "ask".to_owned()),
             ]
         );
     }
 
     #[test]
-    fn test_compile_pushes_edit_write_degradation_only_when_split() {
+    fn test_compile_pushes_each_degradation_only_when_its_tools_are_declared() {
         let presets = HashMap::new();
         let ctx = CompileCtx {
             mode: SyncDestinationMode::Compile,
@@ -1211,11 +1267,24 @@ mod tests {
         };
 
         assert_eq!(
-            kinds(vec![ToolFrontmatter::Read, ToolFrontmatter::Edit]),
+            kinds(vec![ToolFrontmatter::Grep, ToolFrontmatter::Edit]),
             [DegradationKind::EditWriteCoupled]
         );
         assert!(kinds(vec![ToolFrontmatter::Edit, ToolFrontmatter::Write]).is_empty());
-        assert!(kinds(vec![ToolFrontmatter::Read]).is_empty());
+        assert!(kinds(vec![ToolFrontmatter::Grep]).is_empty());
+
+        // `read` draws the MCP resource warning, after the edit/write one.
+        assert_eq!(
+            kinds(vec![ToolFrontmatter::Read]),
+            [DegradationKind::McpResourceToolsOffered]
+        );
+        assert_eq!(
+            kinds(vec![ToolFrontmatter::Read, ToolFrontmatter::Edit]),
+            [
+                DegradationKind::EditWriteCoupled,
+                DegradationKind::McpResourceToolsOffered,
+            ]
+        );
     }
 
     #[test]

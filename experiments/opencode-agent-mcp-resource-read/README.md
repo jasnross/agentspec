@@ -8,7 +8,7 @@
 
 ## Why it matters
 
-This is Key Assumption 4 of `$THOUGHTS_DIR/designs/2026-10-03-agentspec-mcp-tool-grants.md`, and the open question in `TODO.md` #45. OpenCode offers three MCP resource tools — `list_mcp_resources`, `list_mcp_resource_templates`, and `read_mcp_resource` — whenever a connected server advertises resources, and checks each against the `read` permission rather than against an MCP tool id. Each asks `read` with pattern `mcp:<server>:*` (the list tools) or `mcp:<server>:<uri>` (the read tool) (`packages/opencode/src/session/tools.ts` L172–185 and L343–348 at `1ddb087`, byte-identical to v1.18.34). So an agent agentspec grants `read` can read every connected server's resources, behind the adapter's `"*": "deny"`.
+This is Key Assumption 4 of `$THOUGHTS_DIR/designs/2026-10-03-agentspec-mcp-tool-grants.md`. OpenCode offers three MCP resource tools — `list_mcp_resources`, `list_mcp_resource_templates`, and `read_mcp_resource` — whenever a connected server advertises resources, and checks each against the `read` permission rather than against an MCP tool id. Each asks `read` with pattern `mcp:<server>:*` (the list tools) or `mcp:<server>:<uri>` (the read tool) (`packages/opencode/src/session/tools.ts` L172–185 and L343–348 at `1ddb087`, byte-identical to v1.18.34). So an agent agentspec grants `read` can read every connected server's resources, behind the adapter's `"*": "deny"`.
 
 The design has the OpenCode adapter emit the `probe-pattern-map` shape for a spec declaring `read`: file reads allowed, `mcp:*` patterns denied, deny last because rules resolve last-match-wins in authored order.
 
@@ -38,7 +38,7 @@ The two agents differ only in `read`:
 | `probe-pattern-map` | `"*": deny`, `read: {"*": allow, "mcp:*": deny}`, `external_directory: ask`, `doom_loop: ask` |
 | `probe-plain-read` | `"*": deny`, `read: allow`, `external_directory: ask`, `doom_loop: ask` |
 
-The three `plain_*` arms are comparison arms, not a control: they are cells of the assertion like any other. They run the map agentspec's OpenCode adapter emits today for a spec declaring `read`, and each pairs with a `map_*` arm making the same call. A rule denial reads the same whichever rule matched — OpenCode lists every rule for the `read` permission, the top-level `"*": deny` included — so only the pairing shows the `mcp:*` deny, rather than the deny-all, is what refused a call.
+The three `plain_*` arms are comparison arms, not a control: they are cells of the assertion like any other. They run a plain `read: allow` behind the same deny-all, and each pairs with a `map_*` arm making the same call. A rule denial reads the same whichever rule matched — OpenCode lists every rule for the `read` permission, the top-level `"*": deny` included — so only the pairing shows the `mcp:*` deny, rather than the deny-all, is what refused a call.
 
 Every arm connects `fx`, a local MCP stdio server (`fixtures/fx_server.py`) that advertises the `resources` capability and serves one resource (`fx://AGENTSPEC-RESOURCE-OCRES3`) and one template. A successful read returns `AGENTSPEC-RESOURCE-CONTENT-OCRES3`. `fixtures/project/notes.txt` holds `AGENTSPEC-FILE-CONTENT-OCRES3`.
 
@@ -113,7 +113,7 @@ Two records exist from 2026-10-03, both `confirmed`. The first (`T132254`) has f
 
 At `outbound-request`, this is evidence about what reached the model.
 
-- **`read: allow` exposes MCP resources.** All three `plain_*` arms reached the server: the read returned the resource's content and both listings returned their entries. That is `TODO.md` #45's premise.
+- **`read: allow` exposes MCP resources.** All three `plain_*` arms reached the server: the read returned the resource's content and both listings returned their entries.
 - **The pattern map refuses every resource call.** Each of the three resource tools failed on a rule under `probe-pattern-map`, and succeeded under `read: allow`. The two maps differ only in `read`, so the `mcp:*` deny is what refused them.
 - **It keeps file reads.** `map_read_file` read the project file under the same map.
 - **The resource tools are still offered.** Every arm's `tools` lists all three resource tools beside `read`. The map refuses their calls but does not hide them, which is the offered-but-refused limitation the design has the OpenCode adapter report.
@@ -129,6 +129,6 @@ At `outbound-request`, this is evidence about what reached the model.
 
 ## Related
 
-- `TODO.md` #45 — OpenCode agents allowed `read` keep every connected MCP server's resources.
+- `build_permission_map` in `src/adapters/opencode.rs` — writes the `probe-pattern-map` shape for an agent declaring `read`.
 - `experiments/opencode-agent-permission-external-read/` — the scripted-call apparatus this package generalizes.
 - `experiments/opencode-agent-permission-deny-all/` — the deny-all with built-ins, a lone `edit`, or one MCP tool re-allowed.

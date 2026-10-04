@@ -4776,6 +4776,11 @@ fn test_compile_warns_on_opencode_edit_write_coupling() {
         stderr.contains("OpenCode grants `edit` and `write` together"),
         "expected the OpenCode edit/write limitation on stderr, got:\n{stderr}"
     );
+    // The agent declares `read`, so the resource warning appears too.
+    assert!(
+        stderr.contains("OpenCode offers its MCP resource tools"),
+        "expected the OpenCode MCP resource limitation on stderr, got:\n{stderr}"
+    );
 
     // The bytes OpenCode parses: the deny-all leads, quoted so YAML reads `*`
     // as a key rather than an alias, and the restatements follow the allows.
@@ -4787,7 +4792,9 @@ fn test_compile_warns_on_opencode_edit_write_coupling() {
             "permission:\n",
             "  '*': deny\n",
             "  edit: allow\n",
-            "  read: allow\n",
+            "  read:\n",
+            "    '*': allow\n",
+            "    mcp:*: deny\n",
             "  external_directory: ask\n",
             "  doom_loop: ask\n",
         )) && !agent.contains("tools:"),
