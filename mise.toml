@@ -4,5 +4,7 @@ bats = "latest"
 jq = "latest"
 just = "latest"
 prettier = "latest"
-rust = { version = "latest", components = ["rust-analyzer"] }
 shellcheck = "latest"
+
+[settings]
+idiomatic_version_file_enable_tools = ["rust"]
