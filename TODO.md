@@ -1,4 +1,4 @@
-<!-- next: 46 -->
+<!-- next: 47 -->
 
 - #1 Consider deriving id from path instead of requiring in frontmatter
    - Currently `id` is a required `String` in all frontmatter structs; missing it causes a parse error at load time
@@ -198,3 +198,7 @@
   - All three `jasnross/agentconfig` configurations use in-repo relative paths, which a directory symlink would cover
   - What keeps it is an argument from preference — some authors would rather declare a pool in config than create a filesystem artifact — recorded in `$THOUGHTS_DIR/ideas/2026-09-17-agentspec-symlinked-fragment-includes.md`. That is weaker than a capability argument, and testing it is what this item is for
   - Removing it is breaking, and the collision gate, the name validation, and the prefix loop in `resolve_include` all go with it. Raised 2026-09-23.
+- #46 **Check that every tool a compiled body names is declared or granted.**
+  - A body can name a tool through `{{ tool("<canonical>") }}` or `{{ mcp_tool("<server>", "<tool>") }}` that its spec neither declares in `capabilities.tools` nor grants in `capabilities.mcp`. On a provider that restricts tools, the agent is then told to use a tool it is not offered, and nothing reports it. `mcp_tool()` checks only that the server is declared.
+  - **Open questions.** Whether a reference inside a fenced example or a `{% raw %}` span counts, since both are often illustrations rather than instructions. How to attribute a reference reached transitively through a shared fragment, which several specs include under different grants.
+  - Deliberately out of scope for the MCP tool grants work: `$THOUGHTS_DIR/designs/2026-10-03-agentspec-mcp-tool-grants.md`, Non-Goals ("Checking that a body references only granted tools"). The check applies to `tool()` and `mcp_tool()` alike.
