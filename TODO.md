@@ -1,4 +1,4 @@
-<!-- next: 47 -->
+<!-- next: 48 -->
 
 - #1 Consider deriving id from path instead of requiring in frontmatter
    - Currently `id` is a required `String` in all frontmatter structs; missing it causes a parse error at load time
@@ -126,7 +126,7 @@
     - **State the confound rather than overclaiming.** The fixture pins `effortLevel: medium` at the project tier, so the finding cannot separate "the `--agent` path drops frontmatter effort" from "a project-tier `effortLevel` outranks frontmatter on that path". Separating them needs an arm with no `effortLevel` set at all, which the package does not have; the README records this under Residual gaps.
     - The skill surface has a comparable inert cell (a model-invoked skill, `experiments/claude-skill-effort/`), but it is not the same report: there the mechanism is visible and arguably correct — the skill body arrives as a tool result on a request whose effort was already settled — rather than contradicting a documented claim.
 - #23 Keep the counted-line shape and its listing in agreement
-    - _Done — the premise no longer holds._ `HooksUnsupported` was the only `CountedSubjects` `DegradationKind` and `Degradation::for_spec` was its only constructor; both are deleted. Every surviving kind (`PartialOutputImpl`, `EditWriteCoupled`) renders as `Presentation::Warning`, so no degradation can reach the counted shape at all
+    - _Done — the premise no longer holds._ `HooksUnsupported` was the only `CountedSubjects` `DegradationKind` and `Degradation::for_spec` was its only constructor; both are deleted. Every surviving kind (`PartialOutputImpl`, `EditWriteCoupled`, `McpResourceToolsOffered`, `McpServerGlobOverMatch`) renders as `Presentation::Warning`, so no degradation can reach the counted shape at all
     - The loss renderer in `src/report.rs` is now `CountedSubjects`' only writer, and it derives `n` from the collected subjects — one of the three options this item weighed and deferred — so the count and the `--verbose` listing agree by construction rather than by an invariant living in a doc comment
     - The mirror-image gap is closed the same way: a `Presentation::Warning` loss group renders one line per spec rather than only the head, so no group member is silently discarded
     - Closed by `$THOUGHTS_DIR/plans/2026-09-05-agentspec-inspect-surface-and-delivery-ledger.md`
@@ -202,3 +202,8 @@
   - A body can name a tool through `{{ tool("<canonical>") }}` or `{{ mcp_tool("<server>", "<tool>") }}` that its spec neither declares in `capabilities.tools` nor grants in `capabilities.mcp`. On a provider that restricts tools, the agent is then told to use a tool it is not offered, and nothing reports it. `mcp_tool()` checks only that the server is declared.
   - **Open questions.** Whether a reference inside a fenced example or a `{% raw %}` span counts, since both are often illustrations rather than instructions. How to attribute a reference reached transitively through a shared fragment, which several specs include under different grants.
   - Deliberately out of scope for the MCP tool grants work: `$THOUGHTS_DIR/designs/2026-10-03-agentspec-mcp-tool-grants.md`, Non-Goals ("Checking that a body references only granted tools"). The check applies to `tool()` and `mcp_tool()` alike.
+- #47 **Restricted OpenCode agents that declare `read` skip OpenCode's `.env` read prompt.** `build_permission_map` in `src/adapters/opencode.rs` writes `read` as `{"*": "allow", "mcp:*": "deny"}`, which overrides OpenCode's built-in ask-before-reading rules for `*.env` files.
+  - On OpenCode 1.18.34, `opencode debug agent` resolves the `read` rules in this order: `* allow`, `*.env ask`, `*.env.* ask`, `*.env.example allow` (OpenCode's defaults), then the agent's own `* allow`, `mcp:* deny`. OpenCode applies the last rule that matches, so the agent's `* allow` wins over the `.env` ask. This shows only the rule order OpenCode resolved; no actual `.env` read has been tested.
+  - The README's Tools reference bullets don't mention this.
+  - Likely shape: repeat `*.env: ask`, `*.env.*: ask` and `*.env.example: allow` after `* allow`, for the same reason `RESTATED_PERMISSIONS` repeats `external_directory` and `doom_loop`. Add a probe that confirms the prompt still appears when the agent reads a `.env` file, and a README note.
+  - Deferred from the code review of `jasonr/mcp-support`.
