@@ -477,7 +477,8 @@ mod tests {
             .to_owned(),
         })];
 
-        let resolved = resolve_fragments(specs, &templating, None, &ctx).expect("expected value");
+        let resolved = resolve_fragments(specs, &templating, &McpServers::new(), None, &ctx)
+            .expect("expected value");
         let Spec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
@@ -506,7 +507,8 @@ mod tests {
                 .to_owned(),
         })];
 
-        let resolved = resolve_fragments(specs, &templating, None, &ctx).expect("expected value");
+        let resolved = resolve_fragments(specs, &templating, &McpServers::new(), None, &ctx)
+            .expect("expected value");
         let Spec::Agent(ref s) = resolved[0] else {
             panic!("expected Agent variant")
         };
