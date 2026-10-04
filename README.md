@@ -752,6 +752,19 @@ An absent block, or a block with no `server`, means the provider registers the s
 
 **Declared names are a contract the generated output places on whoever runs it**, such as a published plugin's consumers or a teammate who clones the project. agentspec never checks them against the MCP servers installed on the machine that compiles, which in CI is usually none.
 
+### Claude
+
+agentspec writes each grant into an agent's `tools` and a skill's `allowed-tools`. The MCP entries follow the built-in tools, sorted by id:
+
+| Grant | Server outside a plugin | Server bundled in a plugin |
+| --- | --- | --- |
+| `{ tools: [<tool>] }` | `mcp__<server>__<tool>` | `mcp__plugin_<plugin>_<server>__<tool>` |
+| `{ tools: all }` | `mcp__<server>__*` | `mcp__plugin_<plugin>_<server>__*` |
+
+`<server>` is `[mcp.<name>.claude] server`, or the logical name. Because Claude joins the parts of an id with `__`, and a plugin to its server with `_`, `agentspec validate` rejects a Claude server or plugin name that contains `__` or starts or ends with `_`, and two declarations whose prefixes compose to the same string, such as `[mcp.a.claude] server = "x"` beside `[mcp.x]`. The whole-server form is `__*` for both kinds of server, because a plugin-bundled server has no bare `mcp__plugin_<plugin>_<server>` spelling that agentspec has confirmed. On an agent the list restricts what the subagent is offered; on a skill it pre-approves the tools for the turn that runs the skill.
+
+agentspec writes neither of Claude's MCP resource tools (`ListMcpResourcesTool`, `ReadMcpResourceTool`), so an agent that declares `capabilities.tools` reads no MCP resources.
+
 ## Sync
 
 `agentspec sync` compiles specs and distributes the generated output to the appropriate location for each provider. Sync targets are configured in `agentspec.toml` under `[sync.<provider>]`.

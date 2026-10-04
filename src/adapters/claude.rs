@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -21,12 +21,14 @@ use crate::compile::{
 };
 use crate::declarations::Declarations;
 use crate::hooks_merge::{merge_owned, remove_owned};
-use crate::mcp::{ClaudeMcpServer, McpServer, is_mcp_name};
+use crate::mcp::{ClaudeMcpServer, McpServer, McpServers, is_mcp_name};
 use crate::plan::{FileKind, ForwardPatch, ReversePatch};
 use crate::presets::{ClaudeEffort, ProviderPresets, ProviderPresetsMap};
 use crate::provider::Provider;
 use crate::setting::{Carries, SettingKey, SettingKind};
-use crate::spec::{AgentSpec, HookEvent, HookSpec, RuleSpec, SkillSpec, Spec, ToolFrontmatter};
+use crate::spec::{
+    AgentSpec, HookEvent, HookSpec, McpGrant, McpTools, RuleSpec, SkillSpec, Spec, ToolFrontmatter,
+};
 
 // See: https://code.claude.com/docs/en/sub-agents#supported-frontmatter-fields
 #[serde_with::skip_serializing_none]
@@ -36,7 +38,7 @@ struct ClaudeAgentFrontmatter {
     description: String,
     model: Option<String>,
     effort: Option<ClaudeEffort>,
-    tools: Option<Vec<ClaudeTool>>,
+    tools: Option<Vec<ClaudeToolEntry>>,
 }
 
 impl Carries for ClaudeAgentFrontmatter {
@@ -48,6 +50,7 @@ impl Carries for ClaudeAgentFrontmatter {
         ]
         .into_iter()
         .flatten()
+        .chain(mcp_carried(self.tools.as_ref()))
         .collect()
     }
 }
@@ -79,10 +82,13 @@ struct ClaudeSkillFrontmatter {
     effort: Option<ClaudeEffort>,
     user_invocable: Option<bool>,
     disable_model_invocation: Option<bool>,
-    allowed_tools: Option<Vec<ClaudeTool>>,
+    allowed_tools: Option<Vec<ClaudeToolEntry>>,
 }
 
 impl Carries for ClaudeSkillFrontmatter {
+    /// A skill declaring only `capabilities.mcp` still writes `allowed-tools`,
+    /// so it records `Tools` with no matching intent. The loss subtraction
+    /// ignores a delivery no intent asks for, so the extra record is harmless.
     fn carried(&self) -> Vec<SettingKey> {
         [
             self.model.as_ref().map(|_| SettingKey::Model),
@@ -91,8 +97,47 @@ impl Carries for ClaudeSkillFrontmatter {
         ]
         .into_iter()
         .flatten()
+        .chain(mcp_carried(self.allowed_tools.as_ref()))
         .collect()
     }
+}
+
+/// One entry of a Claude `tools` or `allowed-tools` list.
+#[derive(Serialize)]
+#[serde(untagged)]
+enum ClaudeToolEntry {
+    Builtin(ClaudeTool),
+    Mcp(ClaudeMcpTool),
+}
+
+/// A composed MCP tool id or whole-server glob.
+///
+/// Serializes as `id`; `server` is the logical name, read only by `carried()`.
+struct ClaudeMcpTool {
+    server: String,
+    id: String,
+}
+
+impl Serialize for ClaudeMcpTool {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.id)
+    }
+}
+
+/// One `SettingKey::Mcp` per distinct logical server among `entries`' MCP
+/// entries.
+fn mcp_carried(entries: Option<&Vec<ClaudeToolEntry>>) -> impl Iterator<Item = SettingKey> {
+    let servers: BTreeSet<&str> = entries
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| match entry {
+            ClaudeToolEntry::Mcp(tool) => Some(tool.server.as_str()),
+            ClaudeToolEntry::Builtin(_) => None,
+        })
+        .collect();
+    servers
+        .into_iter()
+        .map(|server| SettingKey::Mcp(server.to_owned()))
 }
 
 // FIXME: Should we consider setting all default Claude tools in the generated file? Otherwise Claude's default behavior is to disallow any unlisted tools.
@@ -154,12 +199,22 @@ impl Adapter for ClaudeAdapter {
         for spec in specs {
             match spec {
                 Spec::Agent(s) => {
-                    let (f, d) = adapt_agent_spec(s.clone(), ctx.presets, ctx.adapter_config)?;
+                    let (f, d) = adapt_agent_spec(
+                        s.clone(),
+                        ctx.presets,
+                        ctx.mcp_servers,
+                        ctx.adapter_config,
+                    )?;
                     files.extend(f);
                     deliveries.extend(d);
                 }
                 Spec::Skill(s) => {
-                    let (f, d) = adapt_skill_spec(s.clone(), ctx.presets, ctx.adapter_config)?;
+                    let (f, d) = adapt_skill_spec(
+                        s.clone(),
+                        ctx.presets,
+                        ctx.mcp_servers,
+                        ctx.adapter_config,
+                    )?;
                     files.extend(f);
                     deliveries.extend(d);
                 }
@@ -297,11 +352,18 @@ impl Adapter for ClaudeAdapter {
 
     fn carriable(&self, kind: FileKind) -> &'static [SettingKind] {
         match kind {
+            // `Mcp` carries a grant into an agent's `tools` and a skill's
+            // `allowed-tools`. No limitation accompanies it: a subagent's
+            // `tools` allowlist excludes ungranted MCP tools when it runs in
+            // the background (`experiments/claude-background-subagent-mcp-tools/`)
+            // and under fork mode (`experiments/claude-fork-subagent-mcp-tools/`)
+            // alike.
             FileKind::Agents | FileKind::Skills => &[
                 SettingKind::Body,
                 SettingKind::Model,
                 SettingKind::Effort,
                 SettingKind::Tools,
+                SettingKind::Mcp,
             ],
             FileKind::Rules => &[SettingKind::Body, SettingKind::Paths],
             FileKind::Hooks => &[SettingKind::Body],
@@ -346,6 +408,7 @@ impl Adapter for ClaudeAdapter {
                 }
             }
         }
+        errors.extend(mcp_id_ambiguities(mcp));
         errors
     }
 
@@ -691,9 +754,142 @@ fn count_user_entries(top: &CstObject) -> usize {
     count
 }
 
+/// The prefix Claude Code gives a declared server's tools:
+/// `mcp__plugin_<plugin>_<server>` for a server bundled in a plugin, and
+/// `mcp__<server>` otherwise, where `<server>` is the `claude.server` override
+/// or the logical name.
+fn mcp_server_prefix(server: &McpServer, logical: &str) -> String {
+    let McpServer {
+        claude,
+        cursor: _,
+        opencode: _,
+    } = server;
+    let (name, plugin) = match claude {
+        Some(ClaudeMcpServer { server, plugin }) => {
+            (server.as_deref().unwrap_or(logical), plugin.as_deref())
+        }
+        None => (logical, None),
+    };
+    match plugin {
+        Some(plugin) => format!("mcp__plugin_{plugin}_{name}"),
+        None => format!("mcp__{name}"),
+    }
+}
+
+/// Reject declarations whose Claude tool ids could be mistaken for another's.
+///
+/// Claude joins an MCP tool id's parts with `__` and a plugin to its server
+/// with `_`, so a resolved server or plugin name containing `__`, or starting
+/// or ending with `_`, blurs where one part ends: server `a__b` with tool `t`
+/// and server `a` with tool `b__t` both compose `mcp__a__b__t`. Two
+/// declarations whose prefixes compose to the same string would grant each
+/// other's tools, and write duplicate entries when both are granted.
+///
+/// Names failing `is_mcp_name` are already reported, so they are skipped here.
+fn mcp_id_ambiguities(mcp: &McpServers) -> Vec<String> {
+    let ambiguous =
+        |part: &str| part.contains("__") || part.starts_with('_') || part.ends_with('_');
+    let mut errors = Vec::new();
+    let mut prefixes: Vec<(&str, String)> = Vec::new();
+    for (name, server) in mcp {
+        let McpServer {
+            claude,
+            cursor: _,
+            opencode: _,
+        } = server;
+        let (server_override, plugin) = claude
+            .as_ref()
+            .map(|c| (c.server.as_deref(), c.plugin.as_deref()))
+            .unwrap_or_default();
+        let parts = [
+            (
+                server_override.map_or_else(
+                    || format!("[mcp.{name}]"),
+                    |_| format!("[mcp.{name}.claude] `server`"),
+                ),
+                Some(server_override.unwrap_or(name)),
+            ),
+            (format!("[mcp.{name}.claude] `plugin`"), plugin),
+        ];
+        let mut usable = true;
+        for (label, part) in parts {
+            let Some(part) = part else { continue };
+            if !is_mcp_name(part) {
+                usable = false;
+            } else if ambiguous(part) {
+                usable = false;
+                errors.push(format!(
+                    "{label} gives the Claude name `{part}`, which must not contain `__` or \
+                     start or end with `_`: Claude joins the parts of an MCP tool id with \
+                     `__`, so the id would be ambiguous"
+                ));
+            }
+        }
+        if usable {
+            prefixes.push((name, mcp_server_prefix(server, name)));
+        }
+    }
+    for (i, (first, prefix)) in prefixes.iter().enumerate() {
+        for (second, other) in &prefixes[i + 1..] {
+            if prefix == other {
+                errors.push(format!(
+                    "[mcp.{first}] and [mcp.{second}] both compose the Claude tool prefix \
+                     `{prefix}`, so each would grant the other's tools; set a distinct \
+                     `server` or `plugin` under [mcp.<name>.claude]"
+                ));
+            }
+        }
+    }
+    errors
+}
+
+/// Claude's id for one tool of a declared server: the one place the named-tool
+/// spelling is composed.
+fn compose_mcp_tool(server: &McpServer, logical: &str, tool: &str) -> String {
+    format!("{}__{tool}", mcp_server_prefix(server, logical))
+}
+
+/// Claude's spelling for every tool of a declared server. `__*` for both a
+/// user-configured and a plugin-bundled server: the plugin form has no bare
+/// `mcp__plugin_<plugin>_<server>` spelling that probes have confirmed
+/// (`experiments/claude-subagent-plugin-mcp-tools/`,
+/// `experiments/claude-skill-mcp-allowed-tools/`).
+fn compose_mcp_server_glob(server: &McpServer, logical: &str) -> String {
+    format!("{}__*", mcp_server_prefix(server, logical))
+}
+
+/// The MCP entries for `grants`, one per named tool or one glob per `all`
+/// grant, sorted by composed id so output does not depend on authored order.
+fn mcp_entries(grants: &BTreeMap<String, McpGrant>, servers: &McpServers) -> Vec<ClaudeToolEntry> {
+    let mut tools: Vec<ClaudeMcpTool> = Vec::new();
+    for (logical, McpGrant { tools: granted }) in grants {
+        debug_assert!(
+            servers.contains_key(logical),
+            "undeclared MCP server '{logical}' should have been rejected by validate_semantics"
+        );
+        let Some(server) = servers.get(logical) else {
+            continue;
+        };
+        let ids = match granted {
+            McpTools::All => vec![compose_mcp_server_glob(server, logical)],
+            McpTools::Named(named) => named
+                .iter()
+                .map(|tool| compose_mcp_tool(server, logical, tool))
+                .collect(),
+        };
+        tools.extend(ids.into_iter().map(|id| ClaudeMcpTool {
+            server: logical.clone(),
+            id,
+        }));
+    }
+    tools.sort_by(|a, b| a.id.cmp(&b.id));
+    tools.into_iter().map(ClaudeToolEntry::Mcp).collect()
+}
+
 fn adapt_agent_spec(
     spec: AgentSpec,
     presets: &ProviderPresetsMap,
+    mcp_servers: &McpServers,
     cfg: Option<&AdapterConfig>,
 ) -> Result<(Vec<GeneratedFile>, Vec<Delivery>)> {
     let id = spec.frontmatter.id;
@@ -709,11 +905,20 @@ fn adapt_agent_spec(
     let model = claude_preset.as_ref().and_then(|x| x.model.clone());
     let effort = claude_preset.and_then(|x| x.effort);
 
-    let tools: Option<Vec<ClaudeTool>> = spec
+    let (builtins, grants) = spec
         .frontmatter
         .capabilities
-        .and_then(|x| x.tools)
-        .map(|tool_specs| -> Result<Vec<ClaudeTool>> {
+        .map(|c| (c.tools, c.mcp))
+        .unwrap_or_default();
+    debug_assert!(
+        grants.is_none() || builtins.is_some(),
+        "an agent granting MCP tools without capabilities.tools should have been rejected by \
+         validate_semantics"
+    );
+
+    // MCP entries follow the built-ins, which keep their sort.
+    let tools: Option<Vec<ClaudeToolEntry>> = builtins
+        .map(|tool_specs| -> Result<Vec<ClaudeToolEntry>> {
             // Sort by serialized name — the value that appears in generated files.
             let mut keyed: Vec<(String, ClaudeTool)> = tool_specs
                 .iter()
@@ -721,7 +926,16 @@ fn adapt_agent_spec(
                 .map(|t| Ok((serde_yml::to_string(&t)?, t)))
                 .collect::<Result<_>>()?;
             keyed.sort_by(|(a, _), (b, _)| a.cmp(b));
-            Ok(keyed.into_iter().map(|(_, t)| t).collect())
+            Ok(keyed
+                .into_iter()
+                .map(|(_, t)| ClaudeToolEntry::Builtin(t))
+                .chain(
+                    grants
+                        .as_ref()
+                        .map(|g| mcp_entries(g, mcp_servers))
+                        .unwrap_or_default(),
+                )
+                .collect())
         })
         .transpose()?;
 
@@ -754,6 +968,7 @@ fn adapt_agent_spec(
 fn adapt_skill_spec(
     spec: SkillSpec,
     presets: &ProviderPresetsMap,
+    mcp_servers: &McpServers,
     cfg: Option<&AdapterConfig>,
 ) -> Result<(Vec<GeneratedFile>, Vec<Delivery>)> {
     let id = spec.frontmatter.id;
@@ -769,11 +984,28 @@ fn adapt_skill_spec(
     let model = claude_preset.as_ref().and_then(|x| x.model.clone());
     let effort = claude_preset.and_then(|x| x.effort);
 
-    let allowed_tools: Option<Vec<ClaudeTool>> = spec
+    // Written whenever either list is declared: built-ins in authored order,
+    // then the MCP entries.
+    let (builtins, grants) = spec
         .frontmatter
         .capabilities
-        .and_then(|x| x.tools)
-        .map(|x| x.iter().flat_map(adapt_tool).collect());
+        .map(|c| (c.tools, c.mcp))
+        .unwrap_or_default();
+    let allowed_tools: Option<Vec<ClaudeToolEntry>> = (builtins.is_some() || grants.is_some())
+        .then(|| {
+            builtins
+                .iter()
+                .flatten()
+                .flat_map(adapt_tool)
+                .map(ClaudeToolEntry::Builtin)
+                .chain(
+                    grants
+                        .as_ref()
+                        .map(|g| mcp_entries(g, mcp_servers))
+                        .unwrap_or_default(),
+                )
+                .collect()
+        });
 
     let user_invocable = if spec.frontmatter.user_invocable {
         None
@@ -954,7 +1186,7 @@ mod tests {
             description: "d".to_owned(),
             model: Some("claude-opus-5".to_owned()),
             effort: Some(ClaudeEffort::High),
-            tools: Some(vec![ClaudeTool::Read]),
+            tools: Some(vec![ClaudeToolEntry::Builtin(ClaudeTool::Read)]),
         };
         assert_eq!(
             full.carried(),
@@ -979,7 +1211,7 @@ mod tests {
             effort: Some(ClaudeEffort::High),
             user_invocable: None,
             disable_model_invocation: None,
-            allowed_tools: Some(vec![ClaudeTool::Read]),
+            allowed_tools: Some(vec![ClaudeToolEntry::Builtin(ClaudeTool::Read)]),
         };
         assert_eq!(
             full.carried(),
@@ -1987,7 +2219,7 @@ mod mcp_declaration_tests {
 
     /// Only overrides: a bad logical name is the neutral check's to report.
     #[test]
-    fn test_mcp_claude_ignores_logical_name() {
+    fn test_mcp_claude_ignores_logical_name_failing_the_neutral_rule() {
         let declarations = Declarations {
             mcp: McpServers::from([("a.b".to_owned(), McpServer::default())]),
             ..Declarations::default()
@@ -1996,6 +2228,350 @@ mod mcp_declaration_tests {
             ClaudeAdapter
                 .validate_declarations(&declarations)
                 .is_empty()
+        );
+    }
+
+    fn claude_server(server: Option<&str>, plugin: Option<&str>) -> McpServer {
+        McpServer {
+            claude: Some(ClaudeMcpServer {
+                server: server.map(str::to_owned),
+                plugin: plugin.map(str::to_owned),
+            }),
+            ..McpServer::default()
+        }
+    }
+
+    fn messages(servers: &[(&str, McpServer)]) -> Vec<String> {
+        ClaudeAdapter.validate_declarations(&Declarations {
+            mcp: servers
+                .iter()
+                .map(|(n, s)| ((*n).to_owned(), s.clone()))
+                .collect(),
+            ..Declarations::default()
+        })
+    }
+
+    #[test]
+    fn test_mcp_claude_rejects_alias_of_another_server() {
+        let errors = messages(&[
+            ("a", claude_server(Some("x"), None)),
+            ("x", McpServer::default()),
+        ]);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains("[mcp.a] and [mcp.x]"), "{}", errors[0]);
+        assert!(errors[0].contains("`mcp__x`"), "{}", errors[0]);
+    }
+
+    /// `_` joins a plugin to its server, so `p_q` + `s` and `p` + `q_s` meet,
+    /// and so does a plain server named like a plugin prefix.
+    #[test]
+    fn test_mcp_claude_rejects_prefixes_meeting_across_underscores() {
+        let errors = messages(&[
+            ("q_s", claude_server(None, Some("p"))),
+            ("s", claude_server(None, Some("p_q"))),
+        ]);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains("`mcp__plugin_p_q_s`"), "{}", errors[0]);
+
+        let errors = messages(&[
+            ("plugin_p_s", McpServer::default()),
+            ("s", claude_server(None, Some("p"))),
+        ]);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains("`mcp__plugin_p_s`"), "{}", errors[0]);
+    }
+
+    #[test]
+    fn test_mcp_claude_rejects_ambiguous_underscores_in_names() {
+        assert_eq!(
+            messages(&[("a__b", McpServer::default())]),
+            [
+                "[mcp.a__b] gives the Claude name `a__b`, which must not contain `__` or start or \
+              end with `_`: Claude joins the parts of an MCP tool id with `__`, so the id would \
+              be ambiguous"
+            ]
+        );
+        let errors = messages(&[
+            ("x", claude_server(Some("x_"), None)),
+            ("y", claude_server(None, Some("_p"))),
+        ]);
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        assert!(
+            errors[0].starts_with("[mcp.x.claude] `server` gives"),
+            "{}",
+            errors[0]
+        );
+        assert!(
+            errors[1].starts_with("[mcp.y.claude] `plugin` gives"),
+            "{}",
+            errors[1]
+        );
+    }
+
+    #[test]
+    fn test_mcp_claude_accepts_distinct_names() {
+        assert_eq!(
+            messages(&[
+                ("atlassian", claude_server(None, Some("work-tools"))),
+                ("fx_extra", McpServer::default()),
+                ("quip", McpServer::default()),
+            ]),
+            Vec::<String>::new()
+        );
+    }
+}
+
+#[cfg(test)]
+mod mcp_grant_tests {
+    use std::collections::{BTreeMap, HashMap};
+
+    use indexmap::IndexMap;
+    use serde::Deserialize;
+
+    use super::*;
+    use crate::spec::{AgentFrontmatter, CapabilitiesFrontmatter, SkillFrontmatter};
+
+    fn servers() -> McpServers {
+        McpServers::from([
+            ("quip".to_owned(), McpServer::default()),
+            (
+                "atlassian".to_owned(),
+                McpServer {
+                    claude: Some(ClaudeMcpServer {
+                        server: None,
+                        plugin: Some("work-tools".to_owned()),
+                    }),
+                    ..McpServer::default()
+                },
+            ),
+            (
+                "renamed".to_owned(),
+                McpServer {
+                    claude: Some(ClaudeMcpServer {
+                        server: Some("other".to_owned()),
+                        plugin: None,
+                    }),
+                    ..McpServer::default()
+                },
+            ),
+        ])
+    }
+
+    fn grants(entries: &[(&str, McpTools)]) -> BTreeMap<String, McpGrant> {
+        entries
+            .iter()
+            .map(|(s, t)| ((*s).to_owned(), McpGrant { tools: t.clone() }))
+            .collect()
+    }
+
+    fn named(tools: &[&str]) -> McpTools {
+        McpTools::Named(tools.iter().map(|t| (*t).to_owned()).collect())
+    }
+
+    fn capabilities(
+        tools: Option<Vec<ToolFrontmatter>>,
+        mcp: &[(&str, McpTools)],
+    ) -> CapabilitiesFrontmatter {
+        CapabilitiesFrontmatter {
+            tools,
+            mcp: Some(grants(mcp)),
+        }
+    }
+
+    fn agent(capabilities: CapabilitiesFrontmatter) -> Spec {
+        Spec::Agent(AgentSpec {
+            path: PathBuf::from("a.md"),
+            frontmatter: AgentFrontmatter {
+                id: "a".to_owned(),
+                description: "d".to_owned(),
+                tags: None,
+                execution: None,
+                capabilities: Some(capabilities),
+            },
+            body: "Body.".to_owned(),
+        })
+    }
+
+    fn skill(capabilities: CapabilitiesFrontmatter) -> Spec {
+        Spec::Skill(SkillSpec {
+            path: PathBuf::from("s"),
+            frontmatter: SkillFrontmatter {
+                id: "s".to_owned(),
+                description: Some("d".to_owned()),
+                tags: None,
+                user_invocable: true,
+                agent_invocable: true,
+                execution: None,
+                capabilities: Some(capabilities),
+            },
+            body: "Body.".to_owned(),
+            supporting_files: IndexMap::new(),
+        })
+    }
+
+    /// Compile one spec and return the tool list its file carries, as strings,
+    /// with the file's deliveries.
+    fn compile(spec: Spec) -> (Vec<String>, Vec<SettingKey>) {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "kebab-case")]
+        struct Frontmatter {
+            tools: Option<Vec<String>>,
+            allowed_tools: Option<Vec<String>>,
+        }
+
+        let servers = servers();
+        let presets = HashMap::new();
+        let ctx = CompileCtx {
+            mode: SyncDestinationMode::Compile,
+            home: Path::new("/tmp/home"),
+            cwd: Path::new("/tmp/cwd"),
+            target_dir: None,
+            presets: &presets,
+            mcp_servers: &servers,
+            adapter_config: None,
+            overwrite: false,
+        };
+        let output = ClaudeAdapter.compile(&[spec], &ctx).expect("compile");
+        let content = String::from_utf8(output.files[0].content.clone()).expect("utf8");
+        let yaml = content
+            .strip_prefix("---\n")
+            .and_then(|rest| rest.split_once("---\n"))
+            .map(|(yaml, _)| yaml)
+            .expect("frontmatter");
+        let fm: Frontmatter = serde_yml::from_str(yaml).expect("yaml");
+        let settings = output
+            .deliveries
+            .iter()
+            .map(|d| d.setting().clone())
+            .collect();
+        (fm.tools.or(fm.allowed_tools).unwrap_or_default(), settings)
+    }
+
+    fn strings(ids: &[&str]) -> Vec<String> {
+        ids.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn test_mcp_agent_user_server_named_and_all() {
+        let (tools, _) = compile(agent(capabilities(
+            Some(vec![]),
+            &[("quip", named(&["search_documents"]))],
+        )));
+        assert_eq!(tools, strings(&["mcp__quip__search_documents"]));
+
+        let (tools, _) = compile(agent(capabilities(
+            Some(vec![]),
+            &[("quip", McpTools::All)],
+        )));
+        assert_eq!(tools, strings(&["mcp__quip__*"]));
+    }
+
+    #[test]
+    fn test_mcp_agent_plugin_server_named_and_all() {
+        let (tools, _) = compile(agent(capabilities(
+            Some(vec![]),
+            &[("atlassian", named(&["get_issue"]))],
+        )));
+        assert_eq!(
+            tools,
+            strings(&["mcp__plugin_work-tools_atlassian__get_issue"])
+        );
+
+        let (tools, _) = compile(agent(capabilities(
+            Some(vec![]),
+            &[("atlassian", McpTools::All)],
+        )));
+        assert_eq!(tools, strings(&["mcp__plugin_work-tools_atlassian__*"]));
+    }
+
+    #[test]
+    fn test_mcp_agent_claude_server_override() {
+        let (tools, _) = compile(agent(capabilities(
+            Some(vec![]),
+            &[("renamed", named(&["t"]))],
+        )));
+        assert_eq!(tools, strings(&["mcp__other__t"]));
+    }
+
+    /// Both overrides at once: the plugin prefix wraps the overridden name.
+    #[test]
+    fn test_mcp_agent_claude_server_and_plugin_override() {
+        let server = McpServer {
+            claude: Some(ClaudeMcpServer {
+                server: Some("srv".to_owned()),
+                plugin: Some("plg".to_owned()),
+            }),
+            ..McpServer::default()
+        };
+        assert_eq!(
+            compose_mcp_tool(&server, "logical", "t"),
+            "mcp__plugin_plg_srv__t"
+        );
+    }
+
+    /// Built-ins keep their own sort and come first; MCP entries follow,
+    /// sorted by composed id whatever order they were granted in.
+    #[test]
+    fn test_mcp_entries_follow_builtins_sorted_by_id() {
+        let (tools, _) = compile(agent(capabilities(
+            Some(vec![ToolFrontmatter::Read, ToolFrontmatter::Grep]),
+            &[
+                ("quip", named(&["search_documents", "get_document"])),
+                ("atlassian", McpTools::All),
+            ],
+        )));
+        assert_eq!(
+            tools,
+            strings(&[
+                "Grep",
+                "Read",
+                "mcp__plugin_work-tools_atlassian__*",
+                "mcp__quip__get_document",
+                "mcp__quip__search_documents",
+            ])
+        );
+    }
+
+    /// The skill's built-ins keep authored order, then the MCP entries.
+    #[test]
+    fn test_mcp_skill_keeps_authored_builtin_order() {
+        let (tools, _) = compile(skill(capabilities(
+            Some(vec![ToolFrontmatter::Read, ToolFrontmatter::Grep]),
+            &[("quip", McpTools::All)],
+        )));
+        assert_eq!(tools, strings(&["Read", "Grep", "mcp__quip__*"]));
+    }
+
+    #[test]
+    fn test_mcp_skill_with_only_mcp_writes_allowed_tools() {
+        let (tools, settings) = compile(skill(capabilities(None, &[("quip", named(&["a"]))])));
+        assert_eq!(tools, strings(&["mcp__quip__a"]));
+        assert!(
+            settings.contains(&SettingKey::Mcp("quip".to_owned())),
+            "{settings:?}"
+        );
+    }
+
+    /// One `Mcp` delivery per server, however many tools it grants.
+    #[test]
+    fn test_mcp_carried_records_one_delivery_per_server() {
+        let (_, settings) = compile(agent(capabilities(
+            Some(vec![ToolFrontmatter::Read]),
+            &[
+                ("quip", named(&["a", "b", "c"])),
+                ("atlassian", McpTools::All),
+            ],
+        )));
+        let mcp: Vec<&SettingKey> = settings
+            .iter()
+            .filter(|s| matches!(s, SettingKey::Mcp(_)))
+            .collect();
+        assert_eq!(
+            mcp,
+            [
+                &SettingKey::Mcp("atlassian".to_owned()),
+                &SettingKey::Mcp("quip".to_owned()),
+            ]
         );
     }
 }

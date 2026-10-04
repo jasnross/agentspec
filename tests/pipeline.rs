@@ -6810,10 +6810,10 @@ fn run_in(dir: &Path, args: &[&str]) -> (bool, String, String) {
     )
 }
 
-/// No adapter carries a grant yet, so every provider reports it lost on the
-/// agent file.
+/// Claude carries the grant; Cursor and `OpenCode` report it lost on the agent
+/// file.
 #[test]
-fn test_inspect_mcp_grant_not_delivered() {
+fn test_inspect_mcp_grant_reports_loss_only_where_not_carried() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_agentspec_toml_with(&dir, "[mcp.quip]\n");
@@ -6824,7 +6824,13 @@ fn test_inspect_mcp_grant_not_delivered() {
 
     let (ok, stdout, stderr) = run_in(&dir, &["inspect"]);
     assert!(ok, "inspect failed:\n{stderr}");
-    for provider in ["claude", "cursor", "opencode"] {
+    assert!(
+        !stdout
+            .lines()
+            .any(|line| line.trim_start().starts_with("claude:") && line.contains("mcp.quip")),
+        "Claude carries the grant:\n{stdout}"
+    );
+    for provider in ["cursor", "opencode"] {
         assert!(
             stdout.contains(&format!(
                 "{provider}: 1 spec lost `mcp.quip` — no {provider} agents file carries `mcp.quip`"
@@ -6878,5 +6884,67 @@ fn test_validate_mcp_rejects_mistyped_grant() {
     assert!(
         stderr.contains("expected the keyword `all` or a list of tool names"),
         "{stderr}"
+    );
+}
+
+/// A two-server fixture: `[mcp.quip]` registered under its logical name
+/// everywhere, `[mcp.atlassian]` bundled in a Claude plugin and renamed on
+/// `OpenCode`, granted to the fixture agent beside `read` and `grep`.
+fn install_mcp_design_example(dir: &Path) {
+    install_agentspec_toml_with(
+        dir,
+        "[mcp.quip]\n\n\
+         [mcp.atlassian.claude]\nplugin = \"work-tools\"\n\n\
+         [mcp.atlassian.opencode]\nserver = \"jira\"\n",
+    );
+    install_agent_with_capabilities(
+        dir,
+        "  tools: [read, grep]\n  mcp:\n    quip: { tools: [search_documents, get_document] }\n    atlassian: { tools: all }\n",
+    );
+}
+
+/// The frontmatter of a generated markdown file, parsed.
+fn generated_frontmatter(path: &Path) -> serde_yml::Value {
+    let content = std::fs::read_to_string(path);
+    assert!(content.is_ok(), "read {}: {content:?}", path.display());
+    let content = content.unwrap_or_default();
+    let yaml = content
+        .strip_prefix("---\n")
+        .and_then(|rest| rest.split_once("---\n"))
+        .map(|(yaml, _)| yaml)
+        .unwrap_or_default();
+    let value = serde_yml::from_str(yaml);
+    assert!(value.is_ok(), "parse {}: {value:?}", path.display());
+    value.unwrap_or_default()
+}
+
+/// Compared as a list of strings, since `serde_yml` writes a block list.
+#[test]
+fn test_compile_mcp_design_example_writes_claude_tools() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_mcp_design_example(&dir);
+
+    let (ok, _, stderr) = run_in(&dir, &["compile"]);
+    assert!(ok, "compile failed:\n{stderr}");
+
+    let frontmatter = generated_frontmatter(&dir.join("generated/claude/agents/test-agent.md"));
+    let tools: Vec<String> = frontmatter["tools"]
+        .as_sequence()
+        .map(|seq| {
+            seq.iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert_eq!(
+        tools,
+        [
+            "Grep",
+            "Read",
+            "mcp__plugin_work-tools_atlassian__*",
+            "mcp__quip__get_document",
+            "mcp__quip__search_documents",
+        ]
     );
 }
