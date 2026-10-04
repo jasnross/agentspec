@@ -27,7 +27,7 @@ fmt:
 
 # Run clippy on all targets
 lint:
-    cargo clippy --all-targets
+    cargo clippy --all-targets -- -D warnings
 
 # Check dependency licenses
 licenses:
