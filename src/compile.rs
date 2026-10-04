@@ -577,7 +577,12 @@ fn derive_losses(
             // bracket keys come from the composing expression, and OpenCode's
             // `permission` map is `Some` exactly when `capabilities.tools` is,
             // the same predicate `Spec::declares_tools` raises the `Tools`
-            // intent on. `test_carriable_agrees_with_carried` checks the weaker
+            // intent on. `Mcp` is the one intent whose predicate is wider than
+            // its carrier's: it is raised on `capabilities.mcp`, while Claude's
+            // agent `tools` and `OpenCode`'s `permission` map exist only beside
+            // `capabilities.tools`. `validate_semantics` closes that gap by
+            // rejecting an agent that declares `mcp` without `tools`, and both
+            // adapters `debug_assert!` it. `test_carriable_agrees_with_carried` checks the weaker
             // existential claim (some spec delivered each declared setting),
             // so it narrows this rather than proving it; a future adapter that
             // gates a declared field on a predicate narrower than the one

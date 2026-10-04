@@ -6817,34 +6817,69 @@ fn run_in(dir: &Path, args: &[&str]) -> (bool, String, String) {
     )
 }
 
-/// Claude carries the grant; Cursor and `OpenCode` report it lost on the agent
-/// file.
+/// Claude and `OpenCode` carry an agent's grant and Cursor loses it; `OpenCode`
+/// loses a skill's grant on both its skills and commands files.
 #[test]
 fn test_inspect_mcp_grant_reports_loss_only_where_not_carried() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_agentspec_toml_with(&dir, "[mcp.quip]\n");
-    install_agent_with_capabilities(
-        &dir,
-        "  tools: [read]\n  mcp:\n    quip: { tools: [search_documents] }\n",
+    install_agent_with_capabilities(&dir, "  tools: [read]\n  mcp:\n    quip: { tools: all }\n");
+    // Both invocation flags, so OpenCode emits a skills file and a commands
+    // file, neither of which reads a tool restriction.
+    let skill = dir.join("spec/skills/dual-invocable-skill/SKILL.md");
+    let content = std::fs::read_to_string(&skill);
+    assert!(content.is_ok(), "read skill: {content:?}");
+    let edited = content.unwrap_or_default().replacen(
+        "execution:\n",
+        "capabilities:\n  mcp:\n    quip: { tools: all }\nexecution:\n",
+        1,
     );
+    let r = std::fs::write(&skill, edited);
+    assert!(r.is_ok(), "write skill: {r:?}");
 
-    let (ok, stdout, stderr) = run_in(&dir, &["inspect"]);
+    let (ok, stdout, stderr) = run_in(&dir, &["inspect", "--verbose"]);
     assert!(ok, "inspect failed:\n{stderr}");
-    assert!(
-        !stdout
+    let lines_for = |provider: &str| -> Vec<&str> {
+        stdout
             .lines()
-            .any(|line| line.trim_start().starts_with("claude:") && line.contains("mcp.quip")),
+            .filter(|l| {
+                l.trim_start().starts_with(&format!("{provider}:")) && l.contains("mcp.quip")
+            })
+            .collect()
+    };
+
+    assert!(
+        lines_for("claude").is_empty(),
         "Claude carries the grant:\n{stdout}"
     );
-    for provider in ["cursor", "opencode"] {
+    assert!(
+        lines_for("cursor")
+            .iter()
+            .any(|l| l.contains("no cursor agents file carries `mcp.quip`")),
+        "Cursor's agent loses the grant:\n{stdout}"
+    );
+    let opencode = lines_for("opencode");
+    assert!(
+        opencode.iter().all(|l| !l.contains("agents file")),
+        "OpenCode's agent carries the grant:\n{stdout}"
+    );
+    for kind in ["skills", "commands"] {
         assert!(
-            stdout.contains(&format!(
-                "{provider}: 1 spec lost `mcp.quip` — no {provider} agents file carries `mcp.quip`"
-            )),
-            "{provider}:\n{stdout}"
+            opencode
+                .iter()
+                .any(|l| l.contains(&format!("no opencode {kind} file carries `mcp.quip`"))),
+            "OpenCode {kind}:\n{stdout}"
         );
     }
+    assert!(
+        stdout.contains("OpenCode offers its MCP resource tools"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("OpenCode matches a whole-server grant"),
+        "{stdout}"
+    );
 }
 
 #[test]
@@ -6954,4 +6989,48 @@ fn test_compile_mcp_design_example_writes_claude_tools() {
             "mcp__quip__search_documents",
         ]
     );
+}
+
+/// Compared key by key, in order: `OpenCode` resolves the map's rules
+/// last-match-wins.
+#[test]
+fn test_compile_mcp_design_example_writes_opencode_permission() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_mcp_design_example(&dir);
+
+    let (ok, _, stderr) = run_in(&dir, &["compile"]);
+    assert!(ok, "compile failed:\n{stderr}");
+
+    let frontmatter = generated_frontmatter(&dir.join("generated/opencode/agents/test-agent.md"));
+    let permission: Vec<(String, String)> = frontmatter["permission"]
+        .as_mapping()
+        .map(|map| {
+            map.iter()
+                .map(|(k, v)| {
+                    (
+                        k.as_str().unwrap_or_default().to_owned(),
+                        v.as_str().map_or_else(
+                            || serde_json::to_string(v).unwrap_or_default(),
+                            str::to_owned,
+                        ),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let expected: Vec<(String, String)> = [
+        ("*", "deny"),
+        ("grep", "allow"),
+        ("read", r#"{"*":"allow","mcp:*":"deny"}"#),
+        ("jira_*", "allow"),
+        ("quip_get_document", "allow"),
+        ("quip_search_documents", "allow"),
+        ("external_directory", "ask"),
+        ("doom_loop", "ask"),
+    ]
+    .iter()
+    .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+    .collect();
+    assert_eq!(permission, expected);
 }

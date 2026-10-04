@@ -350,10 +350,13 @@ impl Degradation {
                 "{name} does not surface a hook's canonical `user_facing_message`; a denial shows a generic message in the {name} UI instead. See docs/hooks-canonical.md#documented-limitations."
             ),
             DegradationKind::EditWriteCoupled => format!(
-                "{name} grants `edit` and `write` together through one `edit` permission, so an agent declaring only one of them in `capabilities.tools` receives both. See experiments/opencode-agent-permission-deny-all/."
+                "{name} grants `edit` and `write` together through one `edit` permission, so an agent declaring only one of them in `capabilities.tools` receives both. See README.md#tools-reference."
             ),
             DegradationKind::McpResourceToolsOffered => format!(
-                "{name} offers its MCP resource tools (`list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource`) to an agent declaring `read` in `capabilities.tools`, and refuses every call to them. See experiments/opencode-agent-mcp-resource-read/."
+                "{name} offers its MCP resource tools (`list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource`) to an agent declaring `read` in `capabilities.tools`, and refuses every call to them. See README.md#tools-reference."
+            ),
+            DegradationKind::McpServerGlobOverMatch => format!(
+                "{name} matches a whole-server grant `<server>_*` against every tool whose name begins with `<server>_`, including tools of an undeclared server or a custom tool named that way. See README.md#opencode."
             ),
         }
     }
@@ -392,15 +395,21 @@ pub enum DegradationKind {
     /// that withholds resources through a `read` pattern map — only
     /// `OpenCode`, whose resource tools stay offered and fail on every call.
     McpResourceToolsOffered,
+    /// At least one agent grants every tool of a server on a provider whose
+    /// whole-server key matches by name prefix. Pushed by the adapter whose
+    /// key over-matches — only `OpenCode`, whose `<server>_*` also matches
+    /// tools of any server or custom tool named `<server>_...`.
+    McpServerGlobOverMatch,
 }
 
 impl DegradationKind {
     /// How the report renders a `(provider, kind)` group.
     pub fn presentation(self) -> Presentation {
         match self {
-            Self::PartialOutputImpl | Self::EditWriteCoupled | Self::McpResourceToolsOffered => {
-                Presentation::Warning
-            }
+            Self::PartialOutputImpl
+            | Self::EditWriteCoupled
+            | Self::McpResourceToolsOffered
+            | Self::McpServerGlobOverMatch => Presentation::Warning,
         }
     }
 }

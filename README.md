@@ -765,6 +765,21 @@ agentspec writes each grant into an agent's `tools` and a skill's `allowed-tools
 
 agentspec writes neither of Claude's MCP resource tools (`ListMcpResourcesTool`, `ReadMcpResourceTool`), so an agent that declares `capabilities.tools` reads no MCP resources.
 
+### OpenCode
+
+agentspec writes each grant on an agent as an `allow` in its `permission` map, after the built-in tools' allows and before the restated `external_directory` and `doom_loop`, sorted by key:
+
+| Grant                 | Permission key    |
+| --------------------- | ----------------- |
+| `{ tools: [<tool>] }` | `<server>_<tool>` |
+| `{ tools: all }`      | `<server>_*`      |
+
+`<server>` is `[mcp.<name>.opencode] server`, or the logical name.
+
+**A whole-server grant matches by name, not by server.** OpenCode names an MCP tool `<server>_<tool>` and matches `<server>_*` against every tool whose name begins `<server>_`, so it also allows the tools of an undeclared server named `<server>_...` (`experiments/opencode-agent-mcp-server-glob/`), and by the same name match, though unmeasured, a custom tool named that way. agentspec cannot detect this, because which servers and tools exist is decided where the output runs, so `agentspec inspect` warns whenever an agent grants a whole server. The [overlap rule](#mcp-servers) keeps two declared servers from matching each other's tools. As with a built-in tool's `allow`, a grant's `allow` also overrides your OpenCode config's rules for the tools it names, so `quip: { tools: all }` re-allows a `quip_` tool your config denies.
+
+OpenCode reads no tool restriction on skills or commands, so a grant on a skill reaches neither file, and `agentspec inspect` reports it as not delivered there.
+
 ## Sync
 
 `agentspec sync` compiles specs and distributes the generated output to the appropriate location for each provider. Sync targets are configured in `agentspec.toml` under `[sync.<provider>]`.

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
@@ -19,7 +20,9 @@ use crate::plan::{FileKind, ForwardPatch, RemovePatchReport, ReversePatch};
 use crate::presets::{ProviderPresets, ProviderPresetsMap};
 use crate::provider::Provider;
 use crate::setting::{Carries, SettingKey, SettingKind};
-use crate::spec::{AgentSpec, HookEvent, RuleSpec, SkillSpec, Spec, ToolFrontmatter};
+use crate::spec::{
+    AgentSpec, HookEvent, McpGrant, McpTools, RuleSpec, SkillSpec, Spec, ToolFrontmatter,
+};
 
 // See: https://opencode.ai/docs/agents/#markdown
 // See: https://opencode.ai/docs/agents/#permissions
@@ -31,6 +34,11 @@ struct OpenCodeAgentFrontmatter {
     model: Option<String>,
     variant: Option<String>,
     permission: Option<IndexMap<String, OpenCodePermissionRule>>,
+    /// The logical servers whose grants `permission` carries. Server names
+    /// cannot be read back from the map's keys without parsing them, so the
+    /// expression that writes the keys records them here.
+    #[serde(skip)]
+    mcp_carried: Vec<String>,
 }
 
 /// One `permission` map value: an action for every pattern of the permission,
@@ -63,6 +71,11 @@ impl Carries for OpenCodeAgentFrontmatter {
         ]
         .into_iter()
         .flatten()
+        .chain(
+            self.mcp_carried
+                .iter()
+                .map(|server| SettingKey::Mcp(server.clone())),
+        )
         .collect()
     }
 }
@@ -146,7 +159,21 @@ impl Adapter for OpenCodeAdapter {
                             DegradationKind::McpResourceToolsOffered,
                         ));
                     }
-                    let (f, d) = adapt_agent_spec(s.clone(), ctx.presets, ctx.adapter_config)?;
+                    if spec
+                        .mcp_grants()
+                        .is_some_and(|g| g.values().any(|grant| grant.tools == McpTools::All))
+                    {
+                        degradations.push(Degradation::provider_wide(
+                            Provider::OpenCode,
+                            DegradationKind::McpServerGlobOverMatch,
+                        ));
+                    }
+                    let (f, d) = adapt_agent_spec(
+                        s.clone(),
+                        ctx.presets,
+                        ctx.mcp_servers,
+                        ctx.adapter_config,
+                    )?;
                     files.extend(f);
                     deliveries.extend(d);
                 }
@@ -210,8 +237,9 @@ impl Adapter for OpenCodeAdapter {
             patches,
             dest_root,
             // `OpenCode`'s runtime claims: it grants `edit` and `write` together,
-            // and it still offers its MCP resource tools to an agent whose `read`
-            // pattern map refuses every call to them.
+            // it still offers its MCP resource tools to an agent whose `read`
+            // pattern map refuses every call to them, and its whole-server key
+            // matches by name prefix.
             degradations,
             deliveries,
         })
@@ -304,6 +332,7 @@ impl Adapter for OpenCodeAdapter {
                 SettingKind::Model,
                 SettingKind::Variant,
                 SettingKind::Tools,
+                SettingKind::Mcp,
             ],
             FileKind::Commands => &[SettingKind::Body, SettingKind::Model, SettingKind::Variant],
             FileKind::Skills | FileKind::Rules => &[SettingKind::Body],
@@ -384,6 +413,7 @@ fn config_dir(
 fn adapt_agent_spec(
     spec: AgentSpec,
     presets: &ProviderPresetsMap,
+    mcp_servers: &McpServers,
     cfg: Option<&AdapterConfig>,
 ) -> Result<(Vec<GeneratedFile>, Vec<Delivery>)> {
     let id = spec.frontmatter.id;
@@ -398,11 +428,19 @@ fn adapt_agent_spec(
     let model = preset.as_ref().and_then(|x| x.model.clone());
     let variant = preset.as_ref().and_then(|x| x.variant.clone());
 
-    let permission = spec
+    let (builtins, grants) = spec
         .frontmatter
         .capabilities
-        .and_then(|x| x.tools)
-        .map(|tools| build_permission_map(&tools));
+        .map(|c| (c.tools, c.mcp))
+        .unwrap_or_default();
+    debug_assert!(
+        grants.is_none() || builtins.is_some(),
+        "an agent granting MCP tools without capabilities.tools should have been rejected by \
+         validate_semantics"
+    );
+    let (permission, mcp_carried) = builtins
+        .map(|tools| build_permission_map(&tools, grants.as_ref(), mcp_servers))
+        .map_or((None, Vec::new()), |(map, carried)| (Some(map), carried));
 
     let frontmatter = OpenCodeAgentFrontmatter {
         description,
@@ -410,6 +448,7 @@ fn adapt_agent_spec(
         model,
         variant,
         permission,
+        mcp_carried,
     };
 
     let frontmatter_str = serde_yml::to_string(&frontmatter)?;
@@ -739,10 +778,41 @@ fn tidy_instructions(top: &CstObject, rules_dest_dir: &Path) -> TidyResult {
 /// `mcp:<server>:*` patterns). `{"*": "allow", "mcp:*": "deny"}` keeps file
 /// reads and refuses every resource; rules resolve last-match-wins, so
 /// `mcp:*` follows `*` (`experiments/opencode-agent-mcp-resource-read/`).
-fn build_permission_map(tools: &[ToolFrontmatter]) -> IndexMap<String, OpenCodePermissionRule> {
+///
+/// MCP grants follow the built-in allows, one `allow` per composed key sorted
+/// by key, and precede the restatements. Returns the map with the logical
+/// servers it wrote a key for.
+fn build_permission_map(
+    tools: &[ToolFrontmatter],
+    grants: Option<&BTreeMap<String, McpGrant>>,
+    servers: &McpServers,
+) -> (IndexMap<String, OpenCodePermissionRule>, Vec<String>) {
     let mut allowed: Vec<&'static str> = tools.iter().map(permission_key).collect();
     allowed.sort_unstable();
     allowed.dedup();
+
+    let mut mcp_keys: Vec<String> = Vec::new();
+    let mut carried: Vec<String> = Vec::new();
+    for (logical, McpGrant { tools: granted }) in grants.into_iter().flatten() {
+        debug_assert!(
+            servers.contains_key(logical),
+            "undeclared MCP server '{logical}' should have been rejected by validate_semantics"
+        );
+        let Some(server) = servers.get(logical) else {
+            continue;
+        };
+        match granted {
+            McpTools::All => mcp_keys.push(compose_mcp_server_glob(server, logical)),
+            McpTools::Named(named) => mcp_keys.extend(
+                named
+                    .iter()
+                    .map(|tool| compose_mcp_tool(server, logical, tool)),
+            ),
+        }
+        carried.push(logical.clone());
+    }
+    mcp_keys.sort_unstable();
+    let expected_len = 1 + allowed.len() + mcp_keys.len() + RESTATED_PERMISSIONS.len();
 
     let allow = |key: &'static str| {
         let rule = if key == READ_PERMISSION {
@@ -753,21 +823,35 @@ fn build_permission_map(tools: &[ToolFrontmatter]) -> IndexMap<String, OpenCodeP
         } else {
             OpenCodePermissionRule::Action(OpenCodePermission::Allow)
         };
-        (key, rule)
+        (key.to_owned(), rule)
     };
 
-    std::iter::once((
-        "*",
+    let map: IndexMap<String, OpenCodePermissionRule> = std::iter::once((
+        "*".to_owned(),
         OpenCodePermissionRule::Action(OpenCodePermission::Deny),
     ))
     .chain(allowed.into_iter().map(allow))
-    .chain(
-        RESTATED_PERMISSIONS
-            .into_iter()
-            .map(|key| (key, OpenCodePermissionRule::Action(OpenCodePermission::Ask))),
-    )
-    .map(|(key, rule)| (key.to_owned(), rule))
-    .collect()
+    .chain(mcp_keys.into_iter().map(|key| {
+        (
+            key,
+            OpenCodePermissionRule::Action(OpenCodePermission::Allow),
+        )
+    }))
+    .chain(RESTATED_PERMISSIONS.into_iter().map(|key| {
+        (
+            key.to_owned(),
+            OpenCodePermissionRule::Action(OpenCodePermission::Ask),
+        )
+    }))
+    .collect();
+    // Collecting a repeated key would overwrite an earlier rule in place.
+    // Validation keeps every key distinct (`mcp_name_overlaps`).
+    debug_assert_eq!(
+        map.len(),
+        expected_len,
+        "a permission key repeated: {map:?}"
+    );
+    (map, carried)
 }
 
 /// The permission that governs file reads and, through `mcp:` patterns, MCP
@@ -799,6 +883,19 @@ fn resolved_server<'a>(logical: &'a str, server: &'a McpServer) -> &'a str {
         .as_ref()
         .and_then(|o| o.server.as_deref())
         .unwrap_or(logical)
+}
+
+/// `OpenCode`'s id for one tool of a declared server, `<server>_<tool>`: the
+/// one place the named-tool spelling is composed.
+fn compose_mcp_tool(server: &McpServer, logical: &str, tool: &str) -> String {
+    format!("{}_{tool}", resolved_server(logical, server))
+}
+
+/// `OpenCode`'s key for every tool of a declared server, `<server>_*`. It
+/// matches any tool whose name begins `<server>_`, whichever server it comes
+/// from (`experiments/opencode-agent-mcp-server-glob/`).
+fn compose_mcp_server_glob(server: &McpServer, logical: &str) -> String {
+    format!("{}_*", resolved_server(logical, server))
 }
 
 /// Reject declared servers whose `OpenCode` names overlap each other or a
@@ -1018,6 +1115,7 @@ mod tests {
             model: None,
             variant: None,
             permission: None,
+            mcp_carried: Vec::new(),
         };
         assert!(frontmatter.carried().is_empty());
     }
@@ -1030,6 +1128,7 @@ mod tests {
             model: Some("anthropic/claude-opus-5".to_owned()),
             variant: Some("thinking".to_owned()),
             permission: None,
+            mcp_carried: Vec::new(),
         };
         assert_eq!(
             frontmatter.carried(),
@@ -1145,12 +1244,17 @@ mod tests {
 
     #[test]
     fn test_build_permission_map_leads_with_deny_all_then_allows_then_restatements() {
-        let map = build_permission_map(&[
-            ToolFrontmatter::Write,
-            ToolFrontmatter::Read,
-            ToolFrontmatter::Edit,
-            ToolFrontmatter::Write,
-        ]);
+        let map = build_permission_map(
+            &[
+                ToolFrontmatter::Write,
+                ToolFrontmatter::Read,
+                ToolFrontmatter::Edit,
+                ToolFrontmatter::Write,
+            ],
+            None,
+            &McpServers::new(),
+        )
+        .0;
         let keys: Vec<&str> = map.keys().map(String::as_str).collect();
         let values: Vec<OpenCodePermissionRule> = map.values().cloned().collect();
         assert_eq!(
@@ -1176,14 +1280,14 @@ mod tests {
     /// resolve last-match-wins, so the reverse order would allow resources.
     #[test]
     fn test_build_permission_map_read_withholds_mcp_resources() {
-        let map = build_permission_map(&[ToolFrontmatter::Read]);
+        let map = build_permission_map(&[ToolFrontmatter::Read], None, &McpServers::new()).0;
         let json = serde_json::to_string(&map["read"]).expect("serializes");
         assert_eq!(json, r#"{"*":"allow","mcp:*":"deny"}"#);
     }
 
     #[test]
     fn test_build_permission_map_empty_list_denies_all() {
-        let map = build_permission_map(&[]);
+        let map = build_permission_map(&[], None, &McpServers::new()).0;
         let keys: Vec<&str> = map.keys().map(String::as_str).collect();
         assert_eq!(keys, ["*", "external_directory", "doom_loop"]);
     }
@@ -2493,5 +2597,195 @@ mod mcp_declaration_tests {
             messages(&[("quip", opencode_server("a.b"))]),
             ["[mcp.quip.opencode] `server` must match [A-Za-z0-9_-]+ (got \"a.b\")"]
         );
+    }
+}
+
+#[cfg(test)]
+mod mcp_grant_tests {
+    use std::collections::HashMap;
+
+    use indexmap::IndexMap;
+
+    use super::*;
+    use crate::spec::{AgentFrontmatter, CapabilitiesFrontmatter, SkillFrontmatter};
+
+    fn servers() -> McpServers {
+        McpServers::from([
+            ("quip".to_owned(), McpServer::default()),
+            (
+                "atlassian".to_owned(),
+                McpServer {
+                    opencode: Some(OpenCodeMcpServer {
+                        server: Some("jira".to_owned()),
+                    }),
+                    ..McpServer::default()
+                },
+            ),
+        ])
+    }
+
+    fn grants(entries: &[(&str, McpTools)]) -> BTreeMap<String, McpGrant> {
+        entries
+            .iter()
+            .map(|(s, t)| ((*s).to_owned(), McpGrant { tools: t.clone() }))
+            .collect()
+    }
+
+    fn named(tools: &[&str]) -> McpTools {
+        McpTools::Named(tools.iter().map(|t| (*t).to_owned()).collect())
+    }
+
+    fn agent(tools: Vec<ToolFrontmatter>, mcp: &[(&str, McpTools)]) -> Spec {
+        Spec::Agent(AgentSpec {
+            path: PathBuf::from("a.md"),
+            frontmatter: AgentFrontmatter {
+                id: "a".to_owned(),
+                description: "d".to_owned(),
+                tags: None,
+                execution: None,
+                capabilities: Some(CapabilitiesFrontmatter {
+                    tools: Some(tools),
+                    mcp: Some(grants(mcp)),
+                }),
+            },
+            body: "Body.".to_owned(),
+        })
+    }
+
+    fn compile(spec: Spec) -> AdapterOutput {
+        let servers = servers();
+        let presets = HashMap::new();
+        let ctx = CompileCtx {
+            mode: SyncDestinationMode::Compile,
+            home: Path::new("/tmp/home"),
+            cwd: Path::new("/tmp/cwd"),
+            target_dir: None,
+            presets: &presets,
+            mcp_servers: &servers,
+            adapter_config: None,
+            overwrite: false,
+        };
+        OpenCodeAdapter.compile(&[spec], &ctx).expect("compile")
+    }
+
+    fn keys(tools: &[ToolFrontmatter], mcp: &[(&str, McpTools)]) -> Vec<String> {
+        let map = build_permission_map(tools, Some(&grants(mcp)), &servers()).0;
+        map.keys().cloned().collect()
+    }
+
+    /// Named and whole-server grants, with and without an `opencode.server`
+    /// override, land after the built-ins and before the restatements, sorted
+    /// by key.
+    #[test]
+    fn test_mcp_keys_follow_builtins_and_precede_restatements() {
+        assert_eq!(
+            keys(
+                &[ToolFrontmatter::Grep],
+                &[
+                    ("quip", named(&["search_documents", "get_document"])),
+                    ("atlassian", McpTools::All),
+                ],
+            ),
+            [
+                "*",
+                "grep",
+                "jira_*",
+                "quip_get_document",
+                "quip_search_documents",
+                "external_directory",
+                "doom_loop",
+            ]
+        );
+        assert_eq!(
+            keys(
+                &[],
+                &[
+                    ("atlassian", named(&["get_issue"])),
+                    ("quip", McpTools::All)
+                ]
+            ),
+            [
+                "*",
+                "jira_get_issue",
+                "quip_*",
+                "external_directory",
+                "doom_loop"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_mcp_allows_are_bare_allow_actions() {
+        let map =
+            build_permission_map(&[], Some(&grants(&[("quip", McpTools::All)])), &servers()).0;
+        assert_eq!(
+            map["quip_*"],
+            OpenCodePermissionRule::Action(OpenCodePermission::Allow)
+        );
+    }
+
+    /// One `Mcp` delivery per server, recorded on the agent file.
+    #[test]
+    fn test_mcp_carried_records_one_delivery_per_server() {
+        let output = compile(agent(
+            vec![],
+            &[("quip", named(&["a", "b"])), ("atlassian", McpTools::All)],
+        ));
+        let mcp: Vec<&SettingKey> = output
+            .deliveries
+            .iter()
+            .map(Delivery::setting)
+            .filter(|s| matches!(s, SettingKey::Mcp(_)))
+            .collect();
+        assert_eq!(
+            mcp,
+            [
+                &SettingKey::Mcp("atlassian".to_owned()),
+                &SettingKey::Mcp("quip".to_owned()),
+            ]
+        );
+    }
+
+    /// `OpenCode` reads no tool restriction on skills or commands, so a skill's
+    /// grant records nothing there.
+    #[test]
+    fn test_mcp_skill_grant_records_nothing() {
+        let output = compile(Spec::Skill(SkillSpec {
+            path: PathBuf::from("s"),
+            frontmatter: SkillFrontmatter {
+                id: "s".to_owned(),
+                description: Some("d".to_owned()),
+                tags: None,
+                user_invocable: true,
+                agent_invocable: true,
+                execution: None,
+                capabilities: Some(CapabilitiesFrontmatter {
+                    tools: None,
+                    mcp: Some(grants(&[("quip", McpTools::All)])),
+                }),
+            },
+            body: "Body.".to_owned(),
+            supporting_files: IndexMap::new(),
+        }));
+        assert!(
+            !output
+                .deliveries
+                .iter()
+                .any(|d| matches!(d.setting(), SettingKey::Mcp(_))),
+            "{:?}",
+            output.deliveries
+        );
+    }
+
+    #[test]
+    fn test_mcp_server_glob_over_match_pushed_only_for_all_grant() {
+        let pushed = |mcp: &[(&str, McpTools)]| {
+            compile(agent(vec![], mcp))
+                .degradations
+                .iter()
+                .any(|d| d.kind() == DegradationKind::McpServerGlobOverMatch)
+        };
+        assert!(pushed(&[("quip", McpTools::All)]));
+        assert!(!pushed(&[("quip", named(&["a"]))]));
     }
 }
