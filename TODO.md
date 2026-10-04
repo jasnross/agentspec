@@ -1,4 +1,4 @@
-<!-- next: 48 -->
+<!-- next: 49 -->
 
 - #1 Consider deriving id from path instead of requiring in frontmatter
    - Currently `id` is a required `String` in all frontmatter structs; missing it causes a parse error at load time
@@ -207,3 +207,8 @@
   - The README's Tools reference bullets don't mention this.
   - Likely shape: repeat `*.env: ask`, `*.env.*: ask` and `*.env.example: allow` after `* allow`, for the same reason `RESTATED_PERMISSIONS` repeats `external_directory` and `doom_loop`. Add a probe that confirms the prompt still appears when the agent reads a `.env` file, and a README note.
   - Deferred from the code review of `jasonr/mcp-support`.
+- #48 **Measure whether a restricted OpenCode agent keeps OpenCode's automatic `external_directory` allows.** The first Tools-reference bullet in `README.md` (`:315`) says a restricted agent's prompt for paths outside the project "replaces OpenCode's automatic allows for its tmp, tool-output, and skill directories". No probe has measured that claim, and resolved config suggests it is wrong for tool-output.
+  - On OpenCode 1.18.34, `opencode debug agent` on a restricted agent (`"*": deny`, the allows, `external_directory: ask`, `doom_loop: ask`) resolved OpenCode's default `external_directory` rules (`* ask`, a tool-output allow, a tmp allow), then the agent's own rules, then **a second copy of the tool-output allow**. Last match wins, so tool-output paths look allowed. The tmp allow was not repeated, so the README holds for tmp. The scratch agent had no skills, so nothing was observed about skill directories.
+  - This is `resolved-config` evidence only: it shows OpenCode read the rule, not that it acts on it. `experiments/opencode-agent-permission-external-read/` deliberately says nothing about paths inside these directories (its "Limits of this oracle").
+  - Likely shape: an `outbound-request` probe that copies external-read's fake provider and isolation, with arms that read a file in OpenCode's tool-output directory, its tmp directory, and a skill directory behind agentspec's map. Correct the README bullet to match what it records.
+  - Found while planning `$THOUGHTS_DIR/plans/2026-10-04-agentspec-opencode-env-read-prompt.md`.
