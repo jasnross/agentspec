@@ -1,5 +1,84 @@
 # Changelog
 
+## [0.7.0](https://github.com/jasnross/agentspec/compare/v0.6.0...v0.7.0) (2026-10-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* **templating:** Adapter gains the required method body_mcp_tool_name.
+* **opencode:** DegradationKind gains McpServerGlobOverMatch, which agentspec inspect reports whenever an agent grants a whole server, because OpenCode's <server>_* also matches tools of any server or custom tool named <server>_...
+* **opencode:** restricted OpenCode agents that declare `read` lose the MCP resource access they had. OpenCode still offers its three resource tools to them and refuses every call, which agentspec inspect reports through the new
+* library API additions that break exhaustive construction or matching: Declarations gains a pub `mcp` field, CapabilitiesFrontmatter gains a pub `mcp` field, SettingKey gains Mcp(String) and SettingKind gains Mcp, and CompileCtx gains a required `mcp_servers` field.
+* **validate:** a spec whose capabilities.tools lists a tool more than once now fails validation, and so fails compile and sync. Remove the repeated entry to fix it.
+* Specs::validate and validate_semantics take &Declarations instead of &ProviderPresetsMap. ValidatedSpecs::presets() is replaced by ValidatedSpecs::declarations(). Adapter::validate_declarations is a new required trait method with no default body. ProviderPresets::validate and
+* **opencode:** Generated OpenCode agent files change.
+    - OpenCode agents that declare `capabilities.tools` get a `permission`
+      map instead of a `tools` map, and no longer receive MCP, `lsp`, or
+      custom tools.
+    - Those agents are asked before touching paths outside the project,
+      overriding OpenCode's automatic allows for tmp and skill directories
+      and any user-level `external_directory` rules.
+    - OpenCode agents that declare no tools now receive every built-in
+      instead of none.
+
+### Features
+
+* **claude:** write MCP grants into agent tools and skill allowed-tools ([fc11f10](https://github.com/jasnross/agentspec/commit/fc11f10895df2796bd87505e65f36d8015ed0c22))
+* declare MCP servers and accept MCP grants in specs ([51df8b9](https://github.com/jasnross/agentspec/commit/51df8b9f11d8c015ca1f562d85d355b8a25cb798))
+* **opencode:** write MCP grants into agent permission maps ([f261823](https://github.com/jasnross/agentspec/commit/f26182380b830a6924be6454934c97d9a06c5398))
+* **templating:** expose agent_invocable on skill entries in the specs variable ([eee340f](https://github.com/jasnross/agentspec/commit/eee340f883a08f2ed782223877076ce81a9e746a))
+* **templating:** name MCP tools in spec bodies with mcp_tool() ([df7efe7](https://github.com/jasnross/agentspec/commit/df7efe77747d934be8a78fcc07ff9c56eb912634))
+* **validate:** reject a capabilities.tools list that names a tool twice ([f77f907](https://github.com/jasnross/agentspec/commit/f77f907414e5fd7f0240a5bff9707df70160d798))
+
+
+### Bug Fixes
+
+* **opencode:** withhold MCP resources from agents that declare read ([8497bff](https://github.com/jasnross/agentspec/commit/8497bfff90522ee25306f9d0850f0a2e259cc690))
+* **opencode:** write declared tools as a deny-all-first permission map and omit it when none is declared ([588f2b1](https://github.com/jasnross/agentspec/commit/588f2b1176cdfc3c7537076844d2fef62bc2c40e))
+
+
+### Refactoring
+
+* validate provider config blocks in their adapters ([bda25a7](https://github.com/jasnross/agentspec/commit/bda25a7591dd6cf20f14c8d7537f37d0e1d587cf))
+
+
+### Documentation
+
+* describe deployment scenarios and keep runtime checks off the compiling machine ([e1c9c0e](https://github.com/jasnross/agentspec/commit/e1c9c0e0d184ed5a90cfc2c1877da4cea45f0c30))
+* **rules:** allow config types to name providers while keeping block interpretation in adapters ([514ae1f](https://github.com/jasnross/agentspec/commit/514ae1f1135b249a48be3ccb1c4339ff663a6694))
+
+
+### Tests
+
+* **pipeline:** make the missing-spec reference test reach template rendering ([ec1b954](https://github.com/jasnross/agentspec/commit/ec1b954626779133a639278d6a817ff62e1d7926))
+* **probes:** measure Claude skill allowed-tools pre-approval for a named plugin MCP tool ([02bb5d6](https://github.com/jasnross/agentspec/commit/02bb5d6a8df6aae25f4857e5c9fa2192e7de3edd))
+* **probes:** measure Claude skill allowed-tools pre-approval for MCP spellings ([42e45f3](https://github.com/jasnross/agentspec/commit/42e45f3b6679326b184279cb80fe3c019d7edda5))
+* **probes:** measure Claude subagent grants for plugin-bundled MCP servers ([232c58b](https://github.com/jasnross/agentspec/commit/232c58b6be31f4fe6ed14d3cb58be25ee1e87fa1))
+* **probes:** measure MCP tools offered to a restricted Claude background subagent ([00636e4](https://github.com/jasnross/agentspec/commit/00636e44d6f93c63d90ef3aa395e5767299605b4))
+* **probes:** measure MCP tools offered to a restricted Claude subagent under fork mode ([6c03e30](https://github.com/jasnross/agentspec/commit/6c03e30c70b3572437225cef96a8d52dbdf3c6e6))
+* **probes:** measure OpenCode MCP resource calls under a read pattern map ([3a4074b](https://github.com/jasnross/agentspec/commit/3a4074b45d331b0011506a48eff654f9a89b98d1))
+* **probes:** measure OpenCode outside-the-project reads under a deny-all permission map ([28ea02f](https://github.com/jasnross/agentspec/commit/28ea02f20b11820dcce9dbc69db92d75728fe328))
+* **probes:** measure OpenCode tool maps that deny all before allowing an MCP tool ([521e5d2](https://github.com/jasnross/agentspec/commit/521e5d2e37722d24a2b56460726b4042618ddc20))
+* **probes:** measure OpenCode tools offered under a permission map that leads with deny-all ([a27ae07](https://github.com/jasnross/agentspec/commit/a27ae07e60499064c546a7640f22ffdf85608909))
+* **probes:** measure the tools a Claude subagent with an empty tools list receives ([30d48b8](https://github.com/jasnross/agentspec/commit/30d48b8cbe35885eb56a7ad6e02afb21858639d0))
+* **probes:** measure what an OpenCode whole-server permission allow offers ([fdf4dfb](https://github.com/jasnross/agentspec/commit/fdf4dfb6674b9a3260374caa977a233cfe8a9797))
+* **probes:** measure whether an OpenCode agent with no permission map is offered MCP tools ([5737f29](https://github.com/jasnross/agentspec/commit/5737f29d18092d80f68aecc9feafa3c20f8f17bf))
+* **probes:** measure which MCP resource tools a restricted Claude subagent receives ([ce6e86a](https://github.com/jasnross/agentspec/commit/ce6e86a8b4696a085971d1e79e3abfae93e1f620))
+* **probes:** measure which MCP tools a Claude subagent receives per tools spelling ([c949491](https://github.com/jasnross/agentspec/commit/c949491cd3baa2877987d5634130822b0d047d05))
+* **probes:** record confirmed runs against Claude Code 2.1.287 and opencode 1.18.34 ([175c06a](https://github.com/jasnross/agentspec/commit/175c06aa08d696bef05953f9607c1312bb582a17))
+* **templating:** pass mcp_servers in the agent_invocable fragment tests ([216a36e](https://github.com/jasnross/agentspec/commit/216a36eac6b6c161f5a74050a8f74ea57353a157))
+
+
+### Miscellaneous Chores
+
+* **ci:** move Node 20 actions to their Node 24 releases ([7e76bae](https://github.com/jasnross/agentspec/commit/7e76baef4a28ecc0bb1e57d40c45df8af00715b7))
+* **just:** deny clippy warnings in just lint to match CI ([2605e21](https://github.com/jasnross/agentspec/commit/2605e21905ebf4b7628c0ad29b4e489d46562aae))
+* pin the Rust toolchain to 1.98.1 ([8387194](https://github.com/jasnross/agentspec/commit/838719427437dfd5455b9f783b11523727e200f9))
+* **todos:** add [#46](https://github.com/jasnross/agentspec/issues/46) for checking body tool references against declarations ([6fdd839](https://github.com/jasnross/agentspec/commit/6fdd8392844b6e11d1b71057b3ea6594ff20fb09))
+* **todos:** add OpenCode MCP tool allowlist gap ([f4d1506](https://github.com/jasnross/agentspec/commit/f4d1506b8c6bac8d6b2270f9603b03166bbda4c6))
+* **todos:** list the MCP degradation kinds in [#23](https://github.com/jasnross/agentspec/issues/23) and add [#47](https://github.com/jasnross/agentspec/issues/47) for the OpenCode .env prompt ([7be371d](https://github.com/jasnross/agentspec/commit/7be371d4d539b2d1a9e554bc178b112321d6c15c))
+* **todos:** remove done items ([7935590](https://github.com/jasnross/agentspec/commit/79355903586bbfeb589415a0124b4a86d793389c))
+
 ## [0.6.0](https://github.com/jasnross/agentspec/compare/v0.5.0...v0.6.0) (2026-09-24)
 
 
