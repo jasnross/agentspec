@@ -1,4 +1,4 @@
-<!-- next: 49 -->
+<!-- next: 50 -->
 
 - #1 Consider deriving id from path instead of requiring in frontmatter
    - Currently `id` is a required `String` in all frontmatter structs; missing it causes a parse error at load time
@@ -212,3 +212,6 @@
   - This is `resolved-config` evidence only: it shows OpenCode read the rule, not that it acts on it. `experiments/opencode-agent-permission-external-read/` deliberately says nothing about paths inside these directories (its "Limits of this oracle").
   - Likely shape: an `outbound-request` probe that copies external-read's fake provider and isolation, with arms that read a file in OpenCode's tool-output directory, its tmp directory, and a skill directory behind agentspec's map. Correct the README bullet to match what it records.
   - Found while planning `$THOUGHTS_DIR/plans/2026-10-04-agentspec-opencode-env-read-prompt.md`.
+- #49 **Consider removing the probe harness's jq dependency.** Manifests carry jq strings (`assertion.projection`, `wait_for`, `version_source.jq`), so jq stays a harness dependency even after the Python port, which freezes the manifest and record formats.
+  - Constraint to weigh: the original harness design requires that the expression a probe author tests at their shell is the one evaluated at record time (`thoughts/designs/.done/2026-08-15-agentspec-provider-verification-harness.md`, "The recorder is shell, and the format is JSON").
+  - Deferred from `thoughts/ideas/2026-10-04-agentspec-probe-harness-python-port.md`.
