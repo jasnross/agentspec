@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.1](https://github.com/jasnross/agentspec/compare/v0.7.0...v0.7.1) (2026-10-10)
+
+
+### Miscellaneous Chores
+
+* **todos:** add [#48](https://github.com/jasnross/agentspec/issues/48) for measuring OpenCode's automatic external_directory allows ([49d47f2](https://github.com/jasnross/agentspec/commit/49d47f238af87e720540d562405010c031ffa759))
+* **todos:** add [#49](https://github.com/jasnross/agentspec/issues/49) for removing the probe harness's jq dependency ([3216350](https://github.com/jasnross/agentspec/commit/32163504bc9a34fc8350d21d7a48f2709273507a))
+
 ## [0.7.0](https://github.com/jasnross/agentspec/compare/v0.6.0...v0.7.0) (2026-10-04)
 
 
