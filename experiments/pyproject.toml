@@ -1,0 +1,31 @@
+[project]
+name = "agentspec-probe-harness"
+version = "0.0.0"
+requires-python = ">=3.14"
+dependencies = []
+
+[dependency-groups]
+dev = ["mypy", "pytest", "ruff"]
+
+[tool.uv]
+package = false
+python-preference = "only-system"
+
+[tool.pytest.ini_options]
+testpaths = ["lib/tests"]
+pythonpath = ["lib"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+extend-include = ["probe"]
+extend-exclude = ["*/fixtures"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "PTH", "RUF"]
+
+[tool.mypy]
+strict = true
+mypy_path = "lib"
+explicit_package_bases = true
+files = ["lib", "probe"]

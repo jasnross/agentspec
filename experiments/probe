@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+import sys
+
+if sys.version_info < (3, 14):  # noqa: UP036 - must parse and run under any python3
+    sys.stderr.write(
+        "probe: Python 3.14 or newer is required, found %d.%d; run it under mise\n"  # noqa: UP031
+        % sys.version_info[:2]
+    )
+    sys.exit(1)
+
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+
+from probe_harness.cli import main
+
+sys.exit(main(sys.argv[1:]))

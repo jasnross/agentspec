@@ -1,10 +1,11 @@
 [tools]
 "cargo:cargo-sort-derives" = "latest"
-bats = "latest"
 jq = "1.8.2"
 just = "latest"
 prettier = "latest"
+python = "3.14"
 shellcheck = "latest"
+uv = "latest"
 
 [settings]
 idiomatic_version_file_enable_tools = ["rust"]

@@ -18,7 +18,14 @@ Thumbs.db
 graphify-out/
 
 # Live-session captures staged for a later phase's dry-run checks. The leading
-# dot is load-bearing: `records-wellformed.bats` iterates `experiments/*/` and
-# would demand a manifest, a runner, and a record from any non-dot directory it
-# found there. Bash's `*` does not match a leading dot without `dotglob`.
+# dot is load-bearing: `lib/tests/test_records_wellformed.py` iterates
+# `experiments/*/`, skips dot-directories, and would demand a manifest, a
+# runner, and a record from any other directory it found there.
 experiments/.probe-scratch/
+
+# The probe harness's Python environment and tool caches
+experiments/.venv/
+__pycache__/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
