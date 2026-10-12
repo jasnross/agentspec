@@ -151,6 +151,30 @@ def test_every_manual_manifest_declares_a_wait_for_filter() -> None:
         )
 
 
+def test_every_probe_package_is_a_measurement() -> None:
+    # The contract's discovery command is `jq -r '.question' experiments/*/probe.json`, and
+    # nothing else enforces it: the run loop and the status report each pass over a
+    # manifest-less directory silently, so an unbacked package would be invisible to all
+    # three at once. Every other check here is scoped to packages with a manifest; this one
+    # says there are no others.
+    for package in _packages():
+        assert (package / "probe.json").is_file(), (
+            f"package has no manifest, so nothing discovers it: {package}"
+        )
+        assert (package / "probe.py").is_file(), f"package has no runner (probe.py): {package}"
+        assert list((package / "results").glob("*.json")), (
+            f"package has never recorded a measurement: {package}"
+        )
+
+
+def test_every_package_with_a_manifest_has_an_executable_runner() -> None:
+    # A package's runner is its `probe.py` definition, which `experiments/probe run` loads.
+    for manifest in _manifests():
+        assert (manifest.parent / "probe.py").is_file(), (
+            f"package has a manifest but no probe.py: {manifest.parent}"
+        )
+
+
 def test_no_committed_record_carries_a_field_removed_during_planning() -> None:
     for path in _records():
         try:

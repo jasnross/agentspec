@@ -12,7 +12,7 @@
 
 ## The six arms
 
-Every arm runs `claude -p` with `--mcp-config <arm>/mcp.json --strict-mcp-config --allowedTools Agent --effort low`, connecting `fx`, a local MCP stdio server (`fixtures/fx_server.py`) with two tools, `alpha` and `beta`. Two tools are what lets "only the granted tool is visible" be told apart from "every tool is visible". The six agents differ only in `tools`:
+Every arm runs `claude -p` with `--mcp-config <arm>/mcp.json --strict-mcp-config --allowedTools Agent --effort low`, connecting `fx`, a local MCP stdio server (`experiments/lib/stubs/fx_server.py`) with two tools, `alpha` and `beta`. Two tools are what lets "only the granted tool is visible" be told apart from "every tool is visible". The six agents differ only in `tools`:
 
 | Arm | Agent | `tools` |
 | --- | --- | --- |

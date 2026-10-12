@@ -16,7 +16,7 @@ This is Key Assumption 3 of `$THOUGHTS_DIR/designs/2026-10-03-agentspec-mcp-tool
 
 ## The five arms
 
-Every arm runs `claude -p` with `--mcp-config <arm>/mcp.json --strict-mcp-config --allowedTools Agent --effort low`, connecting `fx`, a local MCP stdio server (`fixtures/fx_server.py`) with two tools, `alpha` and `beta`, that also advertises the `resources` capability and serves one resource and one template. The five agents differ only in `tools`:
+Every arm runs `claude -p` with `--mcp-config <arm>/mcp.json --strict-mcp-config --allowedTools Agent --effort low`, connecting `fx`, a local MCP stdio server (`experiments/lib/stubs/fx_server.py`) with two tools, `alpha` and `beta`, that also advertises the `resources` capability and serves one resource and one template. The five agents differ only in `tools`:
 
 | Arm | Agent | `tools` |
 | --- | --- | --- |

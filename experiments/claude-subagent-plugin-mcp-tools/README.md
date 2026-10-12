@@ -18,7 +18,7 @@ This is Key Assumption 1 of `$THOUGHTS_DIR/designs/2026-10-03-agentspec-mcp-tool
 
 ## The six arms
 
-Every arm runs `claude -p` with `--plugin-dir <arm>/fxp --allowedTools Agent --effort low`. The plugin `fxp` (`fixtures/plugin/`) bundles `fx`, a local MCP stdio server (`fixtures/fx_server.py`) with two tools, `alpha` and `beta`, so Claude names them `mcp__plugin_fxp_fx__alpha` and `mcp__plugin_fxp_fx__beta`. Every arm installs the plugin, so every arm connects `fx` the same way. Two tools are what lets "only the granted tool is visible" be told apart from "every tool is visible".
+Every arm runs `claude -p` with `--plugin-dir <arm>/fxp --allowedTools Agent --effort low`. The plugin `fxp` (`fixtures/plugin/`) bundles `fx`, a local MCP stdio server (`experiments/lib/stubs/fx_server.py`) with two tools, `alpha` and `beta`, so Claude names them `mcp__plugin_fxp_fx__alpha` and `mcp__plugin_fxp_fx__beta`. Every arm installs the plugin, so every arm connects `fx` the same way. Two tools are what lets "only the granted tool is visible" be told apart from "every tool is visible".
 
 | Arm | Agent location | Delegation name | `tools` |
 | --- | --- | --- | --- |

@@ -17,7 +17,7 @@ from probe_harness.contract import (
     OptionsAssertion,
     parse_manifest,
 )
-from probe_harness.families import manual, opencode_debug, opencode_fake
+from probe_harness.families import claude_otel, manual, opencode_debug, opencode_fake
 from probe_harness.families.base import (
     CustomProbe,
     GateFailure,
@@ -27,6 +27,7 @@ from probe_harness.families.base import (
     record_and_retain,
     refused,
 )
+from probe_harness.families.claude_otel import ClaudeOtelProbe
 from probe_harness.families.manual import ManualProbe
 from probe_harness.families.opencode_debug import OpenCodeDebugProbe
 from probe_harness.families.opencode_fake import OpenCodeFakeProbe
@@ -36,12 +37,15 @@ from probe_harness.preflight import run as run_preflight
 from probe_harness.record import record
 from probe_harness.workspace import create_workspace
 
-type ProbeDefinition = ManualProbe | OpenCodeDebugProbe | OpenCodeFakeProbe | CustomProbe
+type ProbeDefinition = (
+    ManualProbe | OpenCodeDebugProbe | OpenCodeFakeProbe | ClaudeOtelProbe | CustomProbe
+)
 
 DEFINITION_TYPES: tuple[type, ...] = (
     ManualProbe,
     OpenCodeDebugProbe,
     OpenCodeFakeProbe,
+    ClaudeOtelProbe,
     CustomProbe,
 )
 
@@ -89,6 +93,8 @@ def run_package(name: str, extra: list[str], experiments_dir: Path) -> int:
             return opencode_debug.run(package, name, options, definition)
         case OpenCodeFakeProbe():
             return opencode_fake.run(package, name, options, definition)
+        case ClaudeOtelProbe():
+            return claude_otel.run(package, name, options, definition)
         case CustomProbe():
             return _run_custom(package, name, options, definition)
         case _:
@@ -155,6 +161,9 @@ def replay_package(argv: list[str], experiments_dir: Path) -> int:
             case OpenCodeFakeProbe():
                 result = opencode_fake.judge(ws, definition)
                 return record(manifest.path, view=result.view, dry_run=True)
+            case ClaudeOtelProbe():
+                result = claude_otel.judge(ws, definition)
+                return record(manifest.path, view=result.view, dry_run=True)
             case CustomProbe():
                 result = definition.judge(ws)
                 if definition.functions.judge is not None:
@@ -188,34 +197,92 @@ def _run_custom(package: Path, name: str, options: RunOptions, probe: CustomProb
 
 
 def _definition_refusal(name: str, definition: ProbeDefinition, manifest: Manifest) -> str | None:
-    """A definition and manifest that could only fail later, refused before any workspace."""
+    """A definition and manifest that could only fail later, refused before any workspace.
+
+    For the billed family that matters most: each of these would otherwise surface only after
+    every arm had spent a model call.
+    """
     match definition:
         case ManualProbe():
-            # A manual workspace templates the whole fixtures/ tree, so it has no variant
-            # trees for `PROBE_FIXTURE` to select between.
-            if definition.variants != (ASSERTION_VARIANT,):
-                return (
-                    f"probe: {name} is a manual probe, whose only fixture variant is "
-                    f"{ASSERTION_VARIANT}; its definition declares: "
-                    f"{', '.join(definition.variants)}"
-                )
-        case OpenCodeDebugProbe() | OpenCodeFakeProbe() | CustomProbe():
-            # These families record without a capture, which these manifests require.
-            family = type(definition).__name__
-            article = "an" if family[0] in "AEIOU" else "a"
-            if manifest.driver == Driver.MANUAL:
-                return (
-                    f"probe: {name} is {article} {family}, which records without a capture, but "
-                    'its manifest declares driver "manual"'
-                )
-            if isinstance(manifest.version_source, CaptureSource):
-                return (
-                    f"probe: {name} is {article} {family}, which records without a capture, but "
-                    "its manifest declares a capture version source"
-                )
+            return _single_variant(name, definition)
+        case OpenCodeFakeProbe():
+            return (
+                _single_variant(name, definition)
+                or _unique_arms(name, [arm.name for arm in definition.arms])
+                or _needs_capture(name, definition, manifest)
+            )
+        case ClaudeOtelProbe():
+            return (
+                _unique_arms(name, [arm.name for arm in definition.arms])
+                or _claude_gate_arms(name, definition)
+                or _claude_variant_trees(name, definition)
+                or _needs_capture(name, definition, manifest)
+            )
+        case OpenCodeDebugProbe() | CustomProbe():
+            return _needs_capture(name, definition, manifest)
         case _:
             assert_never(definition)
+
+
+def _family(definition: ProbeDefinition) -> str:
+    family = type(definition).__name__
+    return f"{'an' if family[0] in 'AEIOU' else 'a'} {family}"
+
+
+def _single_variant(name: str, definition: ManualProbe | OpenCodeFakeProbe) -> str | None:
+    # These families materialize one fixed tree (all of fixtures/, or fixtures/project/), so
+    # they have no variant trees for `PROBE_FIXTURE` to select between.
+    if definition.variants == (ASSERTION_VARIANT,):
+        return None
+    return (
+        f"probe: {name} is {_family(definition)}, whose only fixture variant is "
+        f"{ASSERTION_VARIANT}; its definition declares: {', '.join(definition.variants)}"
+    )
+
+
+def _needs_capture(name: str, definition: ProbeDefinition, manifest: Manifest) -> str | None:
+    # Every family but the manual one records without a capture, which these manifests need.
+    if manifest.driver == Driver.MANUAL:
+        return (
+            f"probe: {name} is {_family(definition)}, which records without a capture, but its "
+            'manifest declares driver "manual"'
+        )
+    if isinstance(manifest.version_source, CaptureSource):
+        return (
+            f"probe: {name} is {_family(definition)}, which records without a capture, but its "
+            "manifest declares a capture version source"
+        )
     return None
+
+
+def _unique_arms(name: str, arms: list[str]) -> str | None:
+    duplicates = sorted({arm for arm in arms if arms.count(arm) > 1})
+    if duplicates:
+        return f"probe: {name}'s definition declares arm {duplicates[0]} more than once"
+    return None
+
+
+def _claude_gate_arms(name: str, definition: ClaudeOtelProbe) -> str | None:
+    declared = {arm.name for arm in definition.arms}
+    for gate in definition.gates:
+        arm = getattr(gate, "arm", None)
+        if arm is not None and arm not in declared:
+            return (
+                f"probe: {name}'s definition gates arm {arm} ({type(gate).__name__}), but "
+                "declares no such arm"
+            )
+    return None
+
+
+def _claude_variant_trees(name: str, definition: ClaudeOtelProbe) -> str | None:
+    if definition.variants == (ASSERTION_VARIANT,):
+        return None
+    if any(claude_otel.VARIANT in arm.tree for arm in definition.arms):
+        return None
+    return (
+        f"probe: {name} declares variants {', '.join(definition.variants)}, but no arm's "
+        f"fixture tree contains {claude_otel.VARIANT}, so every variant would run the same tree"
+    )
 
 
 def _family_tools(definition: ProbeDefinition) -> tuple[str, ...]:
@@ -226,6 +293,8 @@ def _family_tools(definition: ProbeDefinition) -> tuple[str, ...]:
             return opencode_debug.FAMILY_TOOLS
         case OpenCodeFakeProbe():
             return opencode_fake.FAMILY_TOOLS
+        case ClaudeOtelProbe():
+            return claude_otel.FAMILY_TOOLS
         case CustomProbe():
             return definition.required_tools
         case _:

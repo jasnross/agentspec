@@ -2,8 +2,8 @@
   "mcpServers": {
     "fx": {
       "type": "stdio",
-      "command": "python3",
-      "args": ["{{FX_SERVER}}", "{{FX_STAMP}}"]
+      "command": "{{PYTHON}}",
+      "args": ["{{FX_SERVER}}", "--stamp", "{{FX_STAMP}}"]
     }
   }
 }

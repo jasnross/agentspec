@@ -22,7 +22,7 @@ Every arm runs `claude -p "/probe-skill"` with `--plugin-dir <arm>/fxp --append-
 | `plugin_none`  | `Read`                      |
 | `plugin_named` | `mcp__plugin_fxp_fx__alpha` |
 
-Both arms connect `fx`, a local MCP stdio server (`fixtures/fx_server.py`), through the plugin `fxp` (`fixtures/plugin/`), so Claude names its tool `mcp__plugin_fxp_fx__alpha`. A call answers `AGENTSPEC-FX-REPLY-CCSKPN9`, a reply marker distinct from the sibling package's.
+Both arms connect `fx`, a local MCP stdio server (`experiments/lib/stubs/fx_server.py`), through the plugin `fxp` (`fixtures/plugin/`), so Claude names its tool `mcp__plugin_fxp_fx__alpha`. A call answers `AGENTSPEC-FX-REPLY-CCSKPN9`, a reply marker distinct from the sibling package's.
 
 - **`--permission-prompts none`** denies any call that would prompt, so a call the skill did not pre-approve fails rather than waiting for an answer.
 - **`--allowedTools ToolSearch`** keeps a deferred `fx` tool loadable without pre-approving any `fx` tool.

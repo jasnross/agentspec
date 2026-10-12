@@ -112,6 +112,8 @@ PROBE_DRY_RUN=1 experiments/claude-skill-effort/probe.sh
 {"status":"confirmed","observed":{"inline":"same-as-ungoverned","slash_entry":["low"],"fork":["low"]}}
 ```
 
+The block is captured output, so it keeps the commands of the runner that produced it. Run the same two with `PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run claude-skill-effort` and `PROBE_DRY_RUN=1 experiments/probe run claude-skill-effort`; the harness refuses to record the discriminator.
+
 The two runs **differ in `slash_entry` and `fork` while agreeing in `inline`**. That pairing is the discrimination: it shows the projection reads each arm independently, and that the inert arm is inert rather than merely unread.
 
 ## What the record licenses

@@ -91,6 +91,8 @@ PROBE_DRY_RUN=1 experiments/claude-agent-effort/probe.sh
 {"status":"confirmed","observed":{"session_agent":"same-as-ungoverned","delegated":["low"]}}
 ```
 
+The block is captured output, so it keeps the commands of the runner that produced it. Run the same two with `PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run claude-agent-effort` and `PROBE_DRY_RUN=1 experiments/probe run claude-agent-effort`; the harness refuses to record the discriminator.
+
 The two runs **differ in `delegated` and agree in `session_agent`**. That pairing is the discrimination: it shows the projection reads each arm independently, and that the inert arm is inert rather than merely unread.
 
 ## What the record licenses

@@ -27,7 +27,7 @@ A fork itself "receive[s] the main conversation's exact tool pool"; a subagent s
 
 ## The two arms
 
-Every arm runs `claude -p` with `CLAUDE_CODE_FORK_SUBAGENT=1` and `--mcp-config <arm>/mcp.json --strict-mcp-config --allowedTools Agent --effort low`, connecting `fx`, a local MCP stdio server (`fixtures/fx_server.py`) with two tools, `alpha` and `beta`.
+Every arm runs `claude -p` with `CLAUDE_CODE_FORK_SUBAGENT=1` and `--mcp-config <arm>/mcp.json --strict-mcp-config --allowedTools Agent --effort low`, connecting `fx`, a local MCP stdio server (`experiments/lib/stubs/fx_server.py`) with two tools, `alpha` and `beta`.
 
 | Arm               | Agent                   | `tools` |
 | ----------------- | ----------------------- | ------- |

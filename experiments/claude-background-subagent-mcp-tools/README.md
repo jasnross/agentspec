@@ -19,7 +19,7 @@ The design read "keeps every MCP tool" as a leak: an agent agentspec restricts t
 
 ## The three arms
 
-Every arm runs `claude -p` with `--mcp-config <arm>/mcp.json --strict-mcp-config --allowedTools Agent --effort low`, connecting `fx`, a local MCP stdio server (`fixtures/fx_server.py`) with two tools, `alpha` and `beta`.
+Every arm runs `claude -p` with `--mcp-config <arm>/mcp.json --strict-mcp-config --allowedTools Agent --effort low`, connecting `fx`, a local MCP stdio server (`experiments/lib/stubs/fx_server.py`) with two tools, `alpha` and `beta`.
 
 | Arm | Agent | `tools` | Prompt asks for `run_in_background` |
 | --- | --- | --- | --- |

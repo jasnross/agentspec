@@ -9,11 +9,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-from probe_harness.gates import GateFailure
+from probe_harness.gates import APPARATUS_FAILURE, GateFailure, stamp
 from probe_harness.gates import jq_semantics as jq
 from probe_harness.workspace import jq_tostring
 
-APPARATUS_FAILURE = "probe: this is an apparatus failure, not a refutation; no record written."
+__all__ = ["APPARATUS_FAILURE", "GOVERNED_JQ", "governed", "stamp", "tool_result"]
+
 
 # The `any(…)` arguments selecting a governed request (the marker in a system message), for a
 # definition's custom check. `$m` is the marker; `_governed_requests` is the same in Python.
@@ -34,20 +35,6 @@ def governed(view: Path, arm: str, marker: str, stderr: Path) -> None:
         raise GateFailure(
             f"probe: arm {arm}: no request carried {marker} in a system message.",
             f"probe: OpenCode may have fallen back to its default agent; see {stderr}.",
-            APPARATUS_FAILURE,
-        )
-
-
-def stamp(ws: Path, arm: str, key: str) -> None:
-    """The arm's `<key>` MCP server answered `tools/list`.
-
-    Without a connected server, an arm's tool list says nothing about MCP tools: an empty
-    list would read as "the map hid the tool" when the tool never existed.
-    """
-    if not (ws / arm / f"{key}.stamp").exists():
-        raise GateFailure(
-            f"probe: arm {arm}: the {key} server never answered tools/list, so the arm "
-            "describes nothing.",
             APPARATUS_FAILURE,
         )
 

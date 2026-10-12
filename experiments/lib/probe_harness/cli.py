@@ -16,7 +16,6 @@ import sys
 from pathlib import Path
 
 from probe_harness import families, record, run_all, status
-from probe_harness.gates import claude_otel  # noqa: F401 - imported so it fails early
 
 # `experiments/` is the directory above `lib/`, which holds this package.
 _DEFAULT_EXPERIMENTS_DIR = Path(__file__).resolve().parents[2]
