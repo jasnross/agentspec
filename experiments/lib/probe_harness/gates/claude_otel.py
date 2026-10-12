@@ -17,20 +17,18 @@ each arm against the requests nothing governed in the same run.
 """
 
 import json
-import re
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
 from probe_harness import jq_cli
 from probe_harness.gates import GateFailure
+from probe_harness.gates import jq_semantics as jq
 from probe_harness.workspace import jq_tostring, parse_json_values
 
 DEFERRED_LISTING = "The following deferred tools are now available via ToolSearch"
 
-# What evaluating a gate can raise: a jq type error's equivalents, a malformed file, an
-# unreadable one, or a document nested past Python's recursion limit.
-_EVALUATION_ERRORS = (KeyError, IndexError, TypeError, ValueError, OSError, RecursionError)
+_EVALUATION_ERRORS = jq.EVALUATION_ERRORS
 
 
 def assemble_view(ws: Path, out: Path, arms: Sequence[str]) -> None:
@@ -60,7 +58,9 @@ def marker(view: Path, marker: str, field: str = ".system") -> None:
     """
     try:
         v = _load(view)
-        ok = all(any(_governed_wrapped(r, field, marker) for r in _each(arm)) for arm in _each(v))
+        ok = all(
+            any(_governed_wrapped(r, field, marker) for r in jq.each(arm)) for arm in jq.each(v)
+        )
     except _EVALUATION_ERRORS:
         ok = False
     if not ok:
@@ -80,13 +80,13 @@ def control(view: Path, marker: str, field: str = ".system") -> None:
     try:
         v = _load(view)
         efforts = [
-            _index(_index(r, "output_config"), "effort")
-            for arm in _each(v)
-            for r in _each(arm)
+            jq.index(jq.index(r, "output_config"), "effort")
+            for arm in jq.each(v)
+            for r in jq.each(arm)
             if not _governed_wrapped(r, field, marker)
-            and _has(_index(r, "output_config"), "effort")
+            and jq.has(jq.index(r, "output_config"), "effort")
         ]
-        ok = len(efforts) > 0 and len(_unique(efforts)) == 1
+        ok = len(efforts) > 0 and len(jq.unique(efforts)) == 1
     except _EVALUATION_ERRORS:
         ok = False
     if not ok:
@@ -105,10 +105,12 @@ def deferred_mcp(view: Path, marker: str, arm: str, tools: Sequence[str]) -> Non
     """
     try:
         v = _load(view)
-        governed = [r for r in _each(_index(v, arm)) if marker in jq_tostring(_index(r, "system"))]
-        deferred = _unique([line for r in governed for line in _deferred_lines(r)])
-        ok = _subtract(tools, deferred) == [] and any(
-            any(_index(t, "name") == "ToolSearch" for t in _each_opt(_index(r, "tools")))
+        governed = [
+            r for r in jq.each(jq.index(v, arm)) if marker in jq_tostring(jq.index(r, "system"))
+        ]
+        deferred = jq.unique([line for r in governed for line in _deferred_lines(r)])
+        ok = jq.subtract(tools, deferred) == [] and any(
+            any(jq.index(t, "name") == "ToolSearch" for t in jq.each_opt(jq.index(r, "tools")))
             for r in governed
         )
     except _EVALUATION_ERRORS:
@@ -123,12 +125,12 @@ def deferred_mcp(view: Path, marker: str, arm: str, tools: Sequence[str]) -> Non
     try:
         v = _load(view)
         direct = [
-            _index(t, "name")
-            for r in _each(_index(v, arm))
-            if marker in jq_tostring(_index(r, "system"))
-            for t in _each_opt(_index(r, "tools"))
+            jq.index(t, "name")
+            for r in jq.each(jq.index(v, arm))
+            if marker in jq_tostring(jq.index(r, "system"))
+            for t in jq.each_opt(jq.index(r, "tools"))
         ]
-        if _subtract(tools, direct) == []:
+        if jq.subtract(tools, direct) == []:
             lines.append(
                 "probe: they sit in tools[] instead: tool search was not enabled for this "
                 "subagent — off for this run's model, or Claude Code changed when it defers "
@@ -153,11 +155,11 @@ def model(view: Path, marker: str, model: str) -> None:
         v = _load(view)
         ok = all(
             all(
-                _index(r, "model") == model
-                for r in _each(arm)
-                if marker in jq_tostring(_index(r, "system"))
+                jq.index(r, "model") == model
+                for r in jq.each(arm)
+                if marker in jq_tostring(jq.index(r, "system"))
             )
-            for arm in _each(v)
+            for arm in jq.each(v)
         )
     except _EVALUATION_ERRORS:
         ok = False
@@ -168,10 +170,10 @@ def model(view: Path, marker: str, model: str) -> None:
     try:
         v = _load(view)
         lines += [
-            f"probe:   arm {name}: {jq_tostring(_index(r, 'model'))}"
-            for name, requests in _entries(v)
-            for r in _each(requests)
-            if marker in jq_tostring(_index(r, "system")) and _index(r, "model") != model
+            f"probe:   arm {name}: {jq_tostring(jq.index(r, 'model'))}"
+            for name, requests in jq.entries(v)
+            for r in jq.each(requests)
+            if marker in jq_tostring(jq.index(r, "system")) and jq.index(r, "model") != model
         ]
     except _EVALUATION_ERRORS:
         pass
@@ -192,9 +194,9 @@ def mcp_connected(view: Path, marker: str, tools: Sequence[str]) -> None:
     try:
         v = _load(view)
         ok = True
-        for arm in _each(v):
+        for arm in jq.each(v):
             main = _main_thread(arm, marker)
-            if not (main and all(_subtract(tools, _listed(r)) == [] for r in main)):
+            if not (main and all(jq.subtract(tools, _listed(r)) == [] for r in main)):
                 ok = False
                 break
     except _EVALUATION_ERRORS:
@@ -210,7 +212,7 @@ def mcp_connected(view: Path, marker: str, tools: Sequence[str]) -> None:
         v = _load(view)
         lines += [
             f"probe:   arm {name}: no ungoverned request offered Agent"
-            for name, requests in _entries(v)
+            for name, requests in jq.entries(v)
             if not _main_thread(requests, marker)
         ]
     except _EVALUATION_ERRORS:
@@ -232,11 +234,11 @@ def mcp_absent(view: Path, marker: str, prefix: str) -> None:
         v = _load(view)
         ok = all(
             all(
-                not _startswith(name, prefix)
+                not jq.startswith(name, prefix)
                 for r in _main_thread(arm, marker)
                 for name in _listed(r)
             )
-            for arm in _each(v)
+            for arm in jq.each(v)
         )
     except _EVALUATION_ERRORS:
         ok = False
@@ -246,14 +248,14 @@ def mcp_absent(view: Path, marker: str, prefix: str) -> None:
     lines = [f"probe: a main-thread request listed a tool starting with {prefix}:"]
     try:
         v = _load(view)
-        for name, requests in _entries(v):
+        for name, requests in jq.entries(v):
             found = [
                 n
                 for r in _main_thread(requests, marker)
                 for n in _listed(r)
-                if _startswith(n, prefix)
+                if jq.startswith(n, prefix)
             ]
-            lines += [f"probe:   arm {name}: {jq_tostring(n)}" for n in _unique(found)]
+            lines += [f"probe:   arm {name}: {jq_tostring(n)}" for n in jq.unique(found)]
     except _EVALUATION_ERRORS:
         pass
     lines.append(
@@ -277,17 +279,18 @@ def delegation_background(ws: Path, arm: str, expected: bool) -> None:
     try:
         responses, requests = _concatenated(response_files), _concatenated(request_files)
         calls = [
-            (_index(c, "id"), _index(_index(c, "input"), "run_in_background"))
+            (jq.index(c, "id"), jq.index(jq.index(c, "input"), "run_in_background"))
             for c in _tool_uses(responses)
-            if _index(c, "name") == "Agent"
+            if jq.index(c, "name") == "Agent"
         ]
         results = _tool_results(requests, guard_messages=False)
         ok = (
             len(calls) > 0
-            and all(_jq_eq(mode, want) for _, mode in calls)
+            and all(jq.equal(mode, want) for _, mode in calls)
             and all(
                 any(
-                    _jq_eq(rid, cid) and _jq_eq(asynchronous, want) for rid, asynchronous in results
+                    jq.equal(rid, cid) and jq.equal(asynchronous, want)
+                    for rid, asynchronous in results
                 )
                 for cid, _ in calls
             )
@@ -309,11 +312,11 @@ def tool_answered(ws: Path, arm: str, tool: str) -> None:
     response_files, request_files = _sink_files(ws, arm, "call")
     try:
         responses, requests = _concatenated(response_files), _concatenated(request_files)
-        ids = [_index(c, "id") for c in _tool_uses(responses) if _index(c, "name") == tool]
+        ids = [jq.index(c, "id") for c in _tool_uses(responses) if jq.index(c, "name") == tool]
         ok = len(ids) > 0 and any(
-            _type(block) == "object"
-            and _index(block, "type") == "tool_result"
-            and any(_jq_eq(i, _index(block, "tool_use_id")) for i in ids)
+            jq.type_of(block) == "object"
+            and jq.index(block, "type") == "tool_result"
+            and any(jq.equal(i, jq.index(block, "tool_use_id")) for i in ids)
             for block in _user_content_blocks(requests, guard_messages=False)
         )
     except _EVALUATION_ERRORS:
@@ -337,15 +340,15 @@ def delegation_fork(ws: Path, arm: str) -> None:
     try:
         responses, requests = _concatenated(response_files), _concatenated(request_files)
         schemas = [
-            _has(
-                _alternative(_try_index(_index(t, "input_schema"), "properties"), {}),
+            jq.has(
+                jq.alternative(jq.try_index(jq.index(t, "input_schema"), "properties"), {}),
                 "run_in_background",
             )
             for r in requests
-            for t in _each_opt(_index(r, "tools"))
-            if _type(t) == "object" and _index(t, "name") == "Agent"
+            for t in jq.each_opt(jq.index(r, "tools"))
+            if jq.type_of(t) == "object" and jq.index(t, "name") == "Agent"
         ]
-        calls = [_index(c, "id") for c in _tool_uses(responses) if _index(c, "name") == "Agent"]
+        calls = [jq.index(c, "id") for c in _tool_uses(responses) if jq.index(c, "name") == "Agent"]
         results = _tool_results(requests, guard_messages=True)
         if not schemas:
             failed = (
@@ -358,7 +361,7 @@ def delegation_fork(ws: Path, arm: str) -> None:
         elif not calls:
             failed = "made no Agent call"
         elif any(
-            not any(_jq_eq(rid, c) and asynchronous is True for rid, asynchronous in results)
+            not any(jq.equal(rid, c) and asynchronous is True for rid, asynchronous in results)
             for c in calls
         ):
             failed = (
@@ -403,20 +406,20 @@ def _concatenated(paths: Sequence[Path]) -> list[Any]:
 def _tool_uses(responses: Sequence[Any]) -> Iterator[Any]:
     """`$res[] | .content[]? | select(type == "object" and .type == "tool_use")`."""
     for response in responses:
-        for block in _each_opt(_index(response, "content")):
-            if _type(block) == "object" and _index(block, "type") == "tool_use":
+        for block in jq.each_opt(jq.index(response, "content")):
+            if jq.type_of(block) == "object" and jq.index(block, "type") == "tool_use":
                 yield block
 
 
 def _user_content_blocks(requests: Sequence[Any], *, guard_messages: bool) -> Iterator[Any]:
     """`$req[] | .messages[]? | select(… .role == "user") | .content | if array then .[]`."""
     for request in requests:
-        for message in _each_opt(_index(request, "messages")):
-            if guard_messages and _type(message) != "object":
+        for message in jq.each_opt(jq.index(request, "messages")):
+            if guard_messages and jq.type_of(message) != "object":
                 continue
-            if _index(message, "role") != "user":
+            if jq.index(message, "role") != "user":
                 continue
-            content = _index(message, "content")
+            content = jq.index(message, "content")
             if isinstance(content, list):
                 yield from content
 
@@ -425,16 +428,18 @@ def _tool_results(requests: Sequence[Any], *, guard_messages: bool) -> list[tupl
     """Each `tool_result`'s id, and whether its text opens "Async agent launched"."""
     results = []
     for block in _user_content_blocks(requests, guard_messages=guard_messages):
-        if _type(block) == "object" and _index(block, "type") == "tool_result":
-            text = _join(
+        if jq.type_of(block) == "object" and jq.index(block, "type") == "tool_result":
+            text = jq.join(
                 [
-                    _alternative(_index(item, "text"), "")
-                    if _type(item) == "object"
+                    jq.alternative(jq.index(item, "text"), "")
+                    if jq.type_of(item) == "object"
                     else jq_tostring(item)
-                    for item in _flatten([_index(block, "content")])
+                    for item in jq.flatten([jq.index(block, "content")])
                 ]
             )
-            results.append((_index(block, "tool_use_id"), text.startswith("Async agent launched")))
+            results.append(
+                (jq.index(block, "tool_use_id"), text.startswith("Async agent launched"))
+            )
     return results
 
 
@@ -442,21 +447,21 @@ def _main_thread(requests: Any, marker: str) -> list[Any]:
     """The ungoverned requests that offer `Agent`: the requests that can delegate."""
     return [
         r
-        for r in _each(requests)
-        if marker not in jq_tostring(_index(r, "system"))
-        and any(_index(t, "name") == "Agent" for t in _each_opt(_index(r, "tools")))
+        for r in jq.each(requests)
+        if marker not in jq_tostring(jq.index(r, "system"))
+        and any(jq.index(t, "name") == "Agent" for t in jq.each_opt(jq.index(r, "tools")))
     ]
 
 
 def _listed(request: Any) -> list[Any]:
     """jq's `listed`: the request's direct tool names, then its deferred-listing lines."""
-    direct = [_index(t, "name") for t in _each_opt(_index(request, "tools"))]
+    direct = [jq.index(t, "name") for t in jq.each_opt(jq.index(request, "tools"))]
     return direct + _deferred_lines(request)
 
 
 def _deferred_lines(value: Any) -> list[str]:
     """`.. | strings | select(contains(<listing>)) | split("\\n")[]`."""
-    return [line for s in _strings(value) if DEFERRED_LISTING in s for line in s.split("\n")]
+    return [line for s in jq.strings(value) if DEFERRED_LISTING in s for line in s.split("\n")]
 
 
 def _governed_wrapped(request: Any, field: str, marker: str) -> bool:
@@ -466,163 +471,4 @@ def _governed_wrapped(request: Any, field: str, marker: str) -> bool:
     it a governed request would be judged once per output, and gate 3 would admit it to
     the control set through whichever outputs lack the marker.
     """
-    return marker in jq_tostring(_path_outputs(request, field))
-
-
-_PATH_STEP = re.compile(r"\.([A-Za-z_][A-Za-z0-9_]*)|\[\]")
-
-
-def _path_outputs(value: Any, path: str) -> list[Any]:
-    """The outputs of a jq path built from `.key` and `[]` steps, such as `.messages[].text`."""
-    outputs = [value]
-    position = 0
-    while position < len(path):
-        step = _PATH_STEP.match(path, position)
-        if step is None:
-            raise ValueError(f"unsupported field path: {path}")
-        key = step.group(1)
-        if key is not None:
-            outputs = [_index(o, key) for o in outputs]
-        else:
-            outputs = [item for o in outputs for item in _each(o)]
-        position = step.end()
-    return outputs
-
-
-def _entries(value: Any) -> list[tuple[str, Any]]:
-    """`to_entries[]` over an object, in key order."""
-    if not isinstance(value, dict):
-        raise TypeError("to_entries needs an object")
-    return list(value.items())
-
-
-def _index(value: Any, key: str) -> Any:
-    """`.key`: `null` through `null`, a member of an object, an error otherwise."""
-    if value is None:
-        return None
-    if isinstance(value, dict):
-        return value.get(key)
-    raise TypeError(f"cannot index {_type(value)} with {key!r}")
-
-
-def _try_index(value: Any, key: str) -> Any:
-    """`.key?`: as `_index`, but an error yields nothing, which `//` then replaces."""
-    try:
-        return _index(value, key)
-    except TypeError:
-        return None
-
-
-def _each(value: Any) -> list[Any]:
-    """`.[]`: an array's elements or an object's values; an error otherwise."""
-    if isinstance(value, list):
-        return value
-    if isinstance(value, dict):
-        return list(value.values())
-    raise TypeError(f"cannot iterate over {_type(value)}")
-
-
-def _each_opt(value: Any) -> list[Any]:
-    """`.[]?`: as `_each`, but nothing where iteration would fail."""
-    try:
-        return _each(value)
-    except TypeError:
-        return []
-
-
-def _has(value: Any, key: str) -> bool:
-    if isinstance(value, dict):
-        return key in value
-    raise TypeError(f"cannot check whether {_type(value)} has a key")
-
-
-def _alternative(value: Any, default: Any) -> Any:
-    return default if value is None or value is False else value
-
-
-def _startswith(value: Any, prefix: str) -> bool:
-    if not isinstance(value, str):
-        raise TypeError("startswith() requires string inputs")
-    return value.startswith(prefix)
-
-
-def _strings(value: Any) -> Iterator[str]:
-    """`.. | strings`: every string value, recursively, in pre-order. Keys are not values."""
-    if isinstance(value, str):
-        yield value
-    elif isinstance(value, list):
-        for item in value:
-            yield from _strings(item)
-    elif isinstance(value, dict):
-        for item in value.values():
-            yield from _strings(item)
-
-
-def _flatten(values: list[Any]) -> list[Any]:
-    out: list[Any] = []
-    for value in values:
-        if isinstance(value, list):
-            out.extend(_flatten(value))
-        else:
-            out.append(value)
-    return out
-
-
-def _join(items: list[Any]) -> str:
-    """`join("")`: `null` contributes nothing, scalars their JSON text; containers fail."""
-    parts = []
-    for item in items:
-        if item is None:
-            continue
-        if isinstance(item, str):
-            parts.append(item)
-        elif isinstance(item, list | dict):
-            raise TypeError("cannot join a container")
-        else:
-            parts.append(jq_tostring(item))
-    return "".join(parts)
-
-
-def _subtract(left: Sequence[Any], right: Sequence[Any]) -> list[Any]:
-    """Array subtraction: every element of <left> equal to none of <right>."""
-    return [a for a in left if not any(_jq_eq(a, b) for b in right)]
-
-
-def _unique(values: Sequence[Any]) -> list[Any]:
-    """`unique`, by jq's structural equality. Order is irrelevant to every caller but one,
-    which sorts strings, where jq's order is codepoint order."""
-    out: list[Any] = []
-    for value in values:
-        if not any(_jq_eq(value, seen) for seen in out):
-            out.append(value)
-    if all(isinstance(v, str) for v in out):
-        out.sort()
-    return out
-
-
-def _type(value: Any) -> str:
-    if value is None:
-        return "null"
-    if isinstance(value, bool):
-        return "boolean"
-    if isinstance(value, int | float):
-        return "number"
-    if isinstance(value, str):
-        return "string"
-    if isinstance(value, list):
-        return "array"
-    if isinstance(value, dict):
-        return "object"
-    raise ValueError("not a JSON value")
-
-
-def _jq_eq(a: Any, b: Any) -> bool:
-    """jq's `==`: structural, with booleans never equal to numbers."""
-    kind = _type(a)
-    if kind != _type(b):
-        return False
-    if kind == "array":
-        return len(a) == len(b) and all(_jq_eq(x, y) for x, y in zip(a, b, strict=True))
-    if kind == "object":
-        return a.keys() == b.keys() and all(_jq_eq(a[k], b[k]) for k in a)
-    return bool(a == b)
+    return marker in jq_tostring(jq.path_outputs(request, field))

@@ -27,11 +27,11 @@ Each arm runs `opencode run --agent <agent> -m fake/m "hi"` in its own project. 
 
 The `deny_all` map is the one agentspec's OpenCode adapter emits for a spec declaring `tools: []`.
 
-Every arm also connects `fx`, a local MCP stdio server (`fixtures/fx_server.py`) offering two tools, `alpha` and `beta`, which OpenCode names `fx_alpha` and `fx_beta`. Two tools are what lets "every tool of the server" be told apart from "one tool of it".
+Every arm also connects `fx`, a local MCP stdio server (`experiments/lib/stubs/fx_server.py`, shared by every probe that needs one) offering two tools, `alpha` and `beta`, which OpenCode names `fx_alpha` and `fx_beta`. Two tools are what lets "every tool of the server" be told apart from "one tool of it".
 
 ## The oracle
 
-`fixtures/fake_provider.py` is an OpenAI-compatible chat endpoint on `127.0.0.1`. The project's `opencode.json` declares it as a provider through `@ai-sdk/openai-compatible`, which is built into the OpenCode binary, and the fake writes every request body it receives to the arm's `sink/` directory. The tool names read from those bodies — `tools[].function.name` — are what OpenCode actually offered the model.
+`experiments/lib/stubs/fake_provider.py`, shared by every fake-provider probe, is an OpenAI-compatible chat endpoint on `127.0.0.1`. The project's `opencode.json` declares it as a provider through `@ai-sdk/openai-compatible`, which is built into the OpenCode binary, and the fake writes every request body it receives to the arm's `sink/` directory. The tool names read from those bodies — `tools[].function.name` — are what OpenCode actually offered the model.
 
 The projection reads only requests whose `role: "system"` message carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-OCMCPU1`, and keeps only the names that start with `fx_`. OpenCode also sends a title-generation request per run, with its own system prompt and `tools: []`; the marker keeps it out. Built-in tools are left out of the value because their set varies by OpenCode version, and the question is about the server's tools.
 

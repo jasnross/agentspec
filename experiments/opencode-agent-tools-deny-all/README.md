@@ -9,8 +9,8 @@
 ## Running it
 
 ```sh
-experiments/opencode-agent-tools-deny-all/probe.sh
-PROBE_DRY_RUN=1 experiments/opencode-agent-tools-deny-all/probe.sh   # evaluate without recording
+experiments/probe run opencode-agent-tools-deny-all
+PROBE_DRY_RUN=1 experiments/probe run opencode-agent-tools-deny-all   # evaluate without recording
 ```
 
 ## The arms
@@ -23,11 +23,11 @@ Each arm runs `opencode run --agent <agent> -m fake/m "hi"` in its own project. 
 | `allow_one` | `probe-allow-one` | `"*": false`, then `fx_alpha: true` |
 | `reversed`  | `probe-reversed`  | `fx_alpha: true`, then `"*": false` |
 
-Every arm also connects `fx`, a local MCP stdio server (`fixtures/fx_server.py`) offering two tools, `alpha` and `beta`, which OpenCode names `fx_alpha` and `fx_beta`. Two tools are what lets "only the granted tool is visible" be told apart from "every tool is visible".
+Every arm also connects `fx`, a local MCP stdio server (`experiments/lib/stubs/fx_server.py`, shared by every probe that needs one) offering two tools, `alpha` and `beta`, which OpenCode names `fx_alpha` and `fx_beta`. Two tools are what lets "only the granted tool is visible" be told apart from "every tool is visible".
 
 ## The oracle
 
-`fixtures/fake_provider.py` is an OpenAI-compatible chat endpoint on `127.0.0.1`. The project's `opencode.json` declares it as a provider through `@ai-sdk/openai-compatible`, which is built into the OpenCode binary, and the fake writes every request body it receives to the arm's `sink/` directory. The tool list read from those bodies — `tools[].function.name` — is the set OpenCode actually offered the model.
+`experiments/lib/stubs/fake_provider.py`, shared by every fake-provider probe, is an OpenAI-compatible chat endpoint on `127.0.0.1`. The project's `opencode.json` declares it as a provider through `@ai-sdk/openai-compatible`, which is built into the OpenCode binary, and the fake writes every request body it receives to the arm's `sink/` directory. The tool list read from those bodies — `tools[].function.name` — is the set OpenCode actually offered the model.
 
 That is what makes this `outbound-request` evidence. `opencode debug agent` stops at the resolved agent config, and `TODO.md` #14 shows OpenCode's resolved tool map and the keys it honors diverge, so a resolved map is weak evidence about what the model is offered.
 

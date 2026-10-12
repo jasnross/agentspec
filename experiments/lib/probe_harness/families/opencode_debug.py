@@ -21,7 +21,9 @@ from probe_harness.families.base import (
     JudgeResult,
     ProbeFunctions,
     RunOptions,
+    file_lines,
     kept_on_failure,
+    provider_env,
     record_and_retain,
     refused,
     run_custom_checks,
@@ -56,10 +58,10 @@ def run(package: Path, name: str, options: RunOptions, probe: OpenCodeDebugProbe
 def judge(ws: Path, probe: OpenCodeDebugProbe) -> JudgeResult:
     """Judge a workspace from the files the oracle left: its output and its stderr."""
     view = ws / "view.json"
-    stderr = _read(ws / "oracle.stderr")
     if not view.is_file() or view.stat().st_size == 0:
         raise GateFailure(
-            "probe: the oracle produced no output; its stderr follows:", *_lines(stderr)
+            "probe: the oracle produced no output; its stderr follows:",
+            *file_lines(ws / "oracle.stderr"),
         )
     # Named here rather than left to the recorder, which would report "projection failed"
     # and send the reader after an expression that is correct.
@@ -94,24 +96,10 @@ def _arrange_and_act(package: Path, ws: Path, variant: str, probe: OpenCodeDebug
         completed = subprocess.run(
             ["opencode", "debug", *probe.argv],
             cwd=cwd,
-            env=env,
+            env=provider_env(cwd, env),
             stdout=out,
             stderr=err,
             check=False,
         )
     if completed.returncode != 0:
-        raise GateFailure(
-            f'probe: "{command}" exited nonzero:', *_lines(_read(ws / "oracle.stderr"))
-        )
-
-
-def _read(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return ""
-
-
-def _lines(text: str) -> tuple[str, ...]:
-    """<text> as printed lines, as `cat` would print it; nothing at all when it is empty."""
-    return tuple(text.rstrip("\n").split("\n")) if text else ()
+        raise GateFailure(f'probe: "{command}" exited nonzero:', *file_lines(ws / "oracle.stderr"))

@@ -11,6 +11,7 @@ work starts, and never after a manual operator has spent a live session.
 """
 
 import os
+import signal
 import sys
 from pathlib import Path
 
@@ -22,6 +23,9 @@ _DEFAULT_EXPERIMENTS_DIR = Path(__file__).resolve().parents[2]
 
 
 def main(argv: list[str]) -> int:
+    # A terminated run unwinds like any other failure, so every `finally` runs: no stub
+    # server outlives it, and a kept workspace is still named.
+    signal.signal(signal.SIGTERM, _terminated)
     if not argv:
         print("probe: usage: probe <run|record|status|replay> …", file=sys.stderr)
         return 2
@@ -40,6 +44,10 @@ def main(argv: list[str]) -> int:
         case _:
             print(f"probe: unknown subcommand: {command}", file=sys.stderr)
             return 2
+
+
+def _terminated(signum: int, frame: object) -> None:
+    raise SystemExit(128 + signum)
 
 
 def experiments_dir() -> Path:

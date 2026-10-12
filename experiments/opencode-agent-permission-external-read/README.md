@@ -9,8 +9,8 @@
 ## Running it
 
 ```sh
-experiments/opencode-agent-permission-external-read/probe.sh
-PROBE_DRY_RUN=1 experiments/opencode-agent-permission-external-read/probe.sh   # evaluate without recording
+experiments/probe run opencode-agent-permission-external-read
+PROBE_DRY_RUN=1 experiments/probe run opencode-agent-permission-external-read   # evaluate without recording
 ```
 
 ## The arms
@@ -26,7 +26,7 @@ Each arm writes `<arm>/outside/target.txt`, containing `AGENTSPEC-OUTSIDE-CONTEN
 
 ## The scripted call
 
-`fixtures/fake_provider.py` is an OpenAI-compatible chat endpoint on `127.0.0.1`, declared in the project's `opencode.json` through `@ai-sdk/openai-compatible`. It writes every request body to the arm's `sink/` directory. Unlike the fake in `experiments/opencode-agent-permission-deny-all/`, it does not only answer `ok`: a request whose system message carries the marker and which holds no `role: "tool"` message gets one streamed `read` tool call, with `filePath` set to the arm's target. Every other request — the follow-up, and OpenCode's title generation — gets `ok`.
+`experiments/lib/stubs/fake_provider.py`, shared by every fake-provider probe, is an OpenAI-compatible chat endpoint on `127.0.0.1`, declared in the project's `opencode.json` through `@ai-sdk/openai-compatible`. It writes every request body to the arm's `sink/` directory. Unlike the plain stub other packages run, this package's invocation of it does not only answer `ok`: a request whose system message carries the marker and which holds no `role: "tool"` message gets one streamed `read` tool call, with `filePath` set to the arm's target. Every other request — the follow-up, and OpenCode's title generation — gets `ok`.
 
 The call is scripted because the question is what OpenCode does when the agent reads outside the project, and a model that never calls a tool never makes OpenCode check a permission. The fake's reply is not the oracle; what OpenCode sends back is.
 

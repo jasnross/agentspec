@@ -40,11 +40,11 @@ The two agents differ only in `read`:
 
 The three `plain_*` arms are comparison arms, not a control: they are cells of the assertion like any other. They run a plain `read: allow` behind the same deny-all, and each pairs with a `map_*` arm making the same call. A rule denial reads the same whichever rule matched — OpenCode lists every rule for the `read` permission, the top-level `"*": deny` included — so only the pairing shows the `mcp:*` deny, rather than the deny-all, is what refused a call.
 
-Every arm connects `fx`, a local MCP stdio server (`fixtures/fx_server.py`) that advertises the `resources` capability and serves one resource (`fx://AGENTSPEC-RESOURCE-OCRES3`) and one template. A successful read returns `AGENTSPEC-RESOURCE-CONTENT-OCRES3`. `fixtures/project/notes.txt` holds `AGENTSPEC-FILE-CONTENT-OCRES3`.
+Every arm connects `fx`, a local MCP stdio server (`experiments/lib/stubs/fx_server.py`, shared by every probe that needs one) that advertises the `resources` capability and serves one resource (`fx://AGENTSPEC-RESOURCE-OCRES3`) and one template. A successful read returns `AGENTSPEC-RESOURCE-CONTENT-OCRES3`. `fixtures/project/notes.txt` holds `AGENTSPEC-FILE-CONTENT-OCRES3`.
 
 ## The oracle
 
-`fixtures/fake_provider.py` is an OpenAI-compatible chat endpoint on `127.0.0.1`, declared in the project's `opencode.json` through `@ai-sdk/openai-compatible`. It writes every request body it receives to the arm's `sink/` directory. A request carrying the marker and no tool result is answered with the arm's scripted call; every other request is answered "ok". The call is scripted because the question is what OpenCode does with a call, and a fake that only answers "ok" never makes OpenCode run a tool.
+`experiments/lib/stubs/fake_provider.py`, shared by every fake-provider probe, is an OpenAI-compatible chat endpoint on `127.0.0.1`, declared in the project's `opencode.json` through `@ai-sdk/openai-compatible`. It writes every request body it receives to the arm's `sink/` directory. A request carrying the marker and no tool result is answered with the arm's scripted call; every other request is answered "ok". The call is scripted because the question is what OpenCode does with a call, and a fake that only answers "ok" never makes OpenCode run a tool.
 
 Two things are read from the marked requests, those whose `role: "system"` message carries `AGENTSPEC-PROBE-MARKER-OCRES3`:
 

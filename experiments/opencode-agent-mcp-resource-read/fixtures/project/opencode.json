@@ -22,7 +22,14 @@
   "mcp": {
     "fx": {
       "type": "local",
-      "command": ["python3", "{{FX_SERVER}}", "{{FX_STAMP}}"]
+      "command": [
+        "{{PYTHON}}",
+        "{{FX_SERVER}}",
+        "--stamp",
+        "{{FX_STAMP}}",
+        "--resources",
+        "OCRES3"
+      ]
     }
   }
 }

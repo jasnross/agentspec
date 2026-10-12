@@ -17,7 +17,7 @@ from probe_harness.contract import (
     OptionsAssertion,
     parse_manifest,
 )
-from probe_harness.families import manual, opencode_debug
+from probe_harness.families import manual, opencode_debug, opencode_fake
 from probe_harness.families.base import (
     CustomProbe,
     GateFailure,
@@ -29,15 +29,21 @@ from probe_harness.families.base import (
 )
 from probe_harness.families.manual import ManualProbe
 from probe_harness.families.opencode_debug import OpenCodeDebugProbe
+from probe_harness.families.opencode_fake import OpenCodeFakeProbe
 from probe_harness.loader import DefinitionError, load_definition
 from probe_harness.preflight import ASSERTION_VARIANT, PreflightError, check_manifest
 from probe_harness.preflight import run as run_preflight
 from probe_harness.record import record
 from probe_harness.workspace import create_workspace
 
-type ProbeDefinition = ManualProbe | OpenCodeDebugProbe | CustomProbe
+type ProbeDefinition = ManualProbe | OpenCodeDebugProbe | OpenCodeFakeProbe | CustomProbe
 
-DEFINITION_TYPES: tuple[type, ...] = (ManualProbe, OpenCodeDebugProbe, CustomProbe)
+DEFINITION_TYPES: tuple[type, ...] = (
+    ManualProbe,
+    OpenCodeDebugProbe,
+    OpenCodeFakeProbe,
+    CustomProbe,
+)
 
 REPLAY_USAGE = "probe replay: usage: probe replay <package> <workspace> [--selection <id>]"
 
@@ -81,6 +87,8 @@ def run_package(name: str, extra: list[str], experiments_dir: Path) -> int:
             return manual.run(package, name, wait_for, options, definition)
         case OpenCodeDebugProbe():
             return opencode_debug.run(package, name, options, definition)
+        case OpenCodeFakeProbe():
+            return opencode_fake.run(package, name, options, definition)
         case CustomProbe():
             return _run_custom(package, name, options, definition)
         case _:
@@ -144,6 +152,9 @@ def replay_package(argv: list[str], experiments_dir: Path) -> int:
             case OpenCodeDebugProbe():
                 result = opencode_debug.judge(ws, definition)
                 return record(manifest.path, view=result.view, dry_run=True)
+            case OpenCodeFakeProbe():
+                result = opencode_fake.judge(ws, definition)
+                return record(manifest.path, view=result.view, dry_run=True)
             case CustomProbe():
                 result = definition.judge(ws)
                 if definition.functions.judge is not None:
@@ -188,7 +199,7 @@ def _definition_refusal(name: str, definition: ProbeDefinition, manifest: Manife
                     f"{ASSERTION_VARIANT}; its definition declares: "
                     f"{', '.join(definition.variants)}"
                 )
-        case OpenCodeDebugProbe() | CustomProbe():
+        case OpenCodeDebugProbe() | OpenCodeFakeProbe() | CustomProbe():
             # These families record without a capture, which these manifests require.
             family = type(definition).__name__
             article = "an" if family[0] in "AEIOU" else "a"
@@ -213,6 +224,8 @@ def _family_tools(definition: ProbeDefinition) -> tuple[str, ...]:
             return manual.FAMILY_TOOLS
         case OpenCodeDebugProbe():
             return opencode_debug.FAMILY_TOOLS
+        case OpenCodeFakeProbe():
+            return opencode_fake.FAMILY_TOOLS
         case CustomProbe():
             return definition.required_tools
         case _:

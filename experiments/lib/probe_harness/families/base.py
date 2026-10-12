@@ -4,9 +4,10 @@ Each run is Preflight → Arrange → Act → Judge → Record. Judge reads only
 `probe replay` can run it on a workspace some earlier run collected.
 """
 
+import os
 import shutil
 import sys
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,8 +24,10 @@ __all__ = [
     "JudgeResult",
     "ProbeFunctions",
     "RunOptions",
+    "file_lines",
     "kept_for_inspection",
     "kept_on_failure",
+    "provider_env",
     "record_and_retain",
     "refused",
     "run_custom_checks",
@@ -81,6 +84,27 @@ def run_custom_checks(checks: Sequence[CustomCheck], view: Path, marker: str | N
     for check in checks:
         if not jq_cli.test(check.expression, view, args=args):
             raise GateFailure(*check.failure)
+
+
+def provider_env(cwd: Path, env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """<env> (or this process's environment) with `PWD` naming <cwd>.
+
+    A shell's `cd` updates `PWD`, but a subprocess started in another directory inherits the
+    caller's. OpenCode reads `PWD` to find its project, so a stale one points it at the
+    wrong directory, where it finds no provider config and fails with an internal error.
+    """
+    child = dict(os.environ if env is None else env)
+    child["PWD"] = str(cwd)
+    return child
+
+
+def file_lines(path: Path) -> tuple[str, ...]:
+    """A file's text as printed lines, as `cat` printed it; nothing for an empty or missing file."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ()
+    return tuple(text.rstrip("\n").split("\n")) if text else ()
 
 
 def kept_for_inspection(ws: Path) -> None:

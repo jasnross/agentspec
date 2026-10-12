@@ -25,11 +25,11 @@ Each arm runs `opencode run --agent <agent> -m fake/m "hi"` in its own project. 
 | `baseline` | `probe-baseline` | none |
 | `server_glob` | `probe-server-glob` | `"*": deny`, `fx_*: allow`, `external_directory: ask`, `doom_loop: ask` |
 
-Every arm connects two local MCP stdio servers, both running `fixtures/fx_server.py` with its own stamp. They are configured under the keys `fx` and `fx_extra`, and OpenCode names tools by config key, so they offer `fx_alpha`, `fx_beta`, `fx_extra_alpha`, and `fx_extra_beta`.
+Every arm connects two local MCP stdio servers, both running `experiments/lib/stubs/fx_server.py` with its own stamp. They are configured under the keys `fx` and `fx_extra`, and OpenCode names tools by config key, so they offer `fx_alpha`, `fx_beta`, `fx_extra_alpha`, and `fx_extra_beta`.
 
 ## The oracle
 
-`fixtures/fake_provider.py` is an OpenAI-compatible chat endpoint on `127.0.0.1`. The project's `opencode.json` declares it as a provider through `@ai-sdk/openai-compatible`, which is built into the OpenCode binary, and the fake writes every request body it receives to the arm's `sink/` directory. The tool list read from those bodies — `tools[].function.name` — is the set OpenCode actually offered the model.
+`experiments/lib/stubs/fake_provider.py`, shared by every fake-provider probe, is an OpenAI-compatible chat endpoint on `127.0.0.1`. The project's `opencode.json` declares it as a provider through `@ai-sdk/openai-compatible`, which is built into the OpenCode binary, and the fake writes every request body it receives to the arm's `sink/` directory. The tool list read from those bodies — `tools[].function.name` — is the set OpenCode actually offered the model.
 
 The projection reads only requests whose `role: "system"` message carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-OCGLOB2`, and keeps the full sorted tool list, so a built-in the glob unexpectedly let through would show. OpenCode also sends a title-generation request per run, with its own system prompt and `tools: []`; the marker keeps it out.
 
