@@ -27,6 +27,7 @@ from probe_harness.families.base import (
     RunOptions,
     kept_for_inspection,
     kept_on_failure,
+    refused,
 )
 from probe_harness.record import record
 from probe_harness.workspace import (
@@ -66,10 +67,7 @@ def run(package: Path, name: str, wait_for: str, options: RunOptions, probe: Man
                 try:
                     probe.functions.judge(ws)
                 except GateFailure as e:
-                    for line in e.lines:
-                        print(line, file=sys.stderr)
-                    kept_for_inspection(ws)
-                    return 1
+                    return refused(e, ws)
             code = record_capture(package, ws, dry_run=options.dry_run)
             if code != 0:
                 kept_for_inspection(ws)

@@ -11,10 +11,16 @@ This is the harness's first negative finding — the first probe whose **confirm
 ## Running it
 
 ```sh
-experiments/opencode-skill-frontmatter-discard/probe.sh
+experiments/probe run opencode-skill-frontmatter-discard
 ```
 
-It materializes `fixtures/assertion/` into a throwaway workspace, runs the oracle from inside it, and hands the raw output to `experiments/lib/record.sh`, which writes a record under `results/`.
+It materializes `fixtures/assertion/` into a throwaway workspace, runs the oracle from inside it, and hands the raw output to the recorder, which writes a record under `results/`.
+
+The discriminator arm runs the same way, as a dry run only; the harness refuses to record it:
+
+```sh
+PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run opencode-skill-frontmatter-discard
+```
 
 ## The assertion discriminates
 
@@ -26,7 +32,7 @@ The assertion is a conjunction and both halves are load-bearing. The **key set**
 | --- | --- | --- |
 | `fixtures/assertion/` | `model` + `variant` + `tools` present | `{"keys":["content","description","location","name"],"description":"agentspec skill-frontmatter discard probe"}` |
 | `fixtures/discriminator/` | none of the three present | `{"keys":["content","description","location","name"],"description":"discriminator arm - no dropped fields present"}` |
-| `fixtures/corroboration/` — the **agent** surface | same three fields | `{"model":{"providerID":"anthropic","modelID":"claude-sonnet-4-5"},"variant":"high","tools":{…,"bash":false,…}}` |
+| corroboration (fixture removed) — the **agent** surface | same three fields | `{"model":{"providerID":"anthropic","modelID":"claude-sonnet-4-5"},"variant":"high","tools":{…,"bash":false,…}}` |
 
 ### Why `keys` alone is not the assertion
 
@@ -49,7 +55,9 @@ The `description` half is what makes the projection track the file under test, a
 
 The corroboration arm carries the **same three fields** on the **agent** surface, where OpenCode reads them into its resolved view. That is what establishes the assertion arm's absent keys are a discard rather than a malformed fixture — the fields are well-formed and read somewhere.
 
-It is deliberately **not** the machine-checked discriminator. `opencode debug agent` emits a single object rather than a list, so this package's skill projection errors on it and `record.sh` hard-fails instead of reporting `refuted`. A hard failure is not a refutation, and the contract's discrimination rule wants a distinct value. The discriminator skill arm supplies that; the agent arm supplies this README's evidence.
+It is deliberately **not** the machine-checked discriminator. `opencode debug agent` emits a single object rather than a list, so this package's skill projection errors on it and the recorder hard-fails instead of reporting `refuted`. A hard failure is not a refutation, and the contract's discrimination rule wants a distinct value. The discriminator skill arm supplies that; the agent arm supplies this README's evidence.
+
+The corroboration observation stands in the table above, measured against opencode 1.18.21. Its fixture was removed: no oracle this package runs can read it, since `opencode debug skill` does not resolve agents and `opencode debug agent` output fails this package's projection. Kept as a runnable fixture variant, it could only ever fail.
 
 ## Limits of this oracle
 
@@ -59,11 +67,11 @@ It is deliberately **not** the machine-checked discriminator. `opencode debug ag
 
 **`location` is deliberately absent from the projection.** It resolves to an absolute path inside a throwaway workspace, so no fixed `expected` could match it. It is still present in the asserted key set, which is where it carries its weight.
 
-**The oracle is enumerating, not name-addressed, so a missing fixture would refute rather than fail.** `opencode debug skill --pure` lists every resolvable skill; it does not take a name. A workspace where the fixture never resolved therefore exits 0 with a valid view of all the _other_ skills, the projection yields `null`, and `record.sh` compares `null` against `expected` and writes `refuted` — the contract's strong "the provider changed" signal, raised by an apparatus failure, into an append-only directory. The runner guards this with a preflight asserting the fixture resolved exactly once, and exits before `record.sh` when it did not. The sibling `opencode-agent-variant` needs no such guard because `opencode debug agent <name>` is name-addressed and exits nonzero on a missing agent.
+**The oracle is enumerating, not name-addressed, so a missing fixture would refute rather than fail.** `opencode debug skill --pure` lists every resolvable skill; it does not take a name. A workspace where the fixture never resolved therefore exits 0 with a valid view of all the _other_ skills, the projection yields `null`, and the recorder compares `null` against `expected` and writes `refuted` — the contract's strong "the provider changed" signal, raised by an apparatus failure, into an append-only directory. The definition guards this with a judge function asserting the fixture resolved exactly once, which refuses the run before anything is recorded when it did not. The sibling `opencode-agent-variant` needs no such guard because `opencode debug agent <name>` is name-addressed and exits nonzero on a missing agent.
 
-This is not hypothetical drift: skills are discovered under both `.opencode/skill/` and `.opencode/skills/`, and which of those OpenCode honors is itself unmeasured (`TODO.md` #16). A change there is exactly what the preflight catches.
+This is not hypothetical drift: skills are discovered under both `.opencode/skill/` and `.opencode/skills/`, and which of those OpenCode honors is itself unmeasured (`TODO.md` #16). A change there is exactly what the judge function catches.
 
-**`opencode debug` truncates its stdout at exactly 65536 bytes when stdout is a pipe.** `opencode debug skill --pure` emits roughly 338 KB, well over that cliff, at which point `jq` reports `Unfinished string at EOF`. The runner redirects to a file rather than piping for this reason; a pipe would silently hand `record.sh` a half-written JSON document.
+**`opencode debug` truncates its stdout at exactly 65536 bytes when stdout is a pipe.** `opencode debug skill --pure` emits roughly 338 KB, well over that cliff, at which point `jq` reports `Unfinished string at EOF`. The debug family redirects the oracle to a file rather than a pipe for this reason; a pipe would silently hand the recorder a half-written JSON document.
 
 ## Related
 

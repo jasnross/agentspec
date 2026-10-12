@@ -9,10 +9,16 @@
 ## Running it
 
 ```sh
-experiments/opencode-agent-variant/probe.sh
+experiments/probe run opencode-agent-variant
 ```
 
-It materializes `fixtures/assertion/` into a throwaway workspace, runs the oracle from inside it, and hands the raw output to `experiments/lib/record.sh`, which writes a record under `results/`.
+It materializes `fixtures/assertion/` into a throwaway workspace, runs the oracle from inside it, and hands the raw output to the recorder, which writes a record under `results/`.
+
+The discriminator arm runs the same way, as a dry run only; the harness refuses to record it:
+
+```sh
+PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run opencode-agent-variant
+```
 
 ## The assertion discriminates
 
@@ -25,7 +31,7 @@ Measured 2026-08-15 against opencode 1.18.18, the two fixture arms project to di
 
 `variant: high` is a non-default value — OpenCode's default is `null`, as the discriminator arm shows — so a match is positive proof rather than a possible reading of the default.
 
-The discriminator arm exists only for this check. It is never recorded; `probe.sh` runs the assertion arm alone.
+The discriminator arm exists only for this check. It is never recorded: a run selecting it must be a dry run.
 
 ## Limits of this oracle
 

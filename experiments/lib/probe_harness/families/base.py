@@ -26,6 +26,7 @@ __all__ = [
     "kept_for_inspection",
     "kept_on_failure",
     "record_and_retain",
+    "refused",
     "run_custom_checks",
 ]
 
@@ -84,6 +85,14 @@ def run_custom_checks(checks: Sequence[CustomCheck], view: Path, marker: str | N
 
 def kept_for_inspection(ws: Path) -> None:
     print(f"probe: the workspace has been kept for inspection: {ws}", file=sys.stderr)
+
+
+def refused(failure: GateFailure, ws: Path) -> int:
+    """Print a gate's lines and the kept-workspace line; a gate failure never records."""
+    for line in failure.lines:
+        print(line, file=sys.stderr)
+    kept_for_inspection(ws)
+    return 1
 
 
 @contextmanager

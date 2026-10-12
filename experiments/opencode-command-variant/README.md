@@ -9,10 +9,16 @@
 ## Running it
 
 ```sh
-experiments/opencode-command-variant/probe.sh
+experiments/probe run opencode-command-variant
 ```
 
-It materializes `fixtures/assertion/` into a throwaway workspace, runs the oracle from inside it, and hands the raw output to `experiments/lib/record.sh`, which writes a record under `results/`.
+It materializes `fixtures/assertion/` into a throwaway workspace, runs the oracle from inside it, and hands the raw output to the recorder, which writes a record under `results/`.
+
+The discriminator arm runs the same way, as a dry run only; the harness refuses to record it:
+
+```sh
+PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run opencode-command-variant
+```
 
 ## The assertion discriminates
 
@@ -37,7 +43,7 @@ Neither package depends on the other and each stands alone; read together they a
 
 `opencode debug config` resolves a command's `model` to the **bare string** `"anthropic/claude-sonnet-4-5"`. `opencode debug agent` resolves an agent's `model` to the **parsed object** `{"providerID":"anthropic","modelID":"claude-sonnet-4-5"}` — see `experiments/opencode-agent-variant/probe.json`.
 
-That is a real provider finding, not a transcription slip in either manifest. Because `record.sh` compares structurally, a projection lifted from one package into the other refutes on the `model` half while the `variant` half agrees, and the diagnostic points at the value rather than at the copy.
+That is a real provider finding, not a transcription slip in either manifest. Because the recorder compares structurally, a projection lifted from one package into the other refutes on the `model` half while the `variant` half agrees, and the diagnostic points at the value rather than at the copy.
 
 ## Limits of this oracle
 
@@ -45,8 +51,8 @@ That is a real provider finding, not a transcription slip in either manifest. Be
 
 **The oracle enumerates the operator's global commands, not only the workspace's.** `--pure` excludes external plugins; it does not exclude global config. The authoring run resolved 29 commands, 28 of them the operator's — so that count is machine-specific and a clean checkout will see a different one. What transfers is that the fixture must be the single match. The projection therefore keys on a name distinctive enough that a collision is implausible.
 
-**The oracle resolves the whole config rather than addressing one command, so a missing fixture would refute rather than fail.** `.command["agentspec-probe-variant"]` on a workspace where the fixture never resolved is `null`, the projection yields `{"model":null,"variant":null}`, and `record.sh` writes `refuted` — the contract's strong "the provider changed" signal, raised by an apparatus failure, into an append-only directory. The runner guards this with a preflight asserting the command resolved, and exits before `record.sh` when it did not.
+**The oracle resolves the whole config rather than addressing one command, so a missing fixture would refute rather than fail.** `.command["agentspec-probe-variant"]` on a workspace where the fixture never resolved is `null`, the projection yields `{"model":null,"variant":null}`, and the recorder writes `refuted` — the contract's strong "the provider changed" signal, raised by an apparatus failure, into an append-only directory. The definition guards this with a judge function asserting the command resolved, which refuses the run before anything is recorded when it did not.
 
 Note that this failure is distinct from the discriminator arm's, which refutes on a **present** command whose `variant` resolved to `null`. Both are `refuted`; only one is a measurement.
 
-**`opencode debug` truncates its stdout at exactly 65536 bytes when stdout is a pipe.** `opencode debug config --pure` emits roughly 458 KB, so it is far over that cliff; the same command piped returns exactly 65536 bytes and `jq` reports `Unfinished string at EOF`. The runner redirects to a file rather than piping for this reason.
+**`opencode debug` truncates its stdout at exactly 65536 bytes when stdout is a pipe.** `opencode debug config --pure` emits roughly 458 KB, so it is far over that cliff; the same command piped returns exactly 65536 bytes and `jq` reports `Unfinished string at EOF`. The debug family redirects the oracle to a file rather than a pipe for this reason.

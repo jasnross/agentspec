@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from typing import assert_never
 
+from probe_harness import jq_cli
 from probe_harness.contract import (
     CaptureSource,
     Driver,
@@ -16,26 +17,27 @@ from probe_harness.contract import (
     OptionsAssertion,
     parse_manifest,
 )
-from probe_harness.families import manual
+from probe_harness.families import manual, opencode_debug
 from probe_harness.families.base import (
     CustomProbe,
     GateFailure,
     JudgeResult,
     RunOptions,
-    kept_for_inspection,
     kept_on_failure,
     record_and_retain,
+    refused,
 )
 from probe_harness.families.manual import ManualProbe
+from probe_harness.families.opencode_debug import OpenCodeDebugProbe
 from probe_harness.loader import DefinitionError, load_definition
 from probe_harness.preflight import ASSERTION_VARIANT, PreflightError, check_manifest
 from probe_harness.preflight import run as run_preflight
 from probe_harness.record import record
 from probe_harness.workspace import create_workspace
 
-type ProbeDefinition = ManualProbe | CustomProbe
+type ProbeDefinition = ManualProbe | OpenCodeDebugProbe | CustomProbe
 
-DEFINITION_TYPES: tuple[type, ...] = (ManualProbe, CustomProbe)
+DEFINITION_TYPES: tuple[type, ...] = (ManualProbe, OpenCodeDebugProbe, CustomProbe)
 
 REPLAY_USAGE = "probe replay: usage: probe replay <package> <workspace> [--selection <id>]"
 
@@ -77,6 +79,8 @@ def run_package(name: str, extra: list[str], experiments_dir: Path) -> int:
                 print("probe: manifest declares no wait_for filter", file=sys.stderr)
                 return 1
             return manual.run(package, name, wait_for, options, definition)
+        case OpenCodeDebugProbe():
+            return opencode_debug.run(package, name, options, definition)
         case CustomProbe():
             return _run_custom(package, name, options, definition)
         case _:
@@ -137,6 +141,9 @@ def replay_package(argv: list[str], experiments_dir: Path) -> int:
                 if definition.functions.judge is not None:
                     definition.functions.judge(ws)
                 return manual.record_capture(package, ws, dry_run=True, selection=selection)
+            case OpenCodeDebugProbe():
+                result = opencode_debug.judge(ws, definition)
+                return record(manifest.path, view=result.view, dry_run=True)
             case CustomProbe():
                 result = definition.judge(ws)
                 if definition.functions.judge is not None:
@@ -148,6 +155,10 @@ def replay_package(argv: list[str], experiments_dir: Path) -> int:
                 assert_never(definition)
     except GateFailure as e:
         _print_lines(e.lines)
+        return 1
+    except jq_cli.JqError as e:
+        # An unexpected jq failure while judging: its own diagnostic, not a traceback.
+        sys.stderr.write(e.stderr)
         return 1
 
 
@@ -161,9 +172,7 @@ def _run_custom(package: Path, name: str, options: RunOptions, probe: CustomProb
             if probe.functions.judge is not None:
                 probe.functions.judge(ws)
         except GateFailure as e:
-            _print_lines(e.lines)
-            kept_for_inspection(ws)
-            return 1
+            return refused(e, ws)
         return record_and_retain(package, ws, result, options, probe.functions)
 
 
@@ -179,16 +188,18 @@ def _definition_refusal(name: str, definition: ProbeDefinition, manifest: Manife
                     f"{ASSERTION_VARIANT}; its definition declares: "
                     f"{', '.join(definition.variants)}"
                 )
-        case CustomProbe():
-            # A custom probe records without a capture, which these manifests require.
+        case OpenCodeDebugProbe() | CustomProbe():
+            # These families record without a capture, which these manifests require.
+            family = type(definition).__name__
+            article = "an" if family[0] in "AEIOU" else "a"
             if manifest.driver == Driver.MANUAL:
                 return (
-                    f"probe: {name} is a CustomProbe, which records without a capture, but "
+                    f"probe: {name} is {article} {family}, which records without a capture, but "
                     'its manifest declares driver "manual"'
                 )
             if isinstance(manifest.version_source, CaptureSource):
                 return (
-                    f"probe: {name} is a CustomProbe, which records without a capture, but "
+                    f"probe: {name} is {article} {family}, which records without a capture, but "
                     "its manifest declares a capture version source"
                 )
         case _:
@@ -200,6 +211,8 @@ def _family_tools(definition: ProbeDefinition) -> tuple[str, ...]:
     match definition:
         case ManualProbe():
             return manual.FAMILY_TOOLS
+        case OpenCodeDebugProbe():
+            return opencode_debug.FAMILY_TOOLS
         case CustomProbe():
             return definition.required_tools
         case _:
