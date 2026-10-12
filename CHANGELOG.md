@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.7.1](https://github.com/jasnross/agentspec/compare/v0.7.0...v0.7.1) (2026-10-12)
+
+
+### Tests
+
+* **probes:** port the Claude OTEL probes and require probe.py in every package ([4dc8b82](https://github.com/jasnross/agentspec/commit/4dc8b82e3fdfa03cca9f0d6025e7a0921b62f6a3))
+* **probes:** port the manual probes to Python definitions ([40636c3](https://github.com/jasnross/agentspec/commit/40636c3e45465b1f764d10141c8dddbda2706b12))
+* **probes:** port the OpenCode debug probes and settle their fixture variants ([e2c3d3f](https://github.com/jasnross/agentspec/commit/e2c3d3fd3de46f05f5944322cffd6301fcae310f))
+* **probes:** port the OpenCode fake-provider probes and share the stub servers ([3fa1108](https://github.com/jasnross/agentspec/commit/3fa11086659730f98dee74639a8344ceb68cac4d))
+* **probes:** port the probe harness core to Python ([f301719](https://github.com/jasnross/agentspec/commit/f3017195a7f1933393ff69db349309cf86d9bb6a))
+* **probes:** record the measurements from the Python port's parity runs ([43ca49b](https://github.com/jasnross/agentspec/commit/43ca49b6f11b7ce192c79d0de6a42c695796e155))
+
+
+### Miscellaneous Chores
+
+* **probes:** document the Python probe harness ([67f7751](https://github.com/jasnross/agentspec/commit/67f775140a629616b97976fa201cf9e652af43ba))
+* **probes:** pin jq to 1.8.2 for probe parity ([2e51723](https://github.com/jasnross/agentspec/commit/2e51723d3665d19a0409e49f0ec47d3bf01586ed))
+* **todos:** add [#48](https://github.com/jasnross/agentspec/issues/48) for measuring OpenCode's automatic external_directory allows ([49d47f2](https://github.com/jasnross/agentspec/commit/49d47f238af87e720540d562405010c031ffa759))
+* **todos:** add [#49](https://github.com/jasnross/agentspec/issues/49) for removing the probe harness's jq dependency ([3216350](https://github.com/jasnross/agentspec/commit/32163504bc9a34fc8350d21d7a48f2709273507a))
+
 ## [0.7.0](https://github.com/jasnross/agentspec/compare/v0.6.0...v0.7.0) (2026-10-04)
 
 
