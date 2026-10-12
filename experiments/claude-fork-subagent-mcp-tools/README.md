@@ -63,21 +63,21 @@ Claude Sonnet 5.5 (`claude-sonnet-5-5`) at `--effort low`, matching `claude-suba
 
 A gate failure is a statement about the run, not about Claude, and writes no record.
 
-- **Stamp, per arm (runner-local).** `fx_server.py` writes `<arm>/fx.stamp` when it answers `tools/list`.
-- **Marker** (`probe_claude_gate_marker`). Every arm holds a request whose `.system` carries the marker, so the arm's subagent actually ran.
-- **Model** (`probe_claude_gate_model`). Every governed request ran on the pinned model.
-- **MCP connected before delegation** (`probe_claude_gate_mcp_connected`). In every arm, every main-thread request that offers `Agent` lists `mcp__fx__alpha` and `mcp__fx__beta`, so `fx`'s tools existed before the subagent did.
-- **Fork mode on, and the delegation ran under it** (`probe_claude_gate_delegation_fork`), once per arm. Every request in the arm's sink that offers `Agent` declares no `run_in_background` parameter in that tool's input schema, the arm's responses hold at least one `Agent` call, and every such call was answered by a `tool_result` that opens "Async agent launched". The missing schema parameter is the positive sign fork mode was on, since fork mode removes it. A call that merely leaves the field out would not do: with fork mode off, such a call also launches in the background (`claude-background-subagent-mcp-tools`, The three arms). The sibling's `probe_claude_gate_delegation_background` requires `run_in_background` to equal a boolean, which fork mode makes impossible.
+- **Stamp, per arm** (`gates.stamp`). `fx_server.py` writes `<arm>/fx.stamp` when it answers `tools/list`.
+- **Marker** (`gates.claude_otel.marker`). Every arm holds a request whose `.system` carries the marker, so the arm's subagent actually ran.
+- **Model** (`gates.claude_otel.model`). Every governed request ran on the pinned model.
+- **MCP connected before delegation** (`gates.claude_otel.mcp_connected`). In every arm, every main-thread request that offers `Agent` lists `mcp__fx__alpha` and `mcp__fx__beta`, so `fx`'s tools existed before the subagent did.
+- **Fork mode on, and the delegation ran under it** (`gates.claude_otel.delegation_fork`), once per arm. Every request in the arm's sink that offers `Agent` declares no `run_in_background` parameter in that tool's input schema, the arm's responses hold at least one `Agent` call, and every such call was answered by a `tool_result` that opens "Async agent launched". The missing schema parameter is the positive sign fork mode was on, since fork mode removes it. A call that merely leaves the field out would not do: with fork mode off, such a call also launches in the background (`claude-background-subagent-mcp-tools`, The three arms). The sibling's `gates.claude_otel.delegation_background` requires `run_in_background` to equal a boolean, which fork mode makes impossible.
 
 The schema check was shown to separate the two modes against real 2.1.287 captures. In this package's `PROBE_DRY_RUN=1` workspace, both arms' `Agent` schema declared `description`, `isolation`, `model`, `prompt`, and `subagent_type`, and the gate passed. In a kept `claude-background-subagent-mcp-tools` workspace (fork mode off), the schema also declared `run_in_background`, and the gate failed both arms it read with "declares run_in_background, so fork mode was off".
 
 ## The assertion is relational across arms
 
-`fork_restricted` expects `[]`; `fork_inherit` expects both `fx` tools. The empty cell is readable because `fork_inherit`, delegated the same way, was offered the tools. No separate discriminator fixture is wired (`TODO.md` #24).
+`fork_restricted` expects `[]`; `fork_inherit` expects both `fx` tools. The empty cell is readable because `fork_inherit`, delegated the same way, was offered the tools. No separate discriminator fixture is wired; `experiments/README.md`, "Fixture variants", states when one is.
 
 ## Discriminate evidence
 
-Before the first billed run, `record.sh --manifest experiments/claude-fork-subagent-mcp-tools/probe.json --view <view> --dry-run` against two fabricated views printed `confirmed` for one matching `expected` and `refuted` for one where `fork_restricted` was offered both `fx` tools:
+Before the first billed run, the recorder's `--dry-run` (`--manifest experiments/claude-fork-subagent-mcp-tools/probe.json --view <view>`) against two fabricated views printed `confirmed` for one matching `expected` and `refuted` for one where `fork_restricted` was offered both `fx` tools:
 
 ```
 record: dry run — confirmed — observed {"fork_restricted":[],"fork_inherit":["mcp__fx__alpha","mcp__fx__beta"]} (no file written)

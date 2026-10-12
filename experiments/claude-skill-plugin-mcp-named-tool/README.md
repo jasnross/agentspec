@@ -26,7 +26,7 @@ Both arms connect `fx`, a local MCP stdio server (`experiments/lib/stubs/fx_serv
 
 - **`--permission-prompts none`** denies any call that would prompt, so a call the skill did not pre-approve fails rather than waiting for an answer.
 - **`--allowedTools ToolSearch`** keeps a deferred `fx` tool loadable without pre-approving any `fx` tool.
-- **`--append-system-prompt`** puts the marker in `.system`. A skill's body reaches `messages[]`, never `.system` (measured at 2.1.232; see `probe_claude_gate_marker`), so without it the marker and model gates would have nothing to match.
+- **`--append-system-prompt`** puts the marker in `.system`. A skill's body reaches `messages[]`, never `.system` (measured at 2.1.232; see `gates.claude_otel.marker`), so without it the marker and model gates would have nothing to match.
 
 The skill is user-invoked: `/probe-skill` in the `-p` prompt. A model-invoked skill, run through the `Skill` tool, is a separate surface this package does not measure.
 
@@ -60,18 +60,18 @@ Claude Sonnet 5.5 (`claude-sonnet-5-5`) at `--effort low`, so that every Claude 
 
 A gate failure is a statement about the run, not about Claude, and writes no record.
 
-- **Stamp, per arm (runner-local).** `fx_server.py` writes `<arm>/fx.stamp` when it answers `tools/list`, so the server connected.
-- **Marker** (`probe_claude_gate_marker`). Every arm holds a request whose `.system` carries the appended marker.
-- **Model** (`probe_claude_gate_model`). Every governed request ran on the pinned model.
-- **Answered call, per arm** (`probe_claude_gate_tool_answered`). The arm's responses hold a `tool_use` naming `mcp__plugin_fxp_fx__alpha`, and its requests hold a `tool_result` answering it. Since the tool's name appears only in the skill body, this is also what shows the skill engaged.
+- **Stamp, per arm** (`gates.stamp`). `fx_server.py` writes `<arm>/fx.stamp` when it answers `tools/list`, so the server connected.
+- **Marker** (`gates.claude_otel.marker`). Every arm holds a request whose `.system` carries the appended marker.
+- **Model** (`gates.claude_otel.model`). Every governed request ran on the pinned model.
+- **Answered call, per arm** (`gates.claude_otel.tool_answered`). The arm's responses hold a `tool_use` naming `mcp__plugin_fxp_fx__alpha`, and its requests hold a `tool_result` answering it. Since the tool's name appears only in the skill body, this is also what shows the skill engaged.
 
 ## The assertion is relational across arms
 
-`plugin_none` expects `"denied"` and `plugin_named` expects `"called"`. The skills differ only in `allowed-tools`, so `plugin_none`'s refusal shows `--permission-prompts none` refused an unapproved call to the plugin tool, and `plugin_named`'s `"called"` is non-default against it. No separate discriminator fixture is wired (`TODO.md` #24).
+`plugin_none` expects `"denied"` and `plugin_named` expects `"called"`. The skills differ only in `allowed-tools`, so `plugin_none`'s refusal shows `--permission-prompts none` refused an unapproved call to the plugin tool, and `plugin_named`'s `"called"` is non-default against it. No separate discriminator fixture is wired; `experiments/README.md`, "Fixture variants", states when one is.
 
 ## Discriminate evidence
 
-Before the first billed run, `record.sh --manifest experiments/claude-skill-plugin-mcp-named-tool/probe.json --view <view> --dry-run` against two fabricated views printed `confirmed` for one matching `expected` and `refuted` for one where `plugin_named`'s call was denied for permission:
+Before the first billed run, the recorder's `--dry-run` (`--manifest experiments/claude-skill-plugin-mcp-named-tool/probe.json --view <view>`) against two fabricated views printed `confirmed` for one matching `expected` and `refuted` for one where `plugin_named`'s call was denied for permission:
 
 ```
 record: dry run — confirmed — observed {"plugin_none":"denied","plugin_named":"called"} (no file written)

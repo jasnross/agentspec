@@ -69,7 +69,7 @@ A gate failure keeps the workspace and exits 1 without recording, because each d
 
 ## The assertion is relational across arms
 
-The two agents differ only in the restated rules, so distinct `external_read` values across arms show the projection reads each arm independently. No separate discriminator fixture is wired (`TODO.md` #24).
+The two agents differ only in the restated rules, so distinct `external_read` values across arms show the projection reads each arm independently. No separate discriminator fixture is wired; `experiments/README.md`, "Fixture variants", states when one is.
 
 An arm with no marked request projects its `tools` to `"arm-had-no-governed-request"`; an arm whose tool result matches none of the strings projects `external_read` to `{unrecognized: [...]}`.
 
@@ -82,7 +82,7 @@ Measured 2026-10-02 against opencode **1.18.34**, from a `PROBE_DRY_RUN=1` run. 
 | `restated` | `read` | "The user rejected permission to use this specific tool call." | `ask-rejected` |
 | `bare` | `read` | "The user has specified a rule which prevents you from using this specific tool call. Here are some of the relevant rules […]" | `rule-denied` |
 
-`restated`'s `opencode run` output carried `permission requested: external_directory (<arm>/outside/*); auto-rejecting`; `bare`'s carried no such line. Against the same saved view, `record.sh --dry-run` printed `refuted` for a copy with `restated` replaced by `bare`'s requests.
+`restated`'s `opencode run` output carried `permission requested: external_directory (<arm>/outside/*); auto-rejecting`; `bare`'s carried no such line. Against the same saved view, the recorder's `--dry-run` printed `refuted` for a copy with `restated` replaced by `bare`'s requests.
 
 ## Limits of this oracle
 

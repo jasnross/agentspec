@@ -68,7 +68,7 @@ That shim sits at `$ws/project/control-b.sh` rather than in `$ws/capture/`, beca
 
 ## The assertion discriminates
 
-Validated against three synthetic captures, each a workspace directory holding a `capture/payloads.jsonl`, run through `record.sh --dry-run`:
+Validated against three synthetic captures, each a workspace directory holding a `capture/payloads.jsonl`, run through the recorder's `--dry-run`:
 
 | Capture | Observed |
 | --- | --- |
@@ -82,9 +82,9 @@ Three distinct values for three distinct inputs. Capture C is the one that matte
 
 - **The capture records argv alongside the payload.** The contract's authoring step 3 asks a capture hook to append "the payload as the provider sent it, with nothing added." Argv is what this probe measures and no other channel carries it, so each line wraps the untouched payload under a `payload` key and adds `case`, `argv0`, `argc`, `argv`, and `probe_env` beside it.
 - **`version_source` therefore reads `.payload.cursor_version`,** not the top-level field the other Cursor packages use.
-- **The source script's outer empty-read guard is dropped.** An empty read now appends `{"case": null, …, "payload": {"unparsed": ""}}` where the source appended nothing, so `record.sh`'s non-empty-capture check can pass on a capture no hook delivered a payload to. Diagnose a bad run by reading `argc` and `payload`, not the line count.
+- **The source script's outer empty-read guard is dropped.** An empty read now appends `{"case": null, …, "payload": {"unparsed": ""}}` where the source appended nothing, so the recorder's non-empty-capture check can pass on a capture no hook delivered a payload to. Diagnose a bad run by reading `argc` and `payload`, not the line count.
 
-  What is **not** dropped is the source's `select(type == "object")` filter, which the payload expression carries across as `((($raw | fromjson?) | select(type == "object")) // {unparsed: $raw})`. An earlier draft used a bare `fromjson? // {unparsed: $raw}`, on the reasoning that the _line_ stays an object either way — true, but not the property that matters once the payload is nested. A payload that parses as valid non-object JSON (a bare array or scalar) passes `fromjson?` and lands under `.payload` verbatim, and then `version_source`'s `.payload.cursor_version` throws on it. Because `record.sh` evaluates that expression as `jq -s` over the whole file and swallows the error (`2>/dev/null || true`), a single such line would cost the recorded version for the **entire** capture, writing `tool_version: null` and a `…-unknown.json` filename with no diagnostic anywhere.
+  What is **not** dropped is the source's `select(type == "object")` filter, which the payload expression carries across as `((($raw | fromjson?) | select(type == "object")) // {unparsed: $raw})`. An earlier draft used a bare `fromjson? // {unparsed: $raw}`, on the reasoning that the _line_ stays an object either way — true, but not the property that matters once the payload is nested. A payload that parses as valid non-object JSON (a bare array or scalar) passes `fromjson?` and lands under `.payload` verbatim, and then `version_source`'s `.payload.cursor_version` throws on it. Because the recorder evaluates that expression as `jq -s` over the whole file and treats a jq error as an empty version, a single such line would cost the recorded version for the **entire** capture, writing `tool_version: null` and a `…-unknown.json` filename with no diagnostic anywhere.
 
 ## Oracle limits
 

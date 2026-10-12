@@ -20,7 +20,7 @@ graphify-out/
 # Live-session captures staged for a later phase's dry-run checks. The leading
 # dot is load-bearing: `lib/tests/test_records_wellformed.py` iterates
 # `experiments/*/`, skips dot-directories, and would demand a manifest, a
-# runner, and a record from any other directory it found there.
+# definition, and a record from any other directory it found there.
 experiments/.probe-scratch/
 
 # The probe harness's Python environment and tool caches

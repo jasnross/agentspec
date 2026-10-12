@@ -60,21 +60,21 @@ Claude Sonnet 5.5 (`claude-sonnet-5-5`) at `--effort low`, matching `claude-suba
 
 A gate failure is a statement about the run, not about Claude, and writes no record.
 
-- **Stamp, per arm (runner-local).** `fx_server.py` writes `<arm>/fx.stamp` when it answers `tools/list`.
-- **Marker** (`probe_claude_gate_marker`). Every arm holds a request whose `.system` carries the marker, so the arm's subagent actually ran.
-- **Model** (`probe_claude_gate_model`). Every governed request ran on the pinned model.
-- **MCP connected before delegation** (`probe_claude_gate_mcp_connected`). In every arm, every main-thread request that offers `Agent` lists `mcp__fx__alpha` and `mcp__fx__beta`, so `fx`'s tools existed before the subagent did.
-- **Delegation mode** (`probe_claude_gate_delegation_background`), once per arm. It judges every `Agent` call in the arm's sink, a subagent's own included; none of these agents delegates. Every `Agent` call in the arm's `*.response.json` files set `run_in_background` to exactly the arm's boolean — a missing field fails — and every such call was answered by a `tool_result` that opens "Async agent launched" exactly when the arm is a background one. It reads the arm's sink rather than the view, because on 2.1.287 a request body carries no earlier assistant turn: the `Agent` call appears only in the responses.
+- **Stamp, per arm** (`gates.stamp`). `fx_server.py` writes `<arm>/fx.stamp` when it answers `tools/list`.
+- **Marker** (`gates.claude_otel.marker`). Every arm holds a request whose `.system` carries the marker, so the arm's subagent actually ran.
+- **Model** (`gates.claude_otel.model`). Every governed request ran on the pinned model.
+- **MCP connected before delegation** (`gates.claude_otel.mcp_connected`). In every arm, every main-thread request that offers `Agent` lists `mcp__fx__alpha` and `mcp__fx__beta`, so `fx`'s tools existed before the subagent did.
+- **Delegation mode** (`gates.claude_otel.delegation_background`), once per arm. It judges every `Agent` call in the arm's sink, a subagent's own included; none of these agents delegates. Every `Agent` call in the arm's `*.response.json` files set `run_in_background` to exactly the arm's boolean — a missing field fails — and every such call was answered by a `tool_result` that opens "Async agent launched" exactly when the arm is a background one. It reads the arm's sink rather than the view, because on 2.1.287 a request body carries no earlier assistant turn: the `Agent` call appears only in the responses.
 
-`probe_claude_gate_deferred_mcp` is not used: no arm pins the deferred listing's format. `background_inherit`'s governed request listed both `fx` tools as deferred beside `ToolSearch` in the dry run, which is the format the projection reads.
+`gates.claude_otel.deferred_mcp` is not used: no arm pins the deferred listing's format. `background_inherit`'s governed request listed both `fx` tools as deferred beside `ToolSearch` in the dry run, which is the format the projection reads.
 
 ## The assertion is relational across arms
 
-`foreground` and `background` expect `[]`; `background_inherit` expects both `fx` tools. The two empty cells are readable because `background_inherit`, delegated the same way as `background`, was offered the tools. No separate discriminator fixture is wired (`TODO.md` #24).
+`foreground` and `background` expect `[]`; `background_inherit` expects both `fx` tools. The two empty cells are readable because `background_inherit`, delegated the same way as `background`, was offered the tools. No separate discriminator fixture is wired; `experiments/README.md`, "Fixture variants", states when one is.
 
 ## Discriminate evidence
 
-Before the first billed run of the three-arm manifest, `record.sh --dry-run` against fabricated views printed `confirmed` for one matching the then-current `expected` and `refuted` for one where `background` was empty and one where `background_inherit` was empty:
+Before the first billed run of the three-arm manifest, the recorder's `--dry-run` against fabricated views printed `confirmed` for one matching the then-current `expected` and `refuted` for one where `background` was empty and one where `background_inherit` was empty:
 
 ```
 record: dry run — confirmed — observed {"foreground":[],"background":["mcp__fx__alpha","mcp__fx__beta"],"background_inherit":["mcp__fx__alpha","mcp__fx__beta"]} (no file written)

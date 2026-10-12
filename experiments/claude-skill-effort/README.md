@@ -65,7 +65,7 @@ An agent file **becomes the system prompt** of the request it governs, so that p
 | `slash_entry` | `messages[0]`, as a text block |
 | `fork` | the forked subagent's `messages[0]`, as a text block |
 
-So this package passes `.messages` to both gates and selects on `.messages` in both directions of the projection. The gates take the field as a parameter for this reason — see `experiments/lib/probe-claude-otel.sh`. Widening the shared default to "`.system` or `.messages`" would reintroduce the echo `claude-agent-effort` measured and excluded, and inlining a second copy of the gates here would put the safety-critical part of a billed apparatus in two files that can drift.
+So this package passes `.messages` to both gates and selects on `.messages` in both directions of the projection. The gates take the field as a parameter for this reason — see `experiments/lib/probe_harness/gates/claude_otel.py`. Widening the shared default to "`.system` or `.messages`" would reintroduce the echo `claude-agent-effort` measured and excluded, and inlining a second copy of the gates here would put the safety-critical part of a billed apparatus in two files that can drift.
 
 The `inline` row is itself the mechanism behind that arm's finding: a model-invoked skill does not get a request of its own. Its body is injected into the ongoing main-thread conversation as a tool result, on a request whose effort was already settled — so there is no request for `effort:` to govern.
 
@@ -73,7 +73,7 @@ The `inline` row is itself the mechanism behind that arm's finding: a model-invo
 
 `unique` rather than a positional selector, in all three arms: the sink names files by UUID, so glob order is not write order, and `| last` would name an arbitrary element while silently discarding disagreement among the rest. **`unique` earns its keep most in the `fork` arm**, which returns to a main thread still at the ungoverned level and is therefore the arm most likely to hold marked requests at two levels — a two-element array that `unique` surfaces and a positional selector would hide. All three arms are spelled identically, including the ones where nothing could go wrong, so a reviewer who has checked one has checked them all.
 
-`rel` is self-guarding: it renders `no-usable-control-set` when the ungoverned set is not exactly one level, and `arm-had-no-governed-request` when an arm has none. The runner's gates block both shapes, but `record.sh --dry-run --view <saved-view>` runs the projection gate-free, and that is the workflow this README points authors at.
+`rel` is self-guarding: it renders `no-usable-control-set` when the ungoverned set is not exactly one level, and `arm-had-no-governed-request` when an arm has none. The runner's gates block both shapes, but the recorder's `--dry-run --view <saved-view>` runs the projection gate-free, and that is the workflow this README points authors at.
 
 ## The three gates
 
@@ -85,7 +85,7 @@ Every gate asserts on a positive signal in the captured bodies. None of them nam
 
 A gate failure is a statement about the run, not about Claude, and writes no record.
 
-The gates live in `experiments/lib/probe-claude-otel.sh` rather than in this runner, shared with `claude-agent-effort` and covered by `experiments/lib/tests/probe-claude-otel.bats` against fabricated views — including coverage that the field parameter actually scopes both gates. Duplicated in two runners, the only thing that would ever exercise them is a real, paid run: an untested control on a billed apparatus.
+The gates live in `experiments/lib/probe_harness/gates/claude_otel.py` rather than in this package's definition, shared with `claude-agent-effort` and covered by `experiments/lib/tests/test_probe_claude_otel.py` against fabricated views — including coverage that the field parameter actually scopes both gates. Duplicated in two definitions, the only thing that would ever exercise them is a real, paid run: an untested control on a billed apparatus.
 
 ## Isolation
 
@@ -102,7 +102,7 @@ Each fixture's own `.claude/settings.json` pin (`effortLevel: medium`) is **not*
 
 ## Discriminate evidence
 
-Both rows below come from `record.sh --dry-run` output on actual runs, not from a design document. The two fixture pairs differ only in the skill's `effort:` value. The `status` and `observed` fields are excerpted from the full seven-key record each run printed; the other five keys are the manifest's own values plus the date and version.
+Both rows below come from the recorder's `--dry-run` output on actual runs, not from a design document. The two fixture pairs differ only in the skill's `effort:` value. The `status` and `observed` fields are excerpted from the full seven-key record each run printed; the other five keys are the manifest's own values plus the date and version.
 
 ```
 PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/claude-skill-effort/probe.sh

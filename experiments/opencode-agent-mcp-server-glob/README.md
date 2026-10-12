@@ -55,11 +55,11 @@ A gate failure keeps the workspace and exits 1 without recording, because each d
 
 ## The assertion
 
-An arm with no marked request projects to `"arm-had-no-governed-request"`, and one whose marked requests disagree projects to `{inconsistent: [...]}`. `expected` states the over-match OpenCode's source predicts: all four tools, and no built-in. No separate discriminator fixture is wired (`TODO.md` #24).
+An arm with no marked request projects to `"arm-had-no-governed-request"`, and one whose marked requests disagree projects to `{inconsistent: [...]}`. `expected` states the over-match OpenCode's source predicts: all four tools, and no built-in. No separate discriminator fixture is wired; `experiments/README.md`, "Fixture variants", states when one is.
 
 ## Discriminate evidence
 
-Before the first run, `record.sh --dry-run` against fabricated views printed `confirmed` for one matching `expected`, and `refuted` for one where `server_glob` carried only `fx`'s tools, one where it carried no tool, and one where a built-in leaked through beside the four:
+Before the first run, the recorder's `--dry-run` against fabricated views printed `confirmed` for one matching `expected`, and `refuted` for one where `server_glob` carried only `fx`'s tools, one where it carried no tool, and one where a built-in leaked through beside the four:
 
 ```
 record: dry run — confirmed — observed {"server_glob":["fx_alpha","fx_beta","fx_extra_alpha","fx_extra_beta"]} (no file written)

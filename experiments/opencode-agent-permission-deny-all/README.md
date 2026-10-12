@@ -57,7 +57,7 @@ A gate failure keeps the workspace and exits 1 without recording, because each d
 
 ## The assertion is relational across arms
 
-The five agents differ only in `permission`, so distinct observed values across arms show the projection reads each arm independently. No separate discriminator fixture is wired (`TODO.md` #24).
+The five agents differ only in `permission`, so distinct observed values across arms show the projection reads each arm independently. No separate discriminator fixture is wired; `experiments/README.md`, "Fixture variants", states when one is.
 
 `reversed` is what tests key order. Its map holds the same keys as `mcp_one`'s with `fx_alpha` moved ahead of the deny-all. If OpenCode's frontmatter path reordered keys before resolving them — sorting them, say, which puts `*` first — `reversed` would resolve exactly like `mcp_one` and offer `fx_alpha`. Expecting no tools is therefore what shows the authored order reaches the last-match-wins resolution intact.
 
@@ -75,7 +75,7 @@ Measured 2026-10-02 against opencode **1.18.34**, from a `PROBE_DRY_RUN=1` run. 
 | `mcp_one` | `fx_alpha` |
 | `reversed` | none |
 
-Every measured arm differs from `baseline`. Against the same saved view, `record.sh --dry-run` printed `refuted` for a copy with `edit_only` replaced by `baseline`'s requests, which projects `edit_only` to the baseline list.
+Every measured arm differs from `baseline`. Against the same saved view, the recorder's `--dry-run` printed `refuted` for a copy with `edit_only` replaced by `baseline`'s requests, which projects `edit_only` to the baseline list.
 
 ## Limits of this oracle
 

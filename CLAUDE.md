@@ -27,16 +27,17 @@ Design consequence: nothing agentspec does at validate, compile, sync, or inspec
 ## Commands
 
 ```sh
-just check                      # lint + cargo check + shell gates + test + licenses + format + probe summary
-just fmt                        # format: prettier + cargo fix + cargo +nightly fmt + cargo sort-derives
+just check                      # lint + cargo check + probe-harness gates + test + licenses + format + probe summary
+just fmt                        # format: prettier + cargo fix + cargo +nightly fmt + cargo sort-derives + ruff format
 just lint                       # clippy on all targets
 just test                       # run tests
 just build                      # build only
 just licenses                   # cargo deny check licenses
 just install                    # install binary locally
 
-just shellcheck                 # lint the probe shell under experiments/
-just bats-test                  # run the probe harness test suite
+just shellcheck                 # lint the provider-run probe scripts
+just probe-lint                 # ruff + mypy --strict over the probe harness and every probe.py
+just probe-test                 # run the probe harness test suite (pytest)
 just probe-run                  # run the free probes; costlier ones are listed with the flag that frees them
 just probe-run --billed         # additionally run the probes that spend model quota
 just probe-run --manual         # additionally run the probes that block on a live provider session
@@ -153,7 +154,7 @@ Two pedantic lints are explicitly allowed: `similar_names` (flags unambiguous pa
 
 Any `#[allow(clippy::...)]` should include a nearby comment explaining why it's needed and keep scope as narrow as possible (item-level over module-level).
 
-Run `just check` before committing to ensure linting, tests, and formatting pass. CI enforces the cargo gates — it invokes `cargo fmt --check`, `cargo clippy`, `cargo test`, and `cargo deny check licenses` directly rather than going through `just`. The shell gates `just check` adds (`shellcheck` and `bats-test`) are therefore **local-only**, as is the probe summary.
+Run `just check` before committing to ensure linting, tests, and formatting pass. CI enforces the cargo gates — it invokes `cargo fmt --check`, `cargo clippy`, `cargo test`, and `cargo deny check licenses` directly rather than going through `just`. The probe-harness gates `just check` adds (`shellcheck`, `probe-lint`, `probe-test`) are therefore **local-only**, as is the probe summary.
 
 ## Serde
 

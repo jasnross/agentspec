@@ -62,7 +62,7 @@ Every gate asserts on a positive signal in the captured bodies. None of them nam
 
 A gate failure is a statement about the run, not about Claude, and writes no record.
 
-The gates live in `experiments/lib/probe-claude-otel.sh` rather than in this runner, shared with `claude-skill-effort` and covered by `experiments/lib/tests/probe-claude-otel.bats` against fabricated views. Duplicated in two runners, the only thing that would ever exercise them is a real, paid run — an untested control on a billed apparatus.
+The gates live in `experiments/lib/probe_harness/gates/claude_otel.py` rather than in this package's definition, shared with `claude-skill-effort` and covered by `experiments/lib/tests/test_probe_claude_otel.py` against fabricated views. Duplicated in two definitions, the only thing that would ever exercise them is a real, paid run — an untested control on a billed apparatus.
 
 Both gates take the field the marker must appear in as a parameter, defaulting to the `.system` this package wants. `claude-skill-effort` passes `.messages`, because a skill's body never reaches `.system` — see that package's README.
 
@@ -81,7 +81,7 @@ The fixture's own `.claude/settings.json` pin (`effortLevel: medium`) is **not**
 
 ## Discriminate evidence
 
-Both rows below come from `record.sh --dry-run` output on actual runs, not from a design document. The two fixtures differ only in the agent's `effort:` value. The `status` and `observed` fields are excerpted from the full seven-key record each run printed; the other five keys are the manifest's own values plus the date and version.
+Both rows below come from the recorder's `--dry-run` output on actual runs, not from a design document. The two fixtures differ only in the agent's `effort:` value. The `status` and `observed` fields are excerpted from the full seven-key record each run printed; the other five keys are the manifest's own values plus the date and version.
 
 ```
 PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/claude-agent-effort/probe.sh

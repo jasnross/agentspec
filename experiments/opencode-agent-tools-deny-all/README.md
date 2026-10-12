@@ -55,7 +55,7 @@ A gate failure keeps the workspace and exits 1 without recording, because each d
 
 ## The assertion is relational across arms
 
-The three agents differ only in `tools`, so distinct observed values across arms show the projection reads each arm independently. No separate discriminator fixture is wired (`TODO.md` #24).
+The three agents differ only in `tools`, so distinct observed values across arms show the projection reads each arm independently. No separate discriminator fixture is wired; `experiments/README.md`, "Fixture variants", states when one is.
 
 An arm with no marked request projects to `"arm-had-no-governed-request"`, so an unmeasured `reversed` can never confirm `[]`. An arm whose marked requests disagree projects to `{inconsistent: [...]}`.
 
@@ -69,7 +69,7 @@ Measured 2026-10-02 against opencode **1.18.34**, from a `PROBE_DRY_RUN=1` run. 
 | `allow_one` | `fx_alpha` |
 | `reversed` | none |
 
-Against the same saved view, `record.sh --dry-run` printed `refuted` for two altered copies:
+Against the same saved view, the recorder's `--dry-run` printed `refuted` for two altered copies:
 
 - `allow_one` replaced by `baseline`'s requests, which projects `allow_one` to the baseline list.
 - `reversed` set to `[]`, which projects `reversed` to `"arm-had-no-governed-request"`.

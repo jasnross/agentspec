@@ -25,7 +25,7 @@ Measured 2026-08-27 against **Cursor 3.17.19**.
 | baseline, no brackets | `claude-opus-5` | `claude-opus-5-thinking-high` | the model's own default |
 | **the probe arm** | `claude-opus-5[effort=low,context=300k]` | `claude-opus-5-thinking-low` | **the bracket parsed, and `effort` survived beside `context`** |
 
-Both arms were re-evaluated against the committed manifest with `record.sh --dry-run`, so the expression validated is the expression the manifest carries:
+Both arms were re-evaluated against the committed manifest with the recorder's `--dry-run`, so the expression validated is the expression the manifest carries:
 
 ```text
 bracketed → confirmed — observed "claude-opus-5-thinking-low"
@@ -40,7 +40,7 @@ Both captures are of a subagent named `arm-bracket-tolerance`. The projection se
 
 ### The two arms ran in separate workspaces
 
-The recorded run captured the bracketed arm. The baseline was then taken in a **second workspace**, arranged by hand from the same fixtures with the bare model substituted, and evaluated only with `record.sh --dry-run`.
+The recorded run captured the bracketed arm. The baseline was then taken in a **second workspace**, arranged by hand from the same fixtures with the bare model substituted, and evaluated only with the recorder's `--dry-run`.
 
 Two workspaces rather than one file, because the projection ends in `| first`: a baseline appended to the recorded capture would leave `first` returning the bracketed value, and the refutation check would pass while measuring nothing. The baseline is also deliberately kept off the runner's recording path — a baseline arm is _supposed_ to refute, and a recorded `refuted` would be a permanent false finding in an append-only directory.
 

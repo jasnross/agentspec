@@ -86,7 +86,7 @@ The `read` arm's path is the project directory's physical path (`pwd -P`). On ma
 
 ## Discriminate evidence
 
-Before the first run, `record.sh --dry-run` against two fabricated views printed `confirmed` for one matching `expected` and `refuted` for one where `map_read_resource.call` was `succeeded`. Against the current projection, three more printed `confirmed` for a matching view, `refuted` with `plain_read_resource.call` as `{unrecognized: ["Error: Failed to read MCP resource: fx/fx://AGENTSPEC-RESOURCE-OCRES3"]}` for one carrying OpenCode's read-failure text, and `refuted` for one where `plain_list_resources` was rule-denied:
+Before the first run, the recorder's `--dry-run` against two fabricated views printed `confirmed` for one matching `expected` and `refuted` for one where `map_read_resource.call` was `succeeded`. Against the current projection, three more printed `confirmed` for a matching view, `refuted` with `plain_read_resource.call` as `{unrecognized: ["Error: Failed to read MCP resource: fx/fx://AGENTSPEC-RESOURCE-OCRES3"]}` for one carrying OpenCode's read-failure text, and `refuted` for one where `plain_list_resources` was rule-denied:
 
 ```
 record: dry run — confirmed — observed {"map_read_resource":{…,"call":"rule-denied"},…} (no file written)

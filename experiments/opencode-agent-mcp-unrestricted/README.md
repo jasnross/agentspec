@@ -56,13 +56,13 @@ There is no baseline tool-listing gate, unlike the deny-all package. `no_map` is
 
 ## The assertion is relational across arms
 
-The two agents differ only in `permission`, so distinct observed values across the arms show the projection reads each arm independently. An arm with no marked request projects to `"arm-had-no-governed-request"`, so an unmeasured `deny_all` can never confirm `[]`. An arm whose marked requests disagree projects to `{inconsistent: [...]}`, so one request carrying both `fx` tools cannot speak for another that carried neither. No separate discriminator fixture is wired (`TODO.md` #24).
+The two agents differ only in `permission`, so distinct observed values across the arms show the projection reads each arm independently. An arm with no marked request projects to `"arm-had-no-governed-request"`, so an unmeasured `deny_all` can never confirm `[]`. An arm whose marked requests disagree projects to `{inconsistent: [...]}`, so one request carrying both `fx` tools cannot speak for another that carried neither. No separate discriminator fixture is wired; `experiments/README.md`, "Fixture variants", states when one is.
 
 `expected` states the design's belief: no map offers both `fx` tools, and the deny-all offers neither.
 
 ## Discriminate evidence
 
-Before the first run, `record.sh --dry-run` against fabricated views printed `confirmed` for one matching `expected`, and `refuted` for one where `deny_all` carried `["fx_alpha", "fx_beta"]`, one where `no_map` carried only `fx_alpha`, one where `deny_all` held only an unmarked request, and one where `no_map`'s two marked requests disagreed:
+Before the first run, the recorder's `--dry-run` against fabricated views printed `confirmed` for one matching `expected`, and `refuted` for one where `deny_all` carried `["fx_alpha", "fx_beta"]`, one where `no_map` carried only `fx_alpha`, one where `deny_all` held only an unmarked request, and one where `no_map`'s two marked requests disagreed:
 
 ```
 record: dry run — confirmed — observed {"no_map":["fx_alpha","fx_beta"],"deny_all":[]} (no file written)

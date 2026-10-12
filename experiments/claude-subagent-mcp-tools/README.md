@@ -60,25 +60,25 @@ Each arm held a single main-thread request. That request offered `Agent` in `too
 
 A gate failure is a statement about the run, not about Claude, and writes no record.
 
-- **Stamp, per arm (runner-local).** `fx_server.py` writes `<arm>/fx.stamp` when it answers `tools/list`. Without it, an arm's tool set says nothing about MCP grants. The check only tests that a file exists, with no projection logic for a fabricated view to exercise, so it stays in the runner.
-- **Marker** (`probe_claude_gate_marker`). Every arm holds a request whose `.system` carries the marker, so the arm's subagent actually ran.
-- **Model** (`probe_claude_gate_model`). Every governed request ran on the pinned model. The subagent's model decides whether tool search is on, and a delegation call's own `model` parameter outranks the agent's frontmatter — only the request shows that one was passed.
-- **Deferred listing on `inherit`** (`probe_claude_gate_deferred_mcp`). The `inherit` arm's governed requests list `mcp__fx__alpha` and `mcp__fx__beta` as deferred, and carry `ToolSearch`. `inherit` has no allowlist, so its expected tool set is unconditional; a failure here means the run was not under default tool search, which is the configuration this package measures. The cost is that `inherit` is a precondition rather than a finding: any recorded run has that cell by construction, and a Claude that stopped deferring for an unrestricted subagent would fail this gate rather than record `refuted`. The gate's diagnostic names both causes, a model without tool search and such a change.
-- **MCP connected before delegation** (`probe_claude_gate_mcp_connected`). In every arm, every main-thread request that offers `Agent` lists `mcp__fx__alpha` and `mcp__fx__beta`, directly or as deferred. The delegating request is one of them, so fx's tools existed before the subagent did. The stamp alone would not show this, and without it the `read` arm's expected value — no MCP tools — would read identically to "fx had not connected yet".
+- **Stamp, per arm** (`gates.stamp`). `fx_server.py` writes `<arm>/fx.stamp` when it answers `tools/list`. Without it, an arm's tool set says nothing about MCP grants.
+- **Marker** (`gates.claude_otel.marker`). Every arm holds a request whose `.system` carries the marker, so the arm's subagent actually ran.
+- **Model** (`gates.claude_otel.model`). Every governed request ran on the pinned model. The subagent's model decides whether tool search is on, and a delegation call's own `model` parameter outranks the agent's frontmatter — only the request shows that one was passed.
+- **Deferred listing on `inherit`** (`gates.claude_otel.deferred_mcp`). The `inherit` arm's governed requests list `mcp__fx__alpha` and `mcp__fx__beta` as deferred, and carry `ToolSearch`. `inherit` has no allowlist, so its expected tool set is unconditional; a failure here means the run was not under default tool search, which is the configuration this package measures. The cost is that `inherit` is a precondition rather than a finding: any recorded run has that cell by construction, and a Claude that stopped deferring for an unrestricted subagent would fail this gate rather than record `refuted`. The gate's diagnostic names both causes, a model without tool search and such a change.
+- **MCP connected before delegation** (`gates.claude_otel.mcp_connected`). In every arm, every main-thread request that offers `Agent` lists `mcp__fx__alpha` and `mcp__fx__beta`, directly or as deferred. The delegating request is one of them, so fx's tools existed before the subagent did. The stamp alone would not show this, and without it the `read` arm's expected value — no MCP tools — would read identically to "fx had not connected yet".
 
-`probe_claude_gate_control` is not used: it gates an effort control set, and nothing here measures effort.
+`gates.claude_otel.control` is not used: it gates an effort control set, and nothing here measures effort.
 
-The four jq gates live in `experiments/lib/probe-claude-otel.sh` with bats coverage in `experiments/lib/tests/probe-claude-otel.bats`, so they are exercised without a paid run.
+The four gates live in `experiments/lib/probe_harness/gates/claude_otel.py` with test coverage in `experiments/lib/tests/test_probe_claude_otel.py`, so they are exercised without a paid run.
 
 ## The assertion is relational across arms
 
-The six agents differ only in `tools`, so distinct observed values across arms show the projection reads each arm independently. An arm with no governed request projects to `"arm-had-no-governed-request"`; without it, an unmeasured `read` arm would project exactly to its expected value. No separate discriminator fixture is wired (`TODO.md` #24).
+The six agents differ only in `tools`, so distinct observed values across arms show the projection reads each arm independently. An arm with no governed request projects to `"arm-had-no-governed-request"`; without it, an unmeasured `read` arm would project exactly to its expected value. No separate discriminator fixture is wired; `experiments/README.md`, "Fixture variants", states when one is.
 
 `expected` states agentspec's documented belief: tool search defers every granted MCP tool, a granted MCP tool always arrives with `ToolSearch`, and an allowlist without MCP entries grants no MCP tool.
 
 ## Discriminate evidence
 
-Before the first billed run, `record.sh --dry-run` against two fabricated views printed `confirmed` for one matching `expected` and `refuted` for one where `exact` carried both fx tools.
+Before the first billed run, the recorder's `--dry-run` against two fabricated views printed `confirmed` for one matching `expected` and `refuted` for one where `exact` carried both fx tools.
 
 From the Sonnet dry run on 2026-10-02 against Claude Code 2.1.287 (`status` and `observed`, excerpted from the printed record):
 

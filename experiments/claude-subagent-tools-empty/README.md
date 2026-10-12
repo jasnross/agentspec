@@ -58,12 +58,12 @@ Claude Sonnet 5.5 (`claude-sonnet-5-5`) at `--effort low`, as in `experiments/cl
 
 A gate failure is a statement about the run, not about Claude, and writes no record.
 
-- **Marker** (`probe_claude_gate_marker`). Every arm holds a request whose `.system` carries the marker, so the arm's subagent actually ran.
-- **Model** (`probe_claude_gate_model`). Every governed request ran on the pinned model.
-- **Inherit (runner-local).** `inherit`'s governed requests carry `Read` in `tools[]`. That shows an unrestricted subagent gets built-ins in this run, so a `no-tools` value for `empty` can only mean the empty list restricted it — not that every subagent here was offered nothing.
-- **Read restricts (runner-local).** `read`'s governed requests carry `Read` in `tools[]`, and offer fewer distinct tools than `inherit`'s. That shows a non-empty `tools` field restricted the subagent in this run, so a `same-as-inherit` value for `empty` would mean Claude reads the empty list as unrestricted — not that the run ignored every agent's `tools` field.
+- **Marker** (`gates.claude_otel.marker`). Every arm holds a request whose `.system` carries the marker, so the arm's subagent actually ran.
+- **Model** (`gates.claude_otel.model`). Every governed request ran on the pinned model.
+- **Inherit** (a custom check in `probe.py`). `inherit`'s governed requests carry `Read` in `tools[]`. That shows an unrestricted subagent gets built-ins in this run, so a `no-tools` value for `empty` can only mean the empty list restricted it — not that every subagent here was offered nothing.
+- **Read restricts** (a custom check in `probe.py`). `read`'s governed requests carry `Read` in `tools[]`, and offer fewer distinct tools than `inherit`'s. That shows a non-empty `tools` field restricted the subagent in this run, so a `same-as-inherit` value for `empty` would mean Claude reads the empty list as unrestricted — not that the run ignored every agent's `tools` field.
 
-The two runner-local gates are the controls for the two values the projection can take: `inherit` for `no-tools`, `read` for `same-as-inherit`.
+The two custom checks are the controls for the two values the projection can take: `inherit` for `no-tools`, `read` for `same-as-inherit`.
 
 ## The assertion discriminates
 
@@ -75,7 +75,7 @@ From the Sonnet dry run on 2026-10-02 against Claude Code 2.1.287, the governed 
 | `empty` | none | none |
 | `read` | `Read`, `advisor` | none |
 
-The dry run printed `confirmed`, observing `{"empty": "no-tools"}`. Against the same saved view, `record.sh --dry-run` printed `refuted`, observing `{"empty": "same-as-inherit"}`, for a copy with `empty` replaced by `inherit`'s requests.
+The dry run printed `confirmed`, observing `{"empty": "no-tools"}`. Against the same saved view, the recorder's `--dry-run` printed `refuted`, observing `{"empty": "same-as-inherit"}`, for a copy with `empty` replaced by `inherit`'s requests.
 
 `read` received `advisor` beside the one tool it listed, while `empty` received nothing at all. Where `advisor` comes from is not measured here; the read-restricts gate compares tool counts rather than requiring `Read` alone for that reason.
 

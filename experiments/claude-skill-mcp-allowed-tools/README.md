@@ -30,7 +30,7 @@ The four user-server arms connect `fx`, a local MCP stdio server (`experiments/l
 
 - **`--permission-prompts none`** denies any call that would prompt, so a call the skill did not pre-approve fails rather than waiting for an answer.
 - **`--allowedTools ToolSearch`** keeps a deferred `fx` tool loadable without pre-approving any `fx` tool. In the dry run every arm's model called `ToolSearch` beside its `fx` call.
-- **`--append-system-prompt`** puts the marker in `.system`. A skill's body reaches `messages[]`, never `.system` (measured at 2.1.232; see `probe_claude_gate_marker`), so without it the marker and model gates would have nothing to match.
+- **`--append-system-prompt`** puts the marker in `.system`. A skill's body reaches `messages[]`, never `.system` (measured at 2.1.232; see `gates.claude_otel.marker`), so without it the marker and model gates would have nothing to match.
 
 The skill is user-invoked: `/probe-skill` in the `-p` prompt. A model-invoked skill, run through the `Skill` tool, is a separate surface this package does not measure.
 
@@ -67,18 +67,18 @@ Claude Sonnet 5.5 (`claude-sonnet-5-5`) at `--effort low`. This package does not
 
 A gate failure is a statement about the run, not about Claude, and writes no record.
 
-- **Stamp, per arm (runner-local).** `fx_server.py` writes `<arm>/fx.stamp` when it answers `tools/list`, so the server connected. That alone does not show the tool was loaded when the model called it; the permission text the `"denied"` class requires is what separates a refusal from an unknown tool.
-- **Marker** (`probe_claude_gate_marker`). Every arm holds a request whose `.system` carries the appended marker.
-- **Model** (`probe_claude_gate_model`). Every governed request ran on the pinned model. A title sidecar carrying the appended prompt on another model would fail this gate; on 2.1.287 none did, so the gate takes no exclusion for one.
-- **Answered call, per arm** (`probe_claude_gate_tool_answered`). The arm's responses hold a `tool_use` naming the arm's `<tool>`, and its requests hold a `tool_result` answering it. An arm whose model never made the call, or whose turn ended before it was answered, reads as neither approved nor denied. Since the tool's name appears only in the skill body, this is also what shows the skill engaged; the marker gate shows only that `--append-system-prompt` reached `.system`.
+- **Stamp, per arm** (`gates.stamp`). `fx_server.py` writes `<arm>/fx.stamp` when it answers `tools/list`, so the server connected. That alone does not show the tool was loaded when the model called it; the permission text the `"denied"` class requires is what separates a refusal from an unknown tool.
+- **Marker** (`gates.claude_otel.marker`). Every arm holds a request whose `.system` carries the appended marker.
+- **Model** (`gates.claude_otel.model`). Every governed request ran on the pinned model. A title sidecar carrying the appended prompt on another model would fail this gate; on 2.1.287 none did, so the gate takes no exclusion for one.
+- **Answered call, per arm** (`gates.claude_otel.tool_answered`). The arm's responses hold a `tool_use` naming the arm's `<tool>`, and its requests hold a `tool_result` answering it. An arm whose model never made the call, or whose turn ended before it was answered, reads as neither approved nor denied. Since the tool's name appears only in the skill body, this is also what shows the skill engaged; the marker gate shows only that `--append-system-prompt` reached `.system`.
 
 ## The assertion is relational across arms
 
-`none` and `plugin_none` expect `"denied"`, every other arm `"called"`. Within each server source the skills differ only in `allowed-tools`, so each `Read` arm's refusal shows `--permission-prompts none` refused an unapproved call to that source's tool, and each `"called"` is non-default against the refusal from its own source. No separate discriminator fixture is wired (`TODO.md` #24).
+`none` and `plugin_none` expect `"denied"`, every other arm `"called"`. Within each server source the skills differ only in `allowed-tools`, so each `Read` arm's refusal shows `--permission-prompts none` refused an unapproved call to that source's tool, and each `"called"` is non-default against the refusal from its own source. No separate discriminator fixture is wired; `experiments/README.md`, "Fixture variants", states when one is.
 
 ## Discriminate evidence
 
-Before the first billed run of the five-arm manifest, `record.sh --dry-run` against two fabricated views printed `confirmed` for one matching `expected` and `refuted` for one where `server_glob`'s call was denied:
+Before the first billed run of the five-arm manifest, the recorder's `--dry-run` against two fabricated views printed `confirmed` for one matching `expected` and `refuted` for one where `server_glob`'s call was denied:
 
 ```
 record: dry run — confirmed — observed {"none":"denied","exact":"called","server":"called","server_glob":"called","plugin_glob":"called"} (no file written)

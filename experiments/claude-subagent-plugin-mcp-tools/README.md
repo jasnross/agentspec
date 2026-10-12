@@ -56,25 +56,25 @@ Claude Sonnet 5.5 (`claude-sonnet-5-5`) at `--effort low`, matching `claude-suba
 
 A gate failure is a statement about the run, not about Claude, and writes no record.
 
-- **Stamp, per arm (runner-local).** `fx_server.py` writes `<arm>/fx.stamp` when it answers `tools/list`. The check only tests that a file exists, so it stays in the runner.
-- **Marker** (`probe_claude_gate_marker`). Every arm holds a request whose `.system` carries the marker, so the arm's subagent actually ran.
-- **Model** (`probe_claude_gate_model`). Every governed request ran on the pinned model.
-- **No foreign `fx` server** (`probe_claude_gate_mcp_absent`). No main-thread request, in any arm, lists a tool starting `mcp__fx__`, directly or as deferred. Every arm's only configured server is the plugin's, so such a tool can only come from a server outside the fixture, and it would reach `project_unprefixed` through the projection's `mcp__fx__` filter as a false `refuted`.
-- **MCP connected before delegation** (`probe_claude_gate_mcp_connected`). In every arm, every main-thread request that offers `Agent` lists `mcp__plugin_fxp_fx__alpha` and `mcp__plugin_fxp_fx__beta`, directly or as deferred. The delegating request is one of them, so the plugin server's tools existed under that name before the subagent did. Without it, an empty `read` or `project_unprefixed` would read the same as "the plugin server had not connected yet".
+- **Stamp, per arm** (`gates.stamp`). `fx_server.py` writes `<arm>/fx.stamp` when it answers `tools/list`.
+- **Marker** (`gates.claude_otel.marker`). Every arm holds a request whose `.system` carries the marker, so the arm's subagent actually ran.
+- **Model** (`gates.claude_otel.model`). Every governed request ran on the pinned model.
+- **No foreign `fx` server** (`gates.claude_otel.mcp_absent`). No main-thread request, in any arm, lists a tool starting `mcp__fx__`, directly or as deferred. Every arm's only configured server is the plugin's, so such a tool can only come from a server outside the fixture, and it would reach `project_unprefixed` through the projection's `mcp__fx__` filter as a false `refuted`.
+- **MCP connected before delegation** (`gates.claude_otel.mcp_connected`). In every arm, every main-thread request that offers `Agent` lists `mcp__plugin_fxp_fx__alpha` and `mcp__plugin_fxp_fx__beta`, directly or as deferred. The delegating request is one of them, so the plugin server's tools existed under that name before the subagent did. Without it, an empty `read` or `project_unprefixed` would read the same as "the plugin server had not connected yet".
 
-`probe_claude_gate_deferred_mcp` is not used: no arm here is unrestricted, so none has an unconditional deferred listing to pin. The cost is that nothing in this run pins the deferred listing's one-name-per-line format, which the projection reads through a prefix filter. No arm grants `ToolSearch`, and `claude-subagent-mcp-tools` measured that grants then arrive directly in `tools[]`, so the listing is not expected to carry a granted tool here; but a format change that indented or re-terminated its lines would go undetected, and would read as an absent grant.
+`gates.claude_otel.deferred_mcp` is not used: no arm here is unrestricted, so none has an unconditional deferred listing to pin. The cost is that nothing in this run pins the deferred listing's one-name-per-line format, which the projection reads through a prefix filter. No arm grants `ToolSearch`, and `claude-subagent-mcp-tools` measured that grants then arrive directly in `tools[]`, so the listing is not expected to carry a granted tool here; but a format change that indented or re-terminated its lines would go undetected, and would read as an absent grant.
 
 If the connection gate fails, re-run the package once by hand before treating it as anything but an apparatus failure; the runner itself does not retry. A second failure the same way is worth investigating rather than recording.
 
 ## The assertion is relational across arms
 
-The six agents differ only in `tools` and location, so distinct observed values across arms show the projection reads each arm independently. No separate discriminator fixture is wired (`TODO.md` #24).
+The six agents differ only in `tools` and location, so distinct observed values across arms show the projection reads each arm independently. No separate discriminator fixture is wired; `experiments/README.md`, "Fixture variants", states when one is.
 
 `expected` states the design's belief: each plugin spelling grants what it names from either location, and the plain spelling grants nothing from a plugin server.
 
 ## Discriminate evidence
 
-Before the first billed run, `record.sh --dry-run` against two fabricated views printed `confirmed` for one matching `expected` and `refuted` for one where `project_unprefixed` carried `mcp__plugin_fxp_fx__alpha`:
+Before the first billed run, the recorder's `--dry-run` against two fabricated views printed `confirmed` for one matching `expected` and `refuted` for one where `project_unprefixed` carried `mcp__plugin_fxp_fx__alpha`:
 
 ```
 record: dry run — confirmed — observed {"read":[],"plugin_exact":["mcp__plugin_fxp_fx__alpha"],…,"project_unprefixed":[]} (no file written)

@@ -53,11 +53,11 @@ Claude Sonnet 5.5 (`claude-sonnet-5-5`) at `--effort low`, matching `claude-suba
 
 A gate failure is a statement about the run, not about Claude, and writes no record.
 
-- **Stamp, per arm (runner-local).** `fx_server.py` writes `<arm>/fx.stamp` when it answers `tools/list`.
-- **Marker** (`probe_claude_gate_marker`). Every arm holds a request whose `.system` carries the marker, so the arm's subagent actually ran.
-- **Model** (`probe_claude_gate_model`). Every governed request ran on the pinned model.
-- **Deferred listing on `inherit`** (`probe_claude_gate_deferred_mcp`). The `inherit` arm's governed requests list `mcp__fx__alpha` and `mcp__fx__beta` as deferred and carry `ToolSearch`, so the run is under default tool search. This also pins the deferred listing's one-name-per-line format the projection reads.
-- **MCP connected before delegation, twice** (`probe_claude_gate_mcp_connected`). In every arm, every main-thread request that offers `Agent` lists `mcp__fx__alpha` and `mcp__fx__beta`, and — in a second call — `ListMcpResourcesTool`, `ReadMcpResourceTool`, and `ReadMcpResourceDirTool`, directly or as deferred. The second call reads the same places with the same exact names as the projection, so an empty value cannot mean "not in the session", "renamed", or "the filter is misspelled". If it fails, the runner adds that a rename or a Claude Code that stopped offering the tools is the likelier cause than a late connection.
+- **Stamp, per arm** (`gates.stamp`). `fx_server.py` writes `<arm>/fx.stamp` when it answers `tools/list`.
+- **Marker** (`gates.claude_otel.marker`). Every arm holds a request whose `.system` carries the marker, so the arm's subagent actually ran.
+- **Model** (`gates.claude_otel.model`). Every governed request ran on the pinned model.
+- **Deferred listing on `inherit`** (`gates.claude_otel.deferred_mcp`). The `inherit` arm's governed requests list `mcp__fx__alpha` and `mcp__fx__beta` as deferred and carry `ToolSearch`, so the run is under default tool search. This also pins the deferred listing's one-name-per-line format the projection reads.
+- **MCP connected before delegation, twice** (`gates.claude_otel.mcp_connected`). In every arm, every main-thread request that offers `Agent` lists `mcp__fx__alpha` and `mcp__fx__beta`, and — in a second call — `ListMcpResourcesTool`, `ReadMcpResourceTool`, and `ReadMcpResourceDirTool`, directly or as deferred. The second call reads the same places with the same exact names as the projection, so an empty value cannot mean "not in the session", "renamed", or "the filter is misspelled". If it fails, the definition's judge step adds that a rename or a Claude Code that stopped offering the tools is the likelier cause than a late connection.
 
 After a successful recording the runner removes its workspace, except when `inherit` or `explicit` was offered a resource tool: then it keeps the workspace and prints its path, because such a run is the rare one, and its requests are the only evidence of why it differed.
 
@@ -69,11 +69,11 @@ After a successful recording the runner removes its workspace, except when `inhe
 
 **What the restricted cells can and cannot show.** An empty restricted cell means the allowlist withheld the tools only if the subagent path offers them at all in that run. In every run but one, the unrestricted `inherit` subagent was offered none either, so in those runs an empty `read`, `exact`, or `server_glob` is what an absent allowlist would also produce. The second MCP-connected gate rules out a session without the tools; it cannot rule that out for a subagent. Only `T154945`, where `inherit` and `explicit` held all three, shows the restricted arms empty while the subagent path offered the tools — and each arm is its own `claude -p` session, so even that is a comparison across sessions run minutes apart, not within one.
 
-No separate discriminator fixture is wired (`TODO.md` #24).
+No separate discriminator fixture is wired; `experiments/README.md`, "Fixture variants", states when one is.
 
 ## Discriminate evidence
 
-Against the four-arm manifest, before the first billed run, `record.sh --dry-run` printed `confirmed` for a fabricated view matching the then-current `expected` and `refuted` for one where `server_glob` carried all three:
+Against the four-arm manifest, before the first billed run, the recorder's `--dry-run` printed `confirmed` for a fabricated view matching the then-current `expected` and `refuted` for one where `server_glob` carried all three:
 
 ```
 record: dry run — confirmed — observed {"inherit":["ListMcpResourcesTool","ReadMcpResourceDirTool","ReadMcpResourceTool"],"read":[],"exact":[],"server_glob":[]} (no file written)
