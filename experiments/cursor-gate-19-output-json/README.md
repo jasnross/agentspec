@@ -9,7 +9,7 @@
 ## Running it
 
 ```sh
-experiments/cursor-gate-19-output-json/probe.sh
+experiments/probe run cursor-gate-19-output-json
 ```
 
 One blocking invocation. It generates a workspace, prints the procedure, waits until the hook actually fires, and only then presents the option set. The "hook never fired" outcome is detected by polling rather than by asking, so you answer only the question no machine can.

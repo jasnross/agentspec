@@ -11,7 +11,7 @@ Option **ordering** needs no probe. agentspec is the sole writer of the bracket 
 ## Running it
 
 ```sh
-experiments/cursor-subagent-model-options/probe.sh
+experiments/probe run cursor-subagent-model-options
 ```
 
 It arranges a throwaway workspace, prints the path, and blocks until the capture matches its `wait_for` filter. There is no resume path — a timeout ends the run and the next attempt is a fresh session.

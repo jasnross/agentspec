@@ -9,7 +9,7 @@
 ## Running it
 
 ```sh
-experiments/claude-session-start/probe.sh
+experiments/probe run claude-session-start
 ```
 
 The procedure has two halves, and the assertion depends on completing both:

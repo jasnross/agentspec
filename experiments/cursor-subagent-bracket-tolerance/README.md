@@ -11,7 +11,7 @@ This package measures whether `context` is **harmless**, never whether it is **h
 ## Running it
 
 ```sh
-experiments/cursor-subagent-bracket-tolerance/probe.sh
+experiments/probe run cursor-subagent-bracket-tolerance
 ```
 
 It arranges a throwaway workspace, prints the path, and blocks until the capture matches its `wait_for` filter. There is no resume path — a timeout ends the run and the next attempt is a fresh session.

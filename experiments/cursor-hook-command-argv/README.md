@@ -11,7 +11,7 @@ Cursor's documentation defines `command` as "a shell string, an absolute path, o
 ## Running it
 
 ```sh
-experiments/cursor-hook-command-argv/probe.sh
+experiments/probe run cursor-hook-command-argv
 ```
 
 1. Open Cursor on the printed workspace
@@ -92,7 +92,7 @@ Three distinct values for three distinct inputs. Capture C is the one that matte
 
   This does not weaken any recorded key — every `true` is still positive proof that the case fired and produced the expected argv, which is what the non-default rule requires. It weakens only the _diagnostic_ the bracket was meant to provide. A capture with two controls and zero cases therefore warrants **one re-run** before being read as "no shell involved," and that advice is now load-bearing rather than precautionary.
 
-- **A workspace path containing a space would silently invalidate every word-splitting case,** since `{{CAPTURE_SCRIPT}} split alpha beta` would then carry a space before the case id. `probe_template_file` guards JSON validity but not whitespace, so the runner asserts on `$TMPDIR` directly and exits 1 before the operator spends a session.
+- **A workspace path containing a space would silently invalidate every word-splitting case,** since `{{CAPTURE_SCRIPT}} split alpha beta` would then carry a space before the case id. Templating guards JSON validity but not whitespace or other shell-significant characters, so the definition's preflight function asserts on `$TMPDIR` directly and exits 1 before the operator spends a session.
 - **The second control is an exec shim at a distinct path.** A `hooks.json` dedup would not defeat it, but a path-resolution failure would. `control-b.sh` is referenced project-relatively because the runner substitutes only `{{CAPTURE_SCRIPT}}`, so the shim's own absolute workspace path is not available to write into `hooks.json` — and Cursor's documentation warns to write `.cursor/hooks/script.sh` rather than `./hooks/script.sh`. Exactly one `argc == 0` line in a timed-out capture means the shim did not resolve; the fix is to move it to `fixtures/.cursor/control-b.sh` and reference it as `.cursor/control-b.sh`, not to change how it is invoked.
 
 ## Depth

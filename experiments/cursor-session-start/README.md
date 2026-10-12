@@ -9,7 +9,7 @@
 ## Running it
 
 ```sh
-experiments/cursor-session-start/probe.sh
+experiments/probe run cursor-session-start
 ```
 
 1. Open Cursor on the printed workspace

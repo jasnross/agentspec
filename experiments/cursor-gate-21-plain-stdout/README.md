@@ -9,7 +9,7 @@
 ## Running it
 
 ```sh
-experiments/cursor-gate-21-plain-stdout/probe.sh
+experiments/probe run cursor-gate-21-plain-stdout
 ```
 
 The runner waits until the hook has fired before prompting. The original script named "the hook didn't fire at all" as a third failure mode; polling detects that, so the option set covers only what a person can uniquely answer.

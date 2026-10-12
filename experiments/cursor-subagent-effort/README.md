@@ -9,7 +9,7 @@
 ## Running it
 
 ```sh
-experiments/cursor-subagent-effort/probe.sh
+experiments/probe run cursor-subagent-effort
 ```
 
 One blocking invocation. It prints a workspace path and three instructions, then polls the capture and records automatically — no second command and no keypress. If your terminal closes before the capture arrives, the workspace is kept for inspection, but the run is over: re-run the probe.
