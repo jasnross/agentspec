@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from probe_harness.contract import parse_manifest
 from probe_harness.families import manual
 
 from tests.conftest import CURSOR_PACKAGE_NAME, EXPERIMENTS_DIR, Cli, Result, make_capture_workspace
@@ -58,7 +59,7 @@ def test_probe_record_capture_prompts_when_the_assertion_declares_options(
     monkeypatch.setattr("sys.stdin", io.StringIO(""))
 
     with pytest.raises(SystemExit) as exc:
-        manual.record_capture(pkg, ws, dry_run=False)
+        manual.record_capture(parse_manifest(pkg / "probe.json"), ws, dry_run=False)
     assert exc.value.code == 2
     captured = capsys.readouterr()
     assert "stdin is not a terminal" in captured.out + captured.err
@@ -81,7 +82,7 @@ def test_probe_record_capture_projects_when_the_assertion_declares_a_projection(
     )
     monkeypatch.setattr("sys.stdin", io.StringIO(""))
 
-    assert manual.record_capture(pkg, ws, dry_run=False) == 0
+    assert manual.record_capture(parse_manifest(pkg / "probe.json"), ws, dry_run=False) == 0
     records = list((pkg / "results").glob("*.json"))
     assert len(records) == 1
     assert json.loads(records[0].read_text(encoding="utf-8"))["status"] == "confirmed"
@@ -216,7 +217,9 @@ def test_a_capture_resolves_tool_version_from_its_own_cursor_version(
     ws = tmp_path / "ws"
     seed_workspace(ws)
 
-    assert manual.record_capture(cursor_package, ws, dry_run=False) == 0
+    assert (
+        manual.record_capture(parse_manifest(cursor_package / "probe.json"), ws, dry_run=False) == 0
+    )
 
     record = read_record(newest_record(cursor_package))
     assert record["status"] == "confirmed"
@@ -234,7 +237,9 @@ def test_a_capture_showing_the_default_model_records_refuted_not_confirmed(
     ws = tmp_path / "ws-default"
     seed_workspace(ws, "claude-opus-5-thinking-high")
 
-    assert manual.record_capture(cursor_package, ws, dry_run=False) == 0
+    assert (
+        manual.record_capture(parse_manifest(cursor_package / "probe.json"), ws, dry_run=False) == 0
+    )
     assert read_record(newest_record(cursor_package))["status"] == "refuted"
 
 
@@ -245,7 +250,9 @@ def test_a_workspace_with_no_payloads_is_refused_and_writes_no_record(
     ws = tmp_path / "ws-empty"
     (ws / "capture").mkdir(parents=True)
 
-    assert manual.record_capture(cursor_package, ws, dry_run=False) != 0
+    assert (
+        manual.record_capture(parse_manifest(cursor_package / "probe.json"), ws, dry_run=False) != 0
+    )
     captured = capsys.readouterr()
     assert "no captured payloads" in captured.out + captured.err
     assert newest_record(cursor_package) is None
@@ -257,7 +264,9 @@ def test_a_directory_that_is_not_a_probe_workspace_is_refused(
     ws = tmp_path / "not-a-workspace"
     ws.mkdir()
 
-    assert manual.record_capture(cursor_package, ws, dry_run=False) != 0
+    assert (
+        manual.record_capture(parse_manifest(cursor_package / "probe.json"), ws, dry_run=False) != 0
+    )
     captured = capsys.readouterr()
     assert "not a probe workspace" in captured.out + captured.err
 

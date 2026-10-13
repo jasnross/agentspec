@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from probe_harness import jq_cli
+from probe_harness.contract import Manifest, OptionsAssertion
 from probe_harness.families.base import (
     GateFailure,
     ProbeFunctions,
@@ -47,13 +48,15 @@ class ManualProbe:
     functions: ProbeFunctions = field(default_factory=ProbeFunctions)
 
 
-def run(package: Path, name: str, wait_for: str, options: RunOptions, probe: ManualProbe) -> int:
+def run(
+    manifest: Manifest, name: str, wait_for: str, options: RunOptions, probe: ManualProbe
+) -> int:
     """The whole human-driven flow as one blocking invocation: arrange, print, poll, record.
 
     Blocking is what removes the stale-capture failure: the workspace was created by the
     invocation still running, so there is no earlier capture to mistake for this one.
     """
-    ws = arrange_human_workspace(package, name)
+    ws = arrange_human_workspace(manifest.path.parent, name)
 
     with kept_on_failure(ws):
         print(f"\nWorkspace ready: {ws / 'project'}", file=sys.stderr)
@@ -68,7 +71,7 @@ def run(package: Path, name: str, wait_for: str, options: RunOptions, probe: Man
                     probe.functions.judge(ws)
                 except GateFailure as e:
                     return refused(e, ws)
-            code = record_capture(package, ws, dry_run=options.dry_run)
+            code = record_capture(manifest, ws, dry_run=options.dry_run)
             if code != 0:
                 kept_for_inspection(ws)
             elif not options.dry_run and probe.functions.after_record is not None:
@@ -134,7 +137,9 @@ def _materialize(package: Path, ws: Path) -> None:
             raise SystemExit(1)
 
 
-def record_capture(package: Path, ws: Path, *, dry_run: bool, selection: str | None = None) -> int:
+def record_capture(
+    manifest: Manifest, ws: Path, *, dry_run: bool, selection: str | None = None
+) -> int:
     """Record from a completed capture, projecting or prompting per the assertion's shape.
 
     Refusing to record on an empty capture is the correct outcome: the failure stays loud
@@ -153,20 +158,17 @@ def record_capture(package: Path, ws: Path, *, dry_run: bool, selection: str | N
         )
         return 1
 
-    manifest = package / "probe.json"
     # The assertion shape decides this, not the driver: an `options` set is a person
     # choosing from a list and a `projection` is jq over a file.
-    if jq_cli.test('.assertion | has("options")', manifest):
+    if isinstance(manifest.assertion, OptionsAssertion):
         if selection is None:
             # The machine has already proved the apparatus worked, so the person answers
             # only the question no machine can.
-            options = jq_cli.evaluate(".assertion.options", manifest, compact=True).rstrip("\n")
-            question = jq_cli.evaluate(".question", manifest, raw=True).rstrip("\n")
-            selection = prompt_selection(options, question)
-        return record(manifest, selection=selection, capture=ws, dry_run=dry_run)
+            selection = prompt_selection(manifest.assertion.options, manifest.question)
+        return record(manifest.path, selection=selection, capture=ws, dry_run=dry_run)
 
     jq_cli.slurp_view(payloads, ws / "view.json")
-    return record(manifest, view=ws / "view.json", capture=ws, dry_run=dry_run)
+    return record(manifest.path, view=ws / "view.json", capture=ws, dry_run=dry_run)
 
 
 def _make_executable(path: Path) -> None:

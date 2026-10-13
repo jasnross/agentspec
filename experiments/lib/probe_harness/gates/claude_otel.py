@@ -3,7 +3,7 @@
 Each gate is a literal translation of a jq program into Python over the jq-built view and
 the arm's sink files, which are only ever read. The jq semantics the translations keep:
 
-- `tostring`: a string as-is, anything else as compact JSON (`jq_tostring`);
+- `tostring`: a string as-is, anything else as compact JSON (`json_values.to_text`);
 - `.. | strings`: every string value, recursively, in pre-order;
 - `.x[]?`: nothing when `.x` is absent or not iterable;
 - `unique`: sorted and deduplicated, under jq's structural equality;
@@ -24,7 +24,8 @@ from typing import Any
 from probe_harness import jq_cli
 from probe_harness.gates import GateFailure
 from probe_harness.gates import jq_semantics as jq
-from probe_harness.workspace import jq_tostring, parse_json_values
+from probe_harness.json_values import to_text
+from probe_harness.workspace import parse_json_values
 
 DEFERRED_LISTING = "The following deferred tools are now available via ToolSearch"
 
@@ -106,7 +107,7 @@ def deferred_mcp(view: Path, marker: str, arm: str, tools: Sequence[str]) -> Non
     try:
         v = _load(view)
         governed = [
-            r for r in jq.each(jq.index(v, arm)) if marker in jq_tostring(jq.index(r, "system"))
+            r for r in jq.each(jq.index(v, arm)) if marker in to_text(jq.index(r, "system"))
         ]
         deferred = jq.unique([line for r in governed for line in _deferred_lines(r)])
         ok = jq.subtract(tools, deferred) == [] and any(
@@ -127,7 +128,7 @@ def deferred_mcp(view: Path, marker: str, arm: str, tools: Sequence[str]) -> Non
         direct = [
             jq.index(t, "name")
             for r in jq.each(jq.index(v, arm))
-            if marker in jq_tostring(jq.index(r, "system"))
+            if marker in to_text(jq.index(r, "system"))
             for t in jq.each_opt(jq.index(r, "tools"))
         ]
         if jq.subtract(tools, direct) == []:
@@ -157,7 +158,7 @@ def model(view: Path, marker: str, model: str) -> None:
             all(
                 jq.index(r, "model") == model
                 for r in jq.each(arm)
-                if marker in jq_tostring(jq.index(r, "system"))
+                if marker in to_text(jq.index(r, "system"))
             )
             for arm in jq.each(v)
         )
@@ -170,10 +171,10 @@ def model(view: Path, marker: str, model: str) -> None:
     try:
         v = _load(view)
         lines += [
-            f"probe:   arm {name}: {jq_tostring(jq.index(r, 'model'))}"
+            f"probe:   arm {name}: {to_text(jq.index(r, 'model'))}"
             for name, requests in jq.entries(v)
             for r in jq.each(requests)
-            if marker in jq_tostring(jq.index(r, "system")) and jq.index(r, "model") != model
+            if marker in to_text(jq.index(r, "system")) and jq.index(r, "model") != model
         ]
     except _EVALUATION_ERRORS:
         pass
@@ -255,7 +256,7 @@ def mcp_absent(view: Path, marker: str, prefix: str) -> None:
                 for n in _listed(r)
                 if jq.startswith(n, prefix)
             ]
-            lines += [f"probe:   arm {name}: {jq_tostring(n)}" for n in jq.unique(found)]
+            lines += [f"probe:   arm {name}: {to_text(n)}" for n in jq.unique(found)]
     except _EVALUATION_ERRORS:
         pass
     lines.append(
@@ -433,7 +434,7 @@ def _tool_results(requests: Sequence[Any], *, guard_messages: bool) -> list[tupl
                 [
                     jq.alternative(jq.index(item, "text"), "")
                     if jq.type_of(item) == "object"
-                    else jq_tostring(item)
+                    else to_text(item)
                     for item in jq.flatten([jq.index(block, "content")])
                 ]
             )
@@ -448,7 +449,7 @@ def _main_thread(requests: Any, marker: str) -> list[Any]:
     return [
         r
         for r in jq.each(requests)
-        if marker not in jq_tostring(jq.index(r, "system"))
+        if marker not in to_text(jq.index(r, "system"))
         and any(jq.index(t, "name") == "Agent" for t in jq.each_opt(jq.index(r, "tools")))
     ]
 
@@ -471,4 +472,4 @@ def _governed_wrapped(request: Any, field: str, marker: str) -> bool:
     it a governed request would be judged once per output, and gate 3 would admit it to
     the control set through whichever outputs lack the marker.
     """
-    return marker in jq_tostring(jq.path_outputs(request, field))
+    return marker in to_text(jq.path_outputs(request, field))

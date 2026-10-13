@@ -7,10 +7,12 @@ import shutil
 import sys
 import tempfile
 import time
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, TextIO
 
 from probe_harness import jq_cli
+from probe_harness.contract import Option
 
 # How long a human-driven probe waits for its capture, in seconds. It is generous because
 # its job is diagnostic: an expiry means the hook never fired, which is worth an hour of an
@@ -99,8 +101,8 @@ def wait_for_capture(ws: Path, filter_expr: str, timeout: int) -> bool:
     return _capture_matches(payloads, filter_expr)
 
 
-def prompt_selection(options: str, question: str) -> str:
-    """Present a pre-declared option set (JSON text) and return the selected id.
+def prompt_selection(options: Sequence[Option], question: str) -> str:
+    """Present a pre-declared option set and return the selected id.
 
     Without the tty guard, a human-judged probe swept up by a batch run would block
     forever on a read that can never be answered.
@@ -118,8 +120,9 @@ def prompt_selection(options: str, question: str) -> str:
     return read_selection(options, question, sys.stdin)
 
 
-def read_selection(options: str, question: str, stream: TextIO) -> str:
-    """The prompt loop, re-prompting on an unrecognized id. EOF exits 2."""
+def read_selection(options: Sequence[Option], question: str, stream: TextIO) -> str:
+    """The prompt loop, re-prompting on an unrecognized id. End of input exits 2."""
+    ids = {option.id for option in options}
     while True:
         sys.stderr.write("\n")
         if question:
@@ -128,11 +131,10 @@ def read_selection(options: str, question: str, stream: TextIO) -> str:
         sys.stderr.write("\nSelection (id): ")
         sys.stderr.flush()
         line = stream.readline()
-        # `read` fails on a final line with no newline, even though it read the text.
-        if not line.endswith("\n"):
+        if not line:
             raise SystemExit(2)
         answer = line.rstrip("\n").strip(" \t")
-        if jq_cli.test("any(.[]; .id == $a)", stdin=options, args={"a": answer}):
+        if answer in ids:
             return answer
         print(f'probe: "{answer}" is not one of the option ids.', file=sys.stderr)
 
@@ -159,13 +161,6 @@ def parse_json_values(text: str) -> list[Any]:
         values.append(value)
 
 
-def jq_tostring(value: Any) -> str:
-    """jq's `tostring`: a string as-is, anything else as compact JSON."""
-    if isinstance(value, str):
-        return value
-    return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
-
-
 def _capture_matches(payloads: Path, filter_expr: str) -> bool:
     try:
         if payloads.stat().st_size == 0:
@@ -175,5 +170,5 @@ def _capture_matches(payloads: Path, filter_expr: str) -> bool:
     return jq_cli.test(filter_expr, payloads, slurp=True)
 
 
-def _render_options(options: str) -> str:
-    return jq_cli.evaluate('.[] | "  \\(.id)  —  \\(.text)"', stdin=options, raw=True)
+def _render_options(options: Sequence[Option]) -> str:
+    return "".join(f"  {option.id}  —  {option.text}\n" for option in options)

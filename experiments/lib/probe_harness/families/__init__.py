@@ -15,7 +15,6 @@ from probe_harness.contract import (
     Driver,
     Manifest,
     OptionsAssertion,
-    parse_manifest,
 )
 from probe_harness.families import claude_otel, manual, opencode_debug, opencode_fake
 from probe_harness.families.base import (
@@ -64,8 +63,8 @@ def run_package(name: str, extra: list[str], experiments_dir: Path) -> int:
     package = experiments_dir / name
     try:
         definition: ProbeDefinition = load_definition(package, DEFINITION_TYPES)
-        options = run_preflight(package, definition.variants, _family_tools(definition))
-        refusal = _definition_refusal(name, definition, parse_manifest(package / "probe.json"))
+        manifest, options = run_preflight(package, definition.variants, _family_tools(definition))
+        refusal = _definition_refusal(name, definition, manifest)
         if refusal is not None:
             raise PreflightError(1, refusal)
         if definition.functions.preflight is not None:
@@ -82,13 +81,13 @@ def run_package(name: str, extra: list[str], experiments_dir: Path) -> int:
 
     match definition:
         case ManualProbe():
-            wait_for = parse_manifest(package / "probe.json").wait_for
+            wait_for = manifest.wait_for
             if wait_for is None:
                 # A missing filter would poll a literal that never matches, burning the
                 # whole timeout of a live session for no reason.
                 print("probe: manifest declares no wait_for filter", file=sys.stderr)
                 return 1
-            return manual.run(package, name, wait_for, options, definition)
+            return manual.run(manifest, name, wait_for, options, definition)
         case OpenCodeDebugProbe():
             return opencode_debug.run(package, name, options, definition)
         case OpenCodeFakeProbe():
@@ -154,7 +153,7 @@ def replay_package(argv: list[str], experiments_dir: Path) -> int:
                     return 2
                 if definition.functions.judge is not None:
                     definition.functions.judge(ws)
-                return manual.record_capture(package, ws, dry_run=True, selection=selection)
+                return manual.record_capture(manifest, ws, dry_run=True, selection=selection)
             case OpenCodeDebugProbe():
                 result = opencode_debug.judge(ws, definition)
                 return record(manifest.path, view=result.view, dry_run=True)

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from probe_harness import jq_cli
+from probe_harness.contract import Option
 from probe_harness.workspace import (
     create_workspace,
     prompt_selection,
@@ -202,6 +203,12 @@ def test_probe_template_file_fails_on_a_missing_source(
     assert "template source not found" in captured.out + captured.err
 
 
+SELECTION_OPTIONS = (
+    Option("neither", "Neither marker", None),
+    Option("couldnt-tell", "Could not determine", "inconclusive"),
+)
+
+
 def test_probe_prompt_selection_exits_2_without_blocking_when_stdin_is_not_a_tty(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -210,8 +217,7 @@ def test_probe_prompt_selection_exits_2_without_blocking_when_stdin_is_not_a_tty
 
     with pytest.raises(SystemExit) as exc:
         prompt_selection(
-            '[{"id":"a","text":"first"},'
-            '{"id":"couldnt-tell","text":"Could not determine","status":"inconclusive"}]',
+            (Option("a", "first", None), Option("couldnt-tell", "Could not determine", None)),
             "Which one?",
         )
     assert exc.value.code == 2
@@ -227,13 +233,18 @@ def test_the_selection_loop_re_prompts_on_an_unrecognized_answer_then_returns_th
 ) -> None:
     # Drives `read_selection` rather than `prompt_selection`: the latter's tty guard fires
     # before the loop on any non-tty stdin.
-    answer = read_selection(
-        '[{"id":"neither","text":"Neither marker"},'
-        '{"id":"couldnt-tell","text":"Could not determine","status":"inconclusive"}]',
-        "Which markers?",
-        io.StringIO("nonsense\nneither\n"),
-    )
+    answer = read_selection(SELECTION_OPTIONS, "Which markers?", io.StringIO("nonsense\nneither\n"))
 
     captured = capsys.readouterr()
     assert '"nonsense" is not one of the option ids' in captured.out + captured.err
     assert answer == "neither"
+
+
+def test_the_selection_loop_accepts_a_known_id_on_a_last_line_with_no_newline() -> None:
+    assert read_selection(SELECTION_OPTIONS, "Which markers?", io.StringIO("neither")) == "neither"
+
+
+def test_the_selection_loop_exits_2_on_an_empty_read() -> None:
+    with pytest.raises(SystemExit) as exc:
+        read_selection(SELECTION_OPTIONS, "Which markers?", io.StringIO("nonsense\n"))
+    assert exc.value.code == 2

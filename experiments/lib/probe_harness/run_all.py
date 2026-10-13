@@ -23,8 +23,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from probe_harness.contract import DRIVERS, FREE_DRIVER, Driver
-from probe_harness.state import manifest_field, needs_run
+from probe_harness.contract import DRIVERS, FREE_DRIVER, Driver, ManifestError, parse_manifest
+from probe_harness.state import needs_run
 
 FLAGS = "--billed --manual --all --stale"
 
@@ -77,9 +77,10 @@ def main(argv: list[str], experiments_dir: Path) -> int:
         package = manifest.parent
         name = package.name
 
-        driver = manifest_field(manifest, "driver", "")
-        if driver not in known:
-            print(f"probe-run: {name} declares an unknown driver: {driver}", file=sys.stderr)
+        try:
+            driver = parse_manifest(manifest).driver.value
+        except ManifestError as e:
+            print(f"probe-run: {name}: {e}", file=sys.stderr)
             failed.append(name)
             continue
 

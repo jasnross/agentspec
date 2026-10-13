@@ -2,20 +2,22 @@
 
 A manifest is hand-authored, and the failures it can express are exactly the ones the
 harness exists to prevent: an absent `expected` compares `null == null` and records a
-vacuous `confirmed`. Every gate therefore runs before anything reads a value out of the
-manifest, in a fixed order, with a message that names the manifest.
+vacuous `confirmed`. `parse_manifest` refuses every malformed shape before anything reads
+a value out of the manifest, so `probe run`, `probe record` and `probe replay` refuse the
+same manifest the same way, before any workspace exists.
 
-Each gate reproduces the jq expression the recorder has always applied, so a value on
-which that expression would error or yield false fails the gate. That is why the checks
-below test JSON types explicitly rather than relying on Python truthiness: in jq, `true`
-is not `1`, and indexing a non-object root is an error rather than a missing key.
+The gates run in a fixed order, each with a message that names the manifest. The order
+matters in one place: the driver enum is checked before the rule that an option set needs
+a manual driver. The checks test JSON types explicitly rather than relying on Python
+truthiness, because `true == 1` in Python and a manifest must not pass on that.
 """
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 type JsonValue = Any
 
@@ -76,14 +78,7 @@ class NoSource:
     pass
 
 
-@dataclass(frozen=True)
-class UnknownSource:
-    """A kind no branch recognizes. Refused by the recorder at its point, not at parse."""
-
-    kind: str
-
-
-type VersionSource = CommandSource | CaptureSource | NoSource | UnknownSource
+type VersionSource = CommandSource | CaptureSource | NoSource
 
 
 @dataclass(frozen=True)
@@ -93,8 +88,16 @@ class ProjectionAssertion:
 
 
 @dataclass(frozen=True)
+class Option:
+    id: str
+    text: str
+    # `None` when the manifest declares no status.
+    status: Literal["inconclusive"] | None
+
+
+@dataclass(frozen=True)
 class OptionsAssertion:
-    options: tuple[JsonValue, ...]
+    options: tuple[Option, ...]
     expected: JsonValue
 
 
@@ -130,12 +133,8 @@ def parse_manifest(path: str | Path) -> Manifest:
         if not ok:
             raise ManifestError(f"{message}: {path}")
 
-    # Indexing any non-object root is a jq error, so every such root fails here.
-    gate(
-        isinstance(root, dict) and _is_one(root.get("schema_version")),
-        "manifest schema_version must be 1",
-    )
-    assert isinstance(root, dict)
+    schema_version = root.get("schema_version")
+    gate(type(schema_version) is int and schema_version == 1, "manifest schema_version must be 1")
     provider = root.get("provider")
     gate(_member(provider, Provider), "manifest provider must be claude, cursor, or opencode")
     question = root.get("question")
@@ -151,6 +150,7 @@ def parse_manifest(path: str | Path) -> Manifest:
         ("projection" in assertion) != ("options" in assertion),
         "manifest assertion must declare exactly one of projection or options",
     )
+    options = assertion.get("options")
 
     # The driver enum is checked before the options correspondence, and the order is
     # load-bearing: the correspondence gate refuses any driver that is not `manual`, so
@@ -160,7 +160,11 @@ def parse_manifest(path: str | Path) -> Manifest:
     driver = root.get("driver")
     gate(_member(driver, Driver), "manifest driver must be unattended, billed, or manual")
     gate(
-        _option_statuses_inconclusive(assertion.get("options")),
+        "options" not in assertion or (isinstance(options, list) and len(options) > 0),
+        "manifest assertion options must be a non-empty list",
+    )
+    gate(
+        _option_statuses_inconclusive(options),
         'an option may declare only status "inconclusive"',
     )
     gate(
@@ -175,38 +179,55 @@ def parse_manifest(path: str | Path) -> Manifest:
 
     parsed: Assertion
     if "projection" in assertion:
-        parsed = ProjectionAssertion(jq_raw(assertion["projection"]), assertion["expected"])
+        projection = assertion["projection"]
+        gate(
+            isinstance(projection, str) and len(projection) > 0,
+            "manifest assertion projection must be a non-empty string",
+        )
+        parsed = ProjectionAssertion(projection, assertion["expected"])
     else:
-        parsed = OptionsAssertion(_iterate(assertion["options"]), assertion["expected"])
+        assert isinstance(options, list)
+        parsed_options: list[Option] = []
+        for n, option in enumerate(options, start=1):
+            gate(
+                _well_formed_option(option),
+                f"manifest option {n} must be an object with a string id and text, "
+                "and no other key but status",
+            )
+            parsed_options.append(Option(option["id"], option["text"], option.get("status")))
+        seen: set[str] = set()
+        for option in parsed_options:
+            gate(option.id not in seen, f'manifest declares option id "{option.id}" more than once')
+            seen.add(option.id)
+        parsed = OptionsAssertion(tuple(parsed_options), assertion["expected"])
 
-    wait_for = _alternative(root.get("wait_for"), "")
+    version_source = _version_source(root.get("version_source"), gate)
+
+    wait_for = root.get("wait_for")
+    gate(
+        wait_for is None or (isinstance(wait_for, str) and len(wait_for) > 0),
+        "manifest wait_for must be a non-empty string",
+    )
     return Manifest(
         path=Path(path),
         provider=Provider(str(provider)),
         driver=Driver(str(driver)),
         depth=Depth(depth) if depth is not None else None,
         question=str(question),
-        version_source=_version_source(root.get("version_source")),
-        wait_for=jq_raw(wait_for) or None,
+        version_source=version_source,
+        wait_for=wait_for,
         assertion=parsed,
     )
 
 
-def jq_raw(value: JsonValue) -> str:
-    """What `jq -r` prints for one value, without its trailing newline."""
-    if isinstance(value, str):
-        return value
-    return json.dumps(value, indent=2, ensure_ascii=False)
-
-
-def _load_root(path: Path, display: str | Path) -> JsonValue:
-    """The manifest's single JSON value. A `null` or `false` root fails `jq -e .`."""
+def _load_root(path: Path, display: str | Path) -> dict[str, JsonValue]:
+    """The manifest's single JSON value, which must be an object."""
     try:
         root = json.loads(path.read_text(encoding="utf-8"))
     except ValueError, OSError:
         raise ManifestError(f"manifest is not valid JSON: {display}") from None
-    if root is None or root is False:
-        raise ManifestError(f"manifest is not valid JSON: {display}")
+    if not isinstance(root, dict):
+        raise ManifestError(f"manifest must be a JSON object: {display}")
     return root
 
 
@@ -215,54 +236,58 @@ def _member(value: JsonValue, enum: type[StrEnum]) -> bool:
     return isinstance(value, str) and value in {member.value for member in enum}
 
 
-def _is_one(value: JsonValue) -> bool:
-    return isinstance(value, int | float) and not isinstance(value, bool) and value == 1
-
-
-def _iterate(value: JsonValue) -> tuple[JsonValue, ...]:
-    """`.[]?`: an array's elements, an object's values, and nothing for anything else."""
-    if isinstance(value, list):
-        return tuple(value)
-    if isinstance(value, dict):
-        return tuple(value.values())
-    return ()
-
-
 def _option_statuses_inconclusive(options: JsonValue) -> bool:
     """A declared option status may only be `inconclusive`.
 
-    Any other declared status would fix the verdict in advance. `[]?` is vacuously true
-    wherever there is nothing to iterate, which covers a projection manifest; a non-object
-    option falls through to the clearer refusal downstream.
+    Any other declared status would fix the verdict in advance. A projection manifest
+    declares no options, and an option that is not an object falls through to the shape
+    gate that follows.
     """
+    if not isinstance(options, list):
+        return True
     return all(
         option["status"] == "inconclusive"
-        for option in _iterate(options)
+        for option in options
         if isinstance(option, dict) and "status" in option
     )
 
 
-def _alternative(value: JsonValue, default: JsonValue) -> JsonValue:
-    """jq's `//`: the default when the value is `null` or `false`."""
-    return default if value is None or value is False else value
+def _well_formed_option(option: JsonValue) -> bool:
+    return (
+        isinstance(option, dict)
+        and set(option) <= {"id", "text", "status"}
+        and isinstance(option.get("id"), str)
+        and len(option["id"]) > 0
+        and isinstance(option.get("text"), str)
+    )
 
 
-def _version_source(source: JsonValue) -> VersionSource:
-    if source is not None and not isinstance(source, dict):
-        # `.version_source.kind` is a jq error here; no recognized kind can follow.
-        return UnknownSource(jq_raw(source))
+def _version_source(source: JsonValue, gate: Callable[[bool, str], None]) -> VersionSource:
+    gate(source is None or isinstance(source, dict), "manifest version_source must be an object")
     fields = source or {}
-    kind = jq_raw(_alternative(fields.get("kind"), "none"))
+    kind = fields.get("kind")
+    gate(
+        kind is None or kind in ("command", "capture", "none"),
+        "manifest version_source.kind must be command, capture, or none",
+    )
     match kind:
         case "command":
             # Split into argv and exec directly rather than through a shell: a manifest is
-            # reviewed as data, so it must not be able to express arbitrary code. Like
-            # bash's `read -a`, only the first line is read and it splits on blanks.
-            first_line = jq_raw(fields.get("command")).split("\n", 1)[0]
-            return CommandSource(tuple(w for w in first_line.replace("\t", " ").split(" ") if w))
+            # reviewed as data, so it must not be able to express arbitrary code.
+            command = fields.get("command")
+            gate(
+                isinstance(command, str)
+                and len(command.splitlines()) == 1
+                and len(command.split()) > 0,
+                "manifest version_source.command must be a non-empty, single-line string",
+            )
+            return CommandSource(tuple(str(command).split()))
         case "capture":
-            return CaptureSource(jq_raw(fields.get("jq")))
-        case "none":
-            return NoSource()
+            expr = fields.get("jq")
+            gate(
+                isinstance(expr, str) and len(expr) > 0,
+                "manifest version_source.jq must be a non-empty string",
+            )
+            return CaptureSource(str(expr))
         case _:
-            return UnknownSource(kind)
+            return NoSource()

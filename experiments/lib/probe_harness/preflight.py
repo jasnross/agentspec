@@ -6,8 +6,7 @@ session may first surface at record time. The version guard and the imports run 
 
     1. the manifest gates
     2. the family's tools, then a jq compile check of every manifest expression
-    3. the version source the recorder will resolve
-    4. `PROBE_DRY_RUN`, `PROBE_FIXTURE` and `PROBE_TIMEOUT_SECONDS`
+    3. `PROBE_DRY_RUN`, `PROBE_FIXTURE` and `PROBE_TIMEOUT_SECONDS`
 
 The definition's own preflight function and any family-specific check run next, in the
 family runner, still before a workspace exists.
@@ -20,11 +19,9 @@ from pathlib import Path
 from probe_harness import jq_cli
 from probe_harness.contract import (
     CaptureSource,
-    CommandSource,
     Manifest,
     ManifestError,
     ProjectionAssertion,
-    UnknownSource,
     parse_manifest,
 )
 from probe_harness.workspace import DEFAULT_TIMEOUT_SECONDS, require_tools
@@ -71,7 +68,9 @@ def check_expressions(manifest: Manifest) -> None:
             )
 
 
-def run(package: Path, variants: tuple[str, ...], family_tools: tuple[str, ...]) -> RunOptions:
+def run(
+    package: Path, variants: tuple[str, ...], family_tools: tuple[str, ...]
+) -> tuple[Manifest, RunOptions]:
     """Run the preflight sequence, raising `PreflightError` at the first refusal."""
     manifest = _parse(package)
     try:
@@ -79,16 +78,7 @@ def run(package: Path, variants: tuple[str, ...], family_tools: tuple[str, ...])
     except SystemExit as e:
         raise PreflightError(int(e.code or 1)) from None
     check_expressions(manifest)
-
-    match manifest.version_source:
-        case CommandSource(argv=()):
-            raise PreflightError(1, "record: version_source declares an empty command")
-        case UnknownSource(kind=kind):
-            raise PreflightError(1, f"record: unknown version_source.kind: {kind}")
-        case _:
-            pass
-
-    return run_options(variants)
+    return manifest, run_options(variants)
 
 
 def run_options(variants: tuple[str, ...]) -> RunOptions:

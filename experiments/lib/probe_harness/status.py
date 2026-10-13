@@ -5,9 +5,11 @@ package's own manifest declares. There is no list of providers and no list of re
 that ought to be verified: the report describes what was measured, and a package with no
 records has no row.
 
-The one exception is a `billed` package, which gets a `not yet run` row from its manifest.
-No batch run will ever populate it, so absence from the report would be its permanent
-resting state rather than a transient one.
+There are two exceptions. A `billed` package gets a `not yet run` row from its manifest: no
+batch run will ever populate it, so absence from the report would be its permanent resting
+state rather than a transient one. And a package whose manifest fails a gate gets a
+`manifest invalid` row, since its driver is unknown and it would otherwise vanish from the
+report.
 
 Always exits 0. This hangs off `just check`, and a check that can fail the build gets
 muted within a week.
@@ -18,10 +20,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from probe_harness.contract import jq_raw
+from probe_harness.contract import Driver, Manifest, ManifestError, parse_manifest
+from probe_harness.json_values import to_text
 from probe_harness.state import (
     load_record,
-    manifest_field,
     newest_record,
     recorded_version,
     resolve_installed_version,
@@ -87,7 +89,8 @@ def collect_status(experiments_dir: Path) -> StatusReport:
 
         recorded = recorded_version(record)
         installed = resolve_installed_version(package / "probe.json")
-        driver = manifest_field(package / "probe.json", "driver", "")
+        manifest = _parsed(package / "probe.json")
+        driver = manifest.driver if manifest is not None else None
 
         # Only a comparable-and-different version is staleness; every other annotation
         # says why no comparison was possible.
@@ -95,7 +98,7 @@ def collect_status(experiments_dir: Path) -> StatusReport:
         if installed.display:
             if installed.comparable:
                 if installed.display != recorded:
-                    if driver == "billed":
+                    if driver == Driver.BILLED:
                         # A billed package is never refreshed by a batch run, so counting
                         # its drift would make the total structurally nonzero.
                         note = (
@@ -125,22 +128,36 @@ def collect_status(experiments_dir: Path) -> StatusReport:
         )
 
     # Counted from the manifests rather than from the records, because a billed package's
-    # most likely state is declared-and-never-run.
-    for manifest in sorted(experiments_dir.glob("*/probe.json")):
-        if manifest.parent.name.startswith(".") or not manifest.exists():
+    # most likely state is declared-and-never-run. A package with a record already has a row,
+    # which marks an invalid manifest in its version cell.
+    for manifest_path in sorted(experiments_dir.glob("*/probe.json")):
+        if manifest_path.parent.name.startswith(".") or not manifest_path.exists():
             continue
-        if manifest_field(manifest, "driver", "") != "billed":
+        manifest = _parsed(manifest_path)
+        if manifest is None:
+            if manifest_path.parent.name not in charted:
+                report.rows.append(
+                    StatusRow(
+                        provider="unknown",
+                        name=manifest_path.parent.name,
+                        label="manifest invalid",
+                        depth="—",
+                        date="—",
+                        version="—",
+                    )
+                )
+            continue
+        if manifest.driver != Driver.BILLED:
             continue
         report.billed += 1
-        if manifest.parent.name in charted:
+        if manifest_path.parent.name in charted:
             continue
-        root = load_record(manifest)
         report.rows.append(
             StatusRow(
-                provider=manifest_field(manifest, "provider", "unknown"),
-                name=manifest.parent.name,
+                provider=manifest.provider.value,
+                name=manifest_path.parent.name,
                 label="not yet run",
-                depth=_dash_if_null(root, "depth"),
+                depth=manifest.depth.value if manifest.depth is not None else "—",
                 date="—",
                 version="— (billed; run: just probe-run --billed)",
             )
@@ -165,13 +182,9 @@ def render_report(report: StatusReport) -> str:
         return "No probe records. Write a probe: see experiments/README.md\n"
 
     lines: list[str] = []
-    # Starts empty, as awk's unset variable did, so a row with no provider opens no header.
+    # Rows sort by provider, then name, and a provider header opens each provider's rows.
     current = ""
-    # Ordered as `sort` ordered the tab-joined rows, by codepoint.
-    for row in sorted(
-        report.rows,
-        key=lambda r: "\t".join((r.provider, r.name, r.label, r.depth, r.date, r.version)),
-    ):
+    for row in sorted(report.rows, key=lambda r: (r.provider, r.name)):
         if row.provider != current:
             current = row.provider
             lines.append(f"\n{row.provider.upper()}\n")
@@ -191,22 +204,20 @@ def _package_dirs(experiments_dir: Path) -> list[Path]:
     return [e for e in entries if not e.name.startswith(".") and e.is_dir()]
 
 
-def _record_field(record: Any, key: str, default: str) -> str:
-    """`jq -r '.<key> // "<default>"'` over a record, empty where jq would error."""
-    if not isinstance(record, dict):
-        return ""
+def _parsed(manifest_path: Path) -> Manifest | None:
+    try:
+        return parse_manifest(manifest_path)
+    except ManifestError:
+        return None
+
+
+def _record_field(record: dict[str, Any], key: str, default: str) -> str:
     value = record.get(key)
-    return default if value is None or value is False else jq_raw(value)
+    return default if value is None else to_text(value)
 
 
-def _dash_if_null(document: Any, key: str) -> str:
-    """`if .<key> == null then "—" else .<key> end`, empty where jq would error."""
-    if document is None:
-        return "—"
-    if not isinstance(document, dict):
-        return ""
-    value = document.get(key)
-    return "—" if value is None else jq_raw(value)
+def _dash_if_null(record: dict[str, Any], key: str) -> str:
+    return _record_field(record, key, "—")
 
 
 def _label(status: str) -> str:

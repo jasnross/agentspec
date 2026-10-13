@@ -219,8 +219,51 @@ def test_a_malformed_manifest_is_reported_not_silently_read_as_a_human_check(
 
     result = cli("status")
     assert result.returncode == 0
-    assert "manifest unreadable" in result.output
+    assert "manifest invalid" in result.output
     assert "human check" not in result.output
+
+
+def test_a_manifest_failing_a_gate_marks_its_row_and_is_not_counted_as_billed(
+    cli: Cli, tree: Path
+) -> None:
+    put_billed_manifest(tree, "alpha")
+    manifest = json.loads((tree / "alpha" / "probe.json").read_text())
+    manifest["wait_for"] = ""
+    write_manifest(tree, "alpha", manifest)
+    put_record(tree, "alpha", "2026-06-01T000000", "claude", "confirmed", "1.0.0")
+
+    result = cli("status")
+    assert result.returncode == 0
+    assert "1.0.0 (manifest invalid)" in result.output
+    assert "billed" not in result.output
+
+
+def test_a_package_with_no_record_and_an_invalid_manifest_gets_a_row(cli: Cli, tree: Path) -> None:
+    put_billed_manifest(tree, "alpha")
+    manifest = json.loads((tree / "alpha" / "probe.json").read_text())
+    manifest["wait_for"] = ""
+    write_manifest(tree, "alpha", manifest)
+
+    result = cli("status")
+    assert result.returncode == 0
+    assert any(
+        line.split() == ["alpha", "manifest", "invalid", "—", "—", "—"] for line in lines(result)
+    )
+    assert "billed" not in result.output
+
+
+def test_a_record_whose_root_is_not_an_object_is_treated_as_unreadable(
+    cli: Cli, tree: Path
+) -> None:
+    put_record(tree, "alpha", "2026-06-01T000000", "opencode", "confirmed", "1.0.0")
+    put_record(tree, "beta", "2026-06-01T000000", "opencode", "confirmed", "1.0.0")
+    (tree / "beta" / "results" / "2026-06-02T000000-opencode-1.0.0.json").write_text("[1]\n")
+
+    result = cli("status")
+    assert result.returncode == 0
+    assert "alpha" in result.output
+    assert "beta" not in result.output
+    assert "1 recorded" in result.output
 
 
 def test_a_version_command_reading_stdin_does_not_wedge_the_report(cli: Cli, tree: Path) -> None:

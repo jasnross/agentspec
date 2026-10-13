@@ -11,7 +11,7 @@ from typing import Any
 
 from probe_harness.gates import APPARATUS_FAILURE, GateFailure, stamp
 from probe_harness.gates import jq_semantics as jq
-from probe_harness.workspace import jq_tostring
+from probe_harness.json_values import to_text
 
 __all__ = ["APPARATUS_FAILURE", "GOVERNED_JQ", "governed", "stamp", "tool_result"]
 
@@ -70,7 +70,7 @@ def _governed_requests(view: Any, arm: str, marker: str) -> list[Any]:
         r
         for r in jq.each(jq.index(view, arm))
         if any(
-            jq.index(m, "role") == "system" and marker in jq_tostring(jq.index(m, "content"))
+            jq.index(m, "role") == "system" and marker in to_text(jq.index(m, "content"))
             for m in jq.each_opt(jq.index(r, "messages"))
         )
     ]

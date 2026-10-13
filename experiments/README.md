@@ -137,12 +137,14 @@ The only hand-authored file in the contract.
 | `depth` | `resolved-config`, `outbound-request`, or `null`. |
 | `question` | Required. What this probe answers, in one sentence. |
 | `version_source` | Where the tool version comes from. See below. |
-| `wait_for` | Optional jq filter the runner polls the capture against. Present on every `manual` manifest. |
+| `wait_for` | Optional jq filter the runner polls the capture against; a non-empty string when present. Present on every `manual` manifest. |
 | `assertion` | Either `{projection, expected}` or `{options, expected}`. Never both. An `options` assertion additionally requires `driver: "manual"` — see below. |
 
 **`depth: null` is the right answer for a finding that is not on the config-rendering chain at all.** Output handling and hook-firing semantics are not weaker points on that chain; they are off it, and claiming a position on a chain the evidence never touched is a category error.
 
 **`question` appears only at the top level.** A human-judged probe shows this same string to the operator rather than carrying a second copy inside `assertion`, and no assertion restates it.
+
+**`parse_manifest` in `lib/probe_harness/contract.py` checks the type and value of every field described here.** `probe run`, `probe record` and `probe replay` all parse through it, so they refuse a malformed manifest the same way, before any workspace exists, rather than at the step that would first read the bad value.
 
 **There is no timeout field.** The poll timeout is a runner constant with a `PROBE_TIMEOUT_SECONDS` override, because it is a property of the operator's session rather than of the probe.
 
@@ -153,7 +155,9 @@ The only hand-authored file in the contract.
 | `command` | `command`   | Run it; take the first line.                 |
 | `capture` | `jq`        | Apply the expression to the capture payload. |
 
-**`kind: "none"` is deliberately absent from that table, but still accepted.** The recorder records a `null` version for it, and an omitted `version_source` falls back to it; the harness's own test fixtures declare it, which is how they avoid running a version command. It is unlisted rather than rejected because no committed manifest uses it, and adding a gate for a value nothing uses would be machinery earning nothing. The reason not to reach for it: a result carrying no tool version cannot drift, so `probe-status` has nothing to compare and the result is never reconfirmed against anything. If a version is genuinely unobtainable, say so in the package README.
+`kind` is one of `command`, `capture`, or `none`; an omitted `version_source` or `kind` means `none`. A `command` must be a non-empty, single-line string, and a `jq` a non-empty string.
+
+**`kind: "none"` is deliberately absent from that table, but accepted.** The recorder records a `null` version for it, and the harness's own test fixtures declare it, which is how they avoid running a version command. No committed manifest uses it, and the reason not to reach for it: a result carrying no tool version cannot drift, so `probe-status` has nothing to compare and the result is never reconfirmed against anything. If a version is genuinely unobtainable, say so in the package README.
 
 **A `command` is split on whitespace and exec'd directly — never through a shell.** So `opencode --version` works and `sh -c "…; …"` does not: `;`, `|`, `>`, `$()`, and quoting are not interpreted. `just probe-status` runs these commands on every `just check`, and a manifest is reviewed as data rather than as code, so it must not be able to express arbitrary code. The command also runs with stdin closed and under a timeout, because a version command that blocks would wedge the build — which is worse than failing it.
 
@@ -179,6 +183,8 @@ A projection over a capture must reduce the array to the shape `expected` is wri
   "expected": "neither"
 }
 ```
+
+**`options` is a non-empty list of `{id, text}` objects, each optionally carrying `status`.** Every `id` is a non-empty string, unique within the list, and every `text` is a string. Any other key on an option is refused, so a misspelled `status` cannot silently drop the couldn't-tell option's verdict.
 
 **An options assertion requires `driver: "manual"`, and the recorder refuses a manifest that declares one without it.** An option set is a person choosing from a list, so running the probe requires a person present — which is exactly what `manual` declares and what neither other value can supply. An `unattended` or `billed` manifest declaring one describes a runner that would have to prompt an operator no scheduler put there. The implication runs one way only — a `manual` probe may still be machine-answered, which is what `claude-session-start` is, and its projection over a capture is perfectly legitimate.
 

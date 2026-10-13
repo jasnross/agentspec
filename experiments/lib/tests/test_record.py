@@ -726,8 +726,8 @@ def test_a_duplicated_option_id_is_refused(cli: Cli, tmp_path: Path, manifest: P
     ws = fresh_capture(tmp_path)
 
     result = cli("record", "--manifest", manifest, "--selection", "dup", "--capture", ws)
-    assert result.returncode != 0
-    assert "2 times" in result.output
+    assert result.returncode == 1
+    assert f'manifest declares option id "dup" more than once: {manifest}' in result.stderr
 
 
 def test_two_runs_on_the_same_day_at_the_same_version_produce_two_records(
@@ -848,19 +848,6 @@ def test_dry_run_records_nothing_on_the_selection_path_either(
     assert result.returncode == 0
     assert not (pkg / "results").is_dir()
     assert "no file written" in result.output
-
-
-def test_a_non_object_version_source_fails_with_jq_s_diagnostic(cli: Cli, tmp_path: Path) -> None:
-    package = tmp_path / "pkg"
-    package.mkdir()
-    manifest = package / "probe.json"
-    manifest.write_text(json.dumps(unattended_manifest(version_source="command")), encoding="utf-8")
-    view = tmp_path / "view.json"
-    view.write_text("1\n", encoding="utf-8")
-    result = cli("record", "--manifest", manifest, "--view", view, "--dry-run")
-    assert result.returncode == 5
-    assert "Cannot index string" in result.stderr
-    assert result.stdout == ""
 
 
 def test_a_relative_manifest_path_records_under_the_logical_working_directory(

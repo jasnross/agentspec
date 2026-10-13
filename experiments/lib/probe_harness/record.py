@@ -9,6 +9,7 @@ Usage:
     probe record --manifest <probe.json> --selection <option-id>  --capture <ws>  [--dry-run]
 """
 
+import json
 import os
 import re
 import subprocess
@@ -24,8 +25,8 @@ from probe_harness.contract import (
     Manifest,
     ManifestError,
     NoSource,
+    OptionsAssertion,
     ProjectionAssertion,
-    UnknownSource,
     parse_manifest,
 )
 
@@ -158,10 +159,10 @@ def _record(
 
     option_status = ""
     if selection is not None:
-        observed, option_status = _select(manifest_path, selection)
+        observed, option_status = _select(manifest, selection)
     else:
         assert view is not None
-        observed = _project(manifest_path, view)
+        observed = _project(manifest, view)
 
     if option_status:
         # A `couldnt-tell` option declares `inconclusive`, so a tired operator picking it
@@ -172,7 +173,7 @@ def _record(
     else:
         status = "refuted"
 
-    tool_version = _tool_version(manifest, manifest_path, capture)
+    tool_version = _tool_version(manifest, capture)
 
     # One UTC clock read feeds both the record's `date` and the filename. The time
     # component stops a same-day re-run at the same version from overwriting its
@@ -207,36 +208,21 @@ def _record(
     return 0
 
 
-def _select(manifest_path: str, selection: str) -> tuple[str, str]:
+def _select(manifest: Manifest, selection: str) -> tuple[str, str]:
     """The observed text and the option's declared status for a selected option id."""
-    # Exactly one match: duplicate ids would make the option multi-valued.
-    matches = jq_cli.evaluate(
-        "[.assertion.options[]? | select(.id == $id)] | length",
-        Path(manifest_path),
-        args={"id": selection},
-    ).strip()
-    if matches == "0":
+    assert isinstance(manifest.assertion, OptionsAssertion)
+    option = next((o for o in manifest.assertion.options if o.id == selection), None)
+    if option is None:
         raise RecordRefused(f'selection "{selection}" is not one of the manifest\'s option ids')
-    if matches != "1":
-        raise RecordRefused(f'manifest declares option id "{selection}" {matches} times')
-    option = jq_cli.evaluate(
-        "first(.assertion.options[] | select(.id == $id))",
-        Path(manifest_path),
-        compact=True,
-        args={"id": selection},
-    ).rstrip("\n")
-    observed = jq_cli.evaluate("$id", null_input=True, args={"id": selection}).rstrip("\n")
-    option_status = jq_cli.evaluate('.status // ""', stdin=option, raw=True).rstrip("\n")
-    return observed, option_status
+    return json.dumps(selection, ensure_ascii=False), option.status or ""
 
 
-def _project(manifest_path: str, view: str) -> str:
+def _project(manifest: Manifest, view: str) -> str:
     """The projection's single value over <view>, as compact JSON text."""
+    assert isinstance(manifest.assertion, ProjectionAssertion)
     if not Path(view).is_file():
         raise RecordRefused(f"view not found: {view}")
-    projection = jq_cli.evaluate(".assertion.projection", Path(manifest_path), raw=True).rstrip(
-        "\n"
-    )
+    projection = manifest.assertion.projection
     try:
         observed = jq_cli.evaluate(projection, Path(view), compact=True).rstrip("\n")
     except jq_cli.JqError as e:
@@ -253,15 +239,10 @@ def _project(manifest_path: str, view: str) -> str:
     return observed
 
 
-def _tool_version(manifest: Manifest, manifest_path: str, capture: str | None) -> str:
-    # Read once through jq so a non-object `version_source` fails with jq's own diagnostic
-    # and exit status, as it always has, rather than as an unknown kind.
-    jq_cli.evaluate('.version_source.kind // "none"', Path(manifest_path), raw=True)
+def _tool_version(manifest: Manifest, capture: str | None) -> str:
     version: str
     match manifest.version_source:
         case CommandSource(argv=argv):
-            if not argv:
-                raise RecordRefused("version_source declares an empty command")
             version = run_version_command(argv, timeout=None)
         case CaptureSource(jq=expr):
             if capture is None:
@@ -276,8 +257,6 @@ def _tool_version(manifest: Manifest, manifest_path: str, capture: str | None) -
             version = out.rstrip("\n")
         case NoSource():
             version = ""
-        case UnknownSource(kind=kind):
-            raise RecordRefused(f"unknown version_source.kind: {kind}")
     return "" if version == "null" else version
 
 

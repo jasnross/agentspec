@@ -11,7 +11,7 @@ import re
 from collections.abc import Iterator, Sequence
 from typing import Any
 
-from probe_harness.workspace import jq_tostring
+from probe_harness.json_values import to_text
 
 # What evaluating a gate can raise: a jq type error's equivalents, a malformed file, an
 # unreadable one, or a document nested past Python's recursion limit.
@@ -128,7 +128,7 @@ def join(items: list[Any]) -> str:
         elif isinstance(item, list | dict):
             raise TypeError("cannot join a container")
         else:
-            parts.append(jq_tostring(item))
+            parts.append(to_text(item))
     return "".join(parts)
 
 
