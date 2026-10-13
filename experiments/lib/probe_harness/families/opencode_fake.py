@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from probe_harness import jq_cli
+from probe_harness.contract import Manifest
 from probe_harness.families.base import (
     CustomCheck,
     GateFailure,
@@ -79,7 +80,8 @@ class OpenCodeFakeProbe:
     functions: ProbeFunctions = field(default_factory=ProbeFunctions)
 
 
-def run(package: Path, name: str, options: RunOptions, probe: OpenCodeFakeProbe) -> int:
+def run(manifest: Manifest, name: str, options: RunOptions, probe: OpenCodeFakeProbe) -> int:
+    package = manifest.path.parent
     ws = create_workspace(name)
     with kept_on_failure(ws):
         try:
@@ -88,7 +90,7 @@ def run(package: Path, name: str, options: RunOptions, probe: OpenCodeFakeProbe)
             result = judge(ws, probe)
         except GateFailure as e:
             return refused(e, ws)
-        return record_and_retain(package, ws, result, options, probe.functions)
+        return record_and_retain(manifest, ws, result, options, probe.functions)
 
 
 def judge(ws: Path, probe: OpenCodeFakeProbe) -> JudgeResult:

@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import assert_never
 
-from probe_harness import jq_cli
+from probe_harness import jq_cli, record
 from probe_harness.contract import (
     CaptureSource,
     Driver,
@@ -24,6 +24,7 @@ from probe_harness.families.base import (
     RunOptions,
     kept_on_failure,
     record_and_retain,
+    record_refused,
     refused,
 )
 from probe_harness.families.claude_otel import ClaudeOtelProbe
@@ -33,7 +34,6 @@ from probe_harness.families.opencode_fake import OpenCodeFakeProbe
 from probe_harness.loader import DefinitionError, load_definition
 from probe_harness.preflight import ASSERTION_VARIANT, PreflightError, check_manifest
 from probe_harness.preflight import run as run_preflight
-from probe_harness.record import record
 from probe_harness.workspace import create_workspace
 
 type ProbeDefinition = (
@@ -89,13 +89,13 @@ def run_package(name: str, extra: list[str], experiments_dir: Path) -> int:
                 return 1
             return manual.run(manifest, name, wait_for, options, definition)
         case OpenCodeDebugProbe():
-            return opencode_debug.run(package, name, options, definition)
+            return opencode_debug.run(manifest, name, options, definition)
         case OpenCodeFakeProbe():
-            return opencode_fake.run(package, name, options, definition)
+            return opencode_fake.run(manifest, name, options, definition)
         case ClaudeOtelProbe():
-            return claude_otel.run(package, name, options, definition)
+            return claude_otel.run(manifest, name, options, definition)
         case CustomProbe():
-            return _run_custom(package, name, options, definition)
+            return _run_custom(manifest, name, options, definition)
         case _:
             assert_never(definition)
 
@@ -156,22 +156,21 @@ def replay_package(argv: list[str], experiments_dir: Path) -> int:
                 return manual.record_capture(manifest, ws, dry_run=True, selection=selection)
             case OpenCodeDebugProbe():
                 result = opencode_debug.judge(ws, definition)
-                return record(manifest.path, view=result.view, dry_run=True)
             case OpenCodeFakeProbe():
                 result = opencode_fake.judge(ws, definition)
-                return record(manifest.path, view=result.view, dry_run=True)
             case ClaudeOtelProbe():
                 result = claude_otel.judge(ws, definition)
-                return record(manifest.path, view=result.view, dry_run=True)
             case CustomProbe():
                 result = definition.judge(ws)
                 if definition.functions.judge is not None:
                     definition.functions.judge(ws)
-                return record(
-                    manifest.path, view=result.view, selection=result.selection, dry_run=True
-                )
             case _:
                 assert_never(definition)
+        computed = record.compute(manifest, view=result.view, selection=result.selection)
+        record.report(computed, None)
+    except record.RecordRefused as e:
+        record_refused(e)
+        return 1
     except GateFailure as e:
         _print_lines(e.lines)
         return 1
@@ -179,9 +178,10 @@ def replay_package(argv: list[str], experiments_dir: Path) -> int:
         # An unexpected jq failure while judging: its own diagnostic, not a traceback.
         sys.stderr.write(e.stderr)
         return 1
+    return 0
 
 
-def _run_custom(package: Path, name: str, options: RunOptions, probe: CustomProbe) -> int:
+def _run_custom(manifest: Manifest, name: str, options: RunOptions, probe: CustomProbe) -> int:
     ws = create_workspace(name)
     with kept_on_failure(ws):
         try:
@@ -192,7 +192,7 @@ def _run_custom(package: Path, name: str, options: RunOptions, probe: CustomProb
                 probe.functions.judge(ws)
         except GateFailure as e:
             return refused(e, ws)
-        return record_and_retain(package, ws, result, options, probe.functions)
+        return record_and_retain(manifest, ws, result, options, probe.functions)
 
 
 def _definition_refusal(name: str, definition: ProbeDefinition, manifest: Manifest) -> str | None:
@@ -295,7 +295,8 @@ def _family_tools(definition: ProbeDefinition) -> tuple[str, ...]:
         case ClaudeOtelProbe():
             return claude_otel.FAMILY_TOOLS
         case CustomProbe():
-            return definition.required_tools
+            # The recorder runs jq whatever the definition itself needs.
+            return tuple(dict.fromkeys(("jq", *definition.required_tools)))
         case _:
             assert_never(definition)
 

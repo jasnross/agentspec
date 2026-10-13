@@ -20,7 +20,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from probe_harness import jq_cli
+from probe_harness import jq_cli, record
 from probe_harness.contract import Manifest, OptionsAssertion
 from probe_harness.families.base import (
     GateFailure,
@@ -28,9 +28,9 @@ from probe_harness.families.base import (
     RunOptions,
     kept_for_inspection,
     kept_on_failure,
+    record_refused,
     refused,
 )
-from probe_harness.record import record
 from probe_harness.workspace import (
     create_workspace,
     prompt_selection,
@@ -160,15 +160,24 @@ def record_capture(
 
     # The assertion shape decides this, not the driver: an `options` set is a person
     # choosing from a list and a `projection` is jq over a file.
+    view: Path | None = None
     if isinstance(manifest.assertion, OptionsAssertion):
         if selection is None:
             # The machine has already proved the apparatus worked, so the person answers
             # only the question no machine can.
             selection = prompt_selection(manifest.assertion.options, manifest.question)
-        return record(manifest.path, selection=selection, capture=ws, dry_run=dry_run)
+    else:
+        view = ws / "view.json"
+        jq_cli.slurp_view(payloads, view)
 
-    jq_cli.slurp_view(payloads, ws / "view.json")
-    return record(manifest.path, view=ws / "view.json", capture=ws, dry_run=dry_run)
+    try:
+        computed = record.compute(manifest, view=view, selection=selection, capture=ws)
+        written = None if dry_run else record.write(computed)
+    except record.RecordRefused as e:
+        record_refused(e)
+        return 1
+    record.report(computed, written)
+    return 0
 
 
 def _make_executable(path: Path) -> None:

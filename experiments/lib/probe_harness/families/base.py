@@ -12,10 +12,10 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from probe_harness import jq_cli
+from probe_harness import jq_cli, record
+from probe_harness.contract import Manifest
 from probe_harness.gates import GateFailure
 from probe_harness.preflight import RunOptions
-from probe_harness.record import record
 
 __all__ = [
     "CustomCheck",
@@ -29,6 +29,7 @@ __all__ = [
     "kept_on_failure",
     "provider_env",
     "record_and_retain",
+    "record_refused",
     "refused",
     "run_custom_checks",
 ]
@@ -142,7 +143,7 @@ def kept_on_failure(ws: Path) -> Iterator[None]:
 
 
 def record_and_retain(
-    package: Path,
+    manifest: Manifest,
     ws: Path,
     result: JudgeResult,
     options: RunOptions,
@@ -156,19 +157,26 @@ def record_and_retain(
     A dry run and any failure keep it. A real record deletes it unless the family keeps
     every workspace or the definition's `after_record` asks to keep this one.
     """
-    code = record(
-        package / "probe.json",
-        view=result.view,
-        selection=result.selection,
-        capture=capture,
-        dry_run=options.dry_run,
-    )
-    if code != 0:
+    try:
+        computed = record.compute(
+            manifest, view=result.view, selection=result.selection, capture=capture
+        )
+        written = None if options.dry_run else record.write(computed)
+    except record.RecordRefused as e:
+        record_refused(e)
         kept_for_inspection(ws)
         return 1
+    record.report(computed, written)
     if options.dry_run:
         return 0
     keep = functions.after_record(ws) if functions.after_record is not None else False
     if delete_after_record and not keep:
         shutil.rmtree(ws, ignore_errors=True)
     return 0
+
+
+def record_refused(refusal: record.RecordRefused) -> None:
+    """Print a recorder refusal: its own lines prefixed, then what it passed through."""
+    for line in refusal.lines:
+        print(f"record: {line}", file=sys.stderr)
+    sys.stderr.writelines(f"{line}\n" for line in refusal.detail)

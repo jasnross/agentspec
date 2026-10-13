@@ -123,11 +123,13 @@ class ManifestError(Exception):
 def parse_manifest(path: str | Path) -> Manifest:
     """Gate <path> and return its typed form, raising `ManifestError` at the first refusal.
 
-    Messages name the path exactly as given.
+    Messages name the path as `Manifest.path` spells it, so every later refusal naming the
+    manifest spells it the same way.
     """
-    if not Path(path).is_file():
+    path = Path(path)
+    if not path.is_file():
         raise ManifestError(f"manifest not found: {path}")
-    root = _load_root(Path(path), path)
+    root = _load_root(path)
 
     def gate(ok: bool, message: str) -> None:
         if not ok:
@@ -209,7 +211,7 @@ def parse_manifest(path: str | Path) -> Manifest:
         "manifest wait_for must be a non-empty string",
     )
     return Manifest(
-        path=Path(path),
+        path=path,
         provider=Provider(str(provider)),
         driver=Driver(str(driver)),
         depth=Depth(depth) if depth is not None else None,
@@ -220,14 +222,14 @@ def parse_manifest(path: str | Path) -> Manifest:
     )
 
 
-def _load_root(path: Path, display: str | Path) -> dict[str, JsonValue]:
+def _load_root(path: Path) -> dict[str, JsonValue]:
     """The manifest's single JSON value, which must be an object."""
     try:
         root = json.loads(path.read_text(encoding="utf-8"))
     except ValueError, OSError:
-        raise ManifestError(f"manifest is not valid JSON: {display}") from None
+        raise ManifestError(f"manifest is not valid JSON: {path}") from None
     if not isinstance(root, dict):
-        raise ManifestError(f"manifest must be a JSON object: {display}")
+        raise ManifestError(f"manifest must be a JSON object: {path}")
     return root
 
 

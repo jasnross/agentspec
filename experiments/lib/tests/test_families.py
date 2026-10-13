@@ -54,6 +54,32 @@ def test_replay_refuses_a_selection_for_a_projection_manifest(
     assert "declares a projection; --selection does not apply" in result.stderr
 
 
+RECORDING_PY = """\
+from pathlib import Path
+from probe_harness.families.base import CustomProbe, JudgeResult
+
+def _act(ws: Path) -> None:
+    (ws / "view.json").write_text("1\\n", encoding="utf-8")
+
+PROBE = CustomProbe(required_tools=(), arrange=lambda ws, variant: None, act=_act,
+                    judge=lambda ws: JudgeResult(view=ws / "view.json", selection=None))
+"""
+
+
+def test_a_record_lands_in_the_package_s_results_when_the_tree_is_reached_through_a_symlink(
+    cli: Cli, tree: Path, tmp_path: Path
+) -> None:
+    _put_custom_package(tree, "alpha", RECORDING_PY)
+    link = tmp_path / "link"
+    link.symlink_to(tree)
+
+    result = cli("run", "alpha", env={"PROBE_EXPERIMENTS_DIR": str(link)})
+    assert result.returncode == 0, result.output
+    records = list((tree / "alpha" / "results").glob("*.json"))
+    assert len(records) == 1
+    assert result.stdout == f"{link / 'alpha' / 'results' / records[0].name}\n"
+
+
 VARIANT_ECHO_PY = """\
 from pathlib import Path
 from probe_harness.families.base import CustomProbe, JudgeResult

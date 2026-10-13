@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from probe_harness import contract, record
 
 from tests.conftest import (
     Cli,
@@ -850,23 +851,82 @@ def test_dry_run_records_nothing_on_the_selection_path_either(
     assert "no file written" in result.output
 
 
-def test_a_relative_manifest_path_records_under_the_logical_working_directory(
+def _parsed(tmp_path: Path, document: dict[str, Any]) -> contract.Manifest:
+    path = tmp_path / "pkg" / "probe.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(document), encoding="utf-8")
+    return contract.parse_manifest(path)
+
+
+def _view_file(tmp_path: Path, text: str) -> Path:
+    path = tmp_path / "view.json"
+    path.write_text(text + "\n", encoding="utf-8")
+    return path
+
+
+def test_compute_confirms_a_matching_projection(tmp_path: Path) -> None:
+    manifest = _parsed(tmp_path, unattended_manifest())
+    computed = record.compute(manifest, view=_view_file(tmp_path, "1"))
+    assert computed.status == record.Status.CONFIRMED
+    assert computed.observed_text == "1"
+    assert computed.tool_version is None
+
+
+def test_compute_refutes_a_mismatching_projection(tmp_path: Path) -> None:
+    manifest = _parsed(tmp_path, unattended_manifest())
+    computed = record.compute(manifest, view=_view_file(tmp_path, "2"))
+    assert computed.status == record.Status.REFUTED
+    assert computed.observed_text == "2"
+
+
+def test_compute_takes_an_inconclusive_option_s_status(tmp_path: Path) -> None:
+    manifest = _parsed(tmp_path, JUDGE_MANIFEST)
+    computed = record.compute(manifest, selection="couldnt-tell", capture=fresh_capture(tmp_path))
+    assert computed.status == record.Status.INCONCLUSIVE
+    assert computed.observed_text == '"couldnt-tell"'
+
+
+def test_compute_refuses_a_projection_yielding_several_values(tmp_path: Path) -> None:
+    manifest = _parsed(
+        tmp_path, unattended_manifest(assertion={"projection": ".[]", "expected": 1})
+    )
+    with pytest.raises(record.RecordRefused) as exc:
+        record.compute(manifest, view=_view_file(tmp_path, "[1, 2]"))
+    assert exc.value.lines == (
+        "projection must yield exactly one JSON value, but yielded several: .[]",
+    )
+
+
+def test_compute_writes_no_file_and_prints_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    manifest = _parsed(tmp_path, unattended_manifest())
+    record.compute(manifest, view=_view_file(tmp_path, "1"))
+    assert not (manifest.path.parent / "results").exists()
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ""
+
+
+def test_write_puts_the_record_under_the_manifest_s_results_with_its_stamped_name(
+    tmp_path: Path,
+) -> None:
+    manifest = _parsed(tmp_path, unattended_manifest())
+    computed = record.compute(manifest, view=_view_file(tmp_path, "1"))
+    written = record.write(computed)
+    assert written == manifest.path.parent / "results" / f"{computed.stamp}-opencode-unknown.json"
+    assert written.read_text(encoding="utf-8") == computed.text() + "\n"
+    assert json.loads(computed.text())["date"] == computed.stamp.split("T", 1)[0]
+
+
+def test_a_relative_manifest_path_records_and_prints_relative_to_the_working_directory(
     cli: Cli, tmp_path: Path
 ) -> None:
-    real = tmp_path / "real"
-    (real / "pkg").mkdir(parents=True)
-    (real / "pkg" / "probe.json").write_text(json.dumps(unattended_manifest()), encoding="utf-8")
-    (real / "view.json").write_text("1\n", encoding="utf-8")
-    link = tmp_path / "link"
-    link.symlink_to(real)
-    result = cli(
-        "record",
-        "--manifest",
-        "pkg/probe.json",
-        "--view",
-        "view.json",
-        cwd=link,
-        env={"PWD": str(link)},
-    )
-    assert result.returncode == 0
-    assert result.stdout.startswith(f"{link}/pkg/results/")
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "probe.json").write_text(json.dumps(unattended_manifest()))
+    (tmp_path / "view.json").write_text("1\n")
+
+    result = cli("record", "--manifest", "pkg/probe.json", "--view", "view.json", cwd=tmp_path)
+    assert result.returncode == 0, result.output
+    printed = result.stdout.removesuffix("\n")
+    assert printed.startswith("pkg/results/")
+    assert (tmp_path / printed).is_file()

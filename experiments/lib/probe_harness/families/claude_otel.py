@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Literal, assert_never
 
 from probe_harness import jq_cli
+from probe_harness.contract import Manifest
 from probe_harness.families.base import (
     CustomCheck,
     GateFailure,
@@ -162,7 +163,8 @@ class ClaudeOtelProbe:
     functions: ProbeFunctions = field(default_factory=ProbeFunctions)
 
 
-def run(package: Path, name: str, options: RunOptions, probe: ClaudeOtelProbe) -> int:
+def run(manifest: Manifest, name: str, options: RunOptions, probe: ClaudeOtelProbe) -> int:
+    package = manifest.path.parent
     ws = create_workspace(name)
     with kept_on_failure(ws):
         try:
@@ -171,7 +173,7 @@ def run(package: Path, name: str, options: RunOptions, probe: ClaudeOtelProbe) -
             result = judge(ws, probe)
         except GateFailure as e:
             return refused(e, ws)
-        return record_and_retain(package, ws, result, options, probe.functions)
+        return record_and_retain(manifest, ws, result, options, probe.functions)
 
 
 def judge(ws: Path, probe: ClaudeOtelProbe) -> JudgeResult:
