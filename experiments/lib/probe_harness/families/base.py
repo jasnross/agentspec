@@ -6,13 +6,12 @@ Each run is Preflight → Arrange → Act → Judge → Record. Judge reads only
 
 import os
 import shutil
-import sys
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from probe_harness import jq_cli, record
+from probe_harness import console, jq_cli, record
 from probe_harness.contract import Manifest
 from probe_harness.gates import GateFailure
 from probe_harness.preflight import RunOptions
@@ -29,7 +28,6 @@ __all__ = [
     "kept_on_failure",
     "provider_env",
     "record_and_retain",
-    "record_refused",
     "refused",
     "run_custom_checks",
 ]
@@ -109,13 +107,12 @@ def file_lines(path: Path) -> tuple[str, ...]:
 
 
 def kept_for_inspection(ws: Path) -> None:
-    print(f"probe: the workspace has been kept for inspection: {ws}", file=sys.stderr)
+    console.say(f"the workspace has been kept for inspection: {ws}")
 
 
 def refused(failure: GateFailure, ws: Path) -> int:
     """Print a gate's lines and the kept-workspace line; a gate failure never records."""
-    for line in failure.lines:
-        print(line, file=sys.stderr)
+    console.say_refusal(failure)
     kept_for_inspection(ws)
     return 1
 
@@ -134,7 +131,7 @@ def kept_on_failure(ws: Path) -> Iterator[None]:
             kept_for_inspection(ws)
         raise
     except jq_cli.JqError as e:
-        sys.stderr.write(e.stderr)
+        console.verbatim(e.stderr.splitlines())
         kept_for_inspection(ws)
         raise SystemExit(1) from None
     except BaseException:
@@ -163,7 +160,7 @@ def record_and_retain(
         )
         written = None if options.dry_run else record.write(computed)
     except record.RecordRefused as e:
-        record_refused(e)
+        console.say_refusal(e)
         kept_for_inspection(ws)
         return 1
     record.report(computed, written)
@@ -173,10 +170,3 @@ def record_and_retain(
     if delete_after_record and not keep:
         shutil.rmtree(ws, ignore_errors=True)
     return 0
-
-
-def record_refused(refusal: record.RecordRefused) -> None:
-    """Print a recorder refusal: its own lines prefixed, then what it passed through."""
-    for line in refusal.lines:
-        print(f"record: {line}", file=sys.stderr)
-    sys.stderr.writelines(f"{line}\n" for line in refusal.detail)

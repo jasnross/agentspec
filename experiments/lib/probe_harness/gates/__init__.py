@@ -8,14 +8,15 @@ from pathlib import Path
 
 
 class GateFailure(Exception):
-    """A refusal whose lines are printed to stderr as-is."""
+    """A refusal. <lines> are the harness's own words; <detail> is output it passes through."""
 
-    def __init__(self, *lines: str) -> None:
+    def __init__(self, *lines: str, detail: tuple[str, ...] = ()) -> None:
         super().__init__("\n".join(lines))
         self.lines = lines
+        self.detail = detail
 
 
-APPARATUS_FAILURE = "probe: this is an apparatus failure, not a refutation; no record written."
+APPARATUS_FAILURE = "this is an apparatus failure, not a refutation; no record written."
 
 
 def stamp(ws: Path, arm: str, key: str) -> None:
@@ -26,7 +27,6 @@ def stamp(ws: Path, arm: str, key: str) -> None:
     """
     if not (ws / arm / f"{key}.stamp").exists():
         raise GateFailure(
-            f"probe: arm {arm}: the {key} server never answered tools/list, so the arm "
-            "describes nothing.",
+            f"arm {arm}: the {key} server never answered tools/list, so the arm describes nothing.",
             APPARATUS_FAILURE,
         )

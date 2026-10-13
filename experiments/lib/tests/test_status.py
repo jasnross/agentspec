@@ -302,11 +302,26 @@ def test_an_unrelated_json_file_in_results_is_not_mistaken_for_the_newest_record
     assert "1 recorded" in result.output
 
 
-def test_an_unknown_argument_exits_0_rather_than_failing_the_build(cli: Cli, tree: Path) -> None:
+def test_an_unknown_argument_exits_2(cli: Cli, tree: Path) -> None:
+    # `just probe-summary` ignores this exit through `-@`, so it still cannot fail the build.
     put_record(tree, "alpha", "2026-06-01T000000", "opencode", "confirmed", "2.0.0")
 
     result = cli("status", "--bogus")
-    assert result.returncode == 0
+    assert result.returncode == 2
+    assert "probe status: error: unrecognized arguments: --bogus" in result.stderr
+
+
+def test_a_cell_holding_a_dash_is_padded_to_the_same_column_as_an_ascii_one(
+    cli: Cli, tree: Path
+) -> None:
+    # alpha's depth cell is `—`, beta's is ASCII; both date cells must start in one column.
+    put_record(tree, "alpha", "2026-06-01T000000", "opencode", "confirmed", "1.0.0")
+    put_billed_manifest(tree, "beta")
+
+    rows = {line.split()[0]: line for line in lines(cli("status")) if line.startswith("  ")}
+    date_column = 2 + 33 + 14 + 18
+    assert rows["alpha"][date_column:].startswith("2026-06-01 ")
+    assert rows["beta"][date_column:].startswith("— ")
 
 
 def test_an_installed_version_differing_from_the_recorded_one_counts_as_drift(

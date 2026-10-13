@@ -34,9 +34,7 @@ def _arrange_arm(package: Path, arm_dir: Path, arm: OpenCodeArm) -> ScriptedCall
     """
     notes = arm_dir / "project" / "notes.txt"
     if not notes.exists():
-        raise GateFailure(
-            f"probe: arm {arm.name}: {notes} is missing, so a read of it could not succeed."
-        )
+        raise GateFailure(f"arm {arm.name}: {notes} is missing, so a read of it could not succeed.")
     if arm.call is None or arm.call.tool != "read":
         return None
     path = f"{(arm_dir / 'project').resolve()}/notes.txt"

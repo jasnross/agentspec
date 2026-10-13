@@ -20,7 +20,7 @@ from tests.conftest import (
     unattended_manifest,
 )
 
-KEPT = "probe: the workspace has been kept for inspection:"
+KEPT = "probe run: the workspace has been kept for inspection:"
 
 
 def test_a_runner_exiting_nonzero_after_the_workspace_exists_keeps_it(
@@ -232,33 +232,33 @@ def providers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         pytest.param(
             _claude('(ClaudeArm("a", "tree", "p"), ClaudeArm("a", "other", "p"))'),
             {},
-            "probe: pkg's definition declares arm a more than once",
+            "probe run: pkg's definition declares arm a more than once",
             id="duplicate-arm",
         ),
         pytest.param(
             _claude(ONE_ARM, '(Model(), ToolAnswered("b", "t"))'),
             {},
-            "probe: pkg's definition gates arm b (ToolAnswered), but declares no such arm",
+            "probe run: pkg's definition gates arm b (ToolAnswered), but declares no such arm",
             id="undeclared-gate-arm",
         ),
         pytest.param(
             _claude(ONE_ARM, '(DelegationFork("z"),)'),
             {},
-            "probe: pkg's definition gates arm z (DelegationFork), but declares no such arm",
+            "probe run: pkg's definition gates arm z (DelegationFork), but declares no such arm",
             id="undeclared-fork-arm",
         ),
         pytest.param(
             _claude(ONE_ARM, variants='("assertion", "discriminator")'),
             {},
-            "probe: pkg declares variants assertion, discriminator, but no arm's fixture tree "
+            "probe run: pkg declares variants assertion, discriminator, but no arm's fixture tree "
             "contains {variant}",
             id="variant-without-tree",
         ),
         pytest.param(
             _claude(ONE_ARM),
             {"driver": "manual", "wait_for": "true"},
-            "probe: pkg is a ClaudeOtelProbe, which records without a capture, but its manifest "
-            'declares driver "manual"',
+            "probe run: pkg is a ClaudeOtelProbe, which records without a capture, but its "
+            'manifest declares driver "manual"',
             id="claude-over-manual",
         ),
         pytest.param(
@@ -272,7 +272,7 @@ def providers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
                 )
             """),
             {"provider": "opencode", "driver": "unattended"},
-            "probe: pkg is an OpenCodeFakeProbe, whose only fixture variant is assertion",
+            "probe run: pkg is an OpenCodeFakeProbe, whose only fixture variant is assertion",
             id="fake-with-variants",
         ),
         pytest.param(
@@ -284,7 +284,7 @@ def providers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
                 )
             """),
             {"provider": "opencode", "driver": "unattended"},
-            "probe: pkg's definition declares arm a more than once",
+            "probe run: pkg's definition declares arm a more than once",
             id="fake-duplicate-arm",
         ),
     ],
@@ -302,3 +302,18 @@ def test_an_inconsistent_definition_is_refused_before_a_workspace_exists(
     assert result.returncode == 1
     assert message in result.stderr
     assert list(_isolated_tmpdir.glob("probe-pkg.*")) == []
+
+
+def test_a_flag_given_with_a_package_exits_2(cli: Cli, put_package: Callable[..., Path]) -> None:
+    put_package("alpha", "unattended", 0)
+    result = cli("run", "alpha", "--billed")
+    assert result.returncode == 2
+    assert "probe run: error: unexpected argument: --billed; set PROBE_FIXTURE" in result.stderr
+    assert "ran alpha" not in result.stdout
+
+
+def test_replay_without_a_workspace_exits_2(cli: Cli, put_package: Callable[..., Path]) -> None:
+    put_package("alpha", "unattended", 0)
+    result = cli("replay", "alpha")
+    assert result.returncode == 2
+    assert "probe replay: error: the following arguments are required: workspace" in (result.stderr)

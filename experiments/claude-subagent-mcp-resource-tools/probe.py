@@ -9,9 +9,9 @@ this package declares `driver: billed` and `just probe-run` withholds it
 without `--billed`.
 """
 
-import sys
 from pathlib import Path
 
+from probe_harness import console
 from probe_harness.families.base import GateFailure, ProbeFunctions
 from probe_harness.families.claude_otel import (
     ClaudeArm,
@@ -51,8 +51,9 @@ def _judge(ws: Path) -> None:
     except GateFailure as e:
         raise GateFailure(
             *e.lines,
-            "probe: for these three names the likelier cause is a renamed resource tool, or a "
+            "for these three names the likelier cause is a renamed resource tool, or a "
             "Claude Code that no longer offers them for this server.",
+            detail=e.detail,
         ) from None
 
 
@@ -71,10 +72,9 @@ def _keep_if_offered(ws: Path) -> bool:
         for tool in bodies.listed_tools(request)
     )
     if offered:
-        print(
-            "probe: inherit or explicit was offered a resource tool; the workspace has been "
-            f"kept for inspection: {ws}",
-            file=sys.stderr,
+        console.say(
+            "inherit or explicit was offered a resource tool; the workspace has been "
+            f"kept for inspection: {ws}"
         )
     return offered
 

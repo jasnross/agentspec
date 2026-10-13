@@ -116,8 +116,8 @@ def test_hook_command_argv_refuses_a_shell_significant_tmpdir(
     )
     assert result.returncode == 1
     assert result.stderr == (
-        f"probe: TMPDIR contains whitespace or a shell metacharacter ({tmpdir});\n"
-        "probe: the command strings this probe registers would not measure what they mean to.\n"
+        f"probe run: TMPDIR contains whitespace or a shell metacharacter ({tmpdir});\n"
+        "probe run: the command strings this probe registers would not measure what they mean to.\n"
     )
     assert "Workspace ready" not in result.output
 

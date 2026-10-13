@@ -31,7 +31,7 @@ def test_a_sink_with_no_request_file_is_the_family_s_refusal(tmp_path: Path) -> 
 
     with pytest.raises(GateFailure) as exc:
         claude_otel.judge(tmp_path, PROBE)
-    assert exc.value.lines == (f"probe: the b arm captured no request files in {tmp_path}/b/sink",)
+    assert exc.value.lines == (f"the b arm captured no request files in {tmp_path}/b/sink",)
 
 
 def test_only_request_json_files_count_as_requests(tmp_path: Path) -> None:
@@ -73,7 +73,7 @@ def test_a_sink_file_that_is_not_json_is_refused_naming_the_file(tmp_path: Path)
 
     with pytest.raises(GateFailure) as exc:
         views.read_sink(sink)
-    assert exc.value.lines[0].startswith(f"probe: {sink}/one.request.json is not valid JSON: ")
+    assert exc.value.lines[0].startswith(f"{sink}/one.request.json is not valid JSON: ")
 
 
 def test_a_capture_view_is_the_list_of_payloads(tmp_path: Path) -> None:
@@ -92,7 +92,7 @@ def test_a_capture_view_over_payloads_that_are_not_json_is_refused(tmp_path: Pat
     with pytest.raises(GateFailure) as exc:
         views.write_capture_view(payloads, tmp_path / "view.json")
     assert exc.value.lines[0].startswith(
-        f"probe: the captured payloads at {payloads} are not valid JSON: "
+        f"the captured payloads at {payloads} are not valid JSON: "
     )
 
 

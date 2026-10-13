@@ -23,13 +23,17 @@ import subprocess
 import sys
 from pathlib import Path
 
+from probe_harness import console
 from probe_harness.contract import DRIVERS, FREE_DRIVER, Driver, ManifestError, parse_manifest
 from probe_harness.state import needs_run
 
-FLAGS = "--billed --manual --all --stale"
+# The CLI this loop runs each package through: the `experiments/probe` beside `lib/`.
+PROBE_SCRIPT = Path(__file__).resolve().parents[2] / "probe"
 
 
-def main(argv: list[str], experiments_dir: Path) -> int:
+def main(
+    *, billed: bool, manual: bool, all_drivers: bool, stale: bool, experiments_dir: Path
+) -> int:
     known = {d.value for d in DRIVERS}
     authorized: list[str] = [FREE_DRIVER.value]
 
@@ -41,30 +45,18 @@ def main(argv: list[str], experiments_dir: Path) -> int:
     # It seeds the same set the flags add to.
     for driver in os.environ.get("PROBE_AUTHORIZE_DRIVERS", "").split():
         if driver not in known:
-            print(
-                f"probe-run: PROBE_AUTHORIZE_DRIVERS names an unknown driver: {driver}",
-                file=sys.stderr,
-            )
+            console.say(f"PROBE_AUTHORIZE_DRIVERS names an unknown driver: {driver}")
             return 2
         authorize(driver)
 
-    stale_only = False
-    for flag in argv:
-        match flag:
-            case "--billed":
-                authorize(Driver.BILLED.value)
-            case "--manual":
-                authorize(Driver.MANUAL.value)
-            case "--all":
-                authorized = [d.value for d in DRIVERS]
-            case "--stale":
-                stale_only = True
-            case _:
-                print(f"probe-run: unknown argument: {flag}", file=sys.stderr)
-                print(f"probe-run: accepted: {FLAGS}", file=sys.stderr)
-                return 2
+    if billed:
+        authorize(Driver.BILLED.value)
+    if manual:
+        authorize(Driver.MANUAL.value)
+    if all_drivers:
+        authorized = [d.value for d in DRIVERS]
+    stale_only = stale
 
-    cli = Path(sys.argv[0]).resolve().parent / "probe"
     ran = 0
     fresh = 0
     # One entry per withheld package, so the summary counts by driver.
@@ -80,7 +72,7 @@ def main(argv: list[str], experiments_dir: Path) -> int:
         try:
             driver = parse_manifest(manifest).driver.value
         except ManifestError as e:
-            print(f"probe-run: {name}: {e}", file=sys.stderr)
+            console.say(f"{name}: {e}")
             failed.append(name)
             continue
 
@@ -97,10 +89,11 @@ def main(argv: list[str], experiments_dir: Path) -> int:
             _out(f"\n=== {name} ===\n")
             # A failing probe must not abort the loop: records written by probes that
             # passed stay valid, and the run reports what broke at the end.
-            if subprocess.run([str(cli), "run", name], check=False).returncode == 0:
+            argv = [sys.executable, str(PROBE_SCRIPT), "run", name]
+            if subprocess.run(argv, check=False).returncode == 0:
                 ran += 1
             else:
-                print(f"probe-run: {name} FAILED", file=sys.stderr)
+                console.say(f"{name} FAILED")
                 failed.append(name)
         else:
             _out(f"skipped  {name:<32} driver {driver} — {_withheld_note(driver, name)}\n")
@@ -114,10 +107,10 @@ def main(argv: list[str], experiments_dir: Path) -> int:
     # evaluated freshness would claim it had been evaluated and found nothing.
     if stale_only:
         segments.append(f"{fresh} fresh")
-    _out(f"\nprobe-run: {ran} ran · {withheld_total + fresh} skipped ({' · '.join(segments)})\n")
+    _out(f"\nprobe run: {ran} ran · {withheld_total + fresh} skipped ({' · '.join(segments)})\n")
 
     if failed:
-        print(f"probe-run: failed: {' '.join(failed)}", file=sys.stderr)
+        console.say(f"failed: {' '.join(failed)}")
         return 1
     return 0
 

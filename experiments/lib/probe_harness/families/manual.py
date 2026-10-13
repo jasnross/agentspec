@@ -20,7 +20,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from probe_harness import json_values, record, views
+from probe_harness import console, json_values, record, views
 from probe_harness.contract import Manifest, OptionsAssertion
 from probe_harness.families.base import (
     GateFailure,
@@ -28,7 +28,6 @@ from probe_harness.families.base import (
     RunOptions,
     kept_for_inspection,
     kept_on_failure,
-    record_refused,
     refused,
 )
 from probe_harness.workspace import (
@@ -83,9 +82,11 @@ def run(
     # The workspace is never deleted: discarding one an operator spent a live session on is
     # the single unrecoverable mistake a runner could make, and reading the capture is how
     # they tell a hook that never fired from a procedure that went off the rails.
-    sys.stderr.write("\nprobe: timed out waiting for the capture.\n")
-    sys.stderr.write("This run is over; re-run the probe to try again.\n")
-    sys.stderr.write(f"The workspace has been kept for inspection: {ws}\n\n")
+    sys.stderr.write(
+        "\nTimed out waiting for the capture.\n"
+        "This run is over; re-run the probe to try again.\n"
+        f"The workspace has been kept for inspection: {ws}\n\n"
+    )
     return 1
 
 
@@ -130,10 +131,7 @@ def _materialize(package: Path, ws: Path) -> None:
         # A workspace path carrying a quote or backslash would yield config the provider
         # silently ignores. Fail here, where the cause is obvious.
         if rel.suffix == ".json" and not _parses(dst):
-            print(
-                f"probe: generated {dst} is not valid JSON — check the workspace path",
-                file=sys.stderr,
-            )
+            console.say(f"generated {dst} is not valid JSON — check the workspace path")
             raise SystemExit(1)
 
 
@@ -148,13 +146,12 @@ def record_capture(
     """
     payloads = ws / "capture" / "payloads.jsonl"
     if not (ws / "capture").is_dir():
-        print(f"probe: {ws} is not a probe workspace (no capture/ directory)", file=sys.stderr)
+        console.say(f"{ws} is not a probe workspace (no capture/ directory)")
         return 1
     if not payloads.is_file() or payloads.stat().st_size == 0:
-        print(f"probe: no captured payloads at {payloads}", file=sys.stderr)
-        print(
-            "probe: the hook did not fire. Check that the provider was fully quit and reopened.",
-            file=sys.stderr,
+        console.say(
+            f"no captured payloads at {payloads}",
+            "the hook did not fire. Check that the provider was fully quit and reopened.",
         )
         return 1
 
@@ -171,15 +168,14 @@ def record_capture(
         try:
             views.write_capture_view(payloads, view)
         except GateFailure as e:
-            for line in e.lines:
-                print(line, file=sys.stderr)
+            console.say_refusal(e)
             return 1
 
     try:
         computed = record.compute(manifest, view=view, selection=selection, capture=ws)
         written = None if dry_run else record.write(computed)
     except record.RecordRefused as e:
-        record_refused(e)
+        console.say_refusal(e)
         return 1
     record.report(computed, written)
     return 0

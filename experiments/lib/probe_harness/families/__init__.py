@@ -5,11 +5,10 @@ existing family writes only what is specific to it; a probe fitting no family wr
 `CustomProbe`.
 """
 
-import sys
 from pathlib import Path
 from typing import assert_never
 
-from probe_harness import jq_cli, record
+from probe_harness import console, jq_cli, record
 from probe_harness.contract import (
     CaptureSource,
     Driver,
@@ -24,7 +23,6 @@ from probe_harness.families.base import (
     RunOptions,
     kept_on_failure,
     record_and_retain,
-    record_refused,
     refused,
 )
 from probe_harness.families.claude_otel import ClaudeOtelProbe
@@ -48,18 +46,9 @@ DEFINITION_TYPES: tuple[type, ...] = (
     CustomProbe,
 )
 
-REPLAY_USAGE = "probe replay: usage: probe replay <package> <workspace> [--selection <id>]"
 
-
-def run_package(name: str, extra: list[str], experiments_dir: Path) -> int:
+def run_package(name: str, experiments_dir: Path) -> int:
     """`probe run <package>`: one blocking run of one package. Returns the exit code."""
-    if extra:
-        print(f"probe run: unexpected argument: {extra[0]}", file=sys.stderr)
-        print(
-            "probe: set PROBE_FIXTURE or PROBE_DRY_RUN in the environment instead.", file=sys.stderr
-        )
-        return 2
-
     package = experiments_dir / name
     try:
         definition: ProbeDefinition = load_definition(package, DEFINITION_TYPES)
@@ -70,13 +59,13 @@ def run_package(name: str, extra: list[str], experiments_dir: Path) -> int:
         if definition.functions.preflight is not None:
             definition.functions.preflight()
     except DefinitionError as e:
-        print(e, file=sys.stderr)
+        console.say(str(e))
         return 1
     except PreflightError as e:
-        _print_lines(e.lines)
+        console.say_refusal(e)
         return e.code
     except GateFailure as e:
-        _print_lines(e.lines)
+        console.say_refusal(e)
         return 1
 
     match definition:
@@ -85,7 +74,7 @@ def run_package(name: str, extra: list[str], experiments_dir: Path) -> int:
             if wait_for is None:
                 # A missing filter would poll a literal that never matches, burning the
                 # whole timeout of a live session for no reason.
-                print("probe: manifest declares no wait_for filter", file=sys.stderr)
+                console.say("manifest declares no wait_for filter")
                 return 1
             return manual.run(manifest, name, wait_for, options, definition)
         case OpenCodeDebugProbe():
@@ -100,56 +89,33 @@ def run_package(name: str, extra: list[str], experiments_dir: Path) -> int:
             assert_never(definition)
 
 
-def replay_package(argv: list[str], experiments_dir: Path) -> int:
+def replay_package(name: str, ws: Path, selection: str | None, experiments_dir: Path) -> int:
     """`probe replay <package> <workspace> [--selection <id>]`: judge a kept workspace again.
 
     Always a dry run; it never records. It writes `view.json` into the workspace it judges,
     as the judging step of a live run does, so replay a copy.
     """
-    selection: str | None = None
-    positional: list[str] = []
-    rest = list(argv)
-    while rest:
-        arg = rest.pop(0)
-        if arg == "--selection":
-            if not rest:
-                print(REPLAY_USAGE, file=sys.stderr)
-                return 2
-            selection = rest.pop(0)
-        else:
-            positional.append(arg)
-    if len(positional) != 2:
-        print(REPLAY_USAGE, file=sys.stderr)
-        return 2
-    name, workspace = positional
     package = experiments_dir / name
-    ws = Path(workspace)
 
     try:
         definition: ProbeDefinition = load_definition(package, DEFINITION_TYPES)
         manifest = check_manifest(package)
     except DefinitionError as e:
-        print(e, file=sys.stderr)
+        console.say(str(e))
         return 1
     except PreflightError as e:
-        _print_lines(e.lines)
+        console.say_refusal(e)
         return e.code
 
     if selection is not None and not isinstance(manifest.assertion, OptionsAssertion):
-        print(
-            f"probe replay: {name} declares a projection; --selection does not apply",
-            file=sys.stderr,
-        )
+        console.say(f"{name} declares a projection; --selection does not apply")
         return 2
 
     try:
         match definition:
             case ManualProbe():
                 if isinstance(manifest.assertion, OptionsAssertion) and selection is None:
-                    print(
-                        f"probe replay: {name} declares options; pass --selection <id>",
-                        file=sys.stderr,
-                    )
+                    console.say(f"{name} declares options; pass --selection <id>")
                     return 2
                 if definition.functions.judge is not None:
                     definition.functions.judge(ws)
@@ -169,14 +135,14 @@ def replay_package(argv: list[str], experiments_dir: Path) -> int:
         computed = record.compute(manifest, view=result.view, selection=result.selection)
         record.report(computed, None)
     except record.RecordRefused as e:
-        record_refused(e)
+        console.say_refusal(e)
         return 1
     except GateFailure as e:
-        _print_lines(e.lines)
+        console.say_refusal(e)
         return 1
     except jq_cli.JqError as e:
         # An unexpected jq failure while judging: its own diagnostic, not a traceback.
-        sys.stderr.write(e.stderr)
+        console.verbatim(e.stderr.splitlines())
         return 1
     return 0
 
@@ -234,7 +200,7 @@ def _single_variant(name: str, definition: ManualProbe | OpenCodeFakeProbe) -> s
     if definition.variants == (ASSERTION_VARIANT,):
         return None
     return (
-        f"probe: {name} is {_family(definition)}, whose only fixture variant is "
+        f"{name} is {_family(definition)}, whose only fixture variant is "
         f"{ASSERTION_VARIANT}; its definition declares: {', '.join(definition.variants)}"
     )
 
@@ -243,12 +209,12 @@ def _needs_capture(name: str, definition: ProbeDefinition, manifest: Manifest) -
     # Every family but the manual one records without a capture, which these manifests need.
     if manifest.driver == Driver.MANUAL:
         return (
-            f"probe: {name} is {_family(definition)}, which records without a capture, but its "
+            f"{name} is {_family(definition)}, which records without a capture, but its "
             'manifest declares driver "manual"'
         )
     if isinstance(manifest.version_source, CaptureSource):
         return (
-            f"probe: {name} is {_family(definition)}, which records without a capture, but its "
+            f"{name} is {_family(definition)}, which records without a capture, but its "
             "manifest declares a capture version source"
         )
     return None
@@ -257,7 +223,7 @@ def _needs_capture(name: str, definition: ProbeDefinition, manifest: Manifest) -
 def _unique_arms(name: str, arms: list[str]) -> str | None:
     duplicates = sorted({arm for arm in arms if arms.count(arm) > 1})
     if duplicates:
-        return f"probe: {name}'s definition declares arm {duplicates[0]} more than once"
+        return f"{name}'s definition declares arm {duplicates[0]} more than once"
     return None
 
 
@@ -267,7 +233,7 @@ def _claude_gate_arms(name: str, definition: ClaudeOtelProbe) -> str | None:
         arm = getattr(gate, "arm", None)
         if arm is not None and arm not in declared:
             return (
-                f"probe: {name}'s definition gates arm {arm} ({type(gate).__name__}), but "
+                f"{name}'s definition gates arm {arm} ({type(gate).__name__}), but "
                 "declares no such arm"
             )
     return None
@@ -279,7 +245,7 @@ def _claude_variant_trees(name: str, definition: ClaudeOtelProbe) -> str | None:
     if any(claude_otel.VARIANT in arm.tree for arm in definition.arms):
         return None
     return (
-        f"probe: {name} declares variants {', '.join(definition.variants)}, but no arm's "
+        f"{name} declares variants {', '.join(definition.variants)}, but no arm's "
         f"fixture tree contains {claude_otel.VARIANT}, so every variant would run the same tree"
     )
 
@@ -299,11 +265,6 @@ def _family_tools(definition: ProbeDefinition) -> tuple[str, ...]:
             return tuple(dict.fromkeys(("jq", *definition.required_tools)))
         case _:
             assert_never(definition)
-
-
-def _print_lines(lines: tuple[str, ...]) -> None:
-    for line in lines:
-        print(line, file=sys.stderr)
 
 
 __all__ = [

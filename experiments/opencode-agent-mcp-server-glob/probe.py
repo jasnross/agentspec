@@ -22,7 +22,7 @@ _BASELINE_OFFERS_ALL = CustomCheck(
         " . as $t | $n | index($t))"
     ),
     failure=(
-        "probe: arm baseline: the servers connected but fx_alpha, fx_beta, fx_extra_alpha, and "
+        "arm baseline: the servers connected but fx_alpha, fx_beta, fx_extra_alpha, and "
         "fx_extra_beta did not all reach the request.",
         APPARATUS_FAILURE,
     ),

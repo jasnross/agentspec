@@ -319,8 +319,28 @@ def test_supplying_both_view_and_selection_is_refused(cli: Cli, manifest: Path, 
     write_view_text(view, "{}")
 
     result = cli("record", "--manifest", manifest, "--view", view, "--selection", "neither")
-    assert result.returncode != 0
-    assert "mutually exclusive" in result.output
+    assert result.returncode == 2
+    assert "probe record: error: argument --selection: not allowed with argument --view" in (
+        result.stderr
+    )
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        ((), "the following arguments are required: --manifest"),
+        (("--manifest", "m.json"), "one of the arguments --view --selection is required"),
+        (("--manifest",), "argument --manifest: expected one argument"),
+        (
+            ("--manifest", "m.json", "--view", "v.json", "--bogus"),
+            "unrecognized arguments: --bogus",
+        ),
+    ],
+)
+def test_an_argument_error_exits_2(cli: Cli, args: tuple[str, ...], message: str) -> None:
+    result = cli("record", *args)
+    assert result.returncode == 2
+    assert f"probe record: error: {message}" in result.stderr
 
 
 def test_a_record_with_depth_null_is_well_formed(

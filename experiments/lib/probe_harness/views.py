@@ -41,9 +41,7 @@ def write_capture_view(payloads: Path, out: Path) -> None:
     try:
         values = json_values.load_stream(payloads.read_text(encoding="utf-8"))
     except ValueError as e:
-        raise GateFailure(
-            f"probe: the captured payloads at {payloads} are not valid JSON: {e}"
-        ) from None
+        raise GateFailure(f"the captured payloads at {payloads} are not valid JSON: {e}") from None
     _write(out, values)
 
 
@@ -53,7 +51,7 @@ def _read_values(paths: list[Path]) -> list[JsonValue]:
         try:
             values += json_values.load_stream(path.read_text(encoding="utf-8"))
         except (ValueError, OSError) as e:
-            raise GateFailure(f"probe: {path} is not valid JSON: {e}") from None
+            raise GateFailure(f"{path} is not valid JSON: {e}") from None
     return values
 
 

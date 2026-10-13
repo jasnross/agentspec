@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import assert_never
 
-from probe_harness import views
+from probe_harness import console, views
 from probe_harness.contract import Manifest
 from probe_harness.families.base import (
     CustomCheck,
@@ -191,7 +191,7 @@ def judge(ws: Path, probe: ClaudeOtelProbe) -> JudgeResult:
     for name in arms:
         sink = ws / name / "sink"
         if not any(sink.glob("*.request.json")):
-            raise GateFailure(f"probe: the {name} arm captured no request files in {sink}")
+            raise GateFailure(f"the {name} arm captured no request files in {sink}")
     sinks = {name: views.read_sink(ws / name / "sink") for name in arms}
     view = ws / "view.json"
     views.write_arm_view(view, {name: values.requests for name, values in sinks.items()})
@@ -206,14 +206,14 @@ def judge(ws: Path, probe: ClaudeOtelProbe) -> JudgeResult:
         for name in arms:
             if not any((ws / name / "sink").glob("*.response.json")):
                 raise GateFailure(
-                    f"probe: the {name} arm captured no response files in {ws / name / 'sink'}"
+                    f"the {name} arm captured no response files in {ws / name / 'sink'}"
                 )
         views.write_arm_view(
             view, {name: [*values.requests, *values.responses] for name, values in sinks.items()}
         )
     # Printed before recording: a dry or failed record keeps the workspace, and this view is
     # what a candidate projection is iterated against.
-    print(f"probe: the assembled view is at {view}", file=sys.stderr)
+    console.say(f"the assembled view is at {view}")
     return JudgeResult(view=view, selection=None)
 
 
@@ -279,8 +279,8 @@ def _run_arm(package: Path, ws: Path, arm: ClaudeArm, variant: str, probe: Claud
         )
     if completed.returncode != 0:
         raise GateFailure(
-            f"probe: the {arm.name} arm exited nonzero; its stderr follows:",
-            *file_lines(arm_dir / "stderr"),
+            f"the {arm.name} arm exited nonzero; its stderr follows:",
+            detail=file_lines(arm_dir / "stderr"),
         )
 
 

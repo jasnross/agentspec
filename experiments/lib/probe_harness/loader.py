@@ -18,17 +18,17 @@ def load_definition(package: Path, accepted: tuple[type, ...]) -> Any:
     """
     path = package / "probe.py"
     if not path.is_file():
-        raise DefinitionError(f"probe run: {package.name} has no probe.py")
+        raise DefinitionError(f"{package.name} has no probe.py")
 
     module_name = f"probe_definition_{package.name.replace('-', '_')}"
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
-        raise DefinitionError(f"probe run: {package.name}/probe.py defines no PROBE")
+        raise DefinitionError(f"{package.name}/probe.py defines no PROBE")
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
 
     definition = getattr(module, "PROBE", None)
     if not isinstance(definition, accepted):
-        raise DefinitionError(f"probe run: {package.name}/probe.py defines no PROBE")
+        raise DefinitionError(f"{package.name}/probe.py defines no PROBE")
     return definition

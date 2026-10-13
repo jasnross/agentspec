@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
-from probe_harness import jq_cli, json_values
+from probe_harness import console, jq_cli, json_values
 from probe_harness.contract import (
     CaptureSource,
     CommandSource,
@@ -98,7 +98,7 @@ def compute(
 ) -> Record:
     """Gate the invocation, compare, and return the record; raise `RecordRefused` otherwise.
 
-    Prints nothing and writes nothing. Assumes jq is installed: `main` checks for it, and
+    Prints nothing and writes nothing. Assumes jq is installed: `run` checks for it, and
     every family's preflight requires it.
     """
     # Status is always computed from the comparison, because a caller that could assert a
@@ -176,68 +176,41 @@ def report(record: Record, written: Path | None) -> None:
         # before a live or billed run produces one.
         sys.stdout.write(record.text() + "\n")
         sys.stdout.flush()
-        print(
-            f"record: dry run — {record.status} — observed {_compact(record.observed)} "
-            "(no file written)",
-            file=sys.stderr,
+        console.say(
+            f"dry run — {record.status} — observed {_compact(record.observed)} (no file written)"
         )
         return
     sys.stdout.write(f"{written}\n")
     sys.stdout.flush()
-    print(f"record: {record.status} — observed {_compact(record.observed)}", file=sys.stderr)
+    console.say(f"{record.status} — observed {_compact(record.observed)}")
 
 
-def main(argv: list[str]) -> int:
-    """`probe record`: parse the arguments, compute, and write (or print) one record."""
+def run(
+    manifest_path: str,
+    *,
+    view: Path | None,
+    selection: str | None,
+    capture: Path | None,
+    dry_run: bool,
+) -> int:
+    """`probe record`: compute, and write (or print) one record. Returns the exit code."""
     try:
         jq_cli.require_jq()
     except jq_cli.ToolsMissing as e:
-        print(f"probe: missing required tool(s): {' '.join(e.tools)}", file=sys.stderr)
+        console.say(f"missing required tool(s): {' '.join(e.tools)}")
         return 1
-
-    values: dict[str, str] = {}
-    dry_run = False
-    rest = list(argv)
-    while rest:
-        flag = rest.pop(0)
-        if flag == "--dry-run":
-            dry_run = True
-        elif flag in ("--manifest", "--view", "--selection", "--capture"):
-            if not rest:
-                print(f"record: {flag} requires a value", file=sys.stderr)
-                return 1
-            values[flag] = rest.pop(0)
-        else:
-            print(f"record: unknown argument: {flag}", file=sys.stderr)
-            return 1
-
-    # An empty value is the same as an absent one.
-    manifest_path = values.get("--manifest", "")
-    if not manifest_path:
-        print("record: --manifest is required", file=sys.stderr)
-        return 1
-    view = values.get("--view", "")
-    capture = values.get("--capture", "")
-
     try:
         manifest = parse_manifest(manifest_path)
-        record = compute(
-            manifest,
-            view=Path(view) if view else None,
-            selection=values.get("--selection", "") or None,
-            capture=Path(capture) if capture else None,
-        )
-        report(record, None if dry_run else write(record))
+        computed = compute(manifest, view=view, selection=selection, capture=capture)
+        report(computed, None if dry_run else write(computed))
     except ManifestError as e:
-        print(f"record: {e}", file=sys.stderr)
+        console.say(str(e))
         return 1
     except RecordRefused as e:
-        for line in e.lines:
-            print(f"record: {line}", file=sys.stderr)
-        sys.stderr.writelines(f"{line}\n" for line in e.detail)
+        console.say_refusal(e)
         return 1
     except jq_cli.JqError as e:
-        sys.stderr.write(e.stderr)
+        console.verbatim(e.stderr.splitlines())
         return 1
     return 0
 

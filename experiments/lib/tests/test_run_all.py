@@ -8,10 +8,17 @@ is the property the design rests on.
 """
 
 import json
+import os
+import shutil
+import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
+
 from tests.conftest import (
+    EXPERIMENTS_DIR,
     Cli,
 )
 
@@ -256,8 +263,46 @@ def test_an_unknown_argument_exits_2_without_running_any_package(
 
     result = cli("run", "--bogus")
     assert result.returncode == 2
-    assert "unknown argument" in result.output
-    assert "--billed --manual --all --stale" in result.output
+    assert "probe run: error: unexpected argument: --bogus" in result.stderr
+    assert "[--billed] [--manual] [--all] [--stale]" in result.stderr
+    assert "ran alpha" not in result.output
+
+
+def test_the_loop_runs_each_package_under_its_own_interpreter_from_any_directory(
+    put_package: PutPackage, tmp_path: Path
+) -> None:
+    # No `python3` on PATH: a child started through the script's shebang would not run.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    jq = shutil.which("jq")
+    assert jq is not None
+    (bin_dir / "jq").symlink_to(jq)
+    put_package("alpha", "unattended")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+
+    completed = subprocess.run(
+        [sys.executable, str(EXPERIMENTS_DIR / "probe"), "run"],
+        cwd=elsewhere,
+        env={**os.environ, "PATH": str(bin_dir)},
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "ran alpha" in completed.stdout
+    assert "probe run: 1 ran" in completed.stdout
+
+
+@pytest.mark.parametrize("flag", ["--bil", "--a", "--st"])
+def test_an_abbreviated_flag_is_refused_rather_than_expanded(
+    cli: Cli, put_package: PutPackage, flag: str
+) -> None:
+    put_package("alpha", "unattended")
+    result = cli("run", flag)
+    assert result.returncode == 2
+    assert f"probe run: error: unexpected argument: {flag}" in result.stderr
     assert "ran alpha" not in result.output
 
 

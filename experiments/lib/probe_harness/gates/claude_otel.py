@@ -32,8 +32,8 @@ def marker(arms: Arms, marker: str, field: MarkerField = MarkerField.SYSTEM) -> 
     """
     if not all(any(governed(r, field, marker) for r in arm.requests) for arm in arms.values()):
         raise GateFailure(
-            f"probe: an arm captured no request whose .{field.value} carries the fixture marker.",
-            "probe: that arm never engaged the fixture, so its value describes nothing.",
+            f"an arm captured no request whose .{field.value} carries the fixture marker.",
+            "that arm never engaged the fixture, so its value describes nothing.",
         )
 
 
@@ -52,9 +52,9 @@ def control(arms: Arms, marker: str, field: MarkerField = MarkerField.SYSTEM) ->
     }
     if len(efforts) != 1:
         raise GateFailure(
-            "probe: the ungoverned control set is empty or internally inconsistent.",
-            "probe: the assertion compares each arm against that set, so it cannot be read.",
-            "probe: this is a statement about the run, not about Claude. No record written.",
+            "the ungoverned control set is empty or internally inconsistent.",
+            "the assertion compares each arm against that set, so it cannot be read.",
+            "this is a statement about the run, not about Claude. No record written.",
         )
 
 
@@ -72,17 +72,17 @@ def deferred_mcp(arms: Arms, marker: str, arm: str, tools: Sequence[str]) -> Non
         return
 
     lines = [
-        f"probe: the {arm} arm's governed requests do not list {' '.join(tools)} as deferred "
+        f"the {arm} arm's governed requests do not list {' '.join(tools)} as deferred "
         "tools alongside ToolSearch."
     ]
     if set(tools) <= {t.name for r in requests for t in r.tools}:
         lines.append(
-            "probe: they sit in tools[] instead: tool search was not enabled for this "
+            "they sit in tools[] instead: tool search was not enabled for this "
             "subagent — off for this run's model, or Claude Code changed when it defers "
             "MCP tools."
         )
     lines.append(
-        "probe: the package measures Claude under default tool search, so this run cannot be "
+        "the package measures Claude under default tool search, so this run cannot be "
         "read. No record written."
     )
     raise GateFailure(*lines)
@@ -100,9 +100,9 @@ def model(arms: Arms, marker: str, model: str) -> None:
     if not wrong:
         return
     raise GateFailure(
-        f"probe: a governed request ran on a model other than {model}:",
-        *(f"probe:   arm {name}: {to_text(found)}" for name, found in wrong),
-        "probe: tool search depends on the subagent's model, so this run cannot be read. "
+        f"a governed request ran on a model other than {model}:",
+        *(f"  arm {name}: {to_text(found)}" for name, found in wrong),
+        "tool search depends on the subagent's model, so this run cannot be read. "
         "No record written.",
     )
 
@@ -123,14 +123,14 @@ def mcp_connected(arms: Arms, marker: str, tools: Sequence[str]) -> None:
     if ok:
         return
     raise GateFailure(
-        f"probe: an arm's main thread did not list {' '.join(tools)} on every request "
+        f"an arm's main thread did not list {' '.join(tools)} on every request "
         "that could delegate.",
         *(
-            f"probe:   arm {name}: no ungoverned request offered Agent"
+            f"  arm {name}: no ungoverned request offered Agent"
             for name, arm in arms.items()
             if not _main_thread(arm, marker)
         ),
-        "probe: the server may not have connected before the subagent spawned, so an empty "
+        "the server may not have connected before the subagent spawned, so an empty "
         "tool set describes nothing. No record written.",
     )
 
@@ -150,9 +150,9 @@ def mcp_absent(arms: Arms, marker: str, prefix: str) -> None:
     if not any(found.values()):
         return
     raise GateFailure(
-        f"probe: a main-thread request listed a tool starting with {prefix}:",
-        *(f"probe:   arm {name}: {n}" for name, names in found.items() for n in names),
-        "probe: a server outside the fixture shares that name, likely a user-scope server in "
+        f"a main-thread request listed a tool starting with {prefix}:",
+        *(f"  arm {name}: {n}" for name, names in found.items() for n in names),
+        "a server outside the fixture shares that name, likely a user-scope server in "
         "~/.claude.json, so the projection cannot tell its tools from the fixture's. "
         "No record written.",
     )
@@ -180,9 +180,9 @@ def delegation_background(arms: Arms, arm: str, expected: bool) -> None:
     if not ok:
         text = "true" if expected else "false"
         raise GateFailure(
-            f"probe: arm {arm} did not delegate with run_in_background={text}, both as asked "
+            f"arm {arm} did not delegate with run_in_background={text}, both as asked "
             "and as run, on every Agent call.",
-            "probe: the arm measured a different delegation mode than it claims, so its value "
+            "the arm measured a different delegation mode than it claims, so its value "
             "describes nothing. No record written.",
         )
 
@@ -193,7 +193,7 @@ def tool_answered(arms: Arms, arm: str, tool: str) -> None:
     ids = {c.id for r in bodies.responses for c in r.tool_uses if c.name == tool}
     if not (ids and any(rid in ids for rid, _ in _tool_results(bodies))):
         raise GateFailure(
-            f"probe: arm {arm} has no answered call to {tool}, so it says nothing about "
+            f"arm {arm} has no answered call to {tool}, so it says nothing about "
             "pre-approval. No record written."
         )
 
@@ -231,8 +231,8 @@ def delegation_fork(arms: Arms, arm: str) -> None:
     else:
         return
     raise GateFailure(
-        f"probe: arm {arm} {failed}.",
-        "probe: the arm did not measure a fork-mode delegation, so its value describes "
+        f"arm {arm} {failed}.",
+        "the arm did not measure a fork-mode delegation, so its value describes "
         "nothing. No record written.",
     )
 
@@ -261,7 +261,7 @@ def _with_sink(arms: Arms, arm: str, reading: str) -> ClaudeArmBodies:
     bodies = arms[arm]
     if not bodies.responses or not bodies.requests:
         raise GateFailure(
-            f"probe: the {arm} arm captured {len(bodies.responses)} response and "
+            f"the {arm} arm captured {len(bodies.responses)} response and "
             f"{len(bodies.requests)} request files in {bodies.sink}, so its {reading} cannot "
             "be read."
         )

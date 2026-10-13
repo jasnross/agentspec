@@ -222,8 +222,8 @@ def test_the_claude_judge_refuses_a_body_that_does_not_fit(tmp_path: Path) -> No
     with pytest.raises(GateFailure) as exc:
         claude_otel.judge(tmp_path, probe)
     assert exc.value.lines == (
-        f"probe: arm a: {sink}: request 1: system is a number, expected a string or an array",
-        "probe: the gates cannot read this body, so the run describes nothing. No record written.",
+        f"arm a: {sink}: request 1: system is a number, expected a string or an array",
+        "the gates cannot read this body, so the run describes nothing. No record written.",
     )
 
 
@@ -236,5 +236,5 @@ def test_the_opencode_judge_refuses_a_body_that_does_not_fit(tmp_path: Path) -> 
     with pytest.raises(GateFailure) as exc:
         opencode_fake.judge(tmp_path, probe)
     assert exc.value.lines[0] == (
-        f"probe: arm a: {sink}: request 1: messages is a string, expected an array"
+        f"arm a: {sink}: request 1: messages is a string, expected an array"
     )

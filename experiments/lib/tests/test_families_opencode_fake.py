@@ -165,7 +165,7 @@ def test_a_two_arm_definition_records_under_a_dry_run(
     record = json.loads(result.stdout)
     assert record["status"] == "confirmed"
     assert record["tool_version"] == "9.9.9"
-    assert "probe: the assembled view is at " in result.stderr
+    assert "probe run: the assembled view is at " in result.stderr
     assert not (package / "results").exists()
     assert _no_fake_running(tmp_path)
 
@@ -173,8 +173,8 @@ def test_a_two_arm_definition_records_under_a_dry_run(
 def test_bodies_without_the_marker_are_refused(cli: Cli, package: Path, tmp_path: Path) -> None:
     result = cli("run", "fake-family", env={"STUB_BODIES": _bodies(tmp_path, "plain")})
     assert result.returncode == 1
-    assert f"probe: arm one: no request carried {MARKER} in a system message." in result.stderr
-    assert "probe: the workspace has been kept for inspection: " in result.stderr
+    assert f"probe run: arm one: no request carried {MARKER} in a system message." in result.stderr
+    assert "probe run: the workspace has been kept for inspection: " in result.stderr
     assert _no_fake_running(tmp_path)
 
 
@@ -223,7 +223,7 @@ def test_replay_judges_a_kept_fake_provider_workspace(
     (ws / "two" / "fx.stamp").unlink()
     replayed = cli("replay", "fake-family", ws)
     assert replayed.returncode == 1
-    assert "probe: arm two: the fx server never answered tools/list" in replayed.stderr
+    assert "probe replay: arm two: the fx server never answered tools/list" in replayed.stderr
 
 
 def test_a_provider_exiting_nonzero_stops_the_stub_and_keeps_the_workspace(
@@ -233,9 +233,9 @@ def test_a_provider_exiting_nonzero_stops_the_stub_and_keeps_the_workspace(
         "run", "fake-family", env={"STUB_BODIES": _bodies(tmp_path, MARKER), "STUB_EXIT": "4"}
     )
     assert result.returncode == 1
-    assert 'probe: arm one: "opencode run --agent agent-one" exited nonzero' in result.stderr
+    assert 'probe run: arm one: "opencode run --agent agent-one" exited nonzero' in result.stderr
     assert "stub failing" in result.stderr
-    assert "probe: the workspace has been kept for inspection: " in result.stderr
+    assert "probe run: the workspace has been kept for inspection: " in result.stderr
     assert _no_fake_running(tmp_path)
 
 
@@ -245,8 +245,8 @@ def test_a_template_failure_mid_arm_stops_the_stub(cli: Cli, package: Path, tmp_
     config.write_text(text, encoding="utf-8")
     result = cli("run", "fake-family", env={"STUB_BODIES": _bodies(tmp_path, MARKER)})
     assert result.returncode == 1
-    assert "probe: unsubstituted placeholder left in" in result.stderr
-    assert "probe: the workspace has been kept for inspection: " in result.stderr
+    assert "probe run: unsubstituted placeholder left in" in result.stderr
+    assert "probe run: the workspace has been kept for inspection: " in result.stderr
     assert _no_fake_running(tmp_path)
 
 
@@ -292,7 +292,7 @@ PROBE = OpenCodeFakeProbe(
     custom_checks=(
         CustomCheck(
             expression=f"[.one[] | select(any({GOVERNED_JQ}))] | length >= CHECK_MIN",
-            failure=("probe: the custom check refused.",),
+            failure=("the custom check refused.",),
         ),
     ),
     arrange_arm=ARRANGE,
@@ -338,7 +338,7 @@ def test_a_custom_check_reading_the_marker_can_refuse(
     _scripted(package, check_min=3)
     result = cli("run", "fake-family", env={"STUB_BODIES": _bodies(tmp_path, MARKER)})
     assert result.returncode == 1
-    assert "probe: the custom check refused." in result.stderr
+    assert "probe run: the custom check refused." in result.stderr
     assert _no_fake_running(tmp_path)
 
 
@@ -348,7 +348,7 @@ def test_without_a_scripted_call_the_tool_result_gate_refuses(
     _scripted(package, scripted=False)
     result = cli("run", "fake-family", env={"STUB_BODIES": _bodies(tmp_path, MARKER)})
     assert result.returncode == 1
-    assert "probe: arm one: no marked request carried a tool result." in result.stderr
+    assert "probe run: arm one: no marked request carried a tool result." in result.stderr
 
 
 def test_a_terminated_run_stops_the_stub_and_names_the_workspace(
@@ -377,5 +377,5 @@ def test_a_terminated_run_stops_the_stub_and_names_the_workspace(
             runner.kill()
             runner.wait()
     assert runner.returncode == 128 + signal.SIGTERM
-    assert "probe: the workspace has been kept for inspection: " in stderr
+    assert "probe run: the workspace has been kept for inspection: " in stderr
     assert _no_fake_running(tmp_path)

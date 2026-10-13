@@ -22,8 +22,8 @@ def governed(requests: Sequence[OpenCodeRequest], arm: str, marker: str, stderr:
     """
     if not _governed_requests(requests, marker):
         raise GateFailure(
-            f"probe: arm {arm}: no request carried {marker} in a system message.",
-            f"probe: OpenCode may have fallen back to its default agent; see {stderr}.",
+            f"arm {arm}: no request carried {marker} in a system message.",
+            f"OpenCode may have fallen back to its default agent; see {stderr}.",
             APPARATUS_FAILURE,
         )
 
@@ -39,10 +39,10 @@ def tool_result(requests: Sequence[OpenCodeRequest], arm: str, marker: str, stde
         any(m.role == "tool" for m in r.messages) for r in _governed_requests(requests, marker)
     ):
         raise GateFailure(
-            f"probe: arm {arm}: no marked request carried a tool result.",
-            "probe: either OpenCode never executed the scripted call, or the session stopped "
+            f"arm {arm}: no marked request carried a tool result.",
+            "either OpenCode never executed the scripted call, or the session stopped "
             "after the rejection —",
-            "probe: a release that no longer honors experimental.continue_loop_on_deny does "
+            "a release that no longer honors experimental.continue_loop_on_deny does "
             f"that. See {stderr}.",
             APPARATUS_FAILURE,
         )

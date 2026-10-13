@@ -20,8 +20,7 @@ _BASELINE_OFFERS_FX = CustomCheck(
         ' | ($n | index("fx_alpha")) and ($n | index("fx_beta"))'
     ),
     failure=(
-        "probe: arm baseline: the fx server connected but fx_alpha and fx_beta never reached "
-        "the request.",
+        "arm baseline: the fx server connected but fx_alpha and fx_beta never reached the request.",
         APPARATUS_FAILURE,
     ),
 )

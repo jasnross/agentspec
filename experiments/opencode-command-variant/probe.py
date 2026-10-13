@@ -32,9 +32,9 @@ def _judge(ws: Path) -> None:
     # The names, not just a count: the likeliest cause is a change in how OpenCode
     # discovers or namespaces commands, and only the names reveal that.
     raise GateFailure(
-        f"probe: the fixture command did not resolve. OpenCode resolved {len(commands)} commands:",
-        *(f"probe:   {name}" for name in sorted(commands)),
-        "probe: this is an apparatus failure, not a refutation; no record written.",
+        f"the fixture command did not resolve. OpenCode resolved {len(commands)} commands:",
+        *(f"  {name}" for name in sorted(commands)),
+        "this is an apparatus failure, not a refutation; no record written.",
     )
 
 

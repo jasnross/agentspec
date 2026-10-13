@@ -34,8 +34,8 @@ def _preflight() -> None:
     tmpdir = os.environ.get("TMPDIR") or "/tmp"
     if _SHELL_SIGNIFICANT.intersection(tmpdir):
         raise GateFailure(
-            f"probe: TMPDIR contains whitespace or a shell metacharacter ({tmpdir});",
-            "probe: the command strings this probe registers would not measure what they mean to.",
+            f"TMPDIR contains whitespace or a shell metacharacter ({tmpdir});",
+            "the command strings this probe registers would not measure what they mean to.",
         )
 
 

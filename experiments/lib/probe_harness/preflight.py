@@ -30,12 +30,13 @@ ASSERTION_VARIANT = "assertion"
 
 
 class PreflightError(Exception):
-    """A preflight refusal: <lines> go to stderr and the run exits with <code>."""
+    """A preflight refusal: <lines> and <detail> go to stderr and the run exits with <code>."""
 
-    def __init__(self, code: int, *lines: str) -> None:
+    def __init__(self, code: int, *lines: str, detail: tuple[str, ...] = ()) -> None:
         super().__init__("\n".join(lines))
         self.code = code
         self.lines = lines
+        self.detail = detail
 
 
 @dataclass(frozen=True)
@@ -64,7 +65,9 @@ def check_expressions(manifest: Manifest) -> None:
         error = jq_cli.compile_error(expr)
         if error is not None:
             raise PreflightError(
-                1, f"probe: the manifest's {name} does not compile: {expr}", error.rstrip("\n")
+                1,
+                f"the manifest's {name} does not compile: {expr}",
+                detail=tuple(error.rstrip("\n").splitlines()),
             )
 
 
@@ -84,20 +87,19 @@ def run(
 def run_options(variants: tuple[str, ...]) -> RunOptions:
     dry_run = os.environ.get("PROBE_DRY_RUN", "")
     if dry_run not in ("", "0", "1"):
-        raise PreflightError(2, f"probe: PROBE_DRY_RUN must be 0 or 1 (got: {dry_run})")
+        raise PreflightError(2, f"PROBE_DRY_RUN must be 0 or 1 (got: {dry_run})")
 
     variant = os.environ.get("PROBE_FIXTURE") or ASSERTION_VARIANT
     if variant not in variants:
         raise PreflightError(
-            2, f"probe: PROBE_FIXTURE must be one of: {', '.join(variants)} (got: {variant})"
+            2, f"PROBE_FIXTURE must be one of: {', '.join(variants)} (got: {variant})"
         )
     if variant != ASSERTION_VARIANT and dry_run != "1":
         # A fixture built to disagree would commit a false `refuted` if it recorded.
         raise PreflightError(
             2,
-            f"probe: the {variant} fixture is dry-run only; set PROBE_DRY_RUN=1",
-            "probe: recording its run would commit a refuted record for a fixture built "
-            "to disagree.",
+            f"the {variant} fixture is dry-run only; set PROBE_DRY_RUN=1",
+            "recording its run would commit a refuted record for a fixture built to disagree.",
         )
 
     # Empty is unset, as the shell's `${PROBE_TIMEOUT_SECONDS:-…}` read it.
@@ -106,7 +108,7 @@ def run_options(variants: tuple[str, ...]) -> RunOptions:
     if timeout_text:
         if not (timeout_text.isascii() and timeout_text.isdecimal() and int(timeout_text) > 0):
             raise PreflightError(
-                2, f"probe: PROBE_TIMEOUT_SECONDS must be a positive integer (got: {timeout_text})"
+                2, f"PROBE_TIMEOUT_SECONDS must be a positive integer (got: {timeout_text})"
             )
         timeout = int(timeout_text)
 
@@ -117,4 +119,4 @@ def _parse(package: Path) -> Manifest:
     try:
         return parse_manifest(package / "probe.json")
     except ManifestError as e:
-        raise PreflightError(1, f"record: {e}") from None
+        raise PreflightError(1, str(e)) from None

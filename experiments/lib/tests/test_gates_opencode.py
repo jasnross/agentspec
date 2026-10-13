@@ -34,8 +34,8 @@ def test_governed_fails_on_a_view_whose_marker_sits_only_in_a_user_message(
     with pytest.raises(GateFailure) as failure:
         gates.governed(_arm(view, "a"), "a", MARKER, tmp_path / "a" / "stderr")
     assert failure.value.lines == (
-        f"probe: arm a: no request carried {MARKER} in a system message.",
-        f"probe: OpenCode may have fallen back to its default agent; see {tmp_path}/a/stderr.",
+        f"arm a: no request carried {MARKER} in a system message.",
+        f"OpenCode may have fallen back to its default agent; see {tmp_path}/a/stderr.",
         gates.APPARATUS_FAILURE,
     )
 
@@ -68,7 +68,7 @@ def test_tool_result_fails_when_no_governed_request_has_a_tool_message(tmp_path:
     }
     with pytest.raises(GateFailure) as failure:
         gates.tool_result(_arm(view, "a"), "a", MARKER, tmp_path / "a" / "stderr")
-    assert failure.value.lines[0] == "probe: arm a: no marked request carried a tool result."
+    assert failure.value.lines[0] == "arm a: no marked request carried a tool result."
     assert "the scripted call" in failure.value.lines[1]
 
 
@@ -77,8 +77,7 @@ def test_stamp_fails_for_a_missing_stamp(tmp_path: Path) -> None:
     with pytest.raises(GateFailure) as failure:
         gates.stamp(tmp_path, "a", "fx_extra")
     assert failure.value.lines == (
-        "probe: arm a: the fx_extra server never answered tools/list, so the arm describes "
-        "nothing.",
+        "arm a: the fx_extra server never answered tools/list, so the arm describes nothing.",
         gates.APPARATUS_FAILURE,
     )
 

@@ -207,8 +207,8 @@ def read_claude_arms(ws: Path, arm_names: Sequence[str]) -> dict[str, ClaudeArmB
 
 def shape_refusal(arm: str, error: BodyShapeError) -> GateFailure:
     return GateFailure(
-        f"probe: arm {arm}: {error}",
-        "probe: the gates cannot read this body, so the run describes nothing. No record written.",
+        f"arm {arm}: {error}",
+        "the gates cannot read this body, so the run describes nothing. No record written.",
     )
 
 

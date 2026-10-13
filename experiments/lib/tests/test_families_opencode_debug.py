@@ -16,7 +16,7 @@ from tests.conftest import (
     oracle_file,
 )
 
-KEPT = "probe: the workspace has been kept for inspection: "
+KEPT = "probe run: the workspace has been kept for inspection: "
 
 
 def _kept(result: Result) -> Path:
@@ -32,7 +32,7 @@ def test_an_empty_oracle_is_refused_and_keeps_the_workspace(
     copy_package(experiments_dir, tree, "opencode-agent-variant")
     result = cli("run", "opencode-agent-variant", env={"STUB_ORACLE": oracle_file(tmp_path, "")})
     assert result.returncode == 1
-    assert "probe: the oracle produced no output; its stderr follows:" in result.stderr
+    assert "probe run: the oracle produced no output; its stderr follows:" in result.stderr
     assert "stub stderr" in result.stderr
     assert _kept(result).is_dir()
 
@@ -43,7 +43,10 @@ def test_an_unparsable_oracle_is_refused(
     copy_package(experiments_dir, tree, "opencode-agent-variant")
     result = cli("run", "opencode-agent-variant", env={"STUB_ORACLE": oracle_file(tmp_path, "{")})
     assert result.returncode == 1
-    assert "probe: the oracle wrote a document jq cannot parse — 1 bytes at" in result.stderr
+    assert (
+        "probe run: the oracle wrote a document that is not valid JSON — 1 bytes at"
+        in result.stderr
+    )
 
 
 def test_a_nonzero_oracle_is_refused_with_its_stderr(
@@ -52,8 +55,9 @@ def test_a_nonzero_oracle_is_refused_with_its_stderr(
     copy_package(experiments_dir, tree, "opencode-agent-variant")
     result = cli("run", "opencode-agent-variant", env={"STUB_EXIT": "3"})
     assert result.returncode == 1
-    assert 'probe: "opencode debug agent probe" exited nonzero:' in result.stderr
-    assert "stub stderr" in result.stderr
+    assert 'probe run: "opencode debug agent probe" exited nonzero:' in result.stderr
+    # The provider's own output passes through unprefixed.
+    assert "stub stderr" in result.stderr.splitlines()
     assert _kept(result).is_dir()
 
 
@@ -68,12 +72,12 @@ def test_a_config_without_the_fixture_command_lists_what_resolved(
         env={"STUB_ORACLE": oracle_file(tmp_path, json.dumps(config))},
     )
     assert result.returncode == 1
-    assert "probe: the fixture command did not resolve. OpenCode resolved 2 commands:" in (
+    assert "probe run: the fixture command did not resolve. OpenCode resolved 2 commands:" in (
         result.stderr
     )
-    assert "probe:   another" in result.stderr
-    assert "probe:   other" in result.stderr
-    assert "probe: this is an apparatus failure, not a refutation; no record written." in (
+    assert "probe run:   another" in result.stderr
+    assert "probe run:   other" in result.stderr
+    assert "probe run: this is an apparatus failure, not a refutation; no record written." in (
         result.stderr
     )
     assert not (tree / "opencode-command-variant" / "results").exists()
@@ -90,10 +94,10 @@ def test_a_skill_list_carrying_the_fixture_twice_is_refused(
         env={"STUB_ORACLE": oracle_file(tmp_path, json.dumps([skill, skill]))},
     )
     assert result.returncode == 1
-    assert "probe: the fixture resolved 2 times, expected exactly 1. Resolved skills:" in (
+    assert "probe run: the fixture resolved 2 times, expected exactly 1. Resolved skills:" in (
         result.stderr
     )
-    assert result.stderr.count("probe:   agentspec-probe-discard") == 2
+    assert result.stderr.count("probe run:   agentspec-probe-discard") == 2
 
 
 def test_a_dry_run_with_a_matching_oracle_records_nothing_and_keeps_the_workspace(
@@ -111,7 +115,7 @@ def test_a_dry_run_with_a_matching_oracle_records_nothing_and_keeps_the_workspac
         env={"STUB_ORACLE": oracle_file(tmp_path, json.dumps(AGENT_VIEW)), "PROBE_DRY_RUN": "1"},
     )
     assert result.returncode == 0
-    assert "record: dry run — confirmed" in result.stderr
+    assert "probe run: dry run — confirmed" in result.stderr
     assert json.loads(result.stdout)["status"] == "confirmed"
     assert not (package / "results").exists()
     assert len(list(_isolated_tmpdir.glob("probe-opencode-agent-variant.*"))) == 1
@@ -144,7 +148,9 @@ def test_the_discriminator_without_a_dry_run_is_refused(
     copy_package(experiments_dir, tree, "opencode-agent-variant")
     result = cli("run", "opencode-agent-variant", env={"PROBE_FIXTURE": "discriminator"})
     assert result.returncode == 2
-    assert "probe: the discriminator fixture is dry-run only; set PROBE_DRY_RUN=1" in result.stderr
+    assert (
+        "probe run: the discriminator fixture is dry-run only; set PROBE_DRY_RUN=1" in result.stderr
+    )
     assert list(_isolated_tmpdir.glob("probe-*")) == []
 
 
@@ -188,10 +194,10 @@ def test_a_config_with_no_commands_at_all_is_refused_as_unresolved(
         "run", "opencode-command-variant", env={"STUB_ORACLE": oracle_file(tmp_path, "{}")}
     )
     assert result.returncode == 1
-    assert "probe: the fixture command did not resolve. OpenCode resolved 0 commands:" in (
+    assert "probe run: the fixture command did not resolve. OpenCode resolved 0 commands:" in (
         result.stderr
     )
-    assert "probe: this is an apparatus failure, not a refutation; no record written." in (
+    assert "probe run: this is an apparatus failure, not a refutation; no record written." in (
         result.stderr
     )
 
@@ -224,10 +230,10 @@ def test_a_skill_list_without_the_fixture_is_refused(
         env={"STUB_ORACLE": oracle_file(tmp_path, json.dumps([other]))},
     )
     assert result.returncode == 1
-    assert "probe: the fixture resolved 0 times, expected exactly 1. Resolved skills:" in (
+    assert "probe run: the fixture resolved 0 times, expected exactly 1. Resolved skills:" in (
         result.stderr
     )
-    assert "probe:   other" in result.stderr
+    assert "probe run:   other" in result.stderr
 
 
 def test_the_oracle_runs_in_the_workspace_with_stdout_to_a_file(
@@ -248,9 +254,11 @@ def test_the_oracle_runs_in_the_workspace_with_stdout_to_a_file(
     assert result.returncode == 0
     cwd, kind = call.read_text(encoding="utf-8").splitlines()
     view_line = next(
-        line for line in result.stderr.splitlines() if line.startswith("probe: the assembled view")
+        line
+        for line in result.stderr.splitlines()
+        if line.startswith("probe run: the assembled view")
     )
-    assert view_line == f"probe: the assembled view is at {cwd}/view.json"
+    assert view_line == f"probe run: the assembled view is at {cwd}/view.json"
     assert kind == "file"
 
 
@@ -319,5 +327,5 @@ def test_replay_judges_a_kept_debug_workspace(
     (bad / "view.json").write_text(json.dumps({"command": {"other": {}}}), encoding="utf-8")
     refused = cli("replay", "opencode-command-variant", bad)
     assert refused.returncode == 1
-    assert "probe: the fixture command did not resolve." in refused.stderr
+    assert "probe replay: the fixture command did not resolve." in refused.stderr
     assert not (package / "results").exists()

@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TextIO
 
-from probe_harness import jq_cli
+from probe_harness import console, jq_cli
 from probe_harness.contract import Option
 
 # How long a human-driven probe waits for its capture, in seconds. It is generous because
@@ -37,7 +37,7 @@ def require_tools(*tools: str) -> None:
     """Exit 1 naming every missing tool, so a contributor gets one clear error."""
     missing = [tool for tool in tools if shutil.which(tool) is None]
     if missing:
-        print(f"probe: missing required tool(s): {' '.join(missing)}", file=sys.stderr)
+        console.say(f"missing required tool(s): {' '.join(missing)}")
         raise SystemExit(1)
 
 
@@ -50,7 +50,7 @@ def template_file(src: Path, dst: Path, **pairs: str) -> None:
     refused rather than written. Trailing newlines collapse to one.
     """
     if not src.is_file():
-        print(f"probe: template source not found: {src}", file=sys.stderr)
+        console.say(f"template source not found: {src}")
         raise SystemExit(1)
 
     content = src.read_text(encoding="utf-8").rstrip("\n")
@@ -58,16 +58,13 @@ def template_file(src: Path, dst: Path, **pairs: str) -> None:
         # The key becomes part of a pattern, so a metacharacter in it would match far
         # more than intended, and an empty key would substitute every `{{}}`.
         if not _TEMPLATE_KEY.fullmatch(key):
-            print(
-                f"probe: invalid template key {key or '<empty>'} (want [A-Za-z0-9_]+)",
-                file=sys.stderr,
-            )
+            console.say(f"invalid template key {key or '<empty>'} (want [A-Za-z0-9_]+)")
             raise SystemExit(1)
         content = content.replace("{{" + key + "}}", value)
 
     if "{{" in content:
         tokens = "".join(f"{t} " for t in sorted(set(_PLACEHOLDER.findall(content))))
-        print(f"probe: unsubstituted placeholder left in {dst}: {tokens}", file=sys.stderr)
+        console.say(f"unsubstituted placeholder left in {dst}: {tokens}")
         raise SystemExit(1)
 
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -90,10 +87,7 @@ def wait_for_capture(ws: Path, filter_expr: str, timeout: int) -> bool:
         time.sleep(POLL_INTERVAL_SECONDS)
         waited += POLL_INTERVAL_SECONDS
         if waited - last_progress >= PROGRESS_INTERVAL_SECONDS:
-            print(
-                f"probe: waiting for capture ({waited}s elapsed, timeout {timeout}s)",
-                file=sys.stderr,
-            )
+            console.say(f"waiting for capture ({waited}s elapsed, timeout {timeout}s)")
             last_progress = waited
     # One final check past the deadline: a capture that landed during the last sleep is a
     # match, not a timeout.
@@ -107,14 +101,11 @@ def prompt_selection(options: Sequence[Option], question: str) -> str:
     forever on a read that can never be answered.
     """
     if not sys.stdin.isatty():
-        print(
-            "probe: this probe requires a human selection, but stdin is not a terminal.",
-            file=sys.stderr,
-        )
+        console.say("this probe requires a human selection, but stdin is not a terminal.")
         if question:
-            print(f"probe: {question}", file=sys.stderr)
+            console.say(question)
         sys.stderr.write(_render_options(options))
-        print("probe: run this probe directly from an interactive terminal.", file=sys.stderr)
+        console.say("run this probe directly from an interactive terminal.")
         raise SystemExit(2)
     return read_selection(options, question, sys.stdin)
 
@@ -135,7 +126,7 @@ def read_selection(options: Sequence[Option], question: str, stream: TextIO) -> 
         answer = line.rstrip("\n").strip(" \t")
         if answer in ids:
             return answer
-        print(f'probe: "{answer}" is not one of the option ids.', file=sys.stderr)
+        console.say(f'"{answer}" is not one of the option ids.')
 
 
 def _capture_matches(payloads: Path, filter_expr: str) -> bool:

@@ -768,7 +768,7 @@ def test_a_response_that_is_not_json_refuses_before_any_gate_reads_the_arm(
 
     with pytest.raises(GateFailure) as exc:
         arms_from_ws(ws, "fork")
-    assert f"probe: {ws}/fork/sink/bad.response.json is not valid JSON: " in failure_output(exc)
+    assert f"{ws}/fork/sink/bad.response.json is not valid JSON: " in failure_output(exc)
 
 
 def test_gate_delegation_fork_fails_and_says_so_when_the_sink_holds_no_responses(

@@ -10,11 +10,10 @@ under an isolated layout), plus `<ws>/view.json` and `<ws>/oracle.stderr`.
 
 import shutil
 import subprocess
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from probe_harness import json_values
+from probe_harness import console, json_values
 from probe_harness.contract import Manifest
 from probe_harness.families.base import (
     CustomCheck,
@@ -62,8 +61,8 @@ def judge(ws: Path, probe: OpenCodeDebugProbe) -> JudgeResult:
     view = ws / "view.json"
     if not view.is_file() or view.stat().st_size == 0:
         raise GateFailure(
-            "probe: the oracle produced no output; its stderr follows:",
-            *file_lines(ws / "oracle.stderr"),
+            "the oracle produced no output; its stderr follows:",
+            detail=file_lines(ws / "oracle.stderr"),
         )
     # Named here rather than left to the recorder, which would report "projection failed"
     # and send the reader after an expression that is correct.
@@ -75,15 +74,15 @@ def judge(ws: Path, probe: OpenCodeDebugProbe) -> JudgeResult:
     # to nulls and record a false `refuted`.
     if not isinstance(document, dict | list):
         raise GateFailure(
-            f"probe: the oracle wrote a document jq cannot parse — {view.stat().st_size} "
-            f"bytes at {view}"
+            f"the oracle wrote a document that is not valid JSON — {view.stat().st_size} bytes at "
+            f"{view}"
         )
     run_custom_checks(probe.custom_checks, view, None)
     if probe.functions.judge is not None:
         probe.functions.judge(ws)
     # Printed before recording: a dry or failed record keeps the workspace, and this view is
     # what a candidate projection is iterated against.
-    print(f"probe: the assembled view is at {view}", file=sys.stderr)
+    console.say(f"the assembled view is at {view}")
     return JudgeResult(view=view, selection=None)
 
 
@@ -110,4 +109,4 @@ def _arrange_and_act(package: Path, ws: Path, variant: str, probe: OpenCodeDebug
             check=False,
         )
     if completed.returncode != 0:
-        raise GateFailure(f'probe: "{command}" exited nonzero:', *file_lines(ws / "oracle.stderr"))
+        raise GateFailure(f'"{command}" exited nonzero:', detail=file_lines(ws / "oracle.stderr"))

@@ -11,8 +11,9 @@ state rather than a transient one. And a package whose manifest fails a gate get
 `manifest invalid` row, since its driver is unknown and it would otherwise vanish from the
 report.
 
-Always exits 0. This hangs off `just check`, and a check that can fail the build gets
-muted within a week.
+Exits 0 on every report, and 2 on a usage error, which `just probe-summary` ignores through
+`-@`. This hangs off `just check`, and a check that can fail the build gets muted within a
+week.
 """
 
 import sys
@@ -53,19 +54,9 @@ class StatusReport:
     billed: int = 0
 
 
-def main(argv: list[str], experiments_dir: Path) -> int:
-    summary_only = False
-    if argv and argv[0] == "--summary":
-        summary_only = True
-    elif argv and argv[0] != "":
-        print(f"probe-status: unknown argument: {argv[0]}", file=sys.stderr)
-        return 0
-
+def main(*, summary: bool, experiments_dir: Path) -> int:
     report = collect_status(experiments_dir)
-    if summary_only:
-        sys.stdout.write(render_summary(report))
-    else:
-        sys.stdout.write(render_report(report))
+    sys.stdout.write(render_summary(report) if summary else render_report(report))
     return 0
 
 
@@ -228,5 +219,5 @@ def _label(status: str) -> str:
 
 
 def _pad(cell: str, width: int) -> str:
-    """Left-justify by UTF-8 bytes, as the macOS awk that rendered this report did."""
-    return cell + " " * max(0, width - len(cell.encode("utf-8")))
+    """Left-justify by characters, so a cell holding `—` lines up with an ASCII one."""
+    return cell.ljust(width)

@@ -154,7 +154,7 @@ def test_a_two_arm_definition_passing_every_gate_records_under_a_dry_run(
     record = json.loads(result.stdout)
     assert record["status"] == "confirmed"
     assert record["tool_version"] == "9.9.9"
-    assert "probe: the assembled view is at " in result.stderr
+    assert "probe run: the assembled view is at " in result.stderr
     assert not (package / "results").exists()
 
 
@@ -164,10 +164,10 @@ def test_a_marker_missing_from_one_arm_refuses_and_keeps_the_workspace(
     env = _env(_source(tmp_path, marked=("a",)), tmp_path / "env.jsonl")
     result = cli("run", "claude-family", env=env)
     assert result.returncode == 1
-    assert "probe: an arm captured no request whose .system carries the fixture marker." in (
+    assert "probe run: an arm captured no request whose .system carries the fixture marker." in (
         result.stderr
     )
-    kept = result.stderr.split("probe: the workspace has been kept for inspection: ", 1)[1]
+    kept = result.stderr.split("probe run: the workspace has been kept for inspection: ", 1)[1]
     assert Path(kept.strip()).is_dir()
 
 
@@ -175,7 +175,7 @@ def test_an_arm_without_a_stamp_refuses(cli: Cli, package: Path, tmp_path: Path)
     env = _env(_source(tmp_path, stamped=("a",)), tmp_path / "env.jsonl")
     result = cli("run", "claude-family", env=env)
     assert result.returncode == 1
-    assert "probe: arm b: the fx server never answered tools/list" in result.stderr
+    assert "probe run: arm b: the fx server never answered tools/list" in result.stderr
 
 
 def test_the_environment_reaching_claude_is_isolated_and_pointed_at_the_sink(
@@ -242,7 +242,7 @@ def test_replay_judges_a_kept_claude_workspace(
     (copy / "a" / "fx.stamp").unlink()
     refused = cli("replay", "claude-family", copy)
     assert refused.returncode == 1
-    assert "probe: arm a: the fx server never answered tools/list" in refused.stderr
+    assert "probe replay: arm a: the fx server never answered tools/list" in refused.stderr
 
 
 def test_the_templated_server_runs_the_shared_stub_under_this_interpreter(
@@ -267,9 +267,9 @@ def test_a_nonzero_claude_exit_refuses_with_its_stderr(
         env=_env(_source(tmp_path), tmp_path / "env.jsonl", STUB_EXIT="3"),
     )
     assert result.returncode == 1
-    assert "probe: the a arm exited nonzero; its stderr follows:" in result.stderr
+    assert "probe run: the a arm exited nonzero; its stderr follows:" in result.stderr
     assert "stub failing" in result.stderr
-    assert "probe: the workspace has been kept for inspection: " in result.stderr
+    assert "probe run: the workspace has been kept for inspection: " in result.stderr
 
 
 RICH_DEFINITION = textwrap.dedent(f"""\
@@ -315,7 +315,7 @@ RICH_DEFINITION = textwrap.dedent(f"""\
         custom_checks=(
             CustomCheck(
                 expression="[.[][] | select(.system | tostring | contains($m))] | length >= MIN",
-                failure=("probe: the custom check refused.",),
+                failure=("the custom check refused.",),
             ),
         ),
         responses_in_view=True,
@@ -400,7 +400,7 @@ def test_a_rich_definition_wires_every_family_hook(cli: Cli, package: Path, tmp_
     view_line = next(
         line
         for line in result.stderr.splitlines()
-        if line.startswith("probe: the assembled view is at ")
+        if line.startswith("probe run: the assembled view is at ")
     )
     view = json.loads(Path(view_line.split(" at ", 1)[1]).read_text(encoding="utf-8"))
     assert len(view["a"]) == 3  # two requests plus the appended response
@@ -428,7 +428,7 @@ def test_a_gate_other_than_model_is_dispatched(cli: Cli, package: Path, tmp_path
     _rich(package)
     result = cli("run", "claude-family", env=_env(_rich_source(tmp_path), tmp_path / "env.jsonl"))
     assert result.returncode == 1
-    assert "probe: an arm's main thread did not list Agent" in result.stderr
+    assert "probe run: an arm's main thread did not list Agent" in result.stderr
 
 
 def test_a_custom_check_reading_the_marker_can_refuse(
@@ -443,7 +443,7 @@ def test_a_custom_check_reading_the_marker_can_refuse(
         )
     result = cli("run", "claude-family", env=_env(source, tmp_path / "env.jsonl"))
     assert result.returncode == 1
-    assert "probe: the custom check refused." in result.stderr
+    assert "probe run: the custom check refused." in result.stderr
 
 
 def test_an_arm_without_responses_is_refused_when_responses_join_the_view(
@@ -459,4 +459,4 @@ def test_an_arm_without_responses_is_refused_when_responses_join_the_view(
         )
     result = cli("run", "claude-family", env=_env(source, tmp_path / "env.jsonl"))
     assert result.returncode == 1
-    assert "probe: the b arm captured no response files in " in result.stderr
+    assert "probe run: the b arm captured no response files in " in result.stderr

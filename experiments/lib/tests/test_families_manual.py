@@ -164,7 +164,7 @@ def test_a_dry_run_with_a_matching_capture_writes_no_record(tree: Path) -> None:
 
     assert process.returncode == 0, stdout + stderr
     assert "Workspace ready" in stderr
-    assert "record: dry run" in stderr
+    assert "probe run: dry run" in stderr
     assert json.loads(stdout)["status"] == "confirmed"
     results = package / "results"
     assert not results.exists() or not any(results.iterdir())

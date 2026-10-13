@@ -26,7 +26,7 @@ _UNSET = (
 
 _ARGS = ("--strict-mcp-config", "--allowedTools", "Agent", "--effort", "low")
 
-_RUN_IS_SAFE = "probe: this is a statement about the run, not about Claude. No record written."
+_RUN_IS_SAFE = "this is a statement about the run, not about Claude. No record written."
 
 # An unrestricted subagent receives the built-ins, so an empty tool set elsewhere describes
 # a restriction rather than a subagent that never got tools.
@@ -36,8 +36,8 @@ _INHERIT_GETS_BUILTINS = CustomCheck(
         | length > 0 and all(.[]; any(.tools[]?; .name == "Read"))
     """,
     failure=(
-        "probe: arm inherit: a governed request offered no Read in tools[].",
-        "probe: an unrestricted subagent did not receive built-ins, so an empty tool set "
+        "arm inherit: a governed request offered no Read in tools[].",
+        "an unrestricted subagent did not receive built-ins, so an empty tool set "
         "elsewhere describes nothing.",
         _RUN_IS_SAFE,
     ),
@@ -55,9 +55,8 @@ _LISTED_TOOLS_RESTRICT = CustomCheck(
              < ([$i[] | .tools[]?.name] | unique | length))
     """,
     failure=(
-        "probe: arm read: the governed requests did not offer Read with fewer tools than "
-        "arm inherit.",
-        "probe: a listed tools field did not restrict the subagent, so the value for empty "
+        "arm read: the governed requests did not offer Read with fewer tools than arm inherit.",
+        "a listed tools field did not restrict the subagent, so the value for empty "
         "cannot be read.",
         _RUN_IS_SAFE,
     ),

@@ -33,9 +33,9 @@ def _judge(ws: Path) -> None:
     # skills (`.opencode/skill/` versus `.opencode/skills/` is itself unmeasured), and only
     # the names reveal that.
     raise GateFailure(
-        f"probe: the fixture resolved {matches} times, expected exactly 1. Resolved skills:",
-        *(f"probe:   {json_values.to_text(skill.get('name'))}" for skill in skills),
-        "probe: this is an apparatus failure, not a refutation; no record written.",
+        f"the fixture resolved {matches} times, expected exactly 1. Resolved skills:",
+        *(f"  {json_values.to_text(skill.get('name'))}" for skill in skills),
+        "this is an apparatus failure, not a refutation; no record written.",
     )
 
 
