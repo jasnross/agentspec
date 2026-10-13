@@ -19,7 +19,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, assert_never
+from typing import assert_never
 
 from probe_harness import views
 from probe_harness.contract import Manifest
@@ -36,8 +36,10 @@ from probe_harness.families.base import (
     refused,
     run_custom_checks,
 )
+from probe_harness.gates import bodies, stamp
 from probe_harness.gates import claude_otel as gates
-from probe_harness.gates import stamp
+from probe_harness.gates.bodies import ClaudeArmBodies
+from probe_harness.gates.bodies import MarkerField as MarkerField
 from probe_harness.workspace import create_workspace, template_file
 
 FAMILY_TOOLS = ("jq", "claude")
@@ -152,7 +154,7 @@ class ClaudeOtelProbe:
     gates: tuple[ClaudeGate, ...] = ()
     # Which request field carries the fixture: an agent becomes the system prompt, a
     # skill's body arrives in `messages[]`.
-    marker_field: Literal[".system", ".messages"] = ".system"
+    marker_field: MarkerField = MarkerField.SYSTEM
     unset_env: tuple[str, ...] = ()
     set_env: tuple[tuple[str, str], ...] = ()
     # Append each arm's response bodies to its view entry, for projections reading calls.
@@ -193,9 +195,10 @@ def judge(ws: Path, probe: ClaudeOtelProbe) -> JudgeResult:
     sinks = {name: views.read_sink(ws / name / "sink") for name in arms}
     view = ws / "view.json"
     views.write_arm_view(view, {name: values.requests for name, values in sinks.items()})
-    gates.marker(view, probe.marker, probe.marker_field)
+    typed = bodies.claude_arms(sinks, ws)
+    gates.marker(typed, probe.marker, probe.marker_field)
     for gate in probe.gates:
-        _check(gate, ws, view, probe)
+        _check(gate, typed, probe)
     run_custom_checks(probe.custom_checks, view, probe.marker)
     if probe.functions.judge is not None:
         probe.functions.judge(ws)
@@ -214,24 +217,24 @@ def judge(ws: Path, probe: ClaudeOtelProbe) -> JudgeResult:
     return JudgeResult(view=view, selection=None)
 
 
-def _check(gate: ClaudeGate, ws: Path, view: Path, probe: ClaudeOtelProbe) -> None:
+def _check(gate: ClaudeGate, arms: dict[str, ClaudeArmBodies], probe: ClaudeOtelProbe) -> None:
     match gate:
         case Control():
-            gates.control(view, probe.marker, probe.marker_field)
+            gates.control(arms, probe.marker, probe.marker_field)
         case Model():
-            gates.model(view, probe.marker, probe.model)
+            gates.model(arms, probe.marker, probe.model)
         case DeferredMcp(arm=arm, tools=tools):
-            gates.deferred_mcp(view, probe.marker, arm, tools)
+            gates.deferred_mcp(arms, probe.marker, arm, tools)
         case McpConnected(tools=tools):
-            gates.mcp_connected(view, probe.marker, tools)
+            gates.mcp_connected(arms, probe.marker, tools)
         case McpAbsent(prefix=prefix):
-            gates.mcp_absent(view, probe.marker, prefix)
+            gates.mcp_absent(arms, probe.marker, prefix)
         case DelegationBackground(arm=arm, expected=expected):
-            gates.delegation_background(ws, arm, expected)
+            gates.delegation_background(arms, arm, expected)
         case DelegationFork(arm=arm):
-            gates.delegation_fork(ws, arm)
+            gates.delegation_fork(arms, arm)
         case ToolAnswered(arm=arm, tool=tool):
-            gates.tool_answered(ws, arm, tool)
+            gates.tool_answered(arms, arm, tool)
         case _:
             assert_never(gate)
 

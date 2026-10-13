@@ -183,18 +183,15 @@ def test_jq_cli_exposes_only_the_expression_runners() -> None:
     assert public == {"require_jq", "evaluate", "test", "compile_error"}
 
 
-def test_only_the_resource_tools_definition_imports_jq_cli() -> None:
+def test_no_definition_imports_jq_cli() -> None:
+    # A definition reads JSON through `json_values` and request bodies through the gates'
+    # typed model; jq is for the expressions a manifest or a custom check carries.
     importing = sorted(
         definition.parent.name
         for definition in EXPERIMENTS_DIR.glob("*/probe.py")
         if _imports_jq_cli(ast.parse(definition.read_text(encoding="utf-8")))
     )
-    # A definition reads JSON through `json_values`. Only a custom check a probe author
-    # wrote may need jq; a definition that adds one is listed here deliberately.
-    assert importing == ["claude-subagent-mcp-resource-tools"], (
-        "a definition other than those listed imports jq_cli; read JSON with json_values, "
-        "and list it here only if it evaluates an author-written jq expression"
-    )
+    assert importing == []
 
 
 def _imports_jq_cli(tree: ast.Module) -> bool:

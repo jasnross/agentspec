@@ -10,14 +10,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from probe_harness.gates import GateFailure, claude_otel
+from probe_harness.gates import GateFailure, bodies, claude_otel
+from probe_harness.gates.bodies import ClaudeArmBodies, MarkerField
+from probe_harness.views import SinkValues
 
 from tests.conftest import (
     MARKER,
     compact,
     deferred_request,
     direct_request,
-    write_view,
 )
 
 
@@ -147,26 +148,42 @@ def tool_call_sink(ws: Path, arm: str, tool: str, answer: str = "answered") -> N
     (sink / "q.request.json").write_text(request, encoding="utf-8")
 
 
+def arms_from_view(
+    view: dict[str, list[Any]], responses: dict[str, list[Any]] | None = None
+) -> dict[str, ClaudeArmBodies]:
+    """Each arm's fabricated request bodies, and any response bodies, parsed as a judge does."""
+    return {
+        arm: bodies.claude_arm(
+            SinkValues(requests=requests, responses=(responses or {}).get(arm, [])),
+            Path(arm) / "sink",
+        )
+        for arm, requests in view.items()
+    }
+
+
+def arms_from_ws(ws: Path, *arms: str) -> dict[str, ClaudeArmBodies]:
+    """The fabricated sinks under <ws>, read and parsed as a judge reads them."""
+    return bodies.read_claude_arms(ws, arms)
+
+
 def failure_output(exc: pytest.ExceptionInfo[GateFailure]) -> str:
     """The lines the gate would have printed to stderr."""
     return "\n".join(exc.value.lines)
 
 
 def test_gate_marker_passes_when_every_arm_holds_a_marked_request(tmp_path: Path) -> None:
-    view = write_view(
-        tmp_path / "view.json", {"a": [marked("low"), ungoverned("medium")], "b": [marked("low")]}
-    )
+    arms = arms_from_view({"a": [marked("low"), ungoverned("medium")], "b": [marked("low")]})
 
-    claude_otel.marker(view, MARKER)
+    claude_otel.marker(arms, MARKER)
 
 
 def test_gate_marker_fails_when_one_arm_holds_none(tmp_path: Path) -> None:
     # The failure that makes the inert arm assertable: without this gate, "the fixture
     # never engaged" reads identically to "Claude discarded its effort."
-    view = write_view(tmp_path / "view.json", {"a": [marked("low")], "b": [ungoverned("medium")]})
+    arms = arms_from_view({"a": [marked("low")], "b": [ungoverned("medium")]})
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.marker(view, MARKER)
+        claude_otel.marker(arms, MARKER)
     assert "never engaged the fixture" in failure_output(exc)
 
 
@@ -177,10 +194,10 @@ def test_gate_marker_fails_when_an_arm_only_echoes_the_marker_in_a_tool_result(
     # reply carries the fixture's text back to the main thread, on a request the fixture
     # governs not at all. Matched on `tostring`, that echo would satisfy this gate for an
     # arm whose fixture never engaged.
-    view = write_view(tmp_path / "view.json", {"a": [marked("low")], "b": [echoed("medium")]})
+    arms = arms_from_view({"a": [marked("low")], "b": [echoed("medium")]})
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.marker(view, MARKER)
+        claude_otel.marker(arms, MARKER)
     assert ".system carries the fixture marker" in failure_output(exc)
 
 
@@ -188,15 +205,14 @@ def test_gate_marker_scopes_to_the_field_it_is_given(tmp_path: Path) -> None:
     # A skill's body never reaches `.system`; measured at 2.1.232 it arrives in
     # `messages[]`. The default would read that arm as never having engaged, so
     # `claude-skill-effort` names the field instead of the library guessing.
-    view = write_view(
-        tmp_path / "view.json",
+    arms = arms_from_view(
         {"a": [governed_in_messages("low")], "b": [governed_in_messages("low")]},
     )
 
     with pytest.raises(GateFailure):
-        claude_otel.marker(view, MARKER)
+        claude_otel.marker(arms, MARKER)
 
-    claude_otel.marker(view, MARKER, ".messages")
+    claude_otel.marker(arms, MARKER, MarkerField.MESSAGES)
 
 
 def test_gate_control_s_control_set_is_the_complement_of_the_field_it_is_given(
@@ -209,88 +225,82 @@ def test_gate_control_s_control_set_is_the_complement_of_the_field_it_is_given(
     # Under `.messages` the two governed requests are excluded and the control is the
     # single ungoverned `medium`. Under `.system` nothing is excluded, so the governed
     # `low`s join the control set and it no longer agrees with itself.
-    view = write_view(
-        tmp_path / "view.json",
+    arms = arms_from_view(
         {
             "a": [governed_in_messages("low"), ungoverned("medium")],
             "b": [governed_in_messages("low")],
         },
     )
 
-    claude_otel.control(view, MARKER, ".messages")
+    claude_otel.control(arms, MARKER, MarkerField.MESSAGES)
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.control(view, MARKER)
+        claude_otel.control(arms, MARKER)
     assert "internally inconsistent" in failure_output(exc)
 
 
-def test_gate_control_does_not_admit_a_governed_request_when_the_field_is_multi_output(
+def test_gate_control_does_not_admit_a_request_governed_by_one_of_its_messages(
     tmp_path: Path,
 ) -> None:
-    # The field is the caller's to name, and nothing constrains it to one output. A bare
-    # `$field` would re-emit its request once per output, so `select(… | not)` admits a
-    # *governed* request whose other outputs lack the marker — putting the arm's own level
-    # into the control the projection compares it against. Gate 2 passes throughout, so
-    # the contamination is silent.
+    # A request is governed as a whole, whichever of its messages carries the marker. Judged
+    # once per message, the messages lacking it would admit a *governed* request to the
+    # control set — putting the arm's own level into the control the projection compares
+    # it against. Gate 2 passes throughout, so the contamination would be silent.
     #
     # Here the two requests disagree, so a control set that admitted the governed `low`
-    # would be inconsistent and gate 3 must fail. It is the `[$field]` collapse that keeps
-    # the control at the single ungoverned `medium`.
+    # would be inconsistent and gate 3 would fail.
     multi_governed = {
-        "messages": [{"content": MARKER}, {"content": "plain"}],
+        "messages": [{"role": "user", "content": MARKER}, {"role": "user", "content": "plain"}],
         "output_config": {"effort": "low"},
     }
     multi_ungoverned = {
-        "messages": [{"content": "plain"}, {"content": "plain"}],
+        "messages": [{"role": "user", "content": "plain"}, {"role": "user", "content": "plain"}],
         "output_config": {"effort": "medium"},
     }
-    view = write_view(tmp_path / "view.json", {"a": [multi_governed, multi_ungoverned]})
+    arms = arms_from_view({"a": [multi_governed, multi_ungoverned]})
 
-    claude_otel.marker(view, MARKER, ".messages[].content")
+    claude_otel.marker(arms, MARKER, MarkerField.MESSAGES)
 
-    claude_otel.control(view, MARKER, ".messages[].content")
+    claude_otel.control(arms, MARKER, MarkerField.MESSAGES)
 
 
 def test_gate_control_counts_an_echoed_request_as_ungoverned(tmp_path: Path) -> None:
     # The complement of the above: an echoed request's effort was not set by the fixture,
     # so it belongs in the control set rather than being excluded from it.
-    view = write_view(
-        tmp_path / "view.json",
+    arms = arms_from_view(
         {"a": [marked("low"), echoed("medium")], "b": [marked("low"), ungoverned("medium")]},
     )
 
-    claude_otel.control(view, MARKER)
+    claude_otel.control(arms, MARKER)
 
 
 def test_gate_control_passes_when_ungoverned_requests_agree_on_one_level(tmp_path: Path) -> None:
-    view = write_view(
-        tmp_path / "view.json",
+    arms = arms_from_view(
         {"a": [marked("low"), ungoverned("medium")], "b": [ungoverned("medium")]},
     )
 
-    claude_otel.control(view, MARKER)
+    claude_otel.control(arms, MARKER)
 
 
 def test_gate_control_fails_when_ungoverned_requests_disagree(tmp_path: Path) -> None:
     # The assertion compares each arm against this set, so a set that does not agree with
     # itself cannot be read as a baseline.
-    view = write_view(
-        tmp_path / "view.json",
+    arms = arms_from_view(
         {"a": [marked("low"), ungoverned("medium")], "b": [ungoverned("high")]},
     )
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.control(view, MARKER)
+        claude_otel.control(arms, MARKER)
     assert "internally inconsistent" in failure_output(exc)
 
 
 def test_gate_control_fails_when_no_ungoverned_request_declares_an_effort(tmp_path: Path) -> None:
     # The loud direction: a Claude that stopped populating `output_config.effort` empties
     # the control set rather than silently comparing against nothing.
-    view = write_view(tmp_path / "view.json", {"a": [marked("low")], "b": [marked("low")]})
+    arms = arms_from_view({"a": [marked("low")], "b": [marked("low")]})
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.control(view, MARKER)
+        claude_otel.control(arms, MARKER)
     assert "empty or internally inconsistent" in failure_output(exc)
 
 
@@ -304,22 +314,19 @@ def test_gate_control_excludes_the_effort_less_title_sidecar_rather_than_failing
         "system": "generate a title",
         "output_config": {"format": {"type": "json_schema"}},
     }
-    view = write_view(
-        tmp_path / "view.json",
+    arms = arms_from_view(
         {"a": [marked("low"), ungoverned("medium"), sidecar], "b": [ungoverned("medium")]},
     )
 
-    claude_otel.control(view, MARKER)
+    claude_otel.control(arms, MARKER)
 
 
 def test_gate_deferred_mcp_passes_when_the_governed_request_lists_every_tool_as_deferred_and_carries_toolsearch(  # noqa: E501
     tmp_path: Path,
 ) -> None:
-    view = write_view(
-        tmp_path / "view.json", {"inherit": [deferred_request("mcp__fx__alpha", "mcp__fx__beta")]}
-    )
+    arms = arms_from_view({"inherit": [deferred_request("mcp__fx__alpha", "mcp__fx__beta")]})
 
-    claude_otel.deferred_mcp(view, MARKER, "inherit", ["mcp__fx__alpha", "mcp__fx__beta"])
+    claude_otel.deferred_mcp(arms, MARKER, "inherit", ["mcp__fx__alpha", "mcp__fx__beta"])
 
 
 def test_gate_deferred_mcp_fails_when_the_tools_sit_in_tools_instead_tool_search_off(
@@ -328,22 +335,20 @@ def test_gate_deferred_mcp_fails_when_the_tools_sit_in_tools_instead_tool_search
     # The model-fallback trigger: the package measures default tool search, and a model
     # Claude does not enable it for produces a readable view of something else. The
     # diagnostic must say which, because it decides the next step.
-    view = write_view(
-        tmp_path / "view.json", {"inherit": [direct_request("mcp__fx__alpha", "mcp__fx__beta")]}
-    )
+    arms = arms_from_view({"inherit": [direct_request("mcp__fx__alpha", "mcp__fx__beta")]})
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.deferred_mcp(view, MARKER, "inherit", ["mcp__fx__alpha", "mcp__fx__beta"])
+        claude_otel.deferred_mcp(arms, MARKER, "inherit", ["mcp__fx__alpha", "mcp__fx__beta"])
     assert "tool search was not enabled" in failure_output(exc)
 
 
 def test_gate_deferred_mcp_fails_when_a_named_tool_is_missing_from_the_deferred_listing(
     tmp_path: Path,
 ) -> None:
-    view = write_view(tmp_path / "view.json", {"inherit": [deferred_request("mcp__fx__alpha")]})
+    arms = arms_from_view({"inherit": [deferred_request("mcp__fx__alpha")]})
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.deferred_mcp(view, MARKER, "inherit", ["mcp__fx__alpha", "mcp__fx__beta"])
+        claude_otel.deferred_mcp(arms, MARKER, "inherit", ["mcp__fx__alpha", "mcp__fx__beta"])
     assert "tool search was not enabled" not in failure_output(exc)
 
 
@@ -353,10 +358,10 @@ def test_gate_deferred_mcp_ignores_a_deferred_listing_on_an_ungoverned_main_thre
     # The main thread carries its own deferred listing. Read on a bare request, it would
     # satisfy the gate for a subagent that never received one.
     main = deferred_request("mcp__fx__alpha", "mcp__fx__beta", marker="main thread")
-    view = write_view(tmp_path / "view.json", {"inherit": [main, direct_request()]})
+    arms = arms_from_view({"inherit": [main, direct_request()]})
 
     with pytest.raises(GateFailure):
-        claude_otel.deferred_mcp(view, MARKER, "inherit", ["mcp__fx__alpha", "mcp__fx__beta"])
+        claude_otel.deferred_mcp(arms, MARKER, "inherit", ["mcp__fx__alpha", "mcp__fx__beta"])
 
 
 def test_gate_deferred_mcp_fails_when_the_deferred_listing_is_complete_but_toolsearch_is_absent(
@@ -366,10 +371,10 @@ def test_gate_deferred_mcp_fails_when_the_deferred_listing_is_complete_but_tools
     # default tool search working. Pins the gate's second clause.
     no_search = deferred_request("mcp__fx__alpha", "mcp__fx__beta")
     no_search["tools"] = [{"name": "Read"}]
-    view = write_view(tmp_path / "view.json", {"inherit": [no_search]})
+    arms = arms_from_view({"inherit": [no_search]})
 
     with pytest.raises(GateFailure):
-        claude_otel.deferred_mcp(view, MARKER, "inherit", ["mcp__fx__alpha", "mcp__fx__beta"])
+        claude_otel.deferred_mcp(arms, MARKER, "inherit", ["mcp__fx__alpha", "mcp__fx__beta"])
 
 
 def test_gate_deferred_mcp_fails_when_the_tools_sit_in_tools_beside_toolsearch_with_no_listing(
@@ -379,10 +384,10 @@ def test_gate_deferred_mcp_fails_when_the_tools_sit_in_tools_beside_toolsearch_w
     # read `tools[].name` as a deferred listing.
     direct_with_search = direct_request("mcp__fx__alpha", "mcp__fx__beta")
     direct_with_search["tools"] += [{"name": "ToolSearch"}]
-    view = write_view(tmp_path / "view.json", {"inherit": [direct_with_search]})
+    arms = arms_from_view({"inherit": [direct_with_search]})
 
     with pytest.raises(GateFailure):
-        claude_otel.deferred_mcp(view, MARKER, "inherit", ["mcp__fx__alpha", "mcp__fx__beta"])
+        claude_otel.deferred_mcp(arms, MARKER, "inherit", ["mcp__fx__alpha", "mcp__fx__beta"])
 
 
 def test_gate_deferred_mcp_and_gate_model_read_a_system_sent_as_an_array_of_text_blocks(
@@ -395,21 +400,19 @@ def test_gate_deferred_mcp_and_gate_model_read_a_system_sent_as_an_array_of_text
         {"type": "text", "text": "preamble"},
         {"type": "text", "text": blocks["system"]},
     ]
-    view = write_view(tmp_path / "view.json", {"inherit": [blocks]})
+    arms = arms_from_view({"inherit": [blocks]})
 
-    claude_otel.deferred_mcp(view, MARKER, "inherit", ["mcp__fx__alpha", "mcp__fx__beta"])
+    claude_otel.deferred_mcp(arms, MARKER, "inherit", ["mcp__fx__alpha", "mcp__fx__beta"])
 
-    claude_otel.model(view, MARKER, "pinned-model")
+    claude_otel.model(arms, MARKER, "pinned-model")
 
 
 def test_gate_model_passes_when_every_governed_request_carries_the_pinned_model(
     tmp_path: Path,
 ) -> None:
-    view = write_view(
-        tmp_path / "view.json", {"a": [deferred_request("mcp__fx__alpha")], "b": [direct_request()]}
-    )
+    arms = arms_from_view({"a": [deferred_request("mcp__fx__alpha")], "b": [direct_request()]})
 
-    claude_otel.model(view, MARKER, "pinned-model")
+    claude_otel.model(arms, MARKER, "pinned-model")
 
 
 def test_gate_model_fails_when_one_governed_request_carries_a_different_model(
@@ -417,8 +420,7 @@ def test_gate_model_fails_when_one_governed_request_carries_a_different_model(
 ) -> None:
     # A delegation call's own `model` parameter outranks the agent's frontmatter, and only
     # the request shows that it was passed.
-    view = write_view(
-        tmp_path / "view.json",
+    arms = arms_from_view(
         {
             "a": [deferred_request("mcp__fx__alpha")],
             "b": [deferred_request("mcp__fx__alpha", model="other-model")],
@@ -426,16 +428,16 @@ def test_gate_model_fails_when_one_governed_request_carries_a_different_model(
     )
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.model(view, MARKER, "pinned-model")
+        claude_otel.model(arms, MARKER, "pinned-model")
     assert "arm b: other-model" in failure_output(exc)
 
 
 def test_gate_model_ignores_an_ungoverned_request_on_a_different_model(tmp_path: Path) -> None:
     # The main thread's title sidecar runs on another model by design.
     sidecar = {"model": "sidecar-model", "system": "generate a title", "tools": []}
-    view = write_view(tmp_path / "view.json", {"a": [deferred_request("mcp__fx__alpha"), sidecar]})
+    arms = arms_from_view({"a": [deferred_request("mcp__fx__alpha"), sidecar]})
 
-    claude_otel.model(view, MARKER, "pinned-model")
+    claude_otel.model(arms, MARKER, "pinned-model")
 
 
 def test_gate_mcp_connected_passes_when_every_arm_s_main_thread_lists_the_tools_deferred_or_direct(
@@ -445,15 +447,14 @@ def test_gate_mcp_connected_passes_when_every_arm_s_main_thread_lists_the_tools_
         "system": "main thread",
         "tools": [{"name": "Agent"}, {"name": "mcp__fx__alpha"}, {"name": "mcp__fx__beta"}],
     }
-    view = write_view(
-        tmp_path / "view.json",
+    arms = arms_from_view(
         {
             "a": [main_thread("mcp__fx__alpha", "mcp__fx__beta"), direct_request()],
             "b": [direct_main],
         },
     )
 
-    claude_otel.mcp_connected(view, MARKER, ["mcp__fx__alpha", "mcp__fx__beta"])
+    claude_otel.mcp_connected(arms, MARKER, ["mcp__fx__alpha", "mcp__fx__beta"])
 
 
 def test_gate_mcp_connected_fails_when_one_main_thread_request_lacks_a_tool(
@@ -461,26 +462,24 @@ def test_gate_mcp_connected_fails_when_one_main_thread_request_lacks_a_tool(
 ) -> None:
     # The server connecting after the delegation would show as a later request listing the
     # tools and an earlier one not; any-one would pass that.
-    view = write_view(
-        tmp_path / "view.json",
+    arms = arms_from_view(
         {"a": [main_thread("mcp__fx__alpha", "mcp__fx__beta"), main_thread("mcp__fx__alpha")]},
     )
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.mcp_connected(view, MARKER, ["mcp__fx__alpha", "mcp__fx__beta"])
+        claude_otel.mcp_connected(arms, MARKER, ["mcp__fx__alpha", "mcp__fx__beta"])
     assert "may not have connected" in failure_output(exc)
 
 
 def test_gate_mcp_connected_fails_and_names_an_arm_with_no_request_offering_agent(
     tmp_path: Path,
 ) -> None:
-    view = write_view(
-        tmp_path / "view.json",
+    arms = arms_from_view(
         {"a": [main_thread("mcp__fx__alpha")], "b": [direct_request("mcp__fx__alpha")]},
     )
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.mcp_connected(view, MARKER, ["mcp__fx__alpha"])
+        claude_otel.mcp_connected(arms, MARKER, ["mcp__fx__alpha"])
     assert "arm b: no ungoverned request offered Agent" in failure_output(exc)
 
 
@@ -488,12 +487,11 @@ def test_gate_mcp_connected_ignores_governed_and_agent_less_requests(tmp_path: P
     # The subagent's own request and the title sidecar say nothing about the main thread,
     # so an empty tool set on either must not fail the gate.
     sidecar = {"system": "generate a title", "tools": []}
-    view = write_view(
-        tmp_path / "view.json",
+    arms = arms_from_view(
         {"a": [main_thread("mcp__fx__alpha"), direct_request(), sidecar]},
     )
 
-    claude_otel.mcp_connected(view, MARKER, ["mcp__fx__alpha"])
+    claude_otel.mcp_connected(arms, MARKER, ["mcp__fx__alpha"])
 
 
 def test_gate_mcp_absent_passes_when_no_main_thread_request_lists_a_tool_with_the_prefix(
@@ -503,12 +501,11 @@ def test_gate_mcp_absent_passes_when_no_main_thread_request_lists_a_tool_with_th
         "system": "main thread",
         "tools": [{"name": "Agent"}, {"name": "mcp__plugin_fxp_fx__alpha"}],
     }
-    view = write_view(
-        tmp_path / "view.json",
+    arms = arms_from_view(
         {"a": [plugin_main, direct_request()], "b": [main_thread("mcp__plugin_fxp_fx__beta")]},
     )
 
-    claude_otel.mcp_absent(view, MARKER, "mcp__fx__")
+    claude_otel.mcp_absent(arms, MARKER, "mcp__fx__")
 
 
 def test_gate_mcp_absent_fails_and_names_the_tool_when_a_main_thread_lists_it_directly(
@@ -518,25 +515,22 @@ def test_gate_mcp_absent_fails_and_names_the_tool_when_a_main_thread_lists_it_di
         "system": "main thread",
         "tools": [{"name": "Agent"}, {"name": "mcp__fx__alpha"}],
     }
-    view = write_view(
-        tmp_path / "view.json",
+    arms = arms_from_view(
         {"a": [main_thread("mcp__plugin_fxp_fx__alpha")], "b": [foreign_main]},
     )
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.mcp_absent(view, MARKER, "mcp__fx__")
+        claude_otel.mcp_absent(arms, MARKER, "mcp__fx__")
     assert "arm b: mcp__fx__alpha" in failure_output(exc)
 
 
 def test_gate_mcp_absent_fails_when_a_main_thread_lists_the_tool_as_deferred(
     tmp_path: Path,
 ) -> None:
-    view = write_view(
-        tmp_path / "view.json", {"a": [main_thread("mcp__plugin_fxp_fx__alpha", "mcp__fx__beta")]}
-    )
+    arms = arms_from_view({"a": [main_thread("mcp__plugin_fxp_fx__alpha", "mcp__fx__beta")]})
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.mcp_absent(view, MARKER, "mcp__fx__")
+        claude_otel.mcp_absent(arms, MARKER, "mcp__fx__")
     assert "arm a: mcp__fx__beta" in failure_output(exc)
 
 
@@ -544,8 +538,7 @@ def test_gate_mcp_absent_ignores_governed_and_agent_less_requests(tmp_path: Path
     # A subagent's own grant is the finding, not a foreign server, and the title sidecar
     # offers no Agent; neither may fail the gate.
     sidecar = {"system": "generate a title", "tools": [{"name": "mcp__fx__alpha"}]}
-    view = write_view(
-        tmp_path / "view.json",
+    arms = arms_from_view(
         {
             "a": [
                 main_thread("mcp__plugin_fxp_fx__alpha"),
@@ -555,7 +548,7 @@ def test_gate_mcp_absent_ignores_governed_and_agent_less_requests(tmp_path: Path
         },
     )
 
-    claude_otel.mcp_absent(view, MARKER, "mcp__fx__")
+    claude_otel.mcp_absent(arms, MARKER, "mcp__fx__")
 
 
 def test_gate_delegation_background_passes_for_true_when_every_call_asked_for_and_ran_in_the_background(  # noqa: E501
@@ -564,7 +557,7 @@ def test_gate_delegation_background_passes_for_true_when_every_call_asked_for_an
     ws = tmp_path / "ws"
     delegation_sink(ws, "bg", "t1:true:async", "t2:true:async")
 
-    claude_otel.delegation_background(ws, "bg", True)
+    claude_otel.delegation_background(arms_from_ws(ws, "bg"), "bg", True)
 
 
 def test_gate_delegation_background_passes_for_false_when_the_call_set_false_and_ran_synchronously(
@@ -573,7 +566,7 @@ def test_gate_delegation_background_passes_for_false_when_the_call_set_false_and
     ws = tmp_path / "ws"
     delegation_sink(ws, "fg", "t1:false:sync")
 
-    claude_otel.delegation_background(ws, "fg", False)
+    claude_otel.delegation_background(arms_from_ws(ws, "fg"), "fg", False)
 
 
 def test_gate_delegation_background_fails_for_false_when_the_field_is_absent_and_the_call_ran_async(
@@ -585,7 +578,7 @@ def test_gate_delegation_background_fails_for_false_when_the_field_is_absent_and
     delegation_sink(ws, "fg", "t1:omit:async")
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.delegation_background(ws, "fg", False)
+        claude_otel.delegation_background(arms_from_ws(ws, "fg"), "fg", False)
     assert "did not delegate with run_in_background=false" in failure_output(exc)
 
 
@@ -596,7 +589,7 @@ def test_gate_delegation_background_fails_when_the_call_asked_for_false_but_ran_
     delegation_sink(ws, "fg", "t1:false:async")
 
     with pytest.raises(GateFailure):
-        claude_otel.delegation_background(ws, "fg", False)
+        claude_otel.delegation_background(arms_from_ws(ws, "fg"), "fg", False)
 
 
 def test_gate_delegation_background_fails_when_the_arm_made_no_agent_call(tmp_path: Path) -> None:
@@ -611,7 +604,7 @@ def test_gate_delegation_background_fails_when_the_arm_made_no_agent_call(tmp_pa
     )
 
     with pytest.raises(GateFailure):
-        claude_otel.delegation_background(ws, "bg", True)
+        claude_otel.delegation_background(arms_from_ws(ws, "bg"), "bg", True)
 
 
 def test_gate_delegation_background_fails_when_one_of_two_calls_disagrees(tmp_path: Path) -> None:
@@ -619,7 +612,7 @@ def test_gate_delegation_background_fails_when_one_of_two_calls_disagrees(tmp_pa
     delegation_sink(ws, "bg", "t1:true:async", "t2:false:sync")
 
     with pytest.raises(GateFailure):
-        claude_otel.delegation_background(ws, "bg", True)
+        claude_otel.delegation_background(arms_from_ws(ws, "bg"), "bg", True)
 
 
 def test_gate_delegation_background_fails_when_a_call_was_never_answered(tmp_path: Path) -> None:
@@ -627,7 +620,7 @@ def test_gate_delegation_background_fails_when_a_call_was_never_answered(tmp_pat
     delegation_sink(ws, "bg", "t1:true:async", "t2:true:none")
 
     with pytest.raises(GateFailure):
-        claude_otel.delegation_background(ws, "bg", True)
+        claude_otel.delegation_background(arms_from_ws(ws, "bg"), "bg", True)
 
 
 def test_gate_delegation_background_fails_for_true_when_the_field_is_absent_even_though_the_call_ran_async(  # noqa: E501
@@ -639,7 +632,7 @@ def test_gate_delegation_background_fails_for_true_when_the_field_is_absent_even
     delegation_sink(ws, "bg", "t1:omit:async")
 
     with pytest.raises(GateFailure):
-        claude_otel.delegation_background(ws, "bg", True)
+        claude_otel.delegation_background(arms_from_ws(ws, "bg"), "bg", True)
 
 
 def test_gate_delegation_background_fails_for_false_when_the_field_is_absent_even_though_the_call_ran_synchronously(  # noqa: E501
@@ -649,7 +642,19 @@ def test_gate_delegation_background_fails_for_false_when_the_field_is_absent_eve
     delegation_sink(ws, "fg", "t1:omit:sync")
 
     with pytest.raises(GateFailure):
-        claude_otel.delegation_background(ws, "fg", False)
+        claude_otel.delegation_background(arms_from_ws(ws, "fg"), "fg", False)
+
+
+def test_gate_delegation_background_does_not_read_a_number_as_true(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    delegation_sink(ws, "bg", "t1:true:async")
+    response = ws / "bg/sink/res1.response.json"
+    response.write_text(
+        response.read_text().replace('"run_in_background":true', '"run_in_background":1')
+    )
+
+    with pytest.raises(GateFailure):
+        claude_otel.delegation_background(arms_from_ws(ws, "bg"), "bg", True)
 
 
 def test_gate_delegation_background_fails_when_the_call_asked_for_true_but_ran_synchronously(
@@ -659,7 +664,7 @@ def test_gate_delegation_background_fails_when_the_call_asked_for_true_but_ran_s
     delegation_sink(ws, "bg", "t1:true:sync")
 
     with pytest.raises(GateFailure):
-        claude_otel.delegation_background(ws, "bg", True)
+        claude_otel.delegation_background(arms_from_ws(ws, "bg"), "bg", True)
 
 
 def test_gate_delegation_background_reads_a_tool_result_whose_content_is_a_bare_string(
@@ -668,7 +673,7 @@ def test_gate_delegation_background_reads_a_tool_result_whose_content_is_a_bare_
     ws = tmp_path / "ws"
     delegation_sink(ws, "bg", "t1:true:async-string")
 
-    claude_otel.delegation_background(ws, "bg", True)
+    claude_otel.delegation_background(arms_from_ws(ws, "bg"), "bg", True)
 
 
 def test_gate_delegation_background_fails_and_says_so_when_the_sink_holds_no_responses(
@@ -679,7 +684,7 @@ def test_gate_delegation_background_fails_and_says_so_when_the_sink_holds_no_res
     (sink / "q.request.json").write_text('{"system":"main thread","messages":[]}', encoding="utf-8")
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.delegation_background(ws, "bg", True)
+        claude_otel.delegation_background(arms_from_ws(ws, "bg"), "bg", True)
     assert "captured 0 response and 1 request files" in failure_output(exc)
 
 
@@ -690,7 +695,7 @@ def test_gate_delegation_fork_passes_when_the_agent_schema_lacks_run_in_backgrou
     agent_schema_request(ws, "fork", "without")
     delegation_sink(ws, "fork", "t1:omit:async", "t2:omit:async-string")
 
-    claude_otel.delegation_fork(ws, "fork")
+    claude_otel.delegation_fork(arms_from_ws(ws, "fork"), "fork")
 
 
 def test_gate_delegation_fork_fails_when_the_agent_schema_declares_run_in_background_though_the_call_ran_async(  # noqa: E501
@@ -703,7 +708,7 @@ def test_gate_delegation_fork_fails_when_the_agent_schema_declares_run_in_backgr
     delegation_sink(ws, "fork", "t1:omit:async")
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.delegation_fork(ws, "fork")
+        claude_otel.delegation_fork(arms_from_ws(ws, "fork"), "fork")
     output = failure_output(exc)
     assert "declares run_in_background, so fork mode was off" in output
     assert "No record written" in output
@@ -714,7 +719,7 @@ def test_gate_delegation_fork_fails_when_no_request_offers_the_agent_tool(tmp_pa
     delegation_sink(ws, "fork", "t1:omit:async")
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.delegation_fork(ws, "fork")
+        claude_otel.delegation_fork(arms_from_ws(ws, "fork"), "fork")
     assert "has no request offering the Agent tool" in failure_output(exc)
 
 
@@ -726,7 +731,7 @@ def test_gate_delegation_fork_fails_when_a_call_s_result_is_not_asynchronous(
     delegation_sink(ws, "fork", "t1:omit:sync")
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.delegation_fork(ws, "fork")
+        claude_otel.delegation_fork(arms_from_ws(ws, "fork"), "fork")
     assert "did not run in the background" in failure_output(exc)
 
 
@@ -736,7 +741,7 @@ def test_gate_delegation_fork_fails_when_a_call_was_never_answered(tmp_path: Pat
     delegation_sink(ws, "fork", "t1:omit:async", "t2:omit:none")
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.delegation_fork(ws, "fork")
+        claude_otel.delegation_fork(arms_from_ws(ws, "fork"), "fork")
     assert "did not run in the background" in failure_output(exc)
 
 
@@ -749,11 +754,11 @@ def test_gate_delegation_fork_fails_when_the_arm_made_no_agent_call(tmp_path: Pa
     )
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.delegation_fork(ws, "fork")
+        claude_otel.delegation_fork(arms_from_ws(ws, "fork"), "fork")
     assert "made no Agent call" in failure_output(exc)
 
 
-def test_gate_delegation_fork_fails_and_says_so_when_a_response_is_not_json(
+def test_a_response_that_is_not_json_refuses_before_any_gate_reads_the_arm(
     tmp_path: Path,
 ) -> None:
     ws = tmp_path / "ws"
@@ -762,8 +767,8 @@ def test_gate_delegation_fork_fails_and_says_so_when_a_response_is_not_json(
     (ws / "fork/sink/bad.response.json").write_text("not json", encoding="utf-8")
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.delegation_fork(ws, "fork")
-    assert "jq could not evaluate the fork arm sink" in failure_output(exc)
+        arms_from_ws(ws, "fork")
+    assert f"probe: {ws}/fork/sink/bad.response.json is not valid JSON: " in failure_output(exc)
 
 
 def test_gate_delegation_fork_fails_and_says_so_when_the_sink_holds_no_responses(
@@ -773,7 +778,7 @@ def test_gate_delegation_fork_fails_and_says_so_when_the_sink_holds_no_responses
     agent_schema_request(ws, "fork", "without")
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.delegation_fork(ws, "fork")
+        claude_otel.delegation_fork(arms_from_ws(ws, "fork"), "fork")
     assert "captured 0 response and 1 request files" in failure_output(exc)
 
 
@@ -783,7 +788,7 @@ def test_gate_tool_answered_passes_when_the_named_tool_was_called_and_answered(
     ws = tmp_path / "ws"
     tool_call_sink(ws, "a", "mcp__fx__alpha")
 
-    claude_otel.tool_answered(ws, "a", "mcp__fx__alpha")
+    claude_otel.tool_answered(arms_from_ws(ws, "a"), "a", "mcp__fx__alpha")
 
 
 def test_gate_tool_answered_fails_when_the_call_has_no_tool_result(tmp_path: Path) -> None:
@@ -791,7 +796,7 @@ def test_gate_tool_answered_fails_when_the_call_has_no_tool_result(tmp_path: Pat
     tool_call_sink(ws, "a", "mcp__fx__alpha", "unanswered")
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.tool_answered(ws, "a", "mcp__fx__alpha")
+        claude_otel.tool_answered(arms_from_ws(ws, "a"), "a", "mcp__fx__alpha")
     assert "no answered call to mcp__fx__alpha" in failure_output(exc)
 
 
@@ -800,7 +805,7 @@ def test_gate_tool_answered_fails_when_only_a_different_tool_was_called(tmp_path
     tool_call_sink(ws, "a", "ToolSearch")
 
     with pytest.raises(GateFailure):
-        claude_otel.tool_answered(ws, "a", "mcp__fx__alpha")
+        claude_otel.tool_answered(arms_from_ws(ws, "a"), "a", "mcp__fx__alpha")
 
 
 def test_gate_tool_answered_fails_when_the_name_appears_only_in_a_user_message_s_text(
@@ -819,7 +824,7 @@ def test_gate_tool_answered_fails_when_the_name_appears_only_in_a_user_message_s
     )
 
     with pytest.raises(GateFailure):
-        claude_otel.tool_answered(ws, "a", "mcp__fx__alpha")
+        claude_otel.tool_answered(arms_from_ws(ws, "a"), "a", "mcp__fx__alpha")
 
 
 def test_gate_tool_answered_fails_and_says_so_when_the_sink_holds_no_responses(
@@ -830,7 +835,7 @@ def test_gate_tool_answered_fails_and_says_so_when_the_sink_holds_no_responses(
     (sink / "q.request.json").write_text('{"system":"x","messages":[]}', encoding="utf-8")
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.tool_answered(ws, "a", "mcp__fx__alpha")
+        claude_otel.tool_answered(arms_from_ws(ws, "a"), "a", "mcp__fx__alpha")
     assert "captured 0 response and 1 request files" in failure_output(exc)
 
 
@@ -854,7 +859,7 @@ def test_gate_tool_answered_fails_when_the_only_tool_result_answers_a_different_
     )
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.tool_answered(ws, "a", "mcp__fx__alpha")
+        claude_otel.tool_answered(arms_from_ws(ws, "a"), "a", "mcp__fx__alpha")
     assert "no answered call to mcp__fx__alpha" in failure_output(exc)
 
 
@@ -870,5 +875,5 @@ def test_gate_tool_answered_fails_and_says_so_when_the_sink_holds_no_requests(
     )
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.tool_answered(ws, "a", "mcp__fx__alpha")
+        claude_otel.tool_answered(arms_from_ws(ws, "a"), "a", "mcp__fx__alpha")
     assert "captured 1 response and 0 request files" in failure_output(exc)

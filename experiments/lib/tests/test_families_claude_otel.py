@@ -360,7 +360,9 @@ def _rich_source(tmp_path: Path, *, responses: tuple[str, ...] = ("a", "b")) -> 
         }
         (sink / "0000.request.json").write_text(json.dumps(request), encoding="utf-8")
         if arm in responses:
-            response = {"content": [{"type": "tool_use", "id": "t1", "name": "mcp__fx__alpha"}]}
+            response = {
+                "content": [{"type": "tool_use", "id": "t1", "name": "mcp__fx__alpha", "input": {}}]
+            }
             (sink / "0000.response.json").write_text(json.dumps(response), encoding="utf-8")
         (source / arm / "fx.stamp").write_text("tools/list\n", encoding="utf-8")
     return source

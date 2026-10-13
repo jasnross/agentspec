@@ -13,6 +13,7 @@ from probe_harness.families.claude_otel import (
     ClaudeArm,
     ClaudeOtelProbe,
     Control,
+    MarkerField,
 )
 
 PROBE = ClaudeOtelProbe(
@@ -35,6 +36,6 @@ PROBE = ClaudeOtelProbe(
         ),
     ),
     gates=(Control(),),
-    marker_field=".messages",
+    marker_field=MarkerField.MESSAGES,
     variants=("assertion", "discriminator"),
 )

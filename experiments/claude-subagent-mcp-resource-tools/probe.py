@@ -12,7 +12,6 @@ without `--billed`.
 import sys
 from pathlib import Path
 
-from probe_harness import jq_cli
 from probe_harness.families.base import GateFailure, ProbeFunctions
 from probe_harness.families.claude_otel import (
     ClaudeArm,
@@ -22,7 +21,7 @@ from probe_harness.families.claude_otel import (
     McpConnected,
     Model,
 )
-from probe_harness.gates import claude_otel
+from probe_harness.gates import bodies, claude_otel
 
 # Each would change what is measured: whether tool search is on, whether the MCP server
 # has connected when the subagent spawns, or which model the subagent runs.
@@ -48,7 +47,7 @@ def _judge(ws: Path) -> None:
     offered because the server's resources had not been seen".
     """
     try:
-        claude_otel.mcp_connected(ws / "view.json", _MARKER, _RESOURCE_TOOLS)
+        claude_otel.mcp_connected(bodies.read_claude_arms(ws, _ARM_NAMES), _MARKER, _RESOURCE_TOOLS)
     except GateFailure as e:
         raise GateFailure(
             *e.lines,
@@ -63,18 +62,13 @@ def _keep_if_offered(ws: Path) -> bool:
     Those cells offered the resource tools in one run of eight, and that run's workspace was
     the only thing that could have shown why.
     """
-    offered = jq_cli.test(
-        """
-        [ (.inherit, .explicit)[] | select(.system | tostring | contains($m))
-          | (.tools[]?.name),
-            (.. | strings
-             | select(contains("The following deferred tools are now available via ToolSearch"))
-             | split("\\n")[])
-          | select(. == "ListMcpResourcesTool" or . == "ReadMcpResourceTool"
-                   or . == "ReadMcpResourceDirTool") ] | length > 0
-        """,
-        ws / "view.json",
-        args={"m": _MARKER},
+    arms = bodies.read_claude_arms(ws, _ARM_NAMES)
+    offered = any(
+        tool in _RESOURCE_TOOLS
+        for name in ("inherit", "explicit")
+        for request in arms[name].requests
+        if bodies.governed(request, bodies.MarkerField.SYSTEM, _MARKER)
+        for tool in bodies.listed_tools(request)
     )
     if offered:
         print(
@@ -135,3 +129,5 @@ PROBE = ClaudeOtelProbe(
     unset_env=_UNSET,
     functions=ProbeFunctions(judge=_judge, after_record=_keep_if_offered),
 )
+
+_ARM_NAMES = tuple(arm.name for arm in PROBE.arms)

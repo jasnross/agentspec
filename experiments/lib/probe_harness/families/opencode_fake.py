@@ -33,6 +33,7 @@ from probe_harness.families.base import (
     run_custom_checks,
 )
 from probe_harness.families.opencode_env import OpenCodeIsolation
+from probe_harness.gates import bodies
 from probe_harness.gates import opencode as gates
 from probe_harness.workspace import create_workspace, template_file
 
@@ -99,16 +100,18 @@ def judge(ws: Path, probe: OpenCodeFakeProbe) -> JudgeResult:
     for arm in arms:
         if not any((ws / arm / "sink").glob("*.request.json")):
             raise GateFailure(f"probe: arm {arm}: the fake provider received no request")
+    sinks = {arm: views.read_sink(ws / arm / "sink") for arm in arms}
     view = ws / "view.json"
-    views.write_arm_view(view, {arm: views.read_sink(ws / arm / "sink").requests for arm in arms})
+    views.write_arm_view(view, {arm: values.requests for arm, values in sinks.items()})
+    requests = bodies.opencode_arms(sinks, ws)
     for arm in arms:
-        gates.governed(view, arm, probe.marker, ws / arm / "stderr")
+        gates.governed(requests[arm], arm, probe.marker, ws / arm / "stderr")
     for arm in arms:
         for key in probe.fx_servers:
             gates.stamp(ws, arm, key)
     if probe.tool_result_gate:
         for arm in arms:
-            gates.tool_result(view, arm, probe.marker, ws / arm / "stderr")
+            gates.tool_result(requests[arm], arm, probe.marker, ws / arm / "stderr")
     run_custom_checks(probe.custom_checks, view, probe.marker)
     if probe.functions.judge is not None:
         probe.functions.judge(ws)
