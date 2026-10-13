@@ -868,7 +868,7 @@ def test_compute_confirms_a_matching_projection(tmp_path: Path) -> None:
     manifest = _parsed(tmp_path, unattended_manifest())
     computed = record.compute(manifest, view=_view_file(tmp_path, "1"))
     assert computed.status == record.Status.CONFIRMED
-    assert computed.observed_text == "1"
+    assert computed.observed == 1
     assert computed.tool_version is None
 
 
@@ -876,14 +876,14 @@ def test_compute_refutes_a_mismatching_projection(tmp_path: Path) -> None:
     manifest = _parsed(tmp_path, unattended_manifest())
     computed = record.compute(manifest, view=_view_file(tmp_path, "2"))
     assert computed.status == record.Status.REFUTED
-    assert computed.observed_text == "2"
+    assert computed.observed == 2
 
 
 def test_compute_takes_an_inconclusive_option_s_status(tmp_path: Path) -> None:
     manifest = _parsed(tmp_path, JUDGE_MANIFEST)
     computed = record.compute(manifest, selection="couldnt-tell", capture=fresh_capture(tmp_path))
     assert computed.status == record.Status.INCONCLUSIVE
-    assert computed.observed_text == '"couldnt-tell"'
+    assert computed.observed == "couldnt-tell"
 
 
 def test_compute_refuses_a_projection_yielding_several_values(tmp_path: Path) -> None:
@@ -930,3 +930,83 @@ def test_a_relative_manifest_path_records_and_prints_relative_to_the_working_dir
     printed = result.stdout.removesuffix("\n")
     assert printed.startswith("pkg/results/")
     assert (tmp_path / printed).is_file()
+
+
+def test_an_expected_true_refutes_an_observed_1(tmp_path: Path) -> None:
+    manifest = _parsed(
+        tmp_path, unattended_manifest(assertion={"projection": ".", "expected": True})
+    )
+    computed = record.compute(manifest, view=_view_file(tmp_path, "1"))
+    assert computed.status == record.Status.REFUTED
+
+
+def test_a_projection_yielding_no_value_observes_null(tmp_path: Path) -> None:
+    manifest = _parsed(
+        tmp_path, unattended_manifest(assertion={"projection": "empty", "expected": None})
+    )
+    computed = record.compute(manifest, view=_view_file(tmp_path, "1"))
+    assert computed.observed is None
+    assert computed.status == record.Status.CONFIRMED
+
+
+def test_a_projection_record_s_document_is_the_seven_keys_in_order(tmp_path: Path) -> None:
+    manifest = _parsed(
+        tmp_path,
+        unattended_manifest(
+            depth="resolved-config",
+            assertion={"projection": ".x", "expected": {"n": 1, "s": "é"}},
+        ),
+    )
+    computed = record.compute(manifest, view=_view_file(tmp_path, '{"x": {"s": "é", "n": 1}}'))
+    assert computed.text() == (
+        "{\n"
+        '  "schema_version": 1,\n'
+        '  "provider": "opencode",\n'
+        '  "status": "confirmed",\n'
+        '  "depth": "resolved-config",\n'
+        f'  "date": "{computed.date}",\n'
+        '  "tool_version": null,\n'
+        '  "assertion": {\n'
+        '    "projection": ".x",\n'
+        '    "expected": {\n'
+        '      "n": 1,\n'
+        '      "s": "é"\n'
+        "    },\n"
+        '    "observed": {\n'
+        '      "s": "é",\n'
+        '      "n": 1\n'
+        "    }\n"
+        "  }\n"
+        "}"
+    )
+
+
+def test_an_options_record_s_document_carries_each_option_s_declared_keys(tmp_path: Path) -> None:
+    manifest = _parsed(tmp_path, JUDGE_MANIFEST)
+    computed = record.compute(manifest, selection="neither", capture=fresh_capture(tmp_path))
+    assert computed.document() == {
+        "schema_version": 1,
+        "provider": "cursor",
+        "status": "confirmed",
+        "depth": None,
+        "date": computed.date,
+        "tool_version": None,
+        "assertion": {
+            "options": [
+                {"id": "both-markers", "text": "Both markers were visible"},
+                {"id": "neither", "text": "Neither marker was visible"},
+                {"id": "couldnt-tell", "text": "Could not determine", "status": "inconclusive"},
+            ],
+            "expected": "neither",
+            "observed": "neither",
+        },
+    }
+    assert list(computed.document()) == [
+        "schema_version",
+        "provider",
+        "status",
+        "depth",
+        "date",
+        "tool_version",
+        "assertion",
+    ]

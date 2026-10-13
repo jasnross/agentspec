@@ -103,7 +103,7 @@ experiments/
     results/*.json            # records, one per run, append-only
 ```
 
-The harness runs on the Python standard library alone; `uv` supplies only the dev tools `just probe-test` and `just probe-lint` use. Every jq expression a manifest or a definition carries runs through the jq on your `PATH`, from `lib/probe_harness/jq_cli.py`, the only module that starts jq.
+The harness runs on the Python standard library alone; `uv` supplies only the dev tools `just probe-test` and `just probe-lint` use. Every jq expression a manifest or a definition carries — a projection, a `wait_for` filter, a `version_source.jq`, a custom check — runs through the jq on your `PATH`, from `lib/probe_harness/jq_cli.py`, the only module that starts jq. jq evaluates those expressions and nothing else: the harness reads and writes JSON itself, including every record and every view. A view — the `view.json` a projection reads — is written by `lib/probe_harness/views.py`: for the fake-provider and Claude families an object mapping each arm to its request bodies, and for a manual probe the list of captured payloads.
 
 **One package holds exactly one probe, and one probe answers one question.** A package needing two answers is two packages.
 

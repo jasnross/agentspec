@@ -1,4 +1,4 @@
-"""Coverage for the gates and view assembly in `probe_harness.gates.claude_otel`.
+"""Coverage for the gates in `probe_harness.gates.claude_otel`.
 
 Every test drives fabricated views and fabricated sink directories, so the suite runs with
 no `claude` on PATH and costs nothing. That is the point of extracting the gates into
@@ -6,7 +6,6 @@ no `claude` on PATH and costs nothing. That is the point of extracting the gates
 paid run — an untested control on a billed apparatus.
 """
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -311,53 +310,6 @@ def test_gate_control_excludes_the_effort_less_title_sidecar_rather_than_failing
     )
 
     claude_otel.control(view, MARKER)
-
-
-def test_assemble_view_fails_when_an_arm_s_sink_holds_no_request_files(tmp_path: Path) -> None:
-    ws = tmp_path / "ws"
-    sink_dir(ws, "a")
-    sink_dir(ws, "b")
-    (ws / "a/sink/one.request.json").write_text('{"x":1}\n', encoding="utf-8")
-
-    with pytest.raises(GateFailure) as exc:
-        claude_otel.assemble_view(ws, tmp_path / "out.json", ["a", "b"])
-    assert "captured no request files" in failure_output(exc)
-
-
-def test_assemble_view_counts_only_request_json_so_a_response_only_sink_is_empty(
-    tmp_path: Path,
-) -> None:
-    # The sink writes `<uuid>.response.json` beside each request. A size check or a bare
-    # `*.json` glob would read a response-only sink as a populated arm.
-    ws = tmp_path / "ws"
-    sink_dir(ws, "a")
-    (ws / "a/sink/one.response.json").write_text('{"x":1}\n', encoding="utf-8")
-
-    with pytest.raises(GateFailure) as exc:
-        claude_otel.assemble_view(ws, tmp_path / "out.json", ["a"])
-    assert "captured no request files" in failure_output(exc)
-
-
-def test_assemble_view_builds_an_arm_keyed_object_of_parsed_request_bodies(
-    tmp_path: Path,
-) -> None:
-    ws = tmp_path / "ws"
-    out = tmp_path / "out.json"
-    sink_dir(ws, "a")
-    sink_dir(ws, "b")
-    (ws / "a/sink/one.request.json").write_text('{"n":1}\n', encoding="utf-8")
-    (ws / "a/sink/two.request.json").write_text('{"n":2}\n', encoding="utf-8")
-    (ws / "b/sink/three.request.json").write_text('{"n":3}\n', encoding="utf-8")
-    (ws / "b/sink/three.response.json").write_text('{"n":99}\n', encoding="utf-8")
-
-    claude_otel.assemble_view(ws, out, ["a", "b"])
-    view = json.loads(out.read_text(encoding="utf-8"))
-    assert ",".join(sorted(view)) == "a,b"
-    assert len(view["a"]) == 2
-    assert len(view["b"]) == 1
-    # Parsed bodies, not strings — the projection indexes into them.
-    assert view["b"][0]["n"] == 3
-    assert sorted(r["n"] for r in view["a"]) == [1, 2]
 
 
 def test_gate_deferred_mcp_passes_when_the_governed_request_lists_every_tool_as_deferred_and_carries_toolsearch(  # noqa: E501

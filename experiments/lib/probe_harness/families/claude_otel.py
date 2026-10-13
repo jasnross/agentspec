@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, assert_never
 
-from probe_harness import jq_cli
+from probe_harness import views
 from probe_harness.contract import Manifest
 from probe_harness.families.base import (
     CustomCheck,
@@ -182,8 +182,17 @@ def judge(ws: Path, probe: ClaudeOtelProbe) -> JudgeResult:
     # Without a connected server, an arm's tool set describes nothing.
     for served in (arm for arm in probe.arms if arm.server is not None):
         stamp(ws, served.name, "fx")
+    # Gate 1. Only `*.request.json` files count: the sink also writes
+    # `<request_id>.response.json`. Files are counted rather than size-checked, and never
+    # against an expected number, since a single turn has been observed producing one, two,
+    # and sixteen requests.
+    for name in arms:
+        sink = ws / name / "sink"
+        if not any(sink.glob("*.request.json")):
+            raise GateFailure(f"probe: the {name} arm captured no request files in {sink}")
+    sinks = {name: views.read_sink(ws / name / "sink") for name in arms}
     view = ws / "view.json"
-    gates.assemble_view(ws, view, arms)
+    views.write_arm_view(view, {name: values.requests for name, values in sinks.items()})
     gates.marker(view, probe.marker, probe.marker_field)
     for gate in probe.gates:
         _check(gate, ws, view, probe)
@@ -192,12 +201,13 @@ def judge(ws: Path, probe: ClaudeOtelProbe) -> JudgeResult:
         probe.functions.judge(ws)
     if probe.responses_in_view:
         for name in arms:
-            responses = sorted((ws / name / "sink").glob("*.response.json"))
-            if not responses:
+            if not any((ws / name / "sink").glob("*.response.json")):
                 raise GateFailure(
                     f"probe: the {name} arm captured no response files in {ws / name / 'sink'}"
                 )
-            jq_cli.append_responses(view, name, responses)
+        views.write_arm_view(
+            view, {name: [*values.requests, *values.responses] for name, values in sinks.items()}
+        )
     # Printed before recording: a dry or failed record keeps the workspace, and this view is
     # what a candidate projection is iterated against.
     print(f"probe: the assembled view is at {view}", file=sys.stderr)

@@ -199,6 +199,19 @@ def test_a_real_run_records_and_deletes_the_workspace(
     assert _no_fake_running(tmp_path)
 
 
+def test_a_run_leaves_no_requests_json_in_any_arm(
+    cli: Cli, package: Path, tmp_path: Path, _isolated_tmpdir: Path
+) -> None:
+    # A dry run, because a real run deletes the workspace this inspects.
+    run = cli(
+        "run", "fake-family", env={"STUB_BODIES": _bodies(tmp_path, MARKER), "PROBE_DRY_RUN": "1"}
+    )
+    assert run.returncode == 0, run.stderr
+    (ws,) = _isolated_tmpdir.glob("probe-fake-family.*")
+    assert (ws / "view.json").is_file()
+    assert list(ws.glob("*/requests.json")) == []
+
+
 def test_replay_judges_a_kept_fake_provider_workspace(
     cli: Cli, package: Path, tmp_path: Path, _isolated_tmpdir: Path
 ) -> None:

@@ -169,8 +169,6 @@ def record_problems(path: Path) -> list[str]:
         record = json.loads(path.read_text(encoding="utf-8"))
     except ValueError:
         return [f"not valid JSON: {path}"]
-    if record is None or record is False:
-        return [f"not valid JSON: {path}"]
     if not isinstance(record, dict):
         return [f"key set mismatch in {path}: not an object"]
 

@@ -14,7 +14,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from probe_harness import jq_cli
+from probe_harness import json_values
 from probe_harness.contract import Manifest
 from probe_harness.families.base import (
     CustomCheck,
@@ -67,7 +67,13 @@ def judge(ws: Path, probe: OpenCodeDebugProbe) -> JudgeResult:
         )
     # Named here rather than left to the recorder, which would report "projection failed"
     # and send the reader after an expression that is correct.
-    if not jq_cli.test(".", view):
+    try:
+        document = json_values.loads(view.read_text(encoding="utf-8"))
+    except ValueError:
+        document = None
+    # A resolved config or listing is an object or an array; a bare `null` would project
+    # to nulls and record a false `refuted`.
+    if not isinstance(document, dict | list):
         raise GateFailure(
             f"probe: the oracle wrote a document jq cannot parse — {view.stat().st_size} "
             f"bytes at {view}"

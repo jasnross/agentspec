@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
-from probe_harness import jq_cli
+from probe_harness import jq_cli, json_values
 from probe_harness.contract import (
     CaptureSource,
     CommandSource,
@@ -26,10 +26,12 @@ from probe_harness.contract import (
     Manifest,
     ManifestError,
     NoSource,
+    Option,
     OptionsAssertion,
     ProjectionAssertion,
     parse_manifest,
 )
+from probe_harness.json_values import JsonValue
 
 
 class Status(StrEnum):
@@ -44,8 +46,7 @@ class Record:
 
     manifest: Manifest
     status: Status
-    # The observed value as jq's compact JSON text.
-    observed_text: str
+    observed: JsonValue
     tool_version: str | None
     # `%Y-%m-%dT%H%M%S` from one UTC clock read; the date is the part before `T`.
     stamp: str
@@ -54,19 +55,29 @@ class Record:
     def date(self) -> str:
         return self.stamp.split("T", 1)[0]
 
+    def document(self) -> dict[str, JsonValue]:
+        """The seven keys, in order."""
+        assertion: dict[str, JsonValue]
+        match self.manifest.assertion:
+            case ProjectionAssertion(projection=projection):
+                assertion = {"projection": projection}
+            case OptionsAssertion(options=options):
+                assertion = {"options": [_option_document(o) for o in options]}
+        assertion["expected"] = self.manifest.assertion.expected
+        assertion["observed"] = self.observed
+        return {
+            "schema_version": 1,
+            "provider": self.manifest.provider.value,
+            "status": self.status.value,
+            "depth": self.manifest.depth.value if self.manifest.depth is not None else None,
+            "date": self.date,
+            "tool_version": self.tool_version,
+            "assertion": assertion,
+        }
+
     def text(self) -> str:
-        """The seven-key record, pretty-printed, with no trailing newline."""
-        shape = (
-            "projection" if isinstance(self.manifest.assertion, ProjectionAssertion) else "options"
-        )
-        return jq_cli.assemble_record(
-            self.manifest.path,
-            shape,
-            self.observed_text,
-            self.status,
-            self.date,
-            self.tool_version or "",
-        )
+        """The record as written, with no trailing newline."""
+        return json_values.dumps(self.document())
 
 
 class RecordRefused(Exception):
@@ -121,9 +132,8 @@ def compute(
         if not _non_empty(payloads):
             raise RecordRefused(f"capture payloads absent or empty: {payloads}")
 
-    expected = jq_cli.evaluate(".assertion.expected", manifest.path, compact=True).rstrip("\n")
-
     option_status = ""
+    observed: JsonValue
     if selection is not None:
         observed, option_status = _select(manifest, selection)
     else:
@@ -134,7 +144,7 @@ def compute(
         # A `couldnt-tell` option declares `inconclusive`, so a tired operator picking it
         # cannot manufacture a pass.
         status = Status(option_status)
-    elif jq_cli.equal(expected, observed):
+    elif json_values.equal(manifest.assertion.expected, observed):
         status = Status.CONFIRMED
     else:
         status = Status.REFUTED
@@ -167,14 +177,14 @@ def report(record: Record, written: Path | None) -> None:
         sys.stdout.write(record.text() + "\n")
         sys.stdout.flush()
         print(
-            f"record: dry run — {record.status} — observed {record.observed_text} "
+            f"record: dry run — {record.status} — observed {_compact(record.observed)} "
             "(no file written)",
             file=sys.stderr,
         )
         return
     sys.stdout.write(f"{written}\n")
     sys.stdout.flush()
-    print(f"record: {record.status} — observed {record.observed_text}", file=sys.stderr)
+    print(f"record: {record.status} — observed {_compact(record.observed)}", file=sys.stderr)
 
 
 def main(argv: list[str]) -> int:
@@ -233,35 +243,37 @@ def main(argv: list[str]) -> int:
 
 
 def _select(manifest: Manifest, selection: str) -> tuple[str, str]:
-    """The observed text and the option's declared status for a selected option id."""
+    """The selected option id and the option's declared status."""
     assert isinstance(manifest.assertion, OptionsAssertion)
     option = next((o for o in manifest.assertion.options if o.id == selection), None)
     if option is None:
         raise RecordRefused(f'selection "{selection}" is not one of the manifest\'s option ids')
-    return json.dumps(selection, ensure_ascii=False), option.status or ""
+    return selection, option.status or ""
 
 
-def _project(manifest: Manifest, view: Path) -> str:
-    """The projection's single value over <view>, as compact JSON text."""
+def _project(manifest: Manifest, view: Path) -> JsonValue:
+    """The projection's single value over <view>; `null` when it yields none."""
     assert isinstance(manifest.assertion, ProjectionAssertion)
     if not view.is_file():
         raise RecordRefused(f"view not found: {view}")
     projection = manifest.assertion.projection
     try:
-        observed = jq_cli.evaluate(projection, view, compact=True).rstrip("\n")
+        output = jq_cli.evaluate(projection, view, compact=True)
     except jq_cli.JqError as e:
         raise RecordRefused(
             f"projection failed: {projection}", detail=tuple(e.stderr.splitlines())
         ) from None
-    if not observed:
-        observed = "null"
+    try:
+        values = json_values.load_stream(output)
+    except ValueError as e:
+        raise RecordRefused(f"projection failed: {projection}", detail=(str(e),)) from None
     # A projection emitting more than one value cannot be compared structurally against
     # a single `expected`.
-    if "\n" in observed:
+    if len(values) > 1:
         raise RecordRefused(
             f"projection must yield exactly one JSON value, but yielded several: {projection}"
         )
-    return observed
+    return values[0] if values else None
 
 
 def _tool_version(manifest: Manifest, capture: Path | None) -> str:
@@ -315,3 +327,14 @@ def _non_empty(path: Path) -> bool:
         return path.is_file() and path.stat().st_size > 0
     except OSError:
         return False
+
+
+def _option_document(option: Option) -> dict[str, JsonValue]:
+    document: dict[str, JsonValue] = {"id": option.id, "text": option.text}
+    if option.status is not None:
+        document["status"] = option.status
+    return document
+
+
+def _compact(value: JsonValue) -> str:
+    return json.dumps(value, separators=(",", ":"), ensure_ascii=False)

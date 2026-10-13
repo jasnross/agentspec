@@ -1,6 +1,5 @@
 """Shared Arrange helpers: workspaces, tools, templating, capture polling, and prompting."""
 
-import json
 import os
 import re
 import shutil
@@ -9,7 +8,7 @@ import tempfile
 import time
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, TextIO
+from typing import TextIO
 
 from probe_harness import jq_cli
 from probe_harness.contract import Option
@@ -137,28 +136,6 @@ def read_selection(options: Sequence[Option], question: str, stream: TextIO) -> 
         if answer in ids:
             return answer
         print(f'probe: "{answer}" is not one of the option ids.', file=sys.stderr)
-
-
-def load_json_values(path: Path) -> list[Any]:
-    """Every whitespace-separated JSON value in <path>, as jq reads a stream of them.
-
-    Raises `ValueError` when the text is not such a stream.
-    """
-    return parse_json_values(path.read_text(encoding="utf-8"))
-
-
-def parse_json_values(text: str) -> list[Any]:
-    """Every whitespace-separated JSON value in <text>; `ValueError` when it is not a stream."""
-    decoder = json.JSONDecoder()
-    values: list[Any] = []
-    index = 0
-    while True:
-        while index < len(text) and text[index] in " \t\n\r":
-            index += 1
-        if index == len(text):
-            return values
-        value, index = decoder.raw_decode(text, index)
-        values.append(value)
 
 
 def _capture_matches(payloads: Path, filter_expr: str) -> bool:

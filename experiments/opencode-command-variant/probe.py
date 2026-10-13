@@ -5,7 +5,7 @@ Fully script-driven: no human step, no network, no credentials.
 
 from pathlib import Path
 
-from probe_harness import jq_cli
+from probe_harness import json_values
 from probe_harness.families.base import GateFailure, ProbeFunctions
 from probe_harness.families.opencode_debug import OpenCodeDebugProbe
 
@@ -22,17 +22,18 @@ def _judge(ws: Path) -> None:
     refutes on a *present* command resolving `variant` to `null`, which is a different
     observation.
     """
-    view = ws / "view.json"
-    if jq_cli.test(f'.command | has("{_FIXTURE_COMMAND}")', view):
+    view = json_values.loads((ws / "view.json").read_text(encoding="utf-8"))
+    # A config with no commands at all omits the key, and is still this failure.
+    commands = (view.get("command") if isinstance(view, dict) else None) or {}
+    if not isinstance(commands, dict):
+        commands = {}
+    if _FIXTURE_COMMAND in commands:
         return
     # The names, not just a count: the likeliest cause is a change in how OpenCode
     # discovers or namespaces commands, and only the names reveal that.
-    # `// {}`: a config with no commands at all omits the key, and is still this failure.
-    count = jq_cli.evaluate(".command // {} | length", view).strip()
-    names = jq_cli.evaluate(".command // {} | keys[]", view, raw=True).splitlines()
     raise GateFailure(
-        f"probe: the fixture command did not resolve. OpenCode resolved {count} commands:",
-        *(f"probe:   {name}" for name in names),
+        f"probe: the fixture command did not resolve. OpenCode resolved {len(commands)} commands:",
+        *(f"probe:   {name}" for name in sorted(commands)),
         "probe: this is an apparatus failure, not a refutation; no record written.",
     )
 

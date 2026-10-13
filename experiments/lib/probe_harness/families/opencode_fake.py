@@ -6,7 +6,7 @@ every request body to disk, and that dump is the oracle, so these probes measure
 environment and its own stub, so no arm's requests can land in another's sink.
 
 Workspace layout, per arm: `<ws>/<arm>/{project, sink, home, xdg/…, fake.port,
-fake.stderr, stdout, stderr, <key>.stamp, requests.json}`, plus `<ws>/view.json`.
+fake.stderr, stdout, stderr, <key>.stamp}`, plus `<ws>/view.json`.
 """
 
 import shutil
@@ -17,7 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from probe_harness import jq_cli
+from probe_harness import views
 from probe_harness.contract import Manifest
 from probe_harness.families.base import (
     CustomCheck,
@@ -100,7 +100,7 @@ def judge(ws: Path, probe: OpenCodeFakeProbe) -> JudgeResult:
         if not any((ws / arm / "sink").glob("*.request.json")):
             raise GateFailure(f"probe: arm {arm}: the fake provider received no request")
     view = ws / "view.json"
-    jq_cli.assemble_arm_view_opencode(ws, arms, view)
+    views.write_arm_view(view, {arm: views.read_sink(ws / arm / "sink").requests for arm in arms})
     for arm in arms:
         gates.governed(view, arm, probe.marker, ws / arm / "stderr")
     for arm in arms:

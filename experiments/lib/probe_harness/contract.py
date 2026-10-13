@@ -12,14 +12,14 @@ a manual driver. The checks test JSON types explicitly rather than relying on Py
 truthiness, because `true == 1` in Python and a manifest must not pass on that.
 """
 
-import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
-type JsonValue = Any
+from probe_harness import json_values
+from probe_harness.json_values import JsonValue
 
 
 class Provider(StrEnum):
@@ -222,10 +222,13 @@ def parse_manifest(path: str | Path) -> Manifest:
     )
 
 
-def _load_root(path: Path) -> dict[str, JsonValue]:
-    """The manifest's single JSON value, which must be an object."""
+def _load_root(path: Path) -> dict[str, Any]:
+    """The manifest's single JSON value, which must be an object.
+
+    Typed `Any` below the root: nothing in it is trusted until a gate has checked it.
+    """
     try:
-        root = json.loads(path.read_text(encoding="utf-8"))
+        root: Any = json_values.loads(path.read_text(encoding="utf-8"))
     except ValueError, OSError:
         raise ManifestError(f"manifest is not valid JSON: {path}") from None
     if not isinstance(root, dict):
@@ -233,12 +236,12 @@ def _load_root(path: Path) -> dict[str, JsonValue]:
     return root
 
 
-def _member(value: JsonValue, enum: type[StrEnum]) -> bool:
+def _member(value: Any, enum: type[StrEnum]) -> bool:
     """String equality against an enum's values; any non-string is simply not a member."""
     return isinstance(value, str) and value in {member.value for member in enum}
 
 
-def _option_statuses_inconclusive(options: JsonValue) -> bool:
+def _option_statuses_inconclusive(options: Any) -> bool:
     """A declared option status may only be `inconclusive`.
 
     Any other declared status would fix the verdict in advance. A projection manifest
@@ -254,7 +257,7 @@ def _option_statuses_inconclusive(options: JsonValue) -> bool:
     )
 
 
-def _well_formed_option(option: JsonValue) -> bool:
+def _well_formed_option(option: Any) -> bool:
     return (
         isinstance(option, dict)
         and set(option) <= {"id", "text", "status"}
@@ -264,9 +267,9 @@ def _well_formed_option(option: JsonValue) -> bool:
     )
 
 
-def _version_source(source: JsonValue, gate: Callable[[bool, str], None]) -> VersionSource:
+def _version_source(source: Any, gate: Callable[[bool, str], None]) -> VersionSource:
     gate(source is None or isinstance(source, dict), "manifest version_source must be an object")
-    fields = source or {}
+    fields: dict[str, Any] = source if isinstance(source, dict) else {}
     kind = fields.get("kind")
     gate(
         kind is None or kind in ("command", "capture", "none"),

@@ -9,7 +9,8 @@ import subprocess
 from pathlib import Path
 
 from probe_harness import jq_cli
-from probe_harness.workspace import load_json_values, parse_json_values, template_file
+from probe_harness.json_values import load_stream
+from probe_harness.workspace import template_file
 
 
 def install_hook(package: Path, ws: Path, *, jq: str, payloads: Path) -> Path:
@@ -56,9 +57,9 @@ def test_the_capture_hook_appends_one_json_line_and_echoes(
 
     result = run_hook(hook, '{"hook_event_name":"subagentStart"}')
     assert result.returncode == 0
-    assert parse_json_values(result.stdout) == [{}]
-    values = load_json_values(payloads)
-    assert [value["hook_event_name"] for value in values] == ["subagentStart"]
+    assert load_stream(result.stdout) == [{}]
+    values = load_stream(payloads.read_text(encoding="utf-8"))
+    assert values == [{"hook_event_name": "subagentStart"}]
     # One line, one JSON value — what every later slurping reader depends on.
     assert line_count(payloads) == 1
 
@@ -76,7 +77,7 @@ def test_the_capture_hook_still_echoes_and_exits_0_when_jq_is_missing(
 
     result = run_hook(hook, '{"a":1}')
     assert result.returncode == 0
-    assert parse_json_values(result.stdout) == [{}]
+    assert load_stream(result.stdout) == [{}]
 
 
 def test_the_capture_hook_echoes_and_writes_nothing_on_an_empty_payload(
@@ -90,7 +91,7 @@ def test_the_capture_hook_echoes_and_writes_nothing_on_an_empty_payload(
 
     result = run_hook(hook, "")
     assert result.returncode == 0
-    assert parse_json_values(result.stdout) == [{}]
+    assert load_stream(result.stdout) == [{}]
     assert not (payloads.is_file() and payloads.stat().st_size > 0)
 
 
@@ -140,4 +141,4 @@ def test_the_capture_hook_echoes_when_its_payloads_path_is_unwritable(
 
     result = run_hook(hook, '{"a":1}')
     assert result.returncode == 0
-    assert parse_json_values(result.stdout) == [{}]
+    assert load_stream(result.stdout) == [{}]

@@ -20,7 +20,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from probe_harness import jq_cli, record
+from probe_harness import json_values, record, views
 from probe_harness.contract import Manifest, OptionsAssertion
 from probe_harness.families.base import (
     GateFailure,
@@ -129,7 +129,7 @@ def _materialize(package: Path, ws: Path) -> None:
 
         # A workspace path carrying a quote or backslash would yield config the provider
         # silently ignores. Fail here, where the cause is obvious.
-        if rel.suffix == ".json" and not jq_cli.test(".", dst):
+        if rel.suffix == ".json" and not _parses(dst):
             print(
                 f"probe: generated {dst} is not valid JSON — check the workspace path",
                 file=sys.stderr,
@@ -168,7 +168,12 @@ def record_capture(
             selection = prompt_selection(manifest.assertion.options, manifest.question)
     else:
         view = ws / "view.json"
-        jq_cli.slurp_view(payloads, view)
+        try:
+            views.write_capture_view(payloads, view)
+        except GateFailure as e:
+            for line in e.lines:
+                print(line, file=sys.stderr)
+            return 1
 
     try:
         computed = record.compute(manifest, view=view, selection=selection, capture=ws)
@@ -185,3 +190,11 @@ def _make_executable(path: Path) -> None:
     umask = os.umask(0)
     os.umask(umask)
     path.chmod(path.stat().st_mode | (0o111 & ~umask))
+
+
+def _parses(path: Path) -> bool:
+    try:
+        json_values.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return False
+    return True

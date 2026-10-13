@@ -413,3 +413,24 @@ def _wait_for_project(outfile: Path) -> Path | None:
                 return Path(line.removeprefix("Workspace ready: "))
         time.sleep(0.25)
     return None
+
+
+def test_a_capture_whose_payloads_are_not_json_is_refused_without_a_record(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pkg, ws = put_capture_package(
+        tmp_path,
+        """{
+  "schema_version": 1, "provider": "cursor", "driver": "manual", "depth": null,
+  "question": "q", "version_source": { "kind": "none" },
+  "assertion": { "projection": ".", "expected": 1 }
+}
+""",
+    )
+    (ws / "capture" / "payloads.jsonl").write_text("{not json\n", encoding="utf-8")
+
+    assert manual.record_capture(parse_manifest(pkg / "probe.json"), ws, dry_run=False) == 1
+    captured = capsys.readouterr()
+    assert "the captured payloads at" in captured.err
+    assert "are not valid JSON" in captured.err
+    assert not (pkg / "results").exists()

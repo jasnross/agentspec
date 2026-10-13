@@ -5,7 +5,7 @@ Fully script-driven: no human step, no network, no credentials.
 
 from pathlib import Path
 
-from probe_harness import jq_cli
+from probe_harness import json_values
 from probe_harness.families.base import GateFailure, ProbeFunctions
 from probe_harness.families.opencode_debug import OpenCodeDebugProbe
 
@@ -20,19 +20,21 @@ def _judge(ws: Path) -> None:
     the *other* skills, the projection resolves to `null`, and the recorder writes
     `refuted`, the strong "the provider changed" signal, permanently.
     """
-    view = ws / "view.json"
-    matches = jq_cli.evaluate(
-        "[.[] | select(.name == $name)] | length", view, args={"name": _FIXTURE_SKILL}
-    ).strip()
-    if matches == "1":
+    view = json_values.loads((ws / "view.json").read_text(encoding="utf-8"))
+    # Iterated as the projection iterates it: an array's elements, or an object's values.
+    entries = (
+        view if isinstance(view, list) else list(view.values()) if isinstance(view, dict) else []
+    )
+    skills = [skill for skill in entries if isinstance(skill, dict)]
+    matches = sum(1 for skill in skills if skill.get("name") == _FIXTURE_SKILL)
+    if matches == 1:
         return
     # The names, not just a count: the likeliest cause is a change in how OpenCode discovers
     # skills (`.opencode/skill/` versus `.opencode/skills/` is itself unmeasured), and only
     # the names reveal that.
-    names = jq_cli.evaluate(".[].name", view, raw=True).splitlines()
     raise GateFailure(
         f"probe: the fixture resolved {matches} times, expected exactly 1. Resolved skills:",
-        *(f"probe:   {name}" for name in names),
+        *(f"probe:   {json_values.to_text(skill.get('name'))}" for skill in skills),
         "probe: this is an apparatus failure, not a refutation; no record written.",
     )
 

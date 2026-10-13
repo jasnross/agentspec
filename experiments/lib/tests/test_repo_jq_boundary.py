@@ -1,9 +1,9 @@
 """Only `jq_cli.py` starts jq.
 
-Every jq invocation goes through one module so its flags stay those the bash harness used,
-and a manifest expression means one thing everywhere. This walks the syntax tree of every
-harness module and every package definition looking for a subprocess call that starts jq
-some other way.
+Every jq invocation goes through one module, so a manifest expression means one thing
+everywhere, and that module runs only the expressions a probe author wrote. This walks the
+syntax tree of every harness module and every package definition looking for a subprocess
+call that starts jq some other way.
 """
 
 import ast
@@ -171,3 +171,46 @@ def _keyword(call: ast.Call, name: str) -> ast.expr | None:
         if keyword.arg == name:
             return keyword.value
     return None
+
+
+def test_jq_cli_exposes_only_the_expression_runners() -> None:
+    tree = ast.parse(JQ_CLI.read_text(encoding="utf-8"))
+    public = {
+        node.name
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and not node.name.startswith("_")
+    }
+    assert public == {"require_jq", "evaluate", "test", "compile_error"}
+
+
+def test_only_the_resource_tools_definition_imports_jq_cli() -> None:
+    importing = sorted(
+        definition.parent.name
+        for definition in EXPERIMENTS_DIR.glob("*/probe.py")
+        if _imports_jq_cli(ast.parse(definition.read_text(encoding="utf-8")))
+    )
+    # A definition reads JSON through `json_values`. Only a custom check a probe author
+    # wrote may need jq; a definition that adds one is listed here deliberately.
+    assert importing == ["claude-subagent-mcp-resource-tools"], (
+        "a definition other than those listed imports jq_cli; read JSON with json_values, "
+        "and list it here only if it evaluates an author-written jq expression"
+    )
+
+
+def _imports_jq_cli(tree: ast.Module) -> bool:
+    """Whether <tree> imports `probe_harness.jq_cli` in any spelling."""
+    for node in ast.walk(tree):
+        match node:
+            case ast.ImportFrom(module="probe_harness", names=names) if any(
+                alias.name == "jq_cli" for alias in names
+            ):
+                return True
+            case ast.ImportFrom(module="probe_harness.jq_cli"):
+                return True
+            case ast.Import(names=names) if any(
+                alias.name == "probe_harness.jq_cli" for alias in names
+            ):
+                return True
+            case _:
+                pass
+    return False

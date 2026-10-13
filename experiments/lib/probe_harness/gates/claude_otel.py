@@ -21,32 +21,13 @@ from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
-from probe_harness import jq_cli
 from probe_harness.gates import GateFailure
 from probe_harness.gates import jq_semantics as jq
-from probe_harness.json_values import to_text
-from probe_harness.workspace import parse_json_values
+from probe_harness.json_values import load_stream, to_text
 
 DEFERRED_LISTING = "The following deferred tools are now available via ToolSearch"
 
 _EVALUATION_ERRORS = jq.EVALUATION_ERRORS
-
-
-def assemble_view(ws: Path, out: Path, arms: Sequence[str]) -> None:
-    """Gate 1, plus view assembly: `{<arm>: [<request bodies>], …}`.
-
-    Only `*.request.json` files: the sink also writes `<request_id>.response.json`. Files
-    are counted rather than size-checked, and never against an expected number, since a
-    single turn has been observed producing one, two, and sixteen requests.
-    """
-    for arm in arms:
-        sink = ws / arm / "sink"
-        if not any(sink.glob("*.request.json")):
-            raise GateFailure(f"probe: the {arm} arm captured no request files in {sink}")
-    try:
-        jq_cli.assemble_arm_view_claude(ws, arms, out)
-    except jq_cli.JqError as e:
-        raise GateFailure(*e.stderr.rstrip("\n").split("\n")) from None
 
 
 def marker(view: Path, marker: str, field: str = ".system") -> None:
@@ -401,7 +382,7 @@ def _sink_files(ws: Path, arm: str, reading: str) -> tuple[list[Path], list[Path
 
 def _concatenated(paths: Sequence[Path]) -> list[Any]:
     """Every JSON value in <paths>, concatenated as `cat` concatenated them for jq."""
-    return parse_json_values("".join(p.read_text(encoding="utf-8") for p in paths))
+    return load_stream("".join(p.read_text(encoding="utf-8") for p in paths))
 
 
 def _tool_uses(responses: Sequence[Any]) -> Iterator[Any]:
