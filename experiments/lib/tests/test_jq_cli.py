@@ -22,11 +22,14 @@ GOLDEN_MANIFEST = """\
 }
 """
 
+
 # The compact observed value `record.sh` projected from the golden view,
 # `{"x": {"nested": {"a": "s", "b": [1, 2.50]}, "n": 1.10}}`, with `.x`.
 GOLDEN_OBSERVED = '{"nested":{"a":"s","b":[1,2.50]},"n":1.10}'
 
+
 GOLDEN_DATE = "2026-10-12"
+
 
 # `record.sh --manifest <GOLDEN_MANIFEST> --view <view> --dry-run`, run from the reference
 # bash checkout under jq 1.8.2, with its trailing newline removed. Its `date` is the day
@@ -108,3 +111,7 @@ def test_load_json_values_reads_concatenated_objects_with_whitespace(tmp_path: P
     path.write_text('{"a":1}\n  {"b":2}\n', encoding="utf-8")
 
     assert load_json_values(path) == [{"a": 1}, {"b": 2}]
+
+
+def test_compile_check_accepts_an_expression_ending_in_a_comment() -> None:
+    assert jq_cli.compile_error(". # trailing comment") is None

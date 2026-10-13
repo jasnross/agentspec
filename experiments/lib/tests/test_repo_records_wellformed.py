@@ -17,7 +17,10 @@ from typing import Any
 
 from probe_harness.contract import Depth, Driver, Provider
 
-from tests.conftest import EXPERIMENTS_DIR, RECORD_FORBIDDEN_KEYS
+from tests.conftest import (
+    EXPERIMENTS_DIR,
+    RECORD_FORBIDDEN_KEYS,
+)
 
 
 class _JqError(Exception):

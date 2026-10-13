@@ -11,7 +11,9 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 
-from tests.conftest import Cli
+from tests.conftest import (
+    Cli,
+)
 
 type PutPackage = Callable[..., Path]
 

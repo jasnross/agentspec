@@ -5,7 +5,7 @@ expressions, custom checks, the `expected == observed` comparison, record assemb
 view assembly all run here, with the flags the bash harness used. A probe author runs the
 same jq at their shell, so a manifest expression means one thing everywhere.
 
-No other module calls jq; `test_jq_boundary.py` enforces that.
+No other module calls jq; `test_repo_jq_boundary.py` enforces that.
 """
 
 import shutil

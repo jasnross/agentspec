@@ -22,7 +22,9 @@ from probe_harness.families.opencode_debug import OpenCodeDebugProbe
 from probe_harness.families.opencode_fake import OpenCodeFakeProbe
 from probe_harness.loader import load_definition
 
-from tests.conftest import EXPERIMENTS_DIR
+from tests.conftest import (
+    EXPERIMENTS_DIR,
+)
 
 
 def _packages() -> list[Path]:

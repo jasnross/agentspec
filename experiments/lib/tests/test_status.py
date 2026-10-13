@@ -1,11 +1,15 @@
 """Coverage for `probe status`, driven against fixture package trees rather than the
-repository's own records, so the assertions do not shift as real probes are added."""
+repository's own records, so the assertions do not shift as real probes are added.
+"""
 
 import json
 from pathlib import Path
 from typing import Any
 
-from tests.conftest import Cli, Result
+from tests.conftest import (
+    Cli,
+    Result,
+)
 
 
 def put_record(

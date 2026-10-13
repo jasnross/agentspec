@@ -1,21 +1,17 @@
-"""Coverage for the shared *Arrange* helpers in `workspace.py` and `manual.record_capture`.
+"""The shared *Arrange* helpers in `workspace.py`.
 
-Ported from `probe-common.bats`. The bash helpers that exited were driven through a
-throwaway script; their Python counterparts raise `SystemExit`, so they are called in-process
-and the exit is caught.
+Helpers that refuse raise `SystemExit`, so they are called in-process and the exit is
+caught.
 """
 
 import io
 import json
 import threading
-import time
 from pathlib import Path
 
 import pytest
-from probe_harness import jq_cli, preflight
-from probe_harness.families import manual
+from probe_harness import jq_cli
 from probe_harness.workspace import (
-    POLL_INTERVAL_SECONDS,
     create_workspace,
     prompt_selection,
     read_selection,
@@ -24,21 +20,9 @@ from probe_harness.workspace import (
     wait_for_capture,
 )
 
-
-def make_capture_workspace(ws: Path, payloads: str | None = None) -> Path:
-    (ws / "capture").mkdir(parents=True)
-    if payloads is not None:
-        (ws / "capture" / "payloads.jsonl").write_text(payloads, encoding="utf-8")
-    return ws
-
-
-def put_capture_package(tmp_path: Path, manifest: str) -> tuple[Path, Path]:
-    """A package carrying <manifest> and a workspace holding one payload: `(pkg, ws)`."""
-    pkg = tmp_path / "pkg"
-    pkg.mkdir()
-    (pkg / "probe.json").write_text(manifest, encoding="utf-8")
-    ws = make_capture_workspace(tmp_path / "ws", '{"marker":"seen"}\n')
-    return pkg, ws
+from tests.conftest import (
+    make_capture_workspace,
+)
 
 
 def test_probe_workspace_create_returns_a_workspace_with_a_capture_directory() -> None:
@@ -107,20 +91,6 @@ def test_probe_wait_for_capture_slurps_so_an_any_filter_matches_jsonl(tmp_path: 
     ws = make_capture_workspace(tmp_path / "ws-slurp", '{"a":1}\n{"cursor_version":"3.16.17"}\n')
 
     assert wait_for_capture(ws, "any(.[]; .cursor_version != null)", 5) is True
-
-
-def test_probe_timeout_seconds_overrides_the_caller_s_timeout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    ws = make_capture_workspace(tmp_path / "ws-override", '{"a":1}\n')
-    monkeypatch.setenv("PROBE_TIMEOUT_SECONDS", "1")
-
-    options = preflight.run_options(("assertion",))
-    assert options.timeout == 1
-
-    started = time.monotonic()
-    assert wait_for_capture(ws, "any(.[]; .never == true)", options.timeout) is False
-    assert time.monotonic() - started < options.timeout + POLL_INTERVAL_SECONDS
 
 
 def test_probe_template_file_substitutes_every_placeholder_and_keeps_json_valid(
@@ -267,56 +237,3 @@ def test_the_selection_loop_re_prompts_on_an_unrecognized_answer_then_returns_th
     captured = capsys.readouterr()
     assert '"nonsense" is not one of the option ids' in captured.out + captured.err
     assert answer == "neither"
-
-
-def test_probe_record_capture_prompts_when_the_assertion_declares_options(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    # The branch reads the assertion's shape, not the driver — the recorder gates the
-    # correspondence that makes that read safe. Reaching `prompt_selection`, whose tty guard
-    # exits 2, is what proves the options path was taken rather than the projection one.
-    pkg, ws = put_capture_package(
-        tmp_path,
-        """{
-  "schema_version": 1, "provider": "cursor", "driver": "manual", "depth": null,
-  "question": "Which markers appeared?", "version_source": { "kind": "none" },
-  "assertion": {
-    "options": [
-      { "id": "neither", "text": "Neither marker was visible" },
-      { "id": "couldnt-tell", "text": "Could not determine", "status": "inconclusive" }
-    ],
-    "expected": "neither"
-  }
-}
-""",
-    )
-    monkeypatch.setattr("sys.stdin", io.StringIO(""))
-
-    with pytest.raises(SystemExit) as exc:
-        manual.record_capture(pkg, ws, dry_run=False)
-    assert exc.value.code == 2
-    captured = capsys.readouterr()
-    assert "stdin is not a terminal" in captured.out + captured.err
-    assert "Which markers appeared?" in captured.out + captured.err
-
-
-def test_probe_record_capture_projects_when_the_assertion_declares_a_projection(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The other half of the same branch. A `manual` manifest may still be machine-answered —
-    # which is what `claude-session-start` is — so the driver alone cannot decide this.
-    pkg, ws = put_capture_package(
-        tmp_path,
-        """{
-  "schema_version": 1, "provider": "cursor", "driver": "manual", "depth": null,
-  "question": "q", "version_source": { "kind": "none" },
-  "assertion": { "projection": "[.[] | .marker] | first", "expected": "seen" }
-}
-""",
-    )
-    monkeypatch.setattr("sys.stdin", io.StringIO(""))
-
-    assert manual.record_capture(pkg, ws, dry_run=False) == 0
-    records = list((pkg / "results").glob("*.json"))
-    assert len(records) == 1
-    assert json.loads(records[0].read_text(encoding="utf-8"))["status"] == "confirmed"

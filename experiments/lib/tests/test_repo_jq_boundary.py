@@ -8,12 +8,19 @@ some other way.
 
 import ast
 
-from tests.conftest import EXPERIMENTS_DIR
+from tests.conftest import (
+    EXPERIMENTS_DIR,
+)
 
 HARNESS_DIR = EXPERIMENTS_DIR / "lib" / "probe_harness"
+
+
 JQ_CLI = HARNESS_DIR / "jq_cli.py"
 
+
 SUBPROCESS_CALLS = frozenset({"run", "Popen", "check_output", "call"})
+
+
 JQ = "jq"
 
 

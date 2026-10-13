@@ -85,7 +85,7 @@ Every gate asserts on a positive signal in the captured bodies. None of them nam
 
 A gate failure is a statement about the run, not about Claude, and writes no record.
 
-The gates live in `experiments/lib/probe_harness/gates/claude_otel.py` rather than in this package's definition, shared with `claude-agent-effort` and covered by `experiments/lib/tests/test_probe_claude_otel.py` against fabricated views — including coverage that the field parameter actually scopes both gates. Duplicated in two definitions, the only thing that would ever exercise them is a real, paid run: an untested control on a billed apparatus.
+The gates live in `experiments/lib/probe_harness/gates/claude_otel.py` rather than in this package's definition, shared with `claude-agent-effort` and covered by `experiments/lib/tests/test_gates_claude_otel.py` against fabricated views — including coverage that the field parameter actually scopes both gates. Duplicated in two definitions, the only thing that would ever exercise them is a real, paid run: an untested control on a billed apparatus.
 
 ## Isolation
 

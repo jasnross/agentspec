@@ -13,9 +13,14 @@ from typing import Any
 
 import pytest
 
-from tests.conftest import Cli, Result
+from tests.conftest import (
+    Cli,
+    Result,
+    unattended_manifest,
+)
 
 type RecordWellformed = Callable[[Path], None]
+
 
 SCRIPT_MANIFEST: dict[str, Any] = {
     "schema_version": 1,
@@ -29,6 +34,7 @@ SCRIPT_MANIFEST: dict[str, Any] = {
         "expected": {"model": "m", "variant": "high"},
     },
 }
+
 
 JUDGE_MANIFEST: dict[str, Any] = {
     "schema_version": 1,
@@ -46,6 +52,7 @@ JUDGE_MANIFEST: dict[str, Any] = {
         "expected": "neither",
     },
 }
+
 
 # A manifest whose option set declares `inconclusive` more than once. The narrowing rejects
 # a *value*, not the presence of a status, so this must be accepted: a gate written as "at
@@ -90,7 +97,7 @@ def write_manifest(path: Path, manifest: dict[str, Any]) -> None:
     path.write_text(json.dumps(manifest, indent=2) + "\n")
 
 
-def write_view(path: Path, text: str) -> None:
+def write_view_text(path: Path, text: str) -> None:
     path.write_text(text + "\n")
 
 
@@ -128,7 +135,7 @@ def test_a_matching_observed_value_records_confirmed(
     cli: Cli, pkg: Path, manifest: Path, view: Path
 ) -> None:
     write_manifest(manifest, SCRIPT_MANIFEST)
-    write_view(view, '{"model":"m","variant":"high"}')
+    write_view_text(view, '{"model":"m","variant":"high"}')
 
     result = cli("record", "--manifest", manifest, "--view", view)
     assert result.returncode == 0
@@ -139,7 +146,7 @@ def test_a_mismatching_observed_value_records_refuted(
     cli: Cli, pkg: Path, manifest: Path, view: Path
 ) -> None:
     write_manifest(manifest, SCRIPT_MANIFEST)
-    write_view(view, '{"model":"m","variant":"low"}')
+    write_view_text(view, '{"model":"m","variant":"low"}')
 
     result = cli("record", "--manifest", manifest, "--view", view)
     assert result.returncode == 0
@@ -153,7 +160,7 @@ def test_comparison_is_structural_so_key_order_does_not_matter(
     # This is the property JSON was chosen for and the one a string comparison would have
     # broken.
     write_manifest(manifest, SCRIPT_MANIFEST)
-    write_view(view, '{"variant":"high","model":"m"}')
+    write_view_text(view, '{"variant":"high","model":"m"}')
 
     result = cli("record", "--manifest", manifest, "--view", view)
     assert result.returncode == 0
@@ -175,7 +182,7 @@ def test_a_manual_projection_manifest_without_capture_is_refused(
             "assertion": {"projection": ".", "expected": {}},
         },
     )
-    write_view(view, "{}")
+    write_view_text(view, "{}")
 
     result = cli("record", "--manifest", manifest, "--view", view)
     assert result.returncode != 0
@@ -288,7 +295,7 @@ def test_a_manifest_declaring_a_retired_depth_is_refused(
     # forbids. A record copies `depth` from its manifest, so a value gathered nowhere would
     # become a claim on a record.
     write_manifest(manifest, {**SCRIPT_MANIFEST, "depth": "provider-parses"})
-    write_view(view, '{"model":"m","variant":"high"}')
+    write_view_text(view, '{"model":"m","variant":"high"}')
 
     result = cli("record", "--manifest", manifest, "--view", view)
     assert result.returncode != 0
@@ -308,7 +315,7 @@ def test_a_selection_absent_from_the_option_set_is_refused(
 
 def test_supplying_both_view_and_selection_is_refused(cli: Cli, manifest: Path, view: Path) -> None:
     write_manifest(manifest, SCRIPT_MANIFEST)
-    write_view(view, "{}")
+    write_view_text(view, "{}")
 
     result = cli("record", "--manifest", manifest, "--view", view, "--selection", "neither")
     assert result.returncode != 0
@@ -338,7 +345,7 @@ def test_a_capture_with_no_payloads_file_is_refused(
     cli: Cli, tmp_path: Path, manifest: Path, view: Path
 ) -> None:
     write_manifest(manifest, SCRIPT_MANIFEST)
-    write_view(view, '{"model":"m","variant":"high"}')
+    write_view_text(view, '{"model":"m","variant":"high"}')
     ws = tmp_path / "nopayloads"
     (ws / "capture").mkdir(parents=True)
 
@@ -351,7 +358,7 @@ def test_a_capture_with_an_empty_payloads_file_is_refused(
     cli: Cli, tmp_path: Path, manifest: Path, view: Path
 ) -> None:
     write_manifest(manifest, SCRIPT_MANIFEST)
-    write_view(view, '{"model":"m","variant":"high"}')
+    write_view_text(view, '{"model":"m","variant":"high"}')
     ws = tmp_path / "emptypayloads"
     (ws / "capture").mkdir(parents=True)
     (ws / "capture" / "payloads.jsonl").write_text("")
@@ -399,7 +406,7 @@ def test_the_emitted_record_parses_and_carries_the_full_key_set(
     record_wellformed: RecordWellformed,
 ) -> None:
     write_manifest(manifest, SCRIPT_MANIFEST)
-    write_view(view, '{"model":"m","variant":"high"}')
+    write_view_text(view, '{"model":"m","variant":"high"}')
 
     result = cli("record", "--manifest", manifest, "--view", view)
     assert result.returncode == 0
@@ -409,7 +416,7 @@ def test_the_emitted_record_parses_and_carries_the_full_key_set(
 
 def test_date_is_stamped_in_utc(cli: Cli, pkg: Path, manifest: Path, view: Path) -> None:
     write_manifest(manifest, SCRIPT_MANIFEST)
-    write_view(view, '{"model":"m","variant":"high"}')
+    write_view_text(view, '{"model":"m","variant":"high"}')
 
     # Run under a timezone 14 hours ahead of UTC, so for most of the day a local-clock stamp
     # would produce tomorrow's date and fail this assertion. The clock is read either side of
@@ -426,7 +433,7 @@ def test_a_record_carries_no_key_outside_the_seven_key_contract(
     cli: Cli, pkg: Path, manifest: Path, view: Path
 ) -> None:
     write_manifest(manifest, SCRIPT_MANIFEST)
-    write_view(view, '{"model":"m","variant":"high"}')
+    write_view_text(view, '{"model":"m","variant":"high"}')
 
     result = cli("record", "--manifest", manifest, "--view", view)
     assert result.returncode == 0
@@ -457,7 +464,7 @@ def test_a_path_hostile_version_string_is_sanitized_in_the_record_filename(
             "assertion": {"projection": ".", "expected": {}},
         },
     )
-    write_view(view, "{}")
+    write_view_text(view, "{}")
 
     result = cli("record", "--manifest", manifest, "--view", view)
     assert result.returncode == 0
@@ -486,7 +493,7 @@ def test_a_manifest_declaring_no_expected_value_is_refused(
             "assertion": {"projection": ".no.such.path"},
         },
     )
-    write_view(view, '{"real":"data"}')
+    write_view_text(view, '{"real":"data"}')
 
     result = cli("record", "--manifest", manifest, "--view", view)
     assert result.returncode != 0
@@ -513,7 +520,7 @@ def test_a_manifest_declaring_both_projection_and_options_is_refused(
             },
         },
     )
-    write_view(view, "{}")
+    write_view_text(view, "{}")
 
     result = cli("record", "--manifest", manifest, "--view", view)
     assert result.returncode != 0
@@ -574,7 +581,7 @@ def test_a_manifest_declaring_neither_projection_nor_options_is_refused(
             "assertion": {"expected": "a"},
         },
     )
-    write_view(view, "{}")
+    write_view_text(view, "{}")
 
     result = cli("record", "--manifest", manifest, "--view", view)
     assert result.returncode != 0
@@ -586,7 +593,7 @@ def test_an_options_manifest_invoked_with_view_is_refused_not_recorded_as_refute
 ) -> None:
     # A wiring error must not manufacture the strong signal.
     write_manifest(manifest, JUDGE_MANIFEST)
-    write_view(view, "{}")
+    write_view_text(view, "{}")
 
     result = cli("record", "--manifest", manifest, "--view", view)
     assert result.returncode != 0
@@ -621,7 +628,7 @@ def test_a_manifest_with_an_unknown_provider_is_refused(
             "assertion": {"projection": ".", "expected": {}},
         },
     )
-    write_view(view, "{}")
+    write_view_text(view, "{}")
 
     result = cli("record", "--manifest", manifest, "--view", view)
     assert result.returncode != 0
@@ -643,7 +650,7 @@ def test_a_manifest_with_an_unknown_schema_version_is_refused(
             "assertion": {"projection": ".", "expected": {}},
         },
     )
-    write_view(view, "{}")
+    write_view_text(view, "{}")
 
     result = cli("record", "--manifest", manifest, "--view", view)
     assert result.returncode != 0
@@ -667,7 +674,7 @@ def test_a_manifest_with_an_unknown_driver_is_refused(
             "assertion": {"projection": ".", "expected": {}},
         },
     )
-    write_view(view, "{}")
+    write_view_text(view, "{}")
 
     result = cli("record", "--manifest", manifest, "--view", view)
     assert result.returncode != 0
@@ -690,7 +697,7 @@ def test_a_projection_yielding_several_values_is_refused_with_a_clear_diagnostic
             "assertion": {"projection": ".[]", "expected": 1},
         },
     )
-    write_view(view, "[1,2,3]")
+    write_view_text(view, "[1,2,3]")
 
     result = cli("record", "--manifest", manifest, "--view", view)
     assert result.returncode != 0
@@ -729,7 +736,7 @@ def test_two_runs_on_the_same_day_at_the_same_version_produce_two_records(
     # The append-only property the filename's time component exists to guarantee: re-running
     # a refuted probe to confirm it must not overwrite the evidence.
     write_manifest(manifest, SCRIPT_MANIFEST)
-    write_view(view, '{"model":"m","variant":"high"}')
+    write_view_text(view, '{"model":"m","variant":"high"}')
 
     cli("record", "--manifest", manifest, "--view", view)
     time.sleep(1)
@@ -740,7 +747,7 @@ def test_two_runs_on_the_same_day_at_the_same_version_produce_two_records(
 
 def test_dry_run_writes_no_record(cli: Cli, pkg: Path, manifest: Path, view: Path) -> None:
     write_manifest(manifest, SCRIPT_MANIFEST)
-    write_view(view, '{"model":"m","variant":"high"}')
+    write_view_text(view, '{"model":"m","variant":"high"}')
 
     result = dry_run(cli, "--manifest", manifest, "--view", view)
     assert result.returncode == 0
@@ -758,7 +765,7 @@ def test_dry_run_prints_a_well_formed_record_to_stdout(
     # The point of the flag: what it prints is what a record would contain, so a projection
     # validated here is the one the real run will evaluate.
     write_manifest(manifest, SCRIPT_MANIFEST)
-    write_view(view, '{"model":"m","variant":"high"}')
+    write_view_text(view, '{"model":"m","variant":"high"}')
 
     result = dry_run(cli, "--manifest", manifest, "--view", view)
     assert result.returncode == 0
@@ -775,7 +782,7 @@ def test_dry_run_exits_0_when_the_comparison_computes_refuted(
     # supposed to refute, so a nonzero exit here would fail the flag's primary use case every
     # time.
     write_manifest(manifest, SCRIPT_MANIFEST)
-    write_view(view, '{"model":"m","variant":"low"}')
+    write_view_text(view, '{"model":"m","variant":"low"}')
 
     result = dry_run(cli, "--manifest", manifest, "--view", view)
     assert result.returncode == 0
@@ -800,7 +807,7 @@ def test_dry_run_still_refuses_a_manifest_failing_a_gate(
             "assertion": {"projection": ".", "expected": {}},
         },
     )
-    write_view(view, "{}")
+    write_view_text(view, "{}")
 
     result = dry_run(cli, "--manifest", manifest, "--view", view)
     assert result.returncode != 0
@@ -814,7 +821,7 @@ def test_dry_run_still_enforces_the_capture_non_empty_check(
     cli: Cli, tmp_path: Path, manifest: Path, view: Path
 ) -> None:
     write_manifest(manifest, SCRIPT_MANIFEST)
-    write_view(view, '{"model":"m","variant":"high"}')
+    write_view_text(view, '{"model":"m","variant":"high"}')
     ws = tmp_path / "emptypayloads"
     (ws / "capture").mkdir(parents=True)
     (ws / "capture" / "payloads.jsonl").write_text("")
@@ -841,3 +848,38 @@ def test_dry_run_records_nothing_on_the_selection_path_either(
     assert result.returncode == 0
     assert not (pkg / "results").is_dir()
     assert "no file written" in result.output
+
+
+def test_a_non_object_version_source_fails_with_jq_s_diagnostic(cli: Cli, tmp_path: Path) -> None:
+    package = tmp_path / "pkg"
+    package.mkdir()
+    manifest = package / "probe.json"
+    manifest.write_text(json.dumps(unattended_manifest(version_source="command")), encoding="utf-8")
+    view = tmp_path / "view.json"
+    view.write_text("1\n", encoding="utf-8")
+    result = cli("record", "--manifest", manifest, "--view", view, "--dry-run")
+    assert result.returncode == 5
+    assert "Cannot index string" in result.stderr
+    assert result.stdout == ""
+
+
+def test_a_relative_manifest_path_records_under_the_logical_working_directory(
+    cli: Cli, tmp_path: Path
+) -> None:
+    real = tmp_path / "real"
+    (real / "pkg").mkdir(parents=True)
+    (real / "pkg" / "probe.json").write_text(json.dumps(unattended_manifest()), encoding="utf-8")
+    (real / "view.json").write_text("1\n", encoding="utf-8")
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    result = cli(
+        "record",
+        "--manifest",
+        "pkg/probe.json",
+        "--view",
+        "view.json",
+        cwd=link,
+        env={"PWD": str(link)},
+    )
+    assert result.returncode == 0
+    assert result.stdout.startswith(f"{link}/pkg/results/")

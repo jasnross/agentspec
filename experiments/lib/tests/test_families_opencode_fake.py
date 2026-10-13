@@ -23,9 +23,13 @@ from typing import Any
 
 import pytest
 
-from tests.conftest import EXPERIMENTS_DIR, Cli
+from tests.conftest import (
+    EXPERIMENTS_DIR,
+    Cli,
+)
 
 MARKER = "AGENTSPEC-PROBE-MARKER-FAKETEST"
+
 
 STUB = textwrap.dedent("""\
     #!/usr/bin/env python3
@@ -76,6 +80,7 @@ STUB = textwrap.dedent("""\
             post({"messages": body["messages"] + [{"role": "tool", "content": "result"}]})
 """)
 
+
 OPENCODE_JSON = {
     "provider": {"fake": {"options": {"baseURL": "http://127.0.0.1:{{PORT}}/v1"}}},
     "mcp": {
@@ -86,6 +91,7 @@ OPENCODE_JSON = {
     },
 }
 
+
 DEFINITION = textwrap.dedent(f"""\
     from probe_harness.families.opencode_fake import OpenCodeArm, OpenCodeFakeProbe
 
@@ -95,6 +101,7 @@ DEFINITION = textwrap.dedent(f"""\
         fx_servers=("fx",),
     )
 """)
+
 
 MANIFEST = {
     "schema_version": 1,

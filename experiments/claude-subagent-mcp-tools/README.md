@@ -68,7 +68,7 @@ A gate failure is a statement about the run, not about Claude, and writes no rec
 
 `gates.claude_otel.control` is not used: it gates an effort control set, and nothing here measures effort.
 
-The four gates live in `experiments/lib/probe_harness/gates/claude_otel.py` with test coverage in `experiments/lib/tests/test_probe_claude_otel.py`, so they are exercised without a paid run.
+The four gates live in `experiments/lib/probe_harness/gates/claude_otel.py` with test coverage in `experiments/lib/tests/test_gates_claude_otel.py`, so they are exercised without a paid run.
 
 ## The assertion is relational across arms
 

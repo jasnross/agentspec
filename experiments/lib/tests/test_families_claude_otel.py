@@ -17,10 +17,15 @@ from typing import Any
 
 import pytest
 
-from tests.conftest import Cli
+from tests.conftest import (
+    Cli,
+)
 
 MARKER = "AGENTSPEC-PROBE-MARKER-CLAUDETEST"
+
+
 MODEL = "claude-test-model"
+
 
 STUB = textwrap.dedent("""\
     #!/usr/bin/env python3
@@ -54,6 +59,7 @@ STUB = textwrap.dedent("""\
         sys.exit(int(os.environ["STUB_EXIT"]))
 """)
 
+
 DEFINITION = textwrap.dedent(f"""\
     from probe_harness.families.claude_otel import ClaudeArm, ClaudeOtelProbe, McpConfig, Model
 
@@ -71,6 +77,7 @@ DEFINITION = textwrap.dedent(f"""\
     )
 """)
 
+
 MANIFEST = {
     "schema_version": 1,
     "provider": "claude",
@@ -83,6 +90,7 @@ MANIFEST = {
         "expected": {"a": 1, "b": 1},
     },
 }
+
 
 MCP_JSON = {
     "mcpServers": {

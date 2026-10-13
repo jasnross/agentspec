@@ -3,10 +3,22 @@
 import json
 import os
 import textwrap
+import time
 from pathlib import Path
 from typing import Any
 
-from tests.conftest import STUB_PROBE_PY, Cli
+import pytest
+from probe_harness import preflight
+from probe_harness.workspace import (
+    POLL_INTERVAL_SECONDS,
+    wait_for_capture,
+)
+
+from tests.conftest import (
+    STUB_PROBE_PY,
+    Cli,
+    make_capture_workspace,
+)
 
 # A stub whose definition declares a second, non-`assertion` variant.
 VARIANT_PROBE_PY = textwrap.dedent("""\
@@ -106,3 +118,17 @@ def test_an_extra_argument_exits_2(cli: Cli, tree: Path) -> None:
     assert result.returncode == 2, result.output
     assert "unexpected argument:" in result.output
     assert "ran stub" not in result.output
+
+
+def test_probe_timeout_seconds_overrides_the_caller_s_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ws = make_capture_workspace(tmp_path / "ws-override", '{"a":1}\n')
+    monkeypatch.setenv("PROBE_TIMEOUT_SECONDS", "1")
+
+    options = preflight.run_options(("assertion",))
+    assert options.timeout == 1
+
+    started = time.monotonic()
+    assert wait_for_capture(ws, "any(.[]; .never == true)", options.timeout) is False
+    assert time.monotonic() - started < options.timeout + POLL_INTERVAL_SECONDS

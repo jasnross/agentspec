@@ -18,7 +18,7 @@ Thumbs.db
 graphify-out/
 
 # Live-session captures staged for a later phase's dry-run checks. The leading
-# dot is load-bearing: `lib/tests/test_records_wellformed.py` iterates
+# dot is load-bearing: `lib/tests/test_repo_records_wellformed.py` iterates
 # `experiments/*/`, skips dot-directories, and would demand a manifest, a
 # definition, and a record from any other directory it found there.
 experiments/.probe-scratch/

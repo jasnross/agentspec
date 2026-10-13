@@ -10,23 +10,28 @@ tracked `results/` directory.
 import json
 import os
 import re
+import shutil
 import subprocess
 import textwrap
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 from probe_harness.contract import Depth
 
 EXPERIMENTS_DIR = Path(__file__).resolve().parents[2]
 
+
 # Exactly these seven keys. No more, no fewer.
 RECORD_KEYS = ["assertion", "date", "depth", "provider", "schema_version", "status", "tool_version"]
+
 
 # Six fields removed during planning. A schema is only as narrow as what rejects additions,
 # so each is asserted absent rather than merely unused.
 RECORD_FORBIDDEN_KEYS = ["probe", "kind", "driver", "capture", "finding", "blocked_reason"]
+
 
 # A synthetic package's `probe.py`: its Act prints and exits with the chosen code, so its
 # Judge is never reached. Filled by `str.format` with `name` and `code`.
@@ -203,3 +208,132 @@ def record_wellformed() -> Callable[[Path], None]:
         assert not problems, "\n".join(problems)
 
     return check
+
+
+MARKER = "AGENTSPEC-PROBE-MARKER-TEST"
+
+
+def write_view(path: Path, arms: dict[str, list[Any]]) -> Path:
+    """An arm-keyed view: each arm maps to its array of request bodies."""
+    path.write_text(json.dumps(arms, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def deferred_request(
+    *tools: str, marker: str = MARKER, model: str = "pinned-model"
+) -> dict[str, Any]:
+    """A subagent request under tool search.
+
+    `ToolSearch` in `tools[]`, and each MCP tool named on its own line in the
+    deferred-tools text block.
+    """
+    text = "\n".join(["The following deferred tools are now available via ToolSearch:", *tools])
+    return {
+        "model": model,
+        "system": marker,
+        "tools": [{"name": "Read"}, {"name": "ToolSearch"}],
+        "messages": [{"role": "user", "content": [{"type": "text", "text": text}]}],
+    }
+
+
+def direct_request(*tools: str, marker: str = MARKER) -> dict[str, Any]:
+    """The same subagent with tool search off: every MCP tool sits in `tools[]`."""
+    return {
+        "model": "pinned-model",
+        "system": marker,
+        "tools": [{"name": "Read"}, *({"name": t} for t in tools)],
+    }
+
+
+def compact(value: Any) -> str:
+    """`jq -c` text for <value>."""
+    return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+
+
+def make_capture_workspace(ws: Path, payloads: str | None = None) -> Path:
+    (ws / "capture").mkdir(parents=True)
+    if payloads is not None:
+        (ws / "capture" / "payloads.jsonl").write_text(payloads, encoding="utf-8")
+    return ws
+
+
+CURSOR_PACKAGE_NAME = "cursor-subagent-effort"
+
+
+@pytest.fixture
+def cursor_package(tmp_path: Path, experiments_dir: Path) -> Path:
+    """A copy of the Cursor package with no `results/`, inside the test's own tree."""
+    copy = tmp_path / "experiments" / CURSOR_PACKAGE_NAME
+    shutil.copytree(experiments_dir / CURSOR_PACKAGE_NAME, copy, symlinks=True)
+    shutil.rmtree(copy / "results", ignore_errors=True)
+    return copy
+
+
+OPENCODE_DEBUG_STUB = textwrap.dedent("""\
+    #!/usr/bin/env bash
+    if [ "$1" = "--version" ]; then echo "9.9.9"; exit 0; fi
+    if [ -n "${STUB_HOME_FILE:-}" ]; then printf '%s' "$HOME" > "$STUB_HOME_FILE"; fi
+    if [ -n "${STUB_CALL_FILE:-}" ]; then
+        if [ -p /dev/stdout ]; then kind=pipe; else kind=file; fi
+        printf '%s\\n%s\\n' "$PWD" "$kind" > "$STUB_CALL_FILE"
+    fi
+    if [ -n "${STUB_ENV_FILE:-}" ]; then env > "$STUB_ENV_FILE"; fi
+    echo "stub stderr" >&2
+    if [ -n "${STUB_ORACLE:-}" ]; then cat "$STUB_ORACLE"; fi
+    exit "${STUB_EXIT:-0}"
+""")
+
+
+AGENT_VIEW = {
+    "name": "probe",
+    "model": {"providerID": "anthropic", "modelID": "claude-sonnet-4-5"},
+    "variant": "high",
+}
+
+
+@pytest.fixture
+def opencode_debug_stub(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """`OPENCODE_DEBUG_STUB`, installed as `opencode` first on `PATH`.
+
+    The stub answers `--version`, and for `debug …` prints the file named by `STUB_ORACLE`
+    (nothing when unset) and exits `STUB_EXIT`. Side files let a test see how it was run:
+    `STUB_HOME_FILE` receives its `$HOME`, `STUB_CALL_FILE` its working directory and whether
+    its stdout was a pipe, and `STUB_ENV_FILE` its whole environment.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub = bin_dir / "opencode"
+    stub.write_text(OPENCODE_DEBUG_STUB, encoding="utf-8")
+    stub.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    return bin_dir
+
+
+def copy_package(experiments_dir: Path, tree: Path, name: str) -> Path:
+    package = tree / name
+    shutil.copytree(experiments_dir / name, package, symlinks=True)
+    shutil.rmtree(package / "results", ignore_errors=True)
+    return package
+
+
+def oracle_file(tmp_path: Path, content: str) -> str:
+    path = tmp_path / "oracle.json"
+    path.write_text(content, encoding="utf-8")
+    return str(path)
+
+
+def unattended_manifest(**overrides: Any) -> dict[str, Any]:
+    manifest: dict[str, Any] = {
+        "schema_version": 1,
+        "provider": "opencode",
+        "driver": "unattended",
+        "depth": None,
+        "question": "q",
+        "version_source": {"kind": "none"},
+        "assertion": {"projection": ".", "expected": 1},
+    }
+    manifest.update(overrides)
+    return manifest
+
+
+STUBS = EXPERIMENTS_DIR / "lib" / "stubs"
