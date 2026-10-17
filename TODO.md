@@ -1,4 +1,4 @@
-<!-- next: 51 -->
+<!-- next: 52 -->
 
 - #1 Consider deriving id from path instead of requiring in frontmatter
    - Currently `id` is a required `String` in all frontmatter structs; missing it causes a parse error at load time
@@ -211,3 +211,7 @@
   - Candidates: a schema library for manifest and record validation, which would replace the hand-written gate order in `lib/probe_harness/contract.py` (no parity check against the bash harness pins its messages any more); running `experiments/probe` through `uv run` so runtime dependencies resolve from `uv.lock`.
   - Constraint to keep: a manual probe's capture must never be lost to a toolchain failure, so any new import or environment requirement has to fail at preflight, before the workspace exists.
   - Related: TODO #49 (removing jq).
+- #51 **Decide what becomes of committed probe records once assertions stop being jq.** Each of the 79 records under `experiments/*/results/` stores its assertion's jq `projection` text beside `expected` and `observed`. Once TODO #49 moves assertions to another form, those records describe an evaluation the harness can no longer reproduce.
+  - `probe status` and `probe run --stale` judge staleness from a record's status, date and tool version, not its projection text, so nothing breaks in the meantime. The harness just reads two record shapes for as long as old ones exist
+  - Options in play: keep them as historical evidence indefinitely; let each age out as its package is re-measured; or re-record every package into the new shape (billed and manual probes cost quota and live sessions). Rewriting a record in place is ruled out because records are append-only evidence
+  - Deliberately not blocking TODO #49 and #50: `$THOUGHTS_DIR/ideas/2026-10-14-agentspec-probe-harness-assertions-and-runtime-libraries.md`, Non-Goals
