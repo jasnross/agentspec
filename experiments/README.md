@@ -134,7 +134,7 @@ The only hand-authored file in the contract.
 | `schema_version` | `1`. |
 | `provider` | `claude`, `cursor`, or `opencode`. |
 | `driver` | `unattended`, `billed`, or `manual` — what running the probe requires. Read by `probe run` to decide what it can execute, and by the recorder for the `--capture` requirement and the options correspondence below. Never on a record. |
-| `depth` | `resolved-config`, `outbound-request`, or `null`. |
+| `depth` | Required: `resolved-config`, `outbound-request`, or `null`. |
 | `question` | Required. What this probe answers, in one sentence. |
 | `version_source` | Where the tool version comes from. See below. |
 | `wait_for` | Optional jq filter the runner polls the capture against; a non-empty string when present. Present on every `manual` manifest. |
@@ -144,7 +144,7 @@ The only hand-authored file in the contract.
 
 **`question` appears only at the top level.** A human-judged probe shows this same string to the operator rather than carrying a second copy inside `assertion`, and no assertion restates it.
 
-**`parse_manifest` in `lib/probe_harness/contract.py` checks the type and value of every field described here.** `probe run`, `probe record` and `probe replay` all parse through it, so they refuse a malformed manifest the same way, before any workspace exists, rather than at the step that would first read the bad value.
+**`parse_manifest` in `lib/probe_harness/contract.py` checks the type and value of every field described here.** `probe run`, `probe record` and `probe replay` all parse through it, so they refuse a malformed manifest the same way, before any workspace exists, rather than at the step that would first read the bad value. A key not described here is refused too, and the refusal lists every invalid field by its path.
 
 **There is no timeout field.** The poll timeout is a runner constant with a `PROBE_TIMEOUT_SECONDS` override, because it is a property of the operator's session rather than of the probe.
 
@@ -155,7 +155,7 @@ The only hand-authored file in the contract.
 | `command` | `command`   | Run it; take the first line.                 |
 | `capture` | `jq`        | Apply the expression to the capture payload. |
 
-`kind` is one of `command`, `capture`, or `none`; an omitted `version_source` or `kind` means `none`. A `command` must be a non-empty, single-line string, and a `jq` a non-empty string.
+`kind` is one of `command`, `capture`, or `none`; an omitted `version_source` or `kind` means `none`, but a `null` one is refused. A `command` must be a non-empty, single-line string, and a `jq` a non-empty string.
 
 **`kind: "none"` is deliberately absent from that table, but accepted.** The recorder records a `null` version for it, and the harness's own test fixtures declare it, which is how they avoid running a version command. No committed manifest uses it, and the reason not to reach for it: a result carrying no tool version cannot drift, so `probe status` has nothing to compare and the result is never reconfirmed against anything. If a version is genuinely unobtainable, say so in the package README.
 

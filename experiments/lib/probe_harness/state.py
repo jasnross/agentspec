@@ -9,21 +9,20 @@ manifest fails a gate is still described, as `manifest invalid`, so the report c
 which package is broken.
 """
 
-import json
 import shutil
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
-from typing import Any
 
 from probe_harness.contract import (
     CaptureSource,
     CommandSource,
     ManifestError,
     NoSource,
+    Record,
     parse_manifest,
+    parse_record,
 )
-from probe_harness.json_values import to_text
 from probe_harness.record import run_version_command
 
 # Bounds a version command, so a wedged one cannot hang `just check`.
@@ -63,19 +62,14 @@ def newest_record(package: Path) -> Path | None:
     return results / names[-1] if names else None
 
 
-def load_record(path: Path) -> dict[str, Any] | None:
-    """A record's JSON object, or `None` when it cannot be read or parsed or is not an object."""
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except ValueError, OSError:
-        return None
-    return value if isinstance(value, dict) else None
+def load_record(path: Path) -> Record | None:
+    """The record at <path>, or `None` when it cannot be read or is not a valid record."""
+    return parse_record(path)
 
 
-def recorded_version(record: dict[str, Any]) -> str:
+def recorded_version(record: Record) -> str:
     """The record's tool version for display: `—` when it recorded none."""
-    version = record.get("tool_version")
-    return "—" if version is None else to_text(version)
+    return "—" if record.tool_version is None else record.tool_version
 
 
 def resolve_installed_version(manifest_path: Path) -> InstalledVersion:
@@ -121,7 +115,7 @@ def needs_run(package: Path) -> tuple[bool, str]:
         return True, "no record"
     record = load_record(path)
     if record is None:
-        return True, "newest record unreadable"
+        return True, "newest record unreadable or invalid"
 
     recorded = recorded_version(record)
     installed = resolve_installed_version(package / "probe.json")

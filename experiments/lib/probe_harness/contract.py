@@ -1,25 +1,49 @@
-"""The manifest contract: its enumerated values, its shape, and the gates a manifest passes.
+"""The harness's own formats, the manifest and the record, each declared once.
 
 A manifest is hand-authored, and the failures it can express are exactly the ones the
 harness exists to prevent: an absent `expected` compares `null == null` and records a
-vacuous `confirmed`. `parse_manifest` refuses every malformed shape before anything reads
-a value out of the manifest, so `probe run`, `probe record` and `probe replay` refuse the
-same manifest the same way, before any workspace exists.
+vacuous `confirmed`. `parse_manifest` validates the whole document against `Manifest`
+before anything reads a value out of it, so every subcommand refuses the same manifest the
+same way, before any workspace exists. The refusal lists every invalid field by path; the
+rules relating fields to each other (an option set needs a manual driver, option ids are
+unique) run once every field is valid, and name no single path.
+A record is read back through `Record`, the same declaration its writer serializes.
 
-The gates run in a fixed order, each with a message that names the manifest. The order
-matters in one place: the driver enum is checked before the rule that an option set needs
-a manual driver. The checks test JSON types explicitly rather than relying on Python
-truthiness, because `true == 1` in Python and a manifest must not pass on that.
+Every harness format derives from `HarnessModel`: unknown keys are refused, and validation
+is strict, because `true == 1` in Python and a document must not pass on that. Four rules
+keep that strictness honest, each measured against pydantic 2.14:
+
+- A number or bool field is a constrained `int` or `bool`, never a `Literal`: strict
+  `Literal[1]` accepts `true` and `1.0`, and `Literal[True, False]` accepts `1`.
+- An enum field opts out of strict mode with `Field(strict=False)`, because strict
+  Python-mode validation refuses the string a document carries. A string outside the enum
+  is still refused.
+- A tuple field opts out of strict mode the same way, because strict mode refuses the list
+  a document carries. Its elements stay strict.
+- A document is loaded with `json_values.loads` and validated in Python mode, because
+  pydantic's JSON mode accepts `NaN` and `1e400` into a `JsonValue`.
 """
 
-from collections.abc import Callable
-from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, Self
+
+from pydantic import (
+    MISSING,
+    BaseModel,
+    ConfigDict,
+    Discriminator,
+    Field,
+    JsonValue,
+    PrivateAttr,
+    Tag,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
+from pydantic_core import ErrorDetails
 
 from probe_harness import json_values
-from probe_harness.json_values import JsonValue
 
 
 class Provider(StrEnum):
@@ -63,65 +87,197 @@ class Depth(StrEnum):
     OUTBOUND_REQUEST = "outbound-request"
 
 
-@dataclass(frozen=True)
-class CommandSource:
-    argv: tuple[str, ...]
+class Status(StrEnum):
+    CONFIRMED = "confirmed"
+    REFUTED = "refuted"
+    INCONCLUSIVE = "inconclusive"
 
 
-@dataclass(frozen=True)
-class CaptureSource:
-    jq: str
+class HarnessModel(BaseModel):
+    """The base of every format the harness itself defines; see the module docstring."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True, allow_inf_nan=False)
 
 
-@dataclass(frozen=True)
-class NoSource:
-    pass
+type NonEmpty = Annotated[str, Field(min_length=1)]
+# Not `Literal[1]`: strict `Literal` accepts `true` and `1.0`.
+type SchemaV1 = Annotated[int, Field(ge=1, le=1)]
 
 
-type VersionSource = CommandSource | CaptureSource | NoSource
+class CommandSource(HarnessModel):
+    kind: Literal["command"]
+    # Split into argv and exec'd directly rather than through a shell: a manifest is
+    # reviewed as data, so it must not be able to express arbitrary code.
+    command: NonEmpty
+
+    @field_validator("command")
+    @classmethod
+    def _one_line_of_words(cls, command: str) -> str:
+        if len(command.splitlines()) != 1 or not command.split():
+            raise ValueError("must be a non-empty, single-line string")
+        return command
+
+    @property
+    def argv(self) -> tuple[str, ...]:
+        return tuple(self.command.split())
 
 
-@dataclass(frozen=True)
-class ProjectionAssertion:
-    projection: str
-    expected: JsonValue
+class CaptureSource(HarnessModel):
+    kind: Literal["capture"]
+    jq: NonEmpty
 
 
-@dataclass(frozen=True)
-class Option:
-    id: str
+class NoSource(HarnessModel):
+    kind: Literal["none"] = "none"
+
+
+def _version_kind(value: Any) -> str | None:
+    """The tag of a version source; a missing `kind` means `none`."""
+    if isinstance(value, dict):
+        kind = value.get("kind", "none")
+        return kind if kind in ("command", "capture", "none") else None
+    if isinstance(value, CommandSource | CaptureSource | NoSource):
+        return value.kind
+    return None
+
+
+type VersionSource = Annotated[
+    Annotated[CommandSource, Tag("command")]
+    | Annotated[CaptureSource, Tag("capture")]
+    | Annotated[NoSource, Tag("none")],
+    Discriminator(
+        _version_kind,
+        custom_error_type="version_source",
+        custom_error_message="must be an object whose kind is command, capture, or none",
+    ),
+]
+
+
+class Option(HarnessModel):
+    id: NonEmpty
     text: str
-    # `None` when the manifest declares no status.
-    status: Literal["inconclusive"] | None
+    # Any other declared status would fix the verdict in advance.
+    status: Literal["inconclusive"] | MISSING = MISSING
 
 
-@dataclass(frozen=True)
-class OptionsAssertion:
-    options: tuple[Option, ...]
+class ProjectionAssertion(HarnessModel):
+    projection: NonEmpty
     expected: JsonValue
 
 
-type Assertion = ProjectionAssertion | OptionsAssertion
+class OptionsAssertion(HarnessModel):
+    options: Annotated[tuple[Option, ...], Field(strict=False)]
+    expected: JsonValue
+
+    # Not `Field(min_length=1)`: that also reports a list whose only option is invalid as
+    # empty, beside the option's own error. An after-validator runs only on valid options.
+    @field_validator("options")
+    @classmethod
+    def _non_empty(cls, options: tuple[Option, ...]) -> tuple[Option, ...]:
+        if not options:
+            raise ValueError("must be a non-empty list")
+        return options
 
 
-@dataclass(frozen=True)
-class Manifest:
-    path: Path
-    provider: Provider
-    driver: Driver
-    depth: Depth | None
-    question: str
-    version_source: VersionSource
-    wait_for: str | None
+def _assertion_shape(value: Any) -> str | None:
+    """The tag of an assertion: whichever one of `projection` and `options` it declares."""
+    if isinstance(value, dict):
+        projection, options = "projection" in value, "options" in value
+        if projection != options:
+            return "projection" if projection else "options"
+        return None
+    if isinstance(value, ProjectionAssertion):
+        return "projection"
+    if isinstance(value, OptionsAssertion):
+        return "options"
+    return None
+
+
+type Assertion = Annotated[
+    Annotated[ProjectionAssertion, Tag("projection")] | Annotated[OptionsAssertion, Tag("options")],
+    Discriminator(
+        _assertion_shape,
+        custom_error_type="assertion_shape",
+        custom_error_message="must be an object declaring exactly one of projection or options",
+    ),
+]
+
+# The `Manifest` fields typed as a tagged union. pydantic puts the chosen tag into the
+# location of every error inside one, after the field name; a refusal leaves it out, so it
+# names the path an author wrote.
+_TAGGED_FIELDS = frozenset({"assertion", "version_source"})
+
+
+class Manifest(HarnessModel):
+    schema_version: SchemaV1
+    provider: Annotated[Provider, Field(strict=False)]
+    driver: Annotated[Driver, Field(strict=False)]
+    depth: Annotated[Depth | None, Field(strict=False)]
+    question: NonEmpty
+    version_source: VersionSource = NoSource()
+    wait_for: NonEmpty | None = None
     assertion: Assertion
+    _path: Path = PrivateAttr()
+
+    @property
+    def path(self) -> Path:
+        """The manifest's path, as `parse_manifest` was given it."""
+        return self._path
+
+    @model_validator(mode="after")
+    def _options_cohere(self) -> Self:
+        if not isinstance(self.assertion, OptionsAssertion):
+            return self
+        if self.driver != Driver.MANUAL:
+            raise ValueError("an options assertion requires a manual driver")
+        seen: set[str] = set()
+        for option in self.assertion.options:
+            if option.id in seen:
+                raise ValueError(f'manifest declares option id "{option.id}" more than once')
+            seen.add(option.id)
+        return self
+
+
+class RecordAssertion(HarnessModel):
+    projection: NonEmpty | MISSING = MISSING
+    options: Annotated[tuple[Option, ...] | MISSING, Field(strict=False)] = MISSING
+    expected: JsonValue
+    observed: JsonValue
+
+    @model_validator(mode="after")
+    def _one_shape(self) -> Self:
+        if (self.projection is MISSING) == (self.options is MISSING):
+            raise ValueError("must declare exactly one of projection or options")
+        return self
+
+
+class Record(HarnessModel):
+    """A v1 record. Field order is the key order the recorder writes."""
+
+    schema_version: SchemaV1
+    provider: Annotated[Provider, Field(strict=False)]
+    status: Annotated[Status, Field(strict=False)]
+    depth: Annotated[Depth | None, Field(strict=False)]
+    date: Annotated[str, Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")]
+    tool_version: str | None
+    assertion: RecordAssertion
 
 
 class ManifestError(Exception):
-    """A manifest gate refused. `str(e)` is the message, ending in `: <path>`."""
+    """A manifest refusal, shaped as a `console.Refusal`.
+
+    `lines[0]` names the manifest; for an invalid one, each later line is one invalid field
+    as `<path>: <message>`. `str(e)` is the lines joined by newlines.
+    """
+
+    def __init__(self, *lines: str) -> None:
+        super().__init__("\n".join(lines))
+        self.lines = lines
+        self.detail: tuple[str, ...] = ()
 
 
 def parse_manifest(path: str | Path) -> Manifest:
-    """Gate <path> and return its typed form, raising `ManifestError` at the first refusal.
+    """Validate <path> and return its typed form, raising `ManifestError` when it is invalid.
 
     Messages name the path as `Manifest.path` spells it, so every later refusal naming the
     manifest spells it the same way.
@@ -129,170 +285,39 @@ def parse_manifest(path: str | Path) -> Manifest:
     path = Path(path)
     if not path.is_file():
         raise ManifestError(f"manifest not found: {path}")
-    root = _load_root(path)
-
-    def gate(ok: bool, message: str) -> None:
-        if not ok:
-            raise ManifestError(f"{message}: {path}")
-
-    schema_version = root.get("schema_version")
-    gate(type(schema_version) is int and schema_version == 1, "manifest schema_version must be 1")
-    provider = root.get("provider")
-    gate(_member(provider, Provider), "manifest provider must be claude, cursor, or opencode")
-    question = root.get("question")
-    gate(
-        isinstance(question, str) and len(question) > 0,
-        "manifest must declare a non-empty question",
-    )
-    assertion = root.get("assertion")
-    gate(isinstance(assertion, dict), "manifest must declare an assertion")
-    assert isinstance(assertion, dict)
-    gate("expected" in assertion, "manifest assertion declares no expected value")
-    gate(
-        ("projection" in assertion) != ("options" in assertion),
-        "manifest assertion must declare exactly one of projection or options",
-    )
-    options = assertion.get("options")
-
-    # The driver enum is checked before the options correspondence, and the order is
-    # load-bearing: the correspondence gate refuses any driver that is not `manual`, so
-    # with it first, a manifest carrying a retired or misspelled driver *and* an option
-    # set would be told it "requires a manual driver", implying it picked the wrong valid
-    # value when the value is not in the enum at all.
-    driver = root.get("driver")
-    gate(_member(driver, Driver), "manifest driver must be unattended, billed, or manual")
-    gate(
-        "options" not in assertion or (isinstance(options, list) and len(options) > 0),
-        "manifest assertion options must be a non-empty list",
-    )
-    gate(
-        _option_statuses_inconclusive(options),
-        'an option may declare only status "inconclusive"',
-    )
-    gate(
-        "options" not in assertion or driver == Driver.MANUAL,
-        "an options assertion requires a manual driver",
-    )
-    depth = root.get("depth")
-    gate(
-        depth is None or _member(depth, Depth),
-        "manifest depth must be resolved-config, outbound-request, or null",
-    )
-
-    parsed: Assertion
-    if "projection" in assertion:
-        projection = assertion["projection"]
-        gate(
-            isinstance(projection, str) and len(projection) > 0,
-            "manifest assertion projection must be a non-empty string",
-        )
-        parsed = ProjectionAssertion(projection, assertion["expected"])
-    else:
-        assert isinstance(options, list)
-        parsed_options: list[Option] = []
-        for n, option in enumerate(options, start=1):
-            gate(
-                _well_formed_option(option),
-                f"manifest option {n} must be an object with a string id and text, "
-                "and no other key but status",
-            )
-            parsed_options.append(Option(option["id"], option["text"], option.get("status")))
-        seen: set[str] = set()
-        for option in parsed_options:
-            gate(option.id not in seen, f'manifest declares option id "{option.id}" more than once')
-            seen.add(option.id)
-        parsed = OptionsAssertion(tuple(parsed_options), assertion["expected"])
-
-    version_source = _version_source(root.get("version_source"), gate)
-
-    wait_for = root.get("wait_for")
-    gate(
-        wait_for is None or (isinstance(wait_for, str) and len(wait_for) > 0),
-        "manifest wait_for must be a non-empty string",
-    )
-    return Manifest(
-        path=path,
-        provider=Provider(str(provider)),
-        driver=Driver(str(driver)),
-        depth=Depth(depth) if depth is not None else None,
-        question=str(question),
-        version_source=version_source,
-        wait_for=wait_for,
-        assertion=parsed,
-    )
-
-
-def _load_root(path: Path) -> dict[str, Any]:
-    """The manifest's single JSON value, which must be an object.
-
-    Typed `Any` below the root: nothing in it is trusted until a gate has checked it.
-    """
     try:
-        root: Any = json_values.loads(path.read_text(encoding="utf-8"))
+        document = json_values.loads(path.read_text(encoding="utf-8"))
     except ValueError, OSError:
         raise ManifestError(f"manifest is not valid JSON: {path}") from None
-    if not isinstance(root, dict):
+    if not isinstance(document, dict):
         raise ManifestError(f"manifest must be a JSON object: {path}")
-    return root
+    try:
+        manifest = Manifest.model_validate(document)
+    except ValidationError as e:
+        raise ManifestError(
+            f"manifest is invalid: {path}", *(f"  {_error_line(error)}" for error in e.errors())
+        ) from None
+    manifest._path = path
+    return manifest
 
 
-def _member(value: Any, enum: type[StrEnum]) -> bool:
-    """String equality against an enum's values; any non-string is simply not a member."""
-    return isinstance(value, str) and value in {member.value for member in enum}
+def parse_record(path: Path) -> Record | None:
+    """The record at <path>, or `None` when it cannot be read, is not JSON, or is no record."""
+    try:
+        return Record.model_validate(json_values.loads(path.read_text(encoding="utf-8")))
+    except ValueError, OSError:
+        # `ValidationError` is a `ValueError`.
+        return None
 
 
-def _option_statuses_inconclusive(options: Any) -> bool:
-    """A declared option status may only be `inconclusive`.
-
-    Any other declared status would fix the verdict in advance. A projection manifest
-    declares no options, and an option that is not an object falls through to the shape
-    gate that follows.
-    """
-    if not isinstance(options, list):
-        return True
-    return all(
-        option["status"] == "inconclusive"
-        for option in options
-        if isinstance(option, dict) and "status" in option
-    )
-
-
-def _well_formed_option(option: Any) -> bool:
-    return (
-        isinstance(option, dict)
-        and set(option) <= {"id", "text", "status"}
-        and isinstance(option.get("id"), str)
-        and len(option["id"]) > 0
-        and isinstance(option.get("text"), str)
-    )
-
-
-def _version_source(source: Any, gate: Callable[[bool, str], None]) -> VersionSource:
-    gate(source is None or isinstance(source, dict), "manifest version_source must be an object")
-    fields: dict[str, Any] = source if isinstance(source, dict) else {}
-    kind = fields.get("kind")
-    gate(
-        kind is None or kind in ("command", "capture", "none"),
-        "manifest version_source.kind must be command, capture, or none",
-    )
-    match kind:
-        case "command":
-            # Split into argv and exec directly rather than through a shell: a manifest is
-            # reviewed as data, so it must not be able to express arbitrary code.
-            command = fields.get("command")
-            gate(
-                isinstance(command, str)
-                and len(command.splitlines()) == 1
-                and len(command.split()) > 0,
-                "manifest version_source.command must be a non-empty, single-line string",
-            )
-            return CommandSource(tuple(str(command).split()))
-        case "capture":
-            expr = fields.get("jq")
-            gate(
-                isinstance(expr, str) and len(expr) > 0,
-                "manifest version_source.jq must be a non-empty string",
-            )
-            return CaptureSource(str(expr))
-        case _:
-            return NoSource()
+def _error_line(error: ErrorDetails) -> str:
+    loc = list(error["loc"])
+    if len(loc) > 1 and loc[0] in _TAGGED_FIELDS:
+        del loc[1]
+    message = error["msg"]
+    if error["type"] == "value_error":
+        # A validator's own words, without pydantic's "Value error, " prefix.
+        message = str(error.get("ctx", {}).get("error", message))
+    if not loc:
+        return message
+    return f"{'.'.join(map(str, loc))}: {message}"

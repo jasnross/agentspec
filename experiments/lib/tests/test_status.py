@@ -266,6 +266,21 @@ def test_a_record_whose_root_is_not_an_object_is_treated_as_unreadable(
     assert "1 recorded" in result.output
 
 
+def test_a_record_failing_the_record_model_is_treated_as_unreadable(cli: Cli, tree: Path) -> None:
+    put_record(tree, "alpha", "2026-06-01T000000", "opencode", "confirmed", "1.0.0")
+    put_record(tree, "beta", "2026-06-01T000000", "opencode", "confirmed", "1.0.0")
+    # Valid JSON, but `maybe` is no status and `finding` no record key.
+    put_record(tree, "beta", "2026-06-02T000000", "opencode", "maybe", "1.0.0")
+    newest = tree / "beta" / "results" / "2026-06-02T000000-opencode-1.0.0.json"
+    newest.write_text(newest.read_text().replace('"depth"', '"finding": "x", "depth"'))
+
+    result = cli("status")
+    assert result.returncode == 0
+    assert "alpha" in result.output
+    assert "beta" not in result.output
+    assert "1 recorded" in result.output
+
+
 def test_a_version_command_reading_stdin_does_not_wedge_the_report(cli: Cli, tree: Path) -> None:
     # stdin is closed for the version command, so a command that reads it returns immediately
     # instead of blocking a build nobody is watching.

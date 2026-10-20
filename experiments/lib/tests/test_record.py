@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from probe_harness import contract, record
+from probe_harness import contract, json_values, record
 
 from tests.conftest import (
     Cli,
@@ -262,7 +262,7 @@ def test_an_option_declaring_a_status_other_than_inconclusive_is_refused(
 
     result = cli("record", "--manifest", manifest, "--selection", "yes", "--capture", ws)
     assert result.returncode != 0
-    assert 'only status "inconclusive"' in result.output
+    assert "  assertion.options.0.status: Input should be 'inconclusive'" in result.output
 
 
 def test_several_inconclusive_options_do_not_stop_the_comparison(
@@ -300,7 +300,7 @@ def test_a_manifest_declaring_a_retired_depth_is_refused(
 
     result = cli("record", "--manifest", manifest, "--view", view)
     assert result.returncode != 0
-    assert "depth must be" in result.output
+    assert "  depth: Input should be" in result.output
 
 
 def test_a_selection_absent_from_the_option_set_is_refused(
@@ -518,7 +518,7 @@ def test_a_manifest_declaring_no_expected_value_is_refused(
 
     result = cli("record", "--manifest", manifest, "--view", view)
     assert result.returncode != 0
-    assert "declares no expected value" in result.output
+    assert "  assertion.expected: Field required" in result.output
     assert not (pkg / "results").is_dir()
 
 
@@ -653,7 +653,7 @@ def test_a_manifest_with_an_unknown_provider_is_refused(
 
     result = cli("record", "--manifest", manifest, "--view", view)
     assert result.returncode != 0
-    assert "provider must be" in result.output
+    assert "  provider: Input should be" in result.output
 
 
 def test_a_manifest_with_an_unknown_schema_version_is_refused(
@@ -675,7 +675,7 @@ def test_a_manifest_with_an_unknown_schema_version_is_refused(
 
     result = cli("record", "--manifest", manifest, "--view", view)
     assert result.returncode != 0
-    assert "schema_version must be 1" in result.output
+    assert "  schema_version: Input should be" in result.output
 
 
 def test_a_manifest_with_an_unknown_driver_is_refused(
@@ -699,7 +699,7 @@ def test_a_manifest_with_an_unknown_driver_is_refused(
 
     result = cli("record", "--manifest", manifest, "--view", view)
     assert result.returncode != 0
-    assert "driver must be unattended, billed, or manual" in result.output
+    assert "  driver: Input should be 'unattended', 'billed' or 'manual'" in result.output
     assert not (pkg / "results").is_dir()
 
 
@@ -748,7 +748,8 @@ def test_a_duplicated_option_id_is_refused(cli: Cli, tmp_path: Path, manifest: P
 
     result = cli("record", "--manifest", manifest, "--selection", "dup", "--capture", ws)
     assert result.returncode == 1
-    assert f'manifest declares option id "dup" more than once: {manifest}' in result.stderr
+    assert f"probe record: manifest is invalid: {manifest}\n" in result.stderr
+    assert 'probe record:   manifest declares option id "dup" more than once' in result.stderr
 
 
 def test_two_runs_on_the_same_day_at_the_same_version_produce_two_records(
@@ -832,7 +833,7 @@ def test_dry_run_still_refuses_a_manifest_failing_a_gate(
 
     result = dry_run(cli, "--manifest", manifest, "--view", view)
     assert result.returncode != 0
-    assert "depth must be" in result.stderr
+    assert "  depth: Input should be" in result.stderr
     # A refused dry run emits no would-be record, so a scripted `--dry-run >file` cannot leave
     # a partial artifact behind.
     assert result.stdout == ""
@@ -887,7 +888,7 @@ def _view_file(tmp_path: Path, text: str) -> Path:
 def test_compute_confirms_a_matching_projection(tmp_path: Path) -> None:
     manifest = _parsed(tmp_path, unattended_manifest())
     computed = record.compute(manifest, view=_view_file(tmp_path, "1"))
-    assert computed.status == record.Status.CONFIRMED
+    assert computed.status == contract.Status.CONFIRMED
     assert computed.observed == 1
     assert computed.tool_version is None
 
@@ -895,14 +896,14 @@ def test_compute_confirms_a_matching_projection(tmp_path: Path) -> None:
 def test_compute_refutes_a_mismatching_projection(tmp_path: Path) -> None:
     manifest = _parsed(tmp_path, unattended_manifest())
     computed = record.compute(manifest, view=_view_file(tmp_path, "2"))
-    assert computed.status == record.Status.REFUTED
+    assert computed.status == contract.Status.REFUTED
     assert computed.observed == 2
 
 
 def test_compute_takes_an_inconclusive_option_s_status(tmp_path: Path) -> None:
     manifest = _parsed(tmp_path, JUDGE_MANIFEST)
     computed = record.compute(manifest, selection="couldnt-tell", capture=fresh_capture(tmp_path))
-    assert computed.status == record.Status.INCONCLUSIVE
+    assert computed.status == contract.Status.INCONCLUSIVE
     assert computed.observed == "couldnt-tell"
 
 
@@ -957,7 +958,7 @@ def test_an_expected_true_refutes_an_observed_1(tmp_path: Path) -> None:
         tmp_path, unattended_manifest(assertion={"projection": ".", "expected": True})
     )
     computed = record.compute(manifest, view=_view_file(tmp_path, "1"))
-    assert computed.status == record.Status.REFUTED
+    assert computed.status == contract.Status.REFUTED
 
 
 def test_a_projection_yielding_no_value_observes_null(tmp_path: Path) -> None:
@@ -966,7 +967,7 @@ def test_a_projection_yielding_no_value_observes_null(tmp_path: Path) -> None:
     )
     computed = record.compute(manifest, view=_view_file(tmp_path, "1"))
     assert computed.observed is None
-    assert computed.status == record.Status.CONFIRMED
+    assert computed.status == contract.Status.CONFIRMED
 
 
 def test_a_projection_record_s_document_is_the_seven_keys_in_order(tmp_path: Path) -> None:
@@ -984,7 +985,7 @@ def test_a_projection_record_s_document_is_the_seven_keys_in_order(tmp_path: Pat
         '  "provider": "opencode",\n'
         '  "status": "confirmed",\n'
         '  "depth": "resolved-config",\n'
-        f'  "date": "{computed.date}",\n'
+        f'  "date": "{computed.record.date}",\n'
         '  "tool_version": null,\n'
         '  "assertion": {\n'
         '    "projection": ".x",\n'
@@ -1001,15 +1002,34 @@ def test_a_projection_record_s_document_is_the_seven_keys_in_order(tmp_path: Pat
     )
 
 
+def test_an_observed_value_too_deep_for_the_record_model_is_refused(tmp_path: Path) -> None:
+    manifest = _parsed(tmp_path, unattended_manifest())
+    view = _view_file(tmp_path, "[" * 300 + "1" + "]" * 300)
+    with pytest.raises(record.RecordRefused) as exc:
+        record.compute(manifest, view=view)
+    assert exc.value.lines == ("the observed value cannot be written as a record",)
+
+
+def test_a_written_record_is_its_parsed_record_s_dump(tmp_path: Path) -> None:
+    manifest = _parsed(tmp_path, JUDGE_MANIFEST)
+    computed = record.compute(manifest, selection="neither", capture=fresh_capture(tmp_path))
+    written = record.write(computed)
+    parsed = contract.parse_record(written)
+    assert parsed is not None
+    assert written.read_text(encoding="utf-8") == (
+        json_values.dumps(parsed.model_dump(mode="json")) + "\n"
+    )
+
+
 def test_an_options_record_s_document_carries_each_option_s_declared_keys(tmp_path: Path) -> None:
     manifest = _parsed(tmp_path, JUDGE_MANIFEST)
     computed = record.compute(manifest, selection="neither", capture=fresh_capture(tmp_path))
-    assert computed.document() == {
+    assert computed.record.model_dump(mode="json") == {
         "schema_version": 1,
         "provider": "cursor",
         "status": "confirmed",
         "depth": None,
-        "date": computed.date,
+        "date": computed.record.date,
         "tool_version": None,
         "assertion": {
             "options": [
@@ -1021,7 +1041,7 @@ def test_an_options_record_s_document_carries_each_option_s_declared_keys(tmp_pa
             "observed": "neither",
         },
     }
-    assert list(computed.document()) == [
+    assert list(computed.record.model_dump(mode="json")) == [
         "schema_version",
         "provider",
         "status",

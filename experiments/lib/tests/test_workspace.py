@@ -204,8 +204,8 @@ def test_probe_template_file_fails_on_a_missing_source(
 
 
 SELECTION_OPTIONS = (
-    Option("neither", "Neither marker", None),
-    Option("couldnt-tell", "Could not determine", "inconclusive"),
+    Option(id="neither", text="Neither marker"),
+    Option(id="couldnt-tell", text="Could not determine", status="inconclusive"),
 )
 
 
@@ -217,7 +217,7 @@ def test_probe_prompt_selection_exits_2_without_blocking_when_stdin_is_not_a_tty
 
     with pytest.raises(SystemExit) as exc:
         prompt_selection(
-            (Option("a", "first", None), Option("couldnt-tell", "Could not determine", None)),
+            (Option(id="a", text="first"), Option(id="couldnt-tell", text="Could not determine")),
             "Which one?",
         )
     assert exc.value.code == 2

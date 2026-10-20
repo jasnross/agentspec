@@ -525,7 +525,10 @@ def test_an_unknown_driver_is_reported_as_failed_rather_than_silently_skipped(
 
     result = cli("run")
     assert result.returncode != 0
-    assert "alpha: manifest driver must be unattended, billed, or manual" in result.stderr
+    assert "probe run: alpha: manifest is invalid: " in result.stderr
+    assert (
+        "probe run:   driver: Input should be 'unattended', 'billed' or 'manual'" in result.stderr
+    )
     assert "failed: alpha" in result.stderr
     assert "ran alpha" not in result.output
 

@@ -19,10 +19,8 @@ week.
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
-from probe_harness.contract import Driver, Manifest, ManifestError, parse_manifest
-from probe_harness.json_values import to_text
+from probe_harness.contract import Driver, Manifest, ManifestError, Status, parse_manifest
 from probe_harness.state import (
     load_record,
     newest_record,
@@ -101,19 +99,18 @@ def collect_status(experiments_dir: Path) -> StatusReport:
             else:
                 note = f" ({installed.display})"
 
-        status = _record_field(record, "status", "unknown")
         report.recorded += 1
-        if status == "refuted":
+        if record.status == Status.REFUTED:
             report.refuted += 1
-        if status == "inconclusive":
+        if record.status == Status.INCONCLUSIVE:
             report.inconclusive += 1
         report.rows.append(
             StatusRow(
-                provider=_record_field(record, "provider", "unknown"),
+                provider=record.provider.value,
                 name=package.name,
-                label=_label(status),
-                depth=_dash_if_null(record, "depth"),
-                date=_record_field(record, "date", "—"),
+                label=_label(record.status),
+                depth=record.depth.value if record.depth is not None else "—",
+                date=record.date,
                 version=f"{recorded}{note}",
             )
         )
@@ -202,20 +199,9 @@ def _parsed(manifest_path: Path) -> Manifest | None:
         return None
 
 
-def _record_field(record: dict[str, Any], key: str, default: str) -> str:
-    value = record.get(key)
-    return default if value is None else to_text(value)
-
-
-def _dash_if_null(record: dict[str, Any], key: str) -> str:
-    return _record_field(record, key, "—")
-
-
-def _label(status: str) -> str:
+def _label(status: Status) -> str:
     """`inconclusive` must not read as a pass: it is what an undecided operator produces."""
-    return {"confirmed": "confirmed", "refuted": "REFUTED", "inconclusive": "INCONCLUSIVE"}.get(
-        status, status
-    )
+    return status.value if status == Status.CONFIRMED else status.value.upper()
 
 
 def _pad(cell: str, width: int) -> str:

@@ -15,10 +15,11 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import StrEnum
 from pathlib import Path
 
-from probe_harness import console, jq_cli, json_values
+from pydantic import MISSING, ValidationError
+
+from probe_harness import console, contract, jq_cli, json_values
 from probe_harness.contract import (
     CaptureSource,
     CommandSource,
@@ -26,58 +27,39 @@ from probe_harness.contract import (
     Manifest,
     ManifestError,
     NoSource,
-    Option,
     OptionsAssertion,
     ProjectionAssertion,
+    RecordAssertion,
+    Status,
     parse_manifest,
 )
 from probe_harness.json_values import JsonValue
 
 
-class Status(StrEnum):
-    CONFIRMED = "confirmed"
-    REFUTED = "refuted"
-    INCONCLUSIVE = "inconclusive"
-
-
 @dataclass(frozen=True)
-class Record:
-    """One computed record, not yet written anywhere."""
+class ComputedRecord:
+    """One computed record, not yet written anywhere, with what writing and reporting need."""
 
     manifest: Manifest
-    status: Status
-    observed: JsonValue
-    tool_version: str | None
-    # `%Y-%m-%dT%H%M%S` from one UTC clock read; the date is the part before `T`.
+    # `%Y-%m-%dT%H%M%S` from one UTC clock read; the record's `date` is the part before `T`.
     stamp: str
+    record: contract.Record
 
     @property
-    def date(self) -> str:
-        return self.stamp.split("T", 1)[0]
+    def status(self) -> Status:
+        return self.record.status
 
-    def document(self) -> dict[str, JsonValue]:
-        """The seven keys, in order."""
-        assertion: dict[str, JsonValue]
-        match self.manifest.assertion:
-            case ProjectionAssertion(projection=projection):
-                assertion = {"projection": projection}
-            case OptionsAssertion(options=options):
-                assertion = {"options": [_option_document(o) for o in options]}
-        assertion["expected"] = self.manifest.assertion.expected
-        assertion["observed"] = self.observed
-        return {
-            "schema_version": 1,
-            "provider": self.manifest.provider.value,
-            "status": self.status.value,
-            "depth": self.manifest.depth.value if self.manifest.depth is not None else None,
-            "date": self.date,
-            "tool_version": self.tool_version,
-            "assertion": assertion,
-        }
+    @property
+    def observed(self) -> JsonValue:
+        return self.record.assertion.observed
+
+    @property
+    def tool_version(self) -> str | None:
+        return self.record.tool_version
 
     def text(self) -> str:
         """The record as written, with no trailing newline."""
-        return json_values.dumps(self.document())
+        return json_values.dumps(self.record.model_dump(mode="json"))
 
 
 class RecordRefused(Exception):
@@ -95,7 +77,7 @@ def compute(
     view: Path | None = None,
     selection: str | None = None,
     capture: Path | None = None,
-) -> Record:
+) -> ComputedRecord:
     """Gate the invocation, compare, and return the record; raise `RecordRefused` otherwise.
 
     Prints nothing and writes nothing. Assumes jq is installed: `run` checks for it, and
@@ -155,10 +137,36 @@ def compute(
     # component stops a same-day re-run at the same version from overwriting its
     # predecessor.
     stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H%M%S")
-    return Record(manifest, status, observed, tool_version or None, stamp)
+    version = tool_version or None
+    assertion: RecordAssertion
+    try:
+        match manifest.assertion:
+            case ProjectionAssertion(projection=projection, expected=expected):
+                assertion = RecordAssertion(
+                    projection=projection, expected=expected, observed=observed
+                )
+            case OptionsAssertion(options=options, expected=expected):
+                assertion = RecordAssertion(options=options, expected=expected, observed=observed)
+        document = contract.Record(
+            schema_version=1,
+            provider=manifest.provider,
+            status=status,
+            depth=manifest.depth,
+            date=stamp.split("T", 1)[0],
+            tool_version=version,
+            assertion=assertion,
+        )
+    except ValidationError as e:
+        # pydantic refuses a JSON value nested past about 255 levels, which a projection can
+        # still yield. Its location would repeat once per level, so only the messages show.
+        raise RecordRefused(
+            "the observed value cannot be written as a record",
+            detail=tuple(dict.fromkeys(error["msg"] for error in e.errors())),
+        ) from None
+    return ComputedRecord(manifest, stamp, document)
 
 
-def write(record: Record) -> Path:
+def write(record: ComputedRecord) -> Path:
     """Write <record> to `results/<stamp>-<provider>-<version>.json` beside its manifest."""
     results_dir = record.manifest.path.parent / "results"
     slug = _slug(record.tool_version or "unknown")
@@ -169,7 +177,7 @@ def write(record: Record) -> Path:
     return path
 
 
-def report(record: Record, written: Path | None) -> None:
+def report(record: ComputedRecord, written: Path | None) -> None:
     """Print a computed record's outcome: the written path, or under a dry run the record."""
     if written is None:
         # Not a record: what one would contain, printed so a probe's wiring can be checked
@@ -204,7 +212,7 @@ def run(
         computed = compute(manifest, view=view, selection=selection, capture=capture)
         report(computed, None if dry_run else write(computed))
     except ManifestError as e:
-        console.say(str(e))
+        console.say_refusal(e)
         return 1
     except RecordRefused as e:
         console.say_refusal(e)
@@ -221,7 +229,7 @@ def _select(manifest: Manifest, selection: str) -> tuple[str, str]:
     option = next((o for o in manifest.assertion.options if o.id == selection), None)
     if option is None:
         raise RecordRefused(f'selection "{selection}" is not one of the manifest\'s option ids')
-    return selection, option.status or ""
+    return selection, "" if option.status is MISSING else option.status
 
 
 def _project(manifest: Manifest, view: Path) -> JsonValue:
@@ -300,13 +308,6 @@ def _non_empty(path: Path) -> bool:
         return path.is_file() and path.stat().st_size > 0
     except OSError:
         return False
-
-
-def _option_document(option: Option) -> dict[str, JsonValue]:
-    document: dict[str, JsonValue] = {"id": option.id, "text": option.text}
-    if option.status is not None:
-        document["status"] = option.status
-    return document
 
 
 def _compact(value: JsonValue) -> str:

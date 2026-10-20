@@ -153,7 +153,8 @@ def test_a_non_object_version_source_is_refused_before_a_workspace_exists(
     package = _put_custom_package(tree, "alpha", VARIANT_ECHO_PY, version_source="command")
     result = cli("run", "alpha")
     assert result.returncode == 1
-    assert f"manifest version_source must be an object: {package / 'probe.json'}" in result.stderr
+    assert f"probe run: manifest is invalid: {package / 'probe.json'}\n" in result.stderr
+    assert "probe run:   version_source: must be an object" in result.stderr
     assert "arranged" not in result.stdout
     assert _workspaces(_isolated_tmpdir, "alpha") == []
 

@@ -12,7 +12,13 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 
 from probe_harness import json_values
-from probe_harness.contract import Driver, Manifest, OptionsAssertion, parse_manifest
+from probe_harness.contract import (
+    Driver,
+    Manifest,
+    OptionsAssertion,
+    parse_manifest,
+    parse_record,
+)
 
 from tests.conftest import (
     EXPERIMENTS_DIR,
@@ -36,6 +42,16 @@ def test_every_committed_record_is_written_as_the_recorder_writes_it() -> None:
         assert json_values.dumps(json_values.loads(text)) + "\n" == text, (
             f"record {path} is not in the recorder's format"
         )
+
+
+def test_every_committed_record_parses_as_a_record() -> None:
+    # The byte comparison is what pins the model's field order to the committed format.
+    for path in _records():
+        parsed = parse_record(path)
+        assert parsed is not None, f"record {path} does not satisfy the record model"
+        assert path.read_text(encoding="utf-8") == (
+            json_values.dumps(parsed.model_dump(mode="json")) + "\n"
+        ), f"record {path} is not what the record model writes"
 
 
 def test_every_options_manifest_carries_exactly_one_inconclusive_option() -> None:

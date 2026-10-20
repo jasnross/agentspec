@@ -72,7 +72,7 @@ def main(
         try:
             driver = parse_manifest(manifest).driver.value
         except ManifestError as e:
-            console.say(f"{name}: {e}")
+            console.say(f"{name}: {e.lines[0]}", *e.lines[1:])
             failed.append(name)
             continue
 

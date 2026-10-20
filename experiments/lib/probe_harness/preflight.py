@@ -119,4 +119,4 @@ def _parse(package: Path) -> Manifest:
     try:
         return parse_manifest(package / "probe.json")
     except ManifestError as e:
-        raise PreflightError(1, str(e)) from None
+        raise PreflightError(1, *e.lines) from None
