@@ -90,7 +90,7 @@ For Cursor that gap is permanent: all traffic including BYOK terminates in Curso
 experiments/
   README.md                   # this file — the probe contract
   probe                       # the harness CLI: run, record, status, replay
-  pyproject.toml  uv.lock     # the dev toolchain: pytest, ruff, mypy
+  pyproject.toml  uv.lock     # the harness's locked environment: its runtime library (pydantic) and dev tools
   lib/
     probe_harness/            # the harness package: recorder, run loop, status, family runners, gates
     stubs/                    # the stub MCP server and stub model endpoint the arm families share
@@ -103,7 +103,7 @@ experiments/
     results/*.json            # records, one per run, append-only
 ```
 
-The harness runs on the Python standard library alone; `uv` supplies only the dev tools `just probe-test` and `just probe-lint` use. Every jq expression a manifest or a definition carries — a projection, a `wait_for` filter, a `version_source.jq`, a custom check — runs through the jq on your `PATH`, from `lib/probe_harness/jq_cli.py`, the only module that starts jq. jq evaluates those expressions and nothing else: the harness reads and writes JSON itself, including every record and every view. A view — the `view.json` a projection reads — is written by `lib/probe_harness/views.py`: for the fake-provider and Claude families an object mapping each arm to its request bodies, and for a manual probe the list of captured payloads.
+`experiments/probe` syncs `uv.lock` into `experiments/.venv` with `uv sync --locked` and re-executes itself there, so a harness feature takes a library by declaring it in `pyproject.toml`; a missing uv or a stale lock is refused with a `probe:` line before any harness code runs. Every jq expression a manifest or a definition carries — a projection, a `wait_for` filter, a `version_source.jq`, a custom check — runs through the jq on your `PATH`, from `lib/probe_harness/jq_cli.py`, the only module that starts jq. jq evaluates those expressions and nothing else: the harness reads and writes JSON itself, including every record and every view. A view — the `view.json` a projection reads — is written by `lib/probe_harness/views.py`: for the fake-provider and Claude families an object mapping each arm to its request bodies, and for a manual probe the list of captured payloads.
 
 **One package holds exactly one probe, and one probe answers one question.** A package needing two answers is two packages.
 
@@ -252,7 +252,7 @@ just shellcheck                  # lint the scripts a provider runs
 experiments/probe run <probe-name>   # run one package, whatever its driver
 ```
 
-The harness and its dev tools need Python 3.14 or newer, and `mise` supplies it along with the pinned jq. `probe-run`, `probe-status`, and the probe summary call `experiments/probe`; `probe-test` and `probe-lint` run through `uv`.
+The harness and its dev tools need Python 3.14 or newer, and `mise` supplies it along with uv and the pinned jq. `probe-run`, `probe-status`, and the probe summary call `experiments/probe`; `probe-test` and `probe-lint` run through `uv`.
 
 **Messages and exit codes.** Every diagnostic line the harness writes starts with the subcommand that printed it — `probe run: …`, `probe record: …`, `probe status: …`, `probe replay: …` — whichever family, gate, or recorder step it came from. A provider's own output, such as the stderr of an arm that exited nonzero, and jq's diagnostics are printed unprefixed after the line that introduces them. So is the text a manual run addresses to its operator: the workspace it prepared, the procedure, the selection prompt, and the block that ends a run whose capture never arrived. Exit 0 is success, 1 a refusal (a missing tool included), and 2 a usage error or an invalid `PROBE_*` variable.
 
@@ -305,7 +305,7 @@ The cost is that an interrupt or a timeout ends the run. The workspace is kept e
 
 The recorder's `--capture` flag remains, because it is how the capture directory reaches version resolution for a manifest declaring `version_source.kind: "capture"` — which every Cursor manifest does. A runner itself takes no arguments.
 
-**A toolchain failure cannot cost a capture.** The Python version, the harness's imports, the manifest's gates, whether its jq expressions compile, and the `PROBE_*` environment variables are all checked before the workspace exists, so a failure among them surfaces before the operator is asked to open a provider. A manual workspace is kept whatever happens after that.
+**A toolchain failure cannot cost a capture.** The Python version, the locked environment, the harness's imports, the manifest's gates, whether its jq expressions compile, and the `PROBE_*` environment variables are all checked before the workspace exists, so a failure among them surfaces before the operator is asked to open a provider. A manual workspace is kept whatever happens after that.
 
 ## Re-verification
 

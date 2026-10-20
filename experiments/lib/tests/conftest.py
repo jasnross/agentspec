@@ -86,6 +86,9 @@ def _isolated_tmpdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     tmpdir = tmp_path / "tmpdir"
     tmpdir.mkdir()
     monkeypatch.setenv("TMPDIR", str(tmpdir))
+    # pytest runs under `uv run --locked`, so the harness environment is already synced and
+    # the launcher may skip straight to the harness; the launcher's own tests unset this.
+    monkeypatch.setenv("_AGENTSPEC_PROBE_SYNCED", "1")
     for name in (
         "PROBE_DRY_RUN",
         "PROBE_FIXTURE",

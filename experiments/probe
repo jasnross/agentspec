@@ -8,10 +8,58 @@ if sys.version_info < (3, 14):  # noqa: UP036 - must parse and run under any pyt
     )
     sys.exit(1)
 
+import os
+import shutil
+import subprocess
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+_EXPERIMENTS = Path(__file__).resolve().parent
+_ENVIRONMENT = _EXPERIMENTS / ".venv"
+_SYNCED = "_AGENTSPEC_PROBE_SYNCED"
 
-from probe_harness.cli import main
+
+def _say(line: str) -> None:
+    sys.stderr.write(f"probe: {line}\n")
+
+
+def _inside_environment() -> bool:
+    return Path(sys.prefix).resolve() == _ENVIRONMENT.resolve()
+
+
+if os.environ.get(_SYNCED) != "1" or not _inside_environment():
+    if os.environ.get(_SYNCED) == "1":
+        # Set by a launcher that already synced, then inherited by an interpreter outside
+        # the environment; syncing and re-executing again could loop.
+        _say(
+            f"the harness environment is {sys.prefix}, not {_ENVIRONMENT};"
+            f" unset {_SYNCED} to prepare it again"
+        )
+        sys.exit(1)
+    uv = shutil.which("uv")
+    if uv is None:
+        _say("uv is required to run the probe harness; run it under mise")
+        sys.exit(1)
+    # The harness runs only in experiments/.venv, so the sync targets it even when
+    # UV_PROJECT_ENVIRONMENT points uv elsewhere.
+    environ = {k: v for k, v in os.environ.items() if k != "UV_PROJECT_ENVIRONMENT"}
+    synced = subprocess.run(
+        [uv, "sync", "--locked", "--quiet", "--project", str(_EXPERIMENTS)],
+        env=environ,
+        stdin=subprocess.DEVNULL,
+        check=False,
+    )
+    if synced.returncode != 0:
+        _say("could not prepare the harness environment from experiments/uv.lock (see above)")
+        sys.exit(1)
+    os.environ[_SYNCED] = "1"
+    # The environment's own interpreter replaces this process, rather than `uv run`: a uv
+    # parent would forward a terminal's Ctrl-C to the harness a second time whenever stdin
+    # is not a terminal, interrupting the teardown the first one started.
+    python = _ENVIRONMENT / "bin" / "python"
+    os.execv(python, [str(python), str(Path(__file__).resolve()), *sys.argv[1:]])
+
+sys.path.insert(0, str(_EXPERIMENTS / "lib"))
+
+from probe_harness.cli import main  # noqa: E402
 
 sys.exit(main(sys.argv[1:]))
