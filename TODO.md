@@ -1,4 +1,4 @@
-<!-- next: 57 -->
+<!-- next: 58 -->
 
 - #1 Consider deriving id from path instead of requiring in frontmatter
    - Currently `id` is a required `String` in all frontmatter structs; missing it causes a parse error at load time
@@ -237,3 +237,7 @@
   - Likely shape: the harness resolves each provider to a concrete binary for a declared version (e.g. `mise where <tool>@<version>`, or running it under `mise exec <tool>@<version> --`), and refuses in preflight when that version is not installed. That keeps the toolchain-failure-before-workspace rule.
   - Decide where the version is declared: the repo `mise.toml` (one pin for every package), or per package/manifest (packages could measure different versions). Square it with the "a package's files state no fact derivable from its layout" rule and with `version_source.command`. `probe status`/`--stale` drift compares the installed version against the record, and should probably compare the pinned one.
   - Running the real binary rather than a shim also removes the mise-trust failure under the probes' isolated `HOME`.
+- #57 **Fit `CustomProbe` to per-variant fixture trees.** Every family, `CustomProbe` included, is refused unless each declared variant has `fixtures/<variant>/` (`_variant_trees` in `experiments/lib/probe_harness/families/__init__.py`), but `CustomProbe.arrange(ws, variant)` receives only the variant name, not the tree.
+  - A custom probe that builds its workspace in code must commit a placeholder (`.gitkeep`) per variant.
+  - `lib/tests/test_repo_fixture_reachability.py` counts a custom probe's whole variant tree as reachable even if its arrange never reads it.
+  - No committed `CustomProbe` exists. Revisit when the first one is written. Likely shape: pass the variant's fixture directory to `arrange`, as the Claude and fake-OpenCode `arrange_arm` hooks receive it.
