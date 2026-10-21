@@ -73,7 +73,7 @@ The `inline` row is itself the mechanism behind that arm's finding: a model-invo
 
 `unique` rather than a positional selector, in all three arms: the sink names files by UUID, so glob order is not write order, and `| last` would name an arbitrary element while silently discarding disagreement among the rest. **`unique` earns its keep most in the `fork` arm**, which returns to a main thread still at the ungoverned level and is therefore the arm most likely to hold marked requests at two levels — a two-element array that `unique` surfaces and a positional selector would hide. All three arms are spelled identically, including the ones where nothing could go wrong, so a reviewer who has checked one has checked them all.
 
-`rel` is self-guarding: it renders `no-usable-control-set` when the ungoverned set is not exactly one level, and `arm-had-no-governed-request` when an arm has none. The runner's gates block both shapes, but the recorder's `--dry-run --view <saved-view>` runs the projection gate-free, and that is the workflow this README points authors at.
+`rel` is self-guarding: it renders `no-usable-control-set` when the ungoverned set is not exactly one level, and `arm-had-no-governed-request` when an arm has none. The runner's gates block both shapes, and so does `probe record`, which judges through the same gates; the projection guards them anyway, so its verdict never depends on the gates having run.
 
 ## The three gates
 

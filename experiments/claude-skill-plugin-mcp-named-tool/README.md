@@ -71,7 +71,7 @@ A gate failure is a statement about the run, not about Claude, and writes no rec
 
 ## Discriminate evidence
 
-Before the first billed run, the recorder's `--dry-run` (`--manifest experiments/claude-skill-plugin-mcp-named-tool/probe.json --view <view>`) against two fabricated views printed `confirmed` for one matching `expected` and `refuted` for one where `plugin_named`'s call was denied for permission:
+Before the first billed run, the recorder's `--dry-run` (`--manifest experiments/claude-skill-plugin-mcp-named-tool/probe.json --view <view>`) (the form `probe record` took then) against two fabricated views printed `confirmed` for one matching `expected` and `refuted` for one where `plugin_named`'s call was denied for permission:
 
 ```
 record: dry run — confirmed — observed {"plugin_none":"denied","plugin_named":"called"} (no file written)

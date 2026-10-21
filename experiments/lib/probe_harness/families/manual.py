@@ -20,17 +20,18 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from probe_harness import console, json_values, record, views
+from probe_harness import console, jq_cli, json_values, views
 from probe_harness.contract import Manifest, OptionsAssertion
 from probe_harness.families.base import (
     GateFailure,
+    JudgeResult,
     ProbeFunctions,
     RunOptions,
-    kept_for_inspection,
+    UsageError,
     kept_on_failure,
+    record_result,
     record_tool_version,
     refused,
-    workspace_kept,
 )
 from probe_harness.source import write_source
 from probe_harness.workspace import (
@@ -71,32 +72,80 @@ def run(
             file=sys.stderr,
         )
 
-        if wait_for_capture(ws, wait_for, options.timeout):
-            if probe.functions.judge is not None:
-                try:
-                    probe.functions.judge(ws)
-                except GateFailure as e:
-                    return refused(e, ws)
-            code = record_capture(manifest, ws, dry_run=options.dry_run)
-            if code != 0:
-                kept_for_inspection(ws)
-            else:
-                workspace_kept(ws)
-            return code
+        if not wait_for_capture(ws, wait_for, options.timeout):
+            # The workspace is never deleted: discarding one an operator spent a live session
+            # on is the single unrecoverable mistake a runner could make, and reading the
+            # capture is how they tell a hook that never fired from a procedure that went
+            # off the rails.
+            return refused(
+                GateFailure(
+                    f"timed out waiting for the capture after {options.timeout}s",
+                    "this run is over; re-run the probe to try again.",
+                    f"if the capture arrived after the deadline, record it with: "
+                    f"experiments/probe record {name} {ws}",
+                ),
+                ws,
+            )
+        try:
+            result = judge(manifest, ws, probe, None, interactive=True)
+        except GateFailure as e:
+            return refused(e, ws)
+        return record_result(manifest, ws, result, options)
 
-    # The workspace is never deleted: discarding one an operator spent a live session on is
-    # the single unrecoverable mistake a runner could make, and reading the capture is how
-    # they tell a hook that never fired from a procedure that went off the rails.
-    sys.stderr.write(
-        "\nTimed out waiting for the capture.\n"
-        "This run is over; re-run the probe to try again.\n"
-        f"The workspace has been kept for inspection: {ws}\n\n"
-    )
-    return 1
+
+def judge(
+    manifest: Manifest,
+    ws: Path,
+    probe: ManualProbe,
+    selection: str | None,
+    *,
+    interactive: bool,
+) -> JudgeResult:
+    """Judge a captured workspace, for a live run and for `probe record` alike.
+
+    Refuses unless the capture exists, is non-empty, and satisfies the manifest's
+    `wait_for`, so a workspace whose hook never fired, or fired for the wrong event, is
+    never recorded. The assertion's shape, not the driver, then decides the answer: an
+    option set is a person choosing from a list, and a projection is jq over the capture.
+    """
+    if manifest.wait_for is None:
+        raise GateFailure("manifest declares no wait_for filter")
+    capture = ws / "capture"
+    if not capture.is_dir():
+        raise GateFailure(f"{ws} is not a probe workspace (no capture/ directory)")
+    payloads = capture / "payloads.jsonl"
+    if not payloads.is_file() or payloads.stat().st_size == 0:
+        raise GateFailure(
+            f"no captured payloads at {payloads}",
+            "the hook did not fire. Check that the provider was fully quit and reopened.",
+        )
+    # Written before `wait_for` runs, so a capture that is not JSON is refused as such
+    # rather than as jq's parse error.
+    view = ws / "view.json"
+    views.write_capture_view(payloads, view)
+    if not jq_cli.test(manifest.wait_for, payloads, slurp=True):
+        raise GateFailure(
+            f"the capture does not satisfy the manifest's wait_for: {manifest.wait_for}",
+            f"the provider did not produce the payload this probe waits for; see {payloads}.",
+        )
+    if probe.functions.judge is not None:
+        probe.functions.judge(ws)
+
+    if isinstance(manifest.assertion, OptionsAssertion):
+        if selection is None:
+            if not interactive:
+                raise UsageError(
+                    f"{manifest.path.parent.name} declares options; pass --selection <id>"
+                )
+            # The machine has already proved the apparatus worked, so the person answers
+            # only the question no machine can.
+            selection = prompt_selection(manifest.assertion.options, manifest.question)
+        return JudgeResult(view=None, selection=selection)
+    return JudgeResult(view=view, selection=None)
 
 
 def arrange_human_workspace(package: Path, name: str, variant: str) -> Path:
-    """Materialize the workspace and return its root, the path `--capture` takes."""
+    """Materialize the workspace and return its root, the path `probe record` takes."""
     ws = create_workspace(name, variant)
     with kept_on_failure(ws):
         _materialize(package, ws)
@@ -138,54 +187,6 @@ def _materialize(package: Path, ws: Path) -> None:
         if rel.suffix == ".json" and not _parses(dst):
             console.say(f"generated {dst} is not valid JSON — check the workspace path")
             raise SystemExit(1)
-
-
-def record_capture(
-    manifest: Manifest, ws: Path, *, dry_run: bool, selection: str | None = None
-) -> int:
-    """Record from a completed capture, projecting or prompting per the assertion's shape.
-
-    Refusing to record on an empty capture is the correct outcome: the failure stays loud
-    rather than becoming a record nobody can trust. Under replay, <selection> stands in for
-    the operator's answer.
-    """
-    payloads = ws / "capture" / "payloads.jsonl"
-    if not (ws / "capture").is_dir():
-        console.say(f"{ws} is not a probe workspace (no capture/ directory)")
-        return 1
-    if not payloads.is_file() or payloads.stat().st_size == 0:
-        console.say(
-            f"no captured payloads at {payloads}",
-            "the hook did not fire. Check that the provider was fully quit and reopened.",
-        )
-        return 1
-
-    # The assertion shape decides this, not the driver: an `options` set is a person
-    # choosing from a list and a `projection` is jq over a file.
-    view: Path | None = None
-    if isinstance(manifest.assertion, OptionsAssertion):
-        if selection is None:
-            # The machine has already proved the apparatus worked, so the person answers
-            # only the question no machine can.
-            selection = prompt_selection(manifest.assertion.options, manifest.question)
-    else:
-        view = ws / "view.json"
-        try:
-            views.write_capture_view(payloads, view)
-        except GateFailure as e:
-            console.say_refusal(e)
-            return 1
-
-    try:
-        computed = record.compute(
-            manifest, view=view, selection=selection, capture=ws, workspace=ws
-        )
-        written = None if dry_run else record.write(computed)
-    except record.RecordRefused as e:
-        console.say_refusal(e)
-        return 1
-    record.report(computed, written)
-    return 0
 
 
 def _make_executable(path: Path) -> None:

@@ -1,4 +1,5 @@
-"""The shared pipeline in `families/__init__.py`: retention, replay, and definition refusals.
+"""The shared pipeline in `families/__init__.py`: retention, `probe record`, and definition
+refusals.
 
 A workspace is kept when a run fails after creating it. Definitions that could only fail
 later are refused before any workspace exists: for the billed Claude family each would
@@ -8,6 +9,8 @@ asserts that no workspace was created.
 
 import json
 import os
+import subprocess
+import sys
 import textwrap
 from collections.abc import Callable
 from pathlib import Path
@@ -16,6 +19,7 @@ from typing import Any
 import pytest
 
 from tests.conftest import (
+    EXPERIMENTS_DIR,
     Cli,
     unattended_manifest,
     workspaces,
@@ -44,13 +48,13 @@ def test_a_runner_exiting_zero_prints_no_kept_line(
     assert KEPT not in result.output
 
 
-def test_replay_refuses_a_selection_for_a_projection_manifest(
+def test_record_refuses_a_selection_for_a_projection_manifest(
     cli: Cli, put_package: Callable[..., Path], tree: Path, tmp_path: Path
 ) -> None:
     put_package("alpha", "unattended", 0)
     ws = tmp_path / "ws"
     ws.mkdir()
-    result = cli("replay", "alpha", ws, "--selection", "x")
+    result = cli("record", "alpha", ws, "--dry-run", "--selection", "x")
     assert result.returncode == 2
     assert "declares a projection; --selection does not apply" in result.stderr
 
@@ -391,8 +395,59 @@ def test_a_flag_given_with_a_package_exits_2(cli: Cli, put_package: Callable[...
     assert "ran alpha" not in result.stdout
 
 
-def test_replay_without_a_workspace_exits_2(cli: Cli, put_package: Callable[..., Path]) -> None:
+def test_record_without_a_workspace_exits_2(cli: Cli, put_package: Callable[..., Path]) -> None:
     put_package("alpha", "unattended", 0)
-    result = cli("replay", "alpha")
+    result = cli("record", "alpha")
     assert result.returncode == 2
-    assert "probe replay: error: the following arguments are required: workspace" in (result.stderr)
+    assert "probe record: error: the following arguments are required: workspace" in (result.stderr)
+
+
+def test_record_refuses_a_workspace_that_is_not_a_directory(
+    cli: Cli, put_package: Callable[..., Path], tmp_path: Path
+) -> None:
+    put_package("alpha", "unattended", 0)
+    missing = tmp_path / "missing"
+    result = cli("record", "alpha", missing)
+    assert result.returncode == 1
+    assert result.stderr == f"probe record: not a workspace directory: {missing}\n"
+
+
+def test_replay_is_no_longer_a_subcommand(cli: Cli) -> None:
+    result = cli("replay", "x", "y")
+    assert result.returncode == 2
+    assert "invalid choice: 'replay'" in result.stderr
+
+
+def test_record_without_jq_on_path_exits_1(
+    put_package: Callable[..., Path], tmp_path: Path
+) -> None:
+    put_package("alpha", "unattended", 0)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    empty = tmp_path / "empty-path"
+    empty.mkdir()
+    completed = subprocess.run(
+        [sys.executable, str(EXPERIMENTS_DIR / "probe"), "record", "alpha", str(ws)],
+        env={**os.environ, "PATH": str(empty)},
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 1, completed.stderr
+    assert completed.stderr == "probe record: missing required tool(s): jq\n"
+
+
+def test_record_refuses_a_manual_workspace_whose_manifest_has_no_wait_for(
+    cli: Cli, put_package: Callable[..., Path], tmp_path: Path
+) -> None:
+    package = put_package("alpha", "manual", 0)
+    manifest = json.loads((package / "probe.json").read_text())
+    assert "wait_for" not in manifest
+    ws = tmp_path / "ws"
+    (ws / "capture").mkdir(parents=True)
+    (ws / "capture" / "payloads.jsonl").write_text('{"x":1}\n')
+
+    result = cli("record", "alpha", ws, "--dry-run")
+    assert result.returncode == 1
+    assert "probe record: manifest declares no wait_for filter\n" in result.stderr

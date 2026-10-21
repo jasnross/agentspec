@@ -24,6 +24,6 @@ def test_say_before_a_command_is_named_speaks_as_probe(
 
 
 def test_verbatim_prints_each_line_unprefixed(capsys: pytest.CaptureFixture[str]) -> None:
-    console.set_command("probe replay")
+    console.set_command("probe record")
     console.verbatim(["jq: error", "  at line 1"])
     assert capsys.readouterr().err == "jq: error\n  at line 1\n"

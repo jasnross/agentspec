@@ -212,7 +212,7 @@ def test_a_run_leaves_no_requests_json_in_any_arm(cli: Cli, package: Path, tmp_p
     assert list(ws.glob("*/requests.json")) == []
 
 
-def test_replay_judges_a_kept_fake_provider_workspace(
+def test_record_dry_run_judges_a_kept_fake_provider_workspace(
     cli: Cli, package: Path, tmp_path: Path
 ) -> None:
     run = cli(
@@ -221,9 +221,9 @@ def test_replay_judges_a_kept_fake_provider_workspace(
     assert run.returncode == 0, run.stderr
     (ws,) = workspaces("fake-family")
     (ws / "two" / "fx.stamp").unlink()
-    replayed = cli("replay", "fake-family", ws)
+    replayed = cli("record", "fake-family", ws, "--dry-run")
     assert replayed.returncode == 1
-    assert "probe replay: arm two: the fx server never answered tools/list" in replayed.stderr
+    assert "probe record: arm two: the fx server never answered tools/list" in replayed.stderr
 
 
 def test_a_provider_exiting_nonzero_stops_the_stub_and_keeps_the_workspace(

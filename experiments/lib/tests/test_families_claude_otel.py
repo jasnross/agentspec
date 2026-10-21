@@ -221,7 +221,9 @@ def test_the_environment_reaching_claude_is_isolated_and_pointed_at_the_sink(
     ]
 
 
-def test_replay_judges_a_kept_claude_workspace(cli: Cli, package: Path, tmp_path: Path) -> None:
+def test_record_dry_run_judges_a_kept_claude_workspace(
+    cli: Cli, package: Path, tmp_path: Path
+) -> None:
     run = cli(
         "run",
         "claude-family",
@@ -231,13 +233,13 @@ def test_replay_judges_a_kept_claude_workspace(cli: Cli, package: Path, tmp_path
     (ws,) = workspaces("claude-family")
     copy = tmp_path / "copy"
     shutil.copytree(ws, copy)
-    replayed = cli("replay", "claude-family", copy)
+    replayed = cli("record", "claude-family", copy, "--dry-run")
     assert replayed.returncode == 0, replayed.stderr
     assert json.loads(replayed.stdout)["status"] == "confirmed"
     (copy / "a" / "fx.stamp").unlink()
-    refused = cli("replay", "claude-family", copy)
+    refused = cli("record", "claude-family", copy, "--dry-run")
     assert refused.returncode == 1
-    assert "probe replay: arm a: the fx server never answered tools/list" in refused.stderr
+    assert "probe record: arm a: the fx server never answered tools/list" in refused.stderr
 
 
 def test_the_templated_server_runs_the_shared_stub_under_this_interpreter(

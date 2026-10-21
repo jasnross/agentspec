@@ -4,9 +4,9 @@ Every record in the repository is produced here. There is one record shape and n
 hand-written exception, which is what lets `probe status` join across packages and what
 makes hand-editing a record a defect rather than a workflow.
 
-Usage:
-    probe record --manifest <probe.json> --view <view.json>      [--capture <ws>] [--dry-run]
-    probe record --manifest <probe.json> --selection <option-id>  --capture <ws>  [--dry-run]
+It records a judged workspace: `probe run` and `probe record <package> <workspace>` judge
+it through the family's judge, and hand the result here. Nothing here runs a gate, and
+nothing here runs a version command except to read one before Act (`run_version_command`).
 """
 
 import json
@@ -25,18 +25,24 @@ from probe_harness.contract import (
     CommandSource,
     Driver,
     Manifest,
-    ManifestError,
     NoSource,
     OptionsAssertion,
     ProjectionAssertion,
     RecordAssertion,
     Status,
-    parse_manifest,
 )
 from probe_harness.json_values import JsonValue
 
 # Bounds a version command, so a wedged one cannot hang a run or `just check`.
 VERSION_COMMAND_TIMEOUT_SECONDS = 10
+
+
+@dataclass(frozen=True)
+class JudgeResult:
+    """What Judge hands to Record: exactly one of a view or a selected option id."""
+
+    view: Path | None
+    selection: str | None
 
 
 @dataclass(frozen=True)
@@ -74,57 +80,36 @@ class RecordRefused(Exception):
         self.detail = detail
 
 
-def compute(
-    manifest: Manifest,
-    *,
-    view: Path | None = None,
-    selection: str | None = None,
-    capture: Path | None = None,
-    workspace: Path | None = None,
-) -> ComputedRecord:
-    """Gate the invocation, compare, and return the record; raise `RecordRefused` otherwise.
+def compute(manifest: Manifest, ws: Path, result: JudgeResult, *, dry_run: bool) -> ComputedRecord:
+    """Compare a judged workspace's result and return the record; raise `RecordRefused`.
 
-    Prints nothing and writes nothing. Assumes jq is installed: `run` checks for it, and
-    every family's preflight requires it.
+    Writes nothing. Prints only the dry-run warning for a workspace with no recorded tool
+    version. Assumes jq is installed, which every caller has checked.
     """
-    # Status is always computed from the comparison, because a caller that could assert a
-    # status could assert one the evidence does not support.
-    if view is not None and selection is not None:
-        raise RecordRefused("--view and --selection are mutually exclusive")
-    if view is None and selection is None:
-        raise RecordRefused("exactly one of --view or --selection is required")
+    # The judge hands over a view for a projection and a selection for an option set; a
+    # mismatch would be a wiring error, since a projection over an options manifest
+    # resolves to `null` and records a false `refuted`.
+    if isinstance(manifest.assertion, ProjectionAssertion):
+        assert result.view is not None and result.selection is None
+    else:
+        assert result.selection is not None and result.view is None
 
-    # The invocation mode must match the assertion shape. Mismatched, a projection over
-    # an options manifest resolves to `null` and records `refuted`, and `refuted` is the
-    # strong signal: an operator wiring error would raise a false alarm.
-    if view is not None and not isinstance(manifest.assertion, ProjectionAssertion):
-        raise RecordRefused(
-            "--view needs a projection assertion; this manifest declares options "
-            f"(use --selection): {manifest.path}"
-        )
-    if selection is not None and not isinstance(manifest.assertion, OptionsAssertion):
-        raise RecordRefused(
-            "--selection needs an options assertion; this manifest declares a projection "
-            f"(use --view): {manifest.path}"
-        )
-
-    if manifest.driver == Driver.MANUAL and capture is None:
-        raise RecordRefused('driver "manual" requires --capture')
-
-    # The non-empty check reads the file the *provider* wrote, never `--view`, which the
-    # runner writes moments before recording. A hook that never fired is what it catches.
-    if capture is not None:
-        payloads = capture / "capture" / "payloads.jsonl"
+    # The non-empty check reads the file the *provider* wrote, never the view, which the
+    # judge writes moments before recording. A hook that never fired is what it catches.
+    if manifest.driver == Driver.MANUAL:
+        payloads = ws / "capture" / "payloads.jsonl"
         if not _non_empty(payloads):
             raise RecordRefused(f"capture payloads absent or empty: {payloads}")
 
+    # Status is always computed from the comparison, because a caller that could assert a
+    # status could assert one the evidence does not support.
     option_status = ""
     observed: JsonValue
-    if selection is not None:
-        observed, option_status = _select(manifest, selection)
+    if result.selection is not None:
+        observed, option_status = _select(manifest, result.selection)
     else:
-        assert view is not None
-        observed = _project(manifest, view)
+        assert result.view is not None
+        observed = _project(manifest, result.view)
 
     if option_status:
         # A `couldnt-tell` option declares `inconclusive`, so a tired operator picking it
@@ -135,7 +120,7 @@ def compute(
     else:
         status = Status.REFUTED
 
-    tool_version = _tool_version(manifest, capture, workspace)
+    tool_version = _tool_version(manifest, ws, dry_run=dry_run)
 
     # One UTC clock read feeds both the record's `date` and the filename. The time
     # component stops a same-day re-run at the same version from overwriting its
@@ -197,36 +182,6 @@ def report(record: ComputedRecord, written: Path | None) -> None:
     console.say(f"{record.status} — observed {_compact(record.observed)}")
 
 
-def run(
-    manifest_path: str,
-    *,
-    view: Path | None,
-    selection: str | None,
-    capture: Path | None,
-    dry_run: bool,
-) -> int:
-    """`probe record`: compute, and write (or print) one record. Returns the exit code."""
-    try:
-        jq_cli.require_jq()
-    except jq_cli.ToolsMissing as e:
-        console.say(f"missing required tool(s): {' '.join(e.tools)}")
-        return 1
-    try:
-        manifest = parse_manifest(manifest_path)
-        computed = compute(manifest, view=view, selection=selection, capture=capture)
-        report(computed, None if dry_run else write(computed))
-    except ManifestError as e:
-        console.say_refusal(e)
-        return 1
-    except RecordRefused as e:
-        console.say_refusal(e)
-        return 1
-    except jq_cli.JqError as e:
-        console.verbatim(e.stderr.splitlines())
-        return 1
-    return 0
-
-
 def _select(manifest: Manifest, selection: str) -> tuple[str, str]:
     """The selected option id and the option's declared status."""
     assert isinstance(manifest.assertion, OptionsAssertion)
@@ -239,8 +194,6 @@ def _select(manifest: Manifest, selection: str) -> tuple[str, str]:
 def _project(manifest: Manifest, view: Path) -> JsonValue:
     """The projection's single value over <view>; `null` when it yields none."""
     assert isinstance(manifest.assertion, ProjectionAssertion)
-    if not view.is_file():
-        raise RecordRefused(f"view not found: {view}")
     projection = manifest.assertion.projection
     try:
         output = jq_cli.evaluate(projection, view, compact=True)
@@ -261,26 +214,27 @@ def _project(manifest: Manifest, view: Path) -> JsonValue:
     return values[0] if values else None
 
 
-def _tool_version(manifest: Manifest, capture: Path | None, workspace: Path | None) -> str:
+def _tool_version(manifest: Manifest, ws: Path, *, dry_run: bool) -> str:
     version: str
     match manifest.version_source:
-        case CommandSource(argv=argv):
-            # The run read the version just before Act. Running the command again here
-            # would record whatever is installed by now; it remains only for a caller with
-            # no workspace, or a workspace made before runs kept the version.
-            recorded = workspace / "tool_version" if workspace is not None else None
-            if recorded is not None and recorded.is_file():
+        case CommandSource():
+            # The run read the version just before Act. Running the command here would
+            # record whatever is installed by now, so a judge never does.
+            recorded = ws / "tool_version"
+            if recorded.is_file():
                 version = recorded.read_text(encoding="utf-8").rstrip("\n")
+            elif dry_run:
+                console.say(f"no recorded tool version in {ws}; the record would carry null")
+                version = ""
             else:
-                version = run_version_command(argv, timeout=None)
+                raise RecordRefused(
+                    f"no recorded tool version in {ws}",
+                    "re-run the probe; a later judge never runs the version command.",
+                )
         case CaptureSource(jq=expr):
-            if capture is None:
-                raise RecordRefused('version_source.kind "capture" requires --capture')
             # Slurped, as every declared capture expression is array-shaped.
             try:
-                out = jq_cli.evaluate(
-                    expr, capture / "capture" / "payloads.jsonl", slurp=True, raw=True
-                )
+                out = jq_cli.evaluate(expr, ws / "capture" / "payloads.jsonl", slurp=True, raw=True)
             except jq_cli.JqError as e:
                 out = e.stdout
             version = out.rstrip("\n")

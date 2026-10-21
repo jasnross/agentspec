@@ -18,6 +18,7 @@ from probe_harness.workspace import (
     create_workspace,
     prompt_selection,
     read_selection,
+    read_workspace_run,
     require_tools,
     template_file,
     wait_for_capture,
@@ -44,6 +45,9 @@ def test_create_workspace_makes_a_stamped_variant_directory_with_capture(
     ws = create_workspace("unit-test", "assertion")
     assert ws == workspace_root() / "unit-test" / "2026-10-21T093005-assertion"
     assert (ws / "capture").is_dir()
+    run = read_workspace_run(ws)
+    assert run is not None
+    assert (run.package, run.variant) == ("unit-test", "assertion")
 
 
 def test_a_second_workspace_in_the_same_second_gets_a_suffix(

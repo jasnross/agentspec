@@ -1,19 +1,21 @@
-"""The committed Claude manifests' projections, run by `probe record` over fabricated views.
+"""The committed Claude manifests' projections, evaluated over fabricated views.
 
-A projection decides the recorded verdict, so each is checked against a view that would
-tempt it into confirming what the run never measured.
+A projection decides the recorded verdict, so each is checked against a degenerate view —
+one that would tempt it into confirming what the run never measured. The gates keep a real
+run from producing such a view; these tests pin what the projection itself outputs if one
+ever reaches it.
 """
 
-import json
 import re
 from pathlib import Path
 
 import pytest
+from probe_harness import jq_cli, json_values
+from probe_harness.contract import ProjectionAssertion, parse_manifest
+from probe_harness.json_values import JsonValue
 
 from tests.conftest import (
     EXPERIMENTS_DIR,
-    Cli,
-    Result,
     compact,
     deferred_request,
     direct_request,
@@ -52,24 +54,24 @@ MARKER_MCP_PATH = (
 )
 
 
-def record_dry_run(cli: Cli, manifest: Path, view: Path) -> Result:
-    """`probe record --dry-run` against a committed manifest, which must write nothing."""
-    results = manifest.parent / "results"
-    before = sorted(results.iterdir()) if results.is_dir() else []
-    result = cli("record", "--manifest", manifest, "--view", view, "--dry-run")
-    after = sorted(results.iterdir()) if results.is_dir() else []
-    assert before == after, "a dry run wrote into a committed results directory"
-    return result
+def project(manifest_path: Path, view: Path) -> tuple[JsonValue, bool]:
+    """The committed manifest's projection over <view>, and whether it equals `expected`."""
+    manifest = parse_manifest(manifest_path)
+    assert isinstance(manifest.assertion, ProjectionAssertion)
+    output = jq_cli.evaluate(manifest.assertion.projection, view, compact=True)
+    values = json_values.load_stream(output)
+    # As the recorder reads it: no value observes `null`, several are an error.
+    assert len(values) <= 1, f"the projection yielded several values: {values}"
+    observed = values[0] if values else None
+    return observed, json_values.equal(observed, manifest.assertion.expected)
 
 
 def test_the_committed_manifest_s_projection_does_not_confirm_an_unmeasured_arm(
-    tmp_path: Path, cli: Cli
+    tmp_path: Path,
 ) -> None:
-    # The gates make a *runner-produced* record safe, but `probe record --dry-run --view
-    # <saved-view>` runs the projection with no gates at all — and that is the workflow
-    # both READMEs point authors at for iterating a candidate expression. A projection
-    # whose pass value can be reached by an arm that was never measured is therefore
-    # reachable in normal use.
+    # The gates keep a real run from producing an arm that was never measured, but the
+    # projection must not depend on them: a pass value an unmeasured arm can reach is a
+    # projection bug that only the gates are hiding.
     #
     # The degenerate shape: an arm with zero governed requests and an empty control set.
     # `unique` yields `[]` for both, and an unguarded `. == $u` collapses `[] == []` to the
@@ -92,18 +94,16 @@ def test_the_committed_manifest_s_projection_does_not_confirm_an_unmeasured_arm(
         },
     )
 
-    result = record_dry_run(cli, manifest, view)
-    assert result.returncode == 0
-    assert '"status": "confirmed"' not in result.output
+    _, confirmed = project(manifest, view)
+    assert not confirmed
 
 
 def test_the_committed_skill_manifest_s_projection_does_not_confirm_an_unmeasured_arm(
-    tmp_path: Path, cli: Cli
+    tmp_path: Path,
 ) -> None:
     # The sibling of the check above, against the skill package's own manifest and its own
-    # governed field. The gates make a *runner-produced* record safe, but `probe record
-    # --dry-run --view <saved-view>` runs the projection with no gates at all — and that is
-    # the workflow both READMEs point authors at.
+    # governed field. Here too the projection must not lean on the gates to keep an
+    # unmeasured arm from confirming.
     #
     # Which branch of `rel` does the work here is worth stating, because it is not the one
     # the shape suggests: the pass value `. == $u` is only reachable once
@@ -126,13 +126,12 @@ def test_the_committed_skill_manifest_s_projection_does_not_confirm_an_unmeasure
         {"inline": [{"system": "plain"}], "slash_entry": [governed], "fork": [governed]},
     )
 
-    result = record_dry_run(cli, manifest, view)
-    assert result.returncode == 0
-    assert '"status": "confirmed"' not in result.output
+    _, confirmed = project(manifest, view)
+    assert not confirmed
 
 
 def test_the_committed_skill_manifest_names_an_arm_that_captured_no_governed_request(
-    tmp_path: Path, cli: Cli
+    tmp_path: Path,
 ) -> None:
     # The case the test above cannot reach: a control set that *is* single-valued, so `rel`
     # gets past its first branch, with one arm holding nothing governed. Deleting
@@ -162,14 +161,13 @@ def test_the_committed_skill_manifest_names_an_arm_that_captured_no_governed_req
         },
     )
 
-    result = record_dry_run(cli, manifest, view)
-    assert result.returncode == 0
-    assert '"status": "confirmed"' not in result.output
-    assert "arm-had-no-governed-request" in result.output
+    observed, confirmed = project(manifest, view)
+    assert not confirmed
+    assert "arm-had-no-governed-request" in compact(observed)
 
 
 def test_the_committed_mcp_manifest_s_projection_reads_both_direct_and_deferred_tools(
-    tmp_path: Path, cli: Cli
+    tmp_path: Path,
 ) -> None:
     # The two places an MCP tool can reach a request: deferred, named in a text block, or
     # loaded directly into `tools[]`. A projection reading only one would report the other
@@ -194,9 +192,8 @@ def test_the_committed_mcp_manifest_s_projection_reads_both_direct_and_deferred_
         },
     )
 
-    result = record_dry_run(cli, manifest, view)
-    assert result.returncode == 0
-    observed = json.loads(result.stdout)["assertion"]["observed"]
+    observed, _ = project(manifest, view)
+    assert isinstance(observed, dict)
     assert compact(observed["inherit"]) == (
         '{"direct":[],"deferred":["mcp__fx__alpha"],"tool_search":true}'
     )
@@ -206,7 +203,7 @@ def test_the_committed_mcp_manifest_s_projection_reads_both_direct_and_deferred_
 
 
 def test_the_committed_mcp_manifest_s_projection_does_not_confirm_an_unmeasured_arm(
-    tmp_path: Path, cli: Cli
+    tmp_path: Path,
 ) -> None:
     # `read` expects no MCP tools and no ToolSearch — exactly what an arm with no governed
     # request would project to if the projection reduced it the same way. The sentinel
@@ -231,9 +228,7 @@ def test_the_committed_mcp_manifest_s_projection_does_not_confirm_an_unmeasured_
         },
     )
 
-    result = record_dry_run(cli, manifest, view)
-    assert result.returncode == 0
-    assert '"status": "refuted"' in result.output
-    assert json.loads(result.stdout)["assertion"]["observed"]["read"] == (
-        "arm-had-no-governed-request"
-    )
+    observed, confirmed = project(manifest, view)
+    assert not confirmed
+    assert isinstance(observed, dict)
+    assert observed["read"] == "arm-had-no-governed-request"

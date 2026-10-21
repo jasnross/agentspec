@@ -33,6 +33,10 @@ from probe_harness.workspace import DEFAULT_TIMEOUT_SECONDS, require_tools
 
 ASSERTION_VARIANT = "assertion"
 
+DISAGREEING_FIXTURE = (
+    "recording its run would commit a refuted record for a fixture built to disagree."
+)
+
 
 class PreflightError(Exception):
     """A preflight refusal: <lines> and <detail> go to stderr and the run exits with <code>."""
@@ -54,7 +58,7 @@ class RunOptions:
 
 
 def check_manifest(package: Path) -> Manifest:
-    """Step 1 and the jq half of step 2, shared with `probe replay`."""
+    """Step 1 and the jq half of step 2, shared with `probe record`."""
     manifest = _parse(package)
     check_expressions(manifest)
     return manifest
@@ -105,23 +109,29 @@ def run_options(variants: tuple[str, ...], source: Mapping[str, str]) -> RunOpti
     return RunOptions(*_environment(variants), source=source)
 
 
-def _environment(variants: tuple[str, ...]) -> tuple[bool, str, int]:
-    """`PROBE_DRY_RUN`, `PROBE_FIXTURE` and `PROBE_TIMEOUT_SECONDS`, checked; exit 2 if not."""
+def dry_run_from_environment() -> bool:
+    """Whether `PROBE_DRY_RUN` asks for a dry run; `PreflightError` (exit 2) if malformed."""
     dry_run = os.environ.get("PROBE_DRY_RUN", "")
     if dry_run not in ("", "0", "1"):
         raise PreflightError(2, f"PROBE_DRY_RUN must be 0 or 1 (got: {dry_run})")
+    return dry_run == "1"
+
+
+def _environment(variants: tuple[str, ...]) -> tuple[bool, str, int]:
+    """`PROBE_DRY_RUN`, `PROBE_FIXTURE` and `PROBE_TIMEOUT_SECONDS`, checked; exit 2 if not."""
+    dry_run = dry_run_from_environment()
 
     variant = os.environ.get("PROBE_FIXTURE") or ASSERTION_VARIANT
     if variant not in variants:
         raise PreflightError(
             2, f"PROBE_FIXTURE must be one of: {', '.join(variants)} (got: {variant})"
         )
-    if variant != ASSERTION_VARIANT and dry_run != "1":
+    if variant != ASSERTION_VARIANT and not dry_run:
         # A fixture built to disagree would commit a false `refuted` if it recorded.
         raise PreflightError(
             2,
             f"the {variant} fixture is dry-run only; set PROBE_DRY_RUN=1",
-            "recording its run would commit a refuted record for a fixture built to disagree.",
+            DISAGREEING_FIXTURE,
         )
 
     # Empty is unset, as the shell's `${PROBE_TIMEOUT_SECONDS:-…}` read it.
@@ -134,7 +144,7 @@ def _environment(variants: tuple[str, ...]) -> tuple[bool, str, int]:
             )
         timeout = int(timeout_text)
 
-    return dry_run == "1", variant, timeout
+    return dry_run, variant, timeout
 
 
 def _parse(package: Path) -> Manifest:

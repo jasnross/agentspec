@@ -8,18 +8,11 @@ The harness reads and writes JSON itself, in `json_values.py`.
 No other module calls jq; `test_repo_jq_boundary.py` enforces that.
 """
 
-import shutil
 import subprocess
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from pathlib import Path
 
 JQ = "jq"
-
-
-class ToolsMissing(Exception):
-    def __init__(self, tools: Sequence[str]) -> None:
-        super().__init__(" ".join(tools))
-        self.tools = tuple(tools)
 
 
 class JqError(Exception):
@@ -30,11 +23,6 @@ class JqError(Exception):
         self.returncode = returncode
         self.stderr = stderr
         self.stdout = stdout
-
-
-def require_jq() -> None:
-    if shutil.which(JQ) is None:
-        raise ToolsMissing([JQ])
 
 
 def evaluate(

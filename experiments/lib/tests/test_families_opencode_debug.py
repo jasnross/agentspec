@@ -299,7 +299,7 @@ def test_the_discriminator_dry_run_arranges_the_discriminator_fixture(
     assert differs
 
 
-def test_replay_judges_a_kept_debug_workspace(
+def test_record_dry_run_judges_a_kept_debug_workspace(
     cli: Cli,
     tree: Path,
     experiments_dir: Path,
@@ -320,14 +320,14 @@ def test_replay_judges_a_kept_debug_workspace(
 
     good = tmp_path / "good"
     shutil.copytree(ws, good)
-    replayed = cli("replay", "opencode-command-variant", good)
+    replayed = cli("record", "opencode-command-variant", good, "--dry-run")
     assert replayed.returncode == 0
     assert json.loads(replayed.stdout)["status"] == "confirmed"
 
     bad = tmp_path / "bad"
     shutil.copytree(ws, bad)
     (bad / "view.json").write_text(json.dumps({"command": {"other": {}}}), encoding="utf-8")
-    refused = cli("replay", "opencode-command-variant", bad)
+    refused = cli("record", "opencode-command-variant", bad, "--dry-run")
     assert refused.returncode == 1
-    assert "probe replay: the fixture command did not resolve." in refused.stderr
+    assert "probe record: the fixture command did not resolve." in refused.stderr
     assert not (package / "results").exists()

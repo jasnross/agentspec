@@ -1,7 +1,7 @@
 """What every family shares: definition building blocks and the five-step pipeline.
 
 Each run is Preflight → Arrange → Act → Judge → Record. Judge reads only the workspace, so
-`probe replay` can run it on a workspace some earlier run collected. The harness never
+`probe record` can run it on a workspace some earlier run collected. The harness never
 deletes a workspace: its owner does, once the record it produced has shipped.
 """
 
@@ -15,6 +15,7 @@ from probe_harness import console, jq_cli, record
 from probe_harness.contract import CommandSource, Manifest
 from probe_harness.gates import GateFailure
 from probe_harness.preflight import RunOptions
+from probe_harness.record import JudgeResult
 
 __all__ = [
     "CustomCheck",
@@ -23,6 +24,7 @@ __all__ = [
     "JudgeResult",
     "ProbeFunctions",
     "RunOptions",
+    "UsageError",
     "file_lines",
     "kept_for_inspection",
     "kept_on_failure",
@@ -33,6 +35,13 @@ __all__ = [
     "run_custom_checks",
     "workspace_kept",
 ]
+
+
+class UsageError(Exception):
+    """A usage error found while judging, such as an option set judged with no selection.
+
+    `str(e)` is the message; the caller prints it and exits 2.
+    """
 
 
 @dataclass(frozen=True)
@@ -55,14 +64,6 @@ class ProbeFunctions:
     preflight: Callable[[], None] | None = None
     # Receives the workspace path only; raise `GateFailure` to refuse.
     judge: Callable[[Path], None] | None = None
-
-
-@dataclass(frozen=True)
-class JudgeResult:
-    """What Judge hands to Record: exactly one of a view or a selected option id."""
-
-    view: Path | None
-    selection: str | None
 
 
 @dataclass(frozen=True)
@@ -135,8 +136,8 @@ def kept_for_inspection(ws: Path) -> None:
     console.say(f"the workspace has been kept for inspection: {ws}")
 
 
-def refused(failure: GateFailure, ws: Path) -> int:
-    """Print a gate's lines and the kept-workspace line; a gate failure never records."""
+def refused(failure: console.Refusal, ws: Path) -> int:
+    """Print a refusal's lines and the kept-workspace line; a refused judge never records."""
     console.say_refusal(failure)
     kept_for_inspection(ws)
     return 1
@@ -164,28 +165,13 @@ def kept_on_failure(ws: Path) -> Iterator[None]:
         raise
 
 
-def record_result(
-    manifest: Manifest,
-    ws: Path,
-    result: JudgeResult,
-    options: RunOptions,
-    *,
-    capture: Path | None = None,
-) -> int:
+def record_result(manifest: Manifest, ws: Path, result: JudgeResult, options: RunOptions) -> int:
     """Record the judged result; a dry run prints it instead. The workspace is kept."""
     try:
-        computed = record.compute(
-            manifest,
-            view=result.view,
-            selection=result.selection,
-            capture=capture,
-            workspace=ws,
-        )
+        computed = record.compute(manifest, ws, result, dry_run=options.dry_run)
         written = None if options.dry_run else record.write(computed)
     except record.RecordRefused as e:
-        console.say_refusal(e)
-        kept_for_inspection(ws)
-        return 1
+        return refused(e, ws)
     record.report(computed, written)
     workspace_kept(ws)
     return 0

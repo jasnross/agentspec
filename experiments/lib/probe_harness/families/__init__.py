@@ -5,6 +5,7 @@ existing family writes only what is specific to it; a probe fitting no family wr
 `CustomProbe`.
 """
 
+import sys
 from pathlib import Path
 from typing import assert_never
 
@@ -21,6 +22,8 @@ from probe_harness.families.base import (
     GateFailure,
     JudgeResult,
     RunOptions,
+    UsageError,
+    kept_for_inspection,
     kept_on_failure,
     record_result,
     record_tool_version,
@@ -31,10 +34,16 @@ from probe_harness.families.manual import ManualProbe
 from probe_harness.families.opencode_debug import OpenCodeDebugProbe
 from probe_harness.families.opencode_fake import OpenCodeFakeProbe
 from probe_harness.loader import DefinitionError, load_definition
-from probe_harness.preflight import ASSERTION_VARIANT, PreflightError, check_manifest
+from probe_harness.preflight import (
+    ASSERTION_VARIANT,
+    DISAGREEING_FIXTURE,
+    PreflightError,
+    check_manifest,
+    dry_run_from_environment,
+)
 from probe_harness.preflight import run as run_preflight
 from probe_harness.source import write_source
-from probe_harness.workspace import create_workspace
+from probe_harness.workspace import create_workspace, read_workspace_run, require_tools
 
 type ProbeDefinition = (
     ManualProbe | OpenCodeDebugProbe | OpenCodeFakeProbe | ClaudeOtelProbe | CustomProbe
@@ -70,38 +79,54 @@ def run_package(name: str, experiments_dir: Path) -> int:
         console.say_refusal(e)
         return 1
 
-    match definition:
-        case ManualProbe():
-            wait_for = manifest.wait_for
-            if wait_for is None:
-                # A missing filter would poll a literal that never matches, burning the
-                # whole timeout of a live session for no reason.
-                console.say("manifest declares no wait_for filter")
-                return 1
-            return manual.run(manifest, name, wait_for, options, definition)
-        case OpenCodeDebugProbe():
-            return opencode_debug.run(manifest, name, options, definition)
-        case OpenCodeFakeProbe():
-            return opencode_fake.run(manifest, name, options, definition)
-        case ClaudeOtelProbe():
-            return claude_otel.run(manifest, name, options, definition)
-        case CustomProbe():
-            return _run_custom(manifest, name, options, definition)
-        case _:
-            assert_never(definition)
+    try:
+        match definition:
+            case ManualProbe():
+                wait_for = manifest.wait_for
+                if wait_for is None:
+                    # A missing filter would poll a literal that never matches, burning the
+                    # whole timeout of a live session for no reason.
+                    console.say("manifest declares no wait_for filter")
+                    return 1
+                return manual.run(manifest, name, wait_for, options, definition)
+            case OpenCodeDebugProbe():
+                return opencode_debug.run(manifest, name, options, definition)
+            case OpenCodeFakeProbe():
+                return opencode_fake.run(manifest, name, options, definition)
+            case ClaudeOtelProbe():
+                return claude_otel.run(manifest, name, options, definition)
+            case CustomProbe():
+                return _run_custom(manifest, name, options, definition)
+            case _:
+                assert_never(definition)
+    except UsageError as e:
+        # Defensive: a live run judges interactively, so no family raises this today.
+        console.say(str(e))
+        return 2
 
 
-def replay_package(name: str, ws: Path, selection: str | None, experiments_dir: Path) -> int:
-    """`probe replay <package> <workspace> [--selection <id>]`: judge a kept workspace again.
+def record_package(
+    name: str, ws: Path, selection: str | None, *, dry_run: bool, experiments_dir: Path
+) -> int:
+    """`probe record <package> <workspace> [--selection <id>] [--dry-run]`.
 
-    Always a dry run; it never records. It writes `view.json` into the workspace it judges,
-    as the judging step of a live run does, so replay a copy.
+    Judges a kept workspace through the family's own judge, the one `probe run` uses, so no
+    record is written over a workspace its gates refuse; then records it, or under
+    `--dry-run` prints what it would record. The definition's preflight function is not
+    run: it checks arranging conditions, not the capture. The judge may write `view.json`
+    into the workspace, as a live run's does.
     """
     package = experiments_dir / name
-
     try:
+        # `PROBE_DRY_RUN=1` means "write nothing" here as it does for `probe run`.
+        dry_run = dry_run or dry_run_from_environment()
         definition: ProbeDefinition = load_definition(package, DEFINITION_TYPES)
+        # `check_manifest` runs jq without checking that it exists.
+        require_tools("jq")
         manifest = check_manifest(package)
+        refusal = _definition_refusal(name, definition, manifest)
+        if refusal is not None:
+            raise PreflightError(1, refusal)
     except DefinitionError as e:
         console.say(str(e))
         return 1
@@ -109,19 +134,38 @@ def replay_package(name: str, ws: Path, selection: str | None, experiments_dir: 
         console.say_refusal(e)
         return e.code
 
+    if not ws.is_dir():
+        console.say(f"not a workspace directory: {ws}")
+        return 1
     if selection is not None and not isinstance(manifest.assertion, OptionsAssertion):
         console.say(f"{name} declares a projection; --selection does not apply")
         return 2
+    run = read_workspace_run(ws)
+    if run is not None and run.package != name:
+        console.say(f"{ws} is a workspace of {run.package}, not {name}")
+        return 1
+    if not dry_run:
+        if run is None:
+            console.say(
+                f"{ws} records no package or variant (run.json); it can only be judged "
+                "with --dry-run"
+            )
+            return 1
+        if run.variant != ASSERTION_VARIANT:
+            console.say(
+                f"{ws} ran the {run.variant} fixture, which is dry-run only; pass --dry-run",
+                DISAGREEING_FIXTURE,
+            )
+            return 1
 
     try:
         match definition:
             case ManualProbe():
-                if isinstance(manifest.assertion, OptionsAssertion) and selection is None:
-                    console.say(f"{name} declares options; pass --selection <id>")
-                    return 2
-                if definition.functions.judge is not None:
-                    definition.functions.judge(ws)
-                return manual.record_capture(manifest, ws, dry_run=True, selection=selection)
+                # A dry run is the re-judging loop an author repeats while editing a
+                # projection, so it takes the selection as an argument instead of asking
+                # every time.
+                interactive = not dry_run and sys.stdin.isatty()
+                result = manual.judge(manifest, ws, definition, selection, interactive=interactive)
             case OpenCodeDebugProbe():
                 result = opencode_debug.judge(ws, definition)
             case OpenCodeFakeProbe():
@@ -129,24 +173,20 @@ def replay_package(name: str, ws: Path, selection: str | None, experiments_dir: 
             case ClaudeOtelProbe():
                 result = claude_otel.judge(ws, definition)
             case CustomProbe():
-                result = definition.judge(ws)
-                if definition.functions.judge is not None:
-                    definition.functions.judge(ws)
+                result = _judge_custom(ws, definition)
             case _:
                 assert_never(definition)
-        computed = record.compute(
-            manifest, view=result.view, selection=result.selection, workspace=ws
-        )
-        record.report(computed, None)
-    except record.RecordRefused as e:
-        console.say_refusal(e)
-        return 1
-    except GateFailure as e:
-        console.say_refusal(e)
-        return 1
+        computed = record.compute(manifest, ws, result, dry_run=dry_run)
+        record.report(computed, None if dry_run else record.write(computed))
+    except UsageError as e:
+        console.say(str(e))
+        return 2
+    except (GateFailure, record.RecordRefused) as e:
+        return refused(e, ws)
     except jq_cli.JqError as e:
         # An unexpected jq failure while judging: its own diagnostic, not a traceback.
         console.verbatim(e.stderr.splitlines())
+        kept_for_inspection(ws)
         return 1
     return 0
 
@@ -159,12 +199,18 @@ def _run_custom(manifest: Manifest, name: str, options: RunOptions, probe: Custo
             probe.arrange(ws, options.variant)
             record_tool_version(manifest, ws)
             probe.act(ws)
-            result: JudgeResult = probe.judge(ws)
-            if probe.functions.judge is not None:
-                probe.functions.judge(ws)
+            result = _judge_custom(ws, probe)
         except GateFailure as e:
             return refused(e, ws)
         return record_result(manifest, ws, result, options)
+
+
+def _judge_custom(ws: Path, probe: CustomProbe) -> JudgeResult:
+    """A custom probe's judge: its own, then the definition's judge function when set."""
+    result = probe.judge(ws)
+    if probe.functions.judge is not None:
+        probe.functions.judge(ws)
+    return result
 
 
 def _definition_refusal(name: str, definition: ProbeDefinition, manifest: Manifest) -> str | None:
@@ -276,6 +322,6 @@ def _family_tools(definition: ProbeDefinition) -> tuple[str, ...]:
 __all__ = [
     "DEFINITION_TYPES",
     "ProbeDefinition",
-    "replay_package",
+    "record_package",
     "run_package",
 ]

@@ -28,7 +28,7 @@ Probes verify the _provider's_ contract, so they use hand-authored provider conf
 2. **Create the package.** `experiments/<probe-name>/`, where the directory name is the probe's identity. No file restates it — `probe status` reads records by path and already knows it.
 3. **Write the fixtures and the definition.** Fixtures go under `fixtures/`. For a human-driven probe, that includes a capture hook that appends each payload as one JSON line to `capture/payloads.jsonl` — the payload as the provider sent it, with nothing added. Use `{{PLACEHOLDER}}` for anything absolute; the harness fills them in at _Arrange_ (`template_file` in `lib/probe_harness/workspace.py`) so no operator ever hand-edits a path. The definition is `probe.py`, which sets a module-level `PROBE` to one family's definition type: `ManualProbe`, `OpenCodeDebugProbe`, `OpenCodeFakeProbe`, or `ClaudeOtelProbe`. That family's runner does the setup, the provider invocation, and the run-soundness gates, so the definition states only the arms, prompts, and checks specific to this probe. A probe new to every family writes a `CustomProbe`, supplying its own arrange, act, and judge steps.
 4. **Author the assertion** — a jq projection with an expected value, or an option set with an expected id.
-5. **Validate that it discriminates** (see below). This is a required step, not a nicety. Do it with `experiments/probe record --dry-run` against the manifest itself, so the expression being validated is the one the manifest actually carries rather than a copy retyped at the shell. Once a view exists on disk, `experiments/probe record --manifest <probe.json> --view <saved-view> --dry-run` re-evaluates any candidate projection for free.
+5. **Validate that it discriminates** (see below). This is a required step, not a nicety. Run two dry runs, each of which keeps its workspace: `PROBE_DRY_RUN=1 experiments/probe run <probe-name>` for the assertion fixture, and `PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run <probe-name>` for the discriminator. Then iterate the projection by editing it in the manifest and re-judging each kept workspace with `experiments/probe record <probe-name> <workspace> --dry-run`, which runs every gate and the edited projection for free. Paste the two results into the package README, as the discriminates-once rule requires.
 6. **Run it** with `experiments/probe run <probe-name>`. The family runner writes the record.
 7. **Commit the fixtures, the manifest, the definition, the README, and the record.**
 
@@ -89,7 +89,7 @@ For Cursor that gap is permanent: all traffic including BYOK terminates in Curso
 ```
 experiments/
   README.md                   # this file — the probe contract
-  probe                       # the harness CLI: run, record, status, replay
+  probe                       # the harness CLI: run, record, status
   pyproject.toml  uv.lock     # the harness's locked environment: its runtime library (pydantic) and dev tools
   lib/
     probe_harness/            # the harness package: recorder, run loop, status, family runners, gates
@@ -135,7 +135,7 @@ The only hand-authored file in the contract.
 | --- | --- |
 | `schema_version` | `1`. |
 | `provider` | `claude`, `cursor`, or `opencode`. |
-| `driver` | `unattended`, `billed`, or `manual` — what running the probe requires. Read by `probe run` to decide what it can execute, and by the recorder for the `--capture` requirement and the options correspondence below. Never on a record. |
+| `driver` | `unattended`, `billed`, or `manual` — what running the probe requires. Read by `probe run` to decide what it can execute, by the recorder, which refuses a `manual` probe's workspace whose capture is empty, and for the options correspondence below. Never on a record. |
 | `depth` | Required: `resolved-config`, `outbound-request`, or `null`. |
 | `question` | Required. What this probe answers, in one sentence. |
 | `version_source` | Where the tool version comes from. See below. |
@@ -146,7 +146,7 @@ The only hand-authored file in the contract.
 
 **`question` appears only at the top level.** A human-judged probe shows this same string to the operator rather than carrying a second copy inside `assertion`, and no assertion restates it.
 
-**`parse_manifest` in `lib/probe_harness/contract.py` checks the type and value of every field described here.** `probe run`, `probe record` and `probe replay` all parse through it, so they refuse a malformed manifest the same way, before any workspace exists, rather than at the step that would first read the bad value. A key not described here is refused too, and the refusal lists every invalid field by its path.
+**`parse_manifest` in `lib/probe_harness/contract.py` checks the type and value of every field described here.** `probe run` and `probe record` both parse through it, so they refuse a malformed manifest the same way, before any workspace exists, rather than at the step that would first read the bad value. A key not described here is refused too, and the refusal lists every invalid field by its path.
 
 **There is no timeout field.** The poll timeout is a runner constant with a `PROBE_TIMEOUT_SECONDS` override, because it is a property of the operator's session rather than of the probe.
 
@@ -190,13 +190,13 @@ A projection over a capture must reduce the array to the shape `expected` is wri
 
 **An options assertion requires `driver: "manual"`, and the recorder refuses a manifest that declares one without it.** An option set is a person choosing from a list, so running the probe requires a person present — which is exactly what `manual` declares and what neither other value can supply. An `unattended` or `billed` manifest declaring one describes a runner that would have to prompt an operator no scheduler put there. The implication runs one way only — a `manual` probe may still be machine-answered, which is what `claude-session-start` is, and its projection over a capture is perfectly legitimate.
 
-This is what makes the runner's read safe: the manual family's `record_capture` decides whether to prompt from the assertion's shape rather than from `driver`, because the shape is the fact and the driver was a second copy of it. `lib/probe_harness/contract.py` holds the gate, and the recorder, every runner's preflight, and the test suite all read the manifest through it, so they cannot drift apart on it.
+This is what makes the runner's read safe: the manual family's judge (`manual.judge`) decides whether to prompt from the assertion's shape rather than from `driver`, because the shape is the fact and the driver was a second copy of it. `lib/probe_harness/contract.py` holds the gate, and the recorder, every runner's preflight, and the test suite all read the manifest through it, so they cannot drift apart on it.
 
 **An option may declare `status`, and `inconclusive` is the only legitimate value.** A declared status replaces the comparison against `expected` — that is how the couldn't-tell option yields `inconclusive` rather than `refuted`. Any other value would let a manifest fix the verdict in advance, which is the caller-supplied status the record contract exists to prevent; it would simply arrive through the manifest instead of the command line. Both the recorder and the test suite reject it, so a committed manifest cannot carry one.
 
 ## The record (`results/<date>T<HHMMSS>-<provider>-<version>.json`)
 
-**Every record is produced by a runner.** Nothing is hand-written, so there is one record shape and no exception to the never-hand-edit rule. Records are append-only: superseding a result means adding a newer file, never editing an existing one. `experiments/*/results/` is prettier-ignored so a probe run is the last thing that touches its own record.
+**Every record is produced by a run or by `probe record`, from a judged workspace.** Nothing is hand-written, so there is one record shape and no exception to the never-hand-edit rule. Records are append-only: superseding a result means adding a newer file, never editing an existing one. `experiments/*/results/` is prettier-ignored so a probe run is the last thing that touches its own record.
 
 Seven keys, every one consumed by `probe status`:
 
@@ -216,27 +216,29 @@ Fields that would merely restate a derivable fact — the probe's name, its driv
 
 The filename carries a UTC time component because date plus version does not disambiguate a same-day re-run at the same provider version — and re-running to confirm a `refuted` result is the first thing anyone would do. The full name also sorts lexicographically in run order, which is how `probe status` finds the newest.
 
+### `probe record`
+
+```sh
+experiments/probe record <probe-name> <workspace> [--selection <id>] [--dry-run]
+```
+
+`probe record` judges a kept workspace and records it. It loads the definition, checks the manifest (its fields, and that its jq compiles) and the definition's consistency with it as a run does, runs the family's own judge — the same one `probe run` uses: every gate, the custom checks, `wait_for` for a manual probe, view assembly — over the workspace as it stands, and records the result. A workspace its gates refuse is never recorded. It reads only the workspace, never the provider: the version a `command` source names comes from the workspace's `tool_version`, so a real record over a workspace without one is refused. The checks a run makes only to arrange — the definition's own preflight function, the run's required tools beyond jq, the other `PROBE_*` variables, the source map — are not made, since judging needs none of them. `PROBE_DRY_RUN=1` makes it a dry run, as `--dry-run` does. It refuses a workspace whose `run.json` names another package, and writes a record only over one whose `run.json` names the `assertion` variant: a discriminator's run is dry-run only, as it is under `probe run`, and a workspace with no `run.json` can only be judged dry. The judge may write `view.json` into the workspace, as a live run's does.
+
+A manual probe with an option set asks for a selection when stdin is a terminal; otherwise, and always under `--dry-run`, it needs `--selection <id>` naming the option, and exits 2 without one. `--selection` with a projection manifest is a usage error.
+
 ### `probe record --dry-run`
 
-`--dry-run` evaluates a manifest end to end — every gate, the projection, the structural comparison, version resolution, record assembly — and prints what a record would contain instead of writing one. No `results/` directory is created and no record is written. Version resolution still runs, so a manifest declaring `version_source.kind: "command"` still executes that command; what dry-run guarantees is that the recorder itself writes nothing, not that the run is side-effect-free.
+`--dry-run` judges the workspace end to end — every gate, the projection, the structural comparison, version resolution, record assembly — and prints what a record would contain instead of writing one. No `results/` directory is created and no record is written. A workspace with no recorded tool version reports `null` with a warning rather than refusing.
 
-**A runner takes no arguments, so `--dry-run` is not one of them.** Every runner reads `PROBE_DRY_RUN=1` from the environment and passes the flag on to the recorder itself — the same shape as `PROBE_FIXTURE`. Every run keeps its workspace. To re-evaluate a view a run already produced, invoke `experiments/probe record` directly against it, or re-judge the whole workspace with `probe replay` (below).
+**Re-judging a kept workspace is `probe record --dry-run`.** It is free to run against a workspace from a billed or manual run, and it is how a gate or projection change is checked against real captures without paying for new ones. The workspace must have the layout its family's runner creates.
+
+**A runner takes no arguments, so `--dry-run` is not one of them.** Every runner reads `PROBE_DRY_RUN=1` from the environment and passes the flag on to the recorder itself — the same shape as `PROBE_FIXTURE`. Every run keeps its workspace.
 
 It exits **0 whatever status the comparison computes**, including `refuted`. Validating that an assertion discriminates means running it against an input it is supposed to refute, so a nonzero exit would fail the primary use case every time; it would also make dry-run disagree with real-run semantics, where `refuted` is a finding rather than a failure.
 
-Every gate still fires. A manifest failing a manifest check, a `--capture` whose payloads are absent or empty, a projection yielding several values — all still refuse, because those are the wiring being verified.
+Every gate still fires. A manifest failing a manifest check, a capture whose payloads are absent or empty, a projection yielding several values — all still refuse, because those are the wiring being verified.
 
-**Its stdout is not a record.** It is what a record would contain, and it must never be redirected into `results/`: every record in this repository is produced by a runner, and that invariant is what makes hand-editing one a defect rather than a workflow. `--dry-run` exists to reduce the pressure to violate that rule, not to work around it.
-
-### Replay
-
-```sh
-experiments/probe replay <probe-name> <workspace> [--selection <id>]
-```
-
-`probe replay` re-judges a kept workspace: it loads the definition, checks the manifest, runs the family's judging step — every gate, the custom checks, view assembly — over the workspace as it stands, and hands the view to the recorder as a dry run. It never records, whatever the outcome, so it is free to run against a workspace from a billed or manual run, and it is how a gate change is checked against real captures without paying for new ones.
-
-Judging reads only the workspace, never the provider, so the workspace must have the layout its family's runner creates. Replay may write `view.json` into the workspace it judges, as a live run's judging step does; replay a copy when the original matters. A manual probe with an option set cannot ask an operator again, so it needs `--selection <id>` naming the option to record, and exits 2 without one.
+**Its stdout is not a record.** It is what a record would contain, and it must never be redirected into `results/`: every record in this repository is produced by a run or by `probe record`, and that invariant is what makes hand-editing one a defect rather than a workflow. `--dry-run` exists to reduce the pressure to violate that rule, not to work around it.
 
 ## Running probes and reading the report
 
@@ -256,7 +258,7 @@ experiments/probe run <probe-name>   # run one package, whatever its driver
 
 The harness and its dev tools need Python 3.14 or newer, and `mise` supplies it along with uv and the pinned jq. `probe-run`, `probe-status`, and the probe summary call `experiments/probe`; `probe-test` and `probe-lint` run through `uv`.
 
-**Messages and exit codes.** Every diagnostic line the harness writes starts with the subcommand that printed it — `probe run: …`, `probe record: …`, `probe status: …`, `probe replay: …` — whichever family, gate, or recorder step it came from. A provider's own output, such as the stderr of an arm that exited nonzero, and jq's diagnostics are printed unprefixed after the line that introduces them. So is the text a manual run addresses to its operator: the workspace it prepared, the procedure, the selection prompt, and the block that ends a run whose capture never arrived. Exit 0 is success, 1 a refusal (a missing tool included), and 2 a usage error or an invalid `PROBE_*` variable.
+**Messages and exit codes.** Every diagnostic line the harness writes starts with the subcommand that printed it — `probe run: …`, `probe record: …`, `probe status: …` — whichever family, gate, or recorder step it came from. A provider's own output, such as the stderr of an arm that exited nonzero, and jq's diagnostics are printed unprefixed after the line that introduces them. So is the text a manual run addresses to its operator: the workspace it prepared, the procedure, and the selection prompt. The timeout that ends a run whose capture never arrived is a prefixed refusal like any other. Exit 0 is success, 1 a refusal (a missing tool included), and 2 a usage error or an invalid `PROBE_*` variable.
 
 `just check` ends with a one-line probe summary. That line can never fail the build.
 
@@ -307,9 +309,9 @@ The cost is that an interrupt or a timeout ends the run. The workspace is kept e
 
 **Every family keeps every workspace,** at `$XDG_STATE_HOME/agentspec/probe-workspaces/<package>/<YYYY-MM-DDTHHMMSS>-<variant>/` (`~/.local/state/…` when `XDG_STATE_HOME` is unset). The harness never deletes one; its owner deletes it once the branch carrying its record ships. The root must lie outside every git work tree, with no provider instruction file (`CLAUDE.md`, `AGENTS.md`, `.claude/`, `.cursor/`) in any directory above it below `$HOME`, since a provider opened on a workspace would read those.
 
-A workspace records what produced its capture. `source.json` holds the git blob id of every file that affects evaluation — the package's `probe.json`, `probe.py` and `fixtures/`, and the harness itself — as it was on disk when the run started. `tool_version` holds a `command` version source's output, read once just before Act; every later judge of the workspace reads the version from there rather than running the command, so a provider updated after the run cannot change the version its record carries.
+A workspace records what produced its capture. `run.json` names the package and fixture variant it was arranged for. `source.json` holds the git blob id of every file that affects evaluation — the package's `probe.json`, `probe.py` and `fixtures/`, and the harness itself — as it was on disk when the run started. `tool_version` holds a `command` version source's output, read once just before Act; every later judge of the workspace reads the version from there rather than running the command, so a provider updated after the run cannot change the version its record carries.
 
-The recorder's `--capture` flag remains, because it is how the capture directory reaches version resolution for a manifest declaring `version_source.kind: "capture"` — which every Cursor manifest does. A runner itself takes no arguments.
+`probe record <package> <workspace>` records a kept manual capture after a fix, and refuses one whose `wait_for` does not hold. A runner itself takes no arguments.
 
 **A toolchain failure cannot cost a capture.** The Python version, the locked environment, the harness's imports, the manifest's gates, the required tools — the family's, git, and a `command` version source's — whether its jq expressions compile, and the `PROBE_*` environment variables are all checked before the workspace exists, so a failure among them surfaces before the operator is asked to open a provider. A manual workspace is kept whatever happens after that.
 

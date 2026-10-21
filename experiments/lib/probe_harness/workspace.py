@@ -10,8 +10,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TextIO
 
-from probe_harness import console, jq_cli
-from probe_harness.contract import Option
+from probe_harness import console, jq_cli, json_values
+from probe_harness.contract import HarnessModel, NonEmpty, Option
 
 # How long a human-driven probe waits for its capture, in seconds. It is generous because
 # its job is diagnostic: an expiry means the hook never fired, which is worth an hour of an
@@ -43,10 +43,33 @@ def workspace_root(environ: Mapping[str, str] = os.environ) -> Path:
     return base / "agentspec" / "probe-workspaces"
 
 
+class WorkspaceRun(HarnessModel):
+    """`<ws>/run.json`: the package and fixture variant a workspace was arranged for.
+
+    `probe record` reads it to refuse recording one package's workspace as another's, or a
+    variant other than `assertion`, which `probe run` never records either.
+    """
+
+    package: NonEmpty
+    variant: NonEmpty
+
+
+def read_workspace_run(ws: Path) -> WorkspaceRun | None:
+    """`<ws>/run.json`, or `None` when the workspace has none or it is invalid."""
+    try:
+        return WorkspaceRun.model_validate(
+            json_values.loads((ws / "run.json").read_text(encoding="utf-8"))
+        )
+    except ValueError, OSError:
+        # `ValidationError` is a `ValueError`.
+        return None
+
+
 def create_workspace(name: str, variant: str) -> Path:
     """A new workspace for one run of <name>'s <variant>, carrying a `capture/` directory.
 
-    Named for the run's UTC start time and variant. The harness never deletes it.
+    Named for the run's UTC start time and variant, and recording both in `run.json`. The
+    harness never deletes it.
     """
     package_dir = workspace_root() / name
     package_dir.mkdir(parents=True, exist_ok=True)
@@ -61,6 +84,8 @@ def create_workspace(name: str, variant: str) -> Path:
             suffix += 1
             ws = package_dir / f"{stem}-{suffix}"
     (ws / "capture").mkdir()
+    run = WorkspaceRun(package=name, variant=variant)
+    (ws / "run.json").write_text(json_values.dumps(run.model_dump(mode="json")) + "\n")
     return ws
 
 

@@ -180,7 +180,7 @@ def test_jq_cli_exposes_only_the_expression_runners() -> None:
         for node in tree.body
         if isinstance(node, ast.FunctionDef) and not node.name.startswith("_")
     }
-    assert public == {"require_jq", "evaluate", "test", "compile_error"}
+    assert public == {"evaluate", "test", "compile_error"}
 
 
 def test_no_definition_imports_jq_cli() -> None:

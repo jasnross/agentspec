@@ -2,9 +2,9 @@
 
     probe run [--billed] [--manual] [--all] [--stale]   run every authorized probe
     probe run <package>                                 run one probe
-    probe record --manifest <probe.json> …              the record writer
+    probe record <package> <workspace> [--selection <id>] [--dry-run]
+                                                        judge a kept workspace and record it
     probe status [--summary]                            report on committed records
-    probe replay <package> <workspace> [--selection <id>]
 
 Every harness module is imported here, at the top, so an import error surfaces before any
 work starts, and never after a manual operator has spent a live session.
@@ -18,7 +18,7 @@ import os
 import signal
 from pathlib import Path
 
-from probe_harness import console, families, record, run_all, status
+from probe_harness import console, families, run_all, status
 
 # `experiments/` is the directory above `lib/`, which holds this package.
 _DEFAULT_EXPERIMENTS_DIR = Path(__file__).resolve().parents[2]
@@ -54,21 +54,16 @@ def main(argv: list[str]) -> int:
             return families.run_package(args.package, experiments_dir())
         case "record":
             _no_extra(subparsers["record"], extra)
-            return record.run(
-                args.manifest,
-                view=Path(args.view) if args.view is not None else None,
-                selection=args.selection,
-                capture=Path(args.capture) if args.capture is not None else None,
+            return families.record_package(
+                args.package,
+                Path(args.workspace),
+                args.selection,
                 dry_run=args.dry_run,
+                experiments_dir=experiments_dir(),
             )
         case "status":
             _no_extra(subparsers["status"], extra)
             return status.main(summary=args.summary, experiments_dir=experiments_dir())
-        case "replay":
-            _no_extra(subparsers["replay"], extra)
-            return families.replay_package(
-                args.package, Path(args.workspace), args.selection, experiments_dir()
-            )
         case _:
             raise AssertionError(args.command)
 
@@ -95,26 +90,18 @@ def _parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParse
     run.add_argument("--stale", action="store_true")
 
     record_parser = commands.add_parser("record", prog="probe record", allow_abbrev=False)
-    record_parser.add_argument("--manifest", required=True)
-    source = record_parser.add_mutually_exclusive_group(required=True)
-    source.add_argument("--view")
-    source.add_argument("--selection")
-    record_parser.add_argument("--capture")
+    record_parser.add_argument("package")
+    record_parser.add_argument("workspace")
+    record_parser.add_argument("--selection")
     record_parser.add_argument("--dry-run", action="store_true")
 
     status_parser = commands.add_parser("status", prog="probe status", allow_abbrev=False)
     status_parser.add_argument("--summary", action="store_true")
 
-    replay = commands.add_parser("replay", prog="probe replay", allow_abbrev=False)
-    replay.add_argument("package")
-    replay.add_argument("workspace")
-    replay.add_argument("--selection")
-
     return parser, {
         "run": run,
         "record": record_parser,
         "status": status_parser,
-        "replay": replay,
     }
 
 

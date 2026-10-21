@@ -77,7 +77,7 @@ The schema check was shown to separate the two modes against real 2.1.287 captur
 
 ## Discriminate evidence
 
-Before the first billed run, the recorder's `--dry-run` (`--manifest experiments/claude-fork-subagent-mcp-tools/probe.json --view <view>`) against two fabricated views printed `confirmed` for one matching `expected` and `refuted` for one where `fork_restricted` was offered both `fx` tools:
+Before the first billed run, the recorder's `--dry-run` (`--manifest experiments/claude-fork-subagent-mcp-tools/probe.json --view <view>`) (the form `probe record` took then) against two fabricated views printed `confirmed` for one matching `expected` and `refuted` for one where `fork_restricted` was offered both `fx` tools:
 
 ```
 record: dry run — confirmed — observed {"fork_restricted":[],"fork_inherit":["mcp__fx__alpha","mcp__fx__beta"]} (no file written)

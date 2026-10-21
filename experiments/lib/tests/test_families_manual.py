@@ -1,4 +1,4 @@
-"""The manual family: its runner, and `manual.record_capture` over a captured workspace.
+"""The manual family: its runner, and `manual.judge` over a captured workspace.
 
 Refusals that cost no session, a dry run that writes no record, and the Cursor package's
 capture handling driven with hand-written payloads. A committed package a test drives is
@@ -20,8 +20,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from probe_harness.contract import parse_manifest
+from probe_harness import console, record
+from probe_harness.contract import Manifest, parse_manifest
 from probe_harness.families import manual
+from probe_harness.families.base import GateFailure
+from probe_harness.families.manual import ManualProbe
 
 from tests.conftest import (
     CURSOR_PACKAGE_NAME,
@@ -33,6 +36,17 @@ from tests.conftest import (
 )
 
 
+def record_in_process(manifest: Manifest, ws: Path) -> int:
+    """Judge <ws> as a live run with a terminal does, then record it; 1 on a refusal."""
+    try:
+        result = manual.judge(manifest, ws, ManualProbe(instructions=""), None, interactive=True)
+        record.write(record.compute(manifest, ws, result, dry_run=False))
+    except (GateFailure, record.RecordRefused) as e:
+        console.say_refusal(e)
+        return 1
+    return 0
+
+
 def put_capture_package(tmp_path: Path, manifest: str) -> tuple[Path, Path]:
     """A package carrying <manifest> and a workspace holding one payload: `(pkg, ws)`."""
     pkg = tmp_path / "pkg"
@@ -42,7 +56,7 @@ def put_capture_package(tmp_path: Path, manifest: str) -> tuple[Path, Path]:
     return pkg, ws
 
 
-def test_probe_record_capture_prompts_when_the_assertion_declares_options(
+def test_the_manual_judge_prompts_when_the_assertion_declares_options(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # The branch reads the assertion's shape, not the driver — the recorder gates the
@@ -53,6 +67,7 @@ def test_probe_record_capture_prompts_when_the_assertion_declares_options(
         """{
   "schema_version": 1, "provider": "cursor", "driver": "manual", "depth": null,
   "question": "Which markers appeared?", "version_source": { "kind": "none" },
+  "wait_for": "length > 0",
   "assertion": {
     "options": [
       { "id": "neither", "text": "Neither marker was visible" },
@@ -66,14 +81,14 @@ def test_probe_record_capture_prompts_when_the_assertion_declares_options(
     monkeypatch.setattr("sys.stdin", io.StringIO(""))
 
     with pytest.raises(SystemExit) as exc:
-        manual.record_capture(parse_manifest(pkg / "probe.json"), ws, dry_run=False)
+        record_in_process(parse_manifest(pkg / "probe.json"), ws)
     assert exc.value.code == 2
     captured = capsys.readouterr()
     assert "stdin is not a terminal" in captured.out + captured.err
     assert "Which markers appeared?" in captured.out + captured.err
 
 
-def test_probe_record_capture_projects_when_the_assertion_declares_a_projection(
+def test_the_manual_judge_projects_when_the_assertion_declares_a_projection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The other half of the same branch. A `manual` manifest may still be machine-answered —
@@ -82,14 +97,14 @@ def test_probe_record_capture_projects_when_the_assertion_declares_a_projection(
         tmp_path,
         """{
   "schema_version": 1, "provider": "cursor", "driver": "manual", "depth": null,
-  "question": "q", "version_source": { "kind": "none" },
+  "question": "q", "version_source": { "kind": "none" }, "wait_for": "length > 0",
   "assertion": { "projection": "[.[] | .marker] | first", "expected": "seen" }
 }
 """,
     )
     monkeypatch.setattr("sys.stdin", io.StringIO(""))
 
-    assert manual.record_capture(parse_manifest(pkg / "probe.json"), ws, dry_run=False) == 0
+    assert record_in_process(parse_manifest(pkg / "probe.json"), ws) == 0
     records = list((pkg / "results").glob("*.json"))
     assert len(records) == 1
     assert json.loads(records[0].read_text(encoding="utf-8"))["status"] == "confirmed"
@@ -257,9 +272,7 @@ def test_a_capture_resolves_tool_version_from_its_own_cursor_version(
     ws = tmp_path / "ws"
     seed_workspace(ws)
 
-    assert (
-        manual.record_capture(parse_manifest(cursor_package / "probe.json"), ws, dry_run=False) == 0
-    )
+    assert record_in_process(parse_manifest(cursor_package / "probe.json"), ws) == 0
 
     record = read_record(newest_record(cursor_package))
     assert record["status"] == "confirmed"
@@ -277,9 +290,7 @@ def test_a_capture_showing_the_default_model_records_refuted_not_confirmed(
     ws = tmp_path / "ws-default"
     seed_workspace(ws, "claude-opus-5-thinking-high")
 
-    assert (
-        manual.record_capture(parse_manifest(cursor_package / "probe.json"), ws, dry_run=False) == 0
-    )
+    assert record_in_process(parse_manifest(cursor_package / "probe.json"), ws) == 0
     assert read_record(newest_record(cursor_package))["status"] == "refuted"
 
 
@@ -290,9 +301,7 @@ def test_a_workspace_with_no_payloads_is_refused_and_writes_no_record(
     ws = tmp_path / "ws-empty"
     (ws / "capture").mkdir(parents=True)
 
-    assert (
-        manual.record_capture(parse_manifest(cursor_package / "probe.json"), ws, dry_run=False) != 0
-    )
+    assert record_in_process(parse_manifest(cursor_package / "probe.json"), ws) != 0
     captured = capsys.readouterr()
     assert "no captured payloads" in captured.out + captured.err
     assert newest_record(cursor_package) is None
@@ -304,9 +313,7 @@ def test_a_directory_that_is_not_a_probe_workspace_is_refused(
     ws = tmp_path / "not-a-workspace"
     ws.mkdir()
 
-    assert (
-        manual.record_capture(parse_manifest(cursor_package / "probe.json"), ws, dry_run=False) != 0
-    )
+    assert record_in_process(parse_manifest(cursor_package / "probe.json"), ws) != 0
     captured = capsys.readouterr()
     assert "not a probe workspace" in captured.out + captured.err
 
@@ -431,9 +438,14 @@ def test_a_timeout_leaves_the_workspace_intact_and_says_the_run_is_over(
     ws = project.parent
     assert ws.is_dir()
     assert project.is_dir()
-    # The message names the workspace root, where capture/ lives, not the project.
-    assert f"kept for inspection: {ws}" in result.output
-    assert "re-run the probe" in result.output
+    # A prefixed refusal, naming the workspace root, where capture/ lives, not the project.
+    assert "probe run: timed out waiting for the capture after 1s\n" in result.stderr
+    assert "probe run: this run is over; re-run the probe to try again.\n" in result.stderr
+    assert (
+        "probe run: if the capture arrived after the deadline, record it with: "
+        f"experiments/probe record {CURSOR_PACKAGE_NAME} {ws}\n" in result.stderr
+    )
+    assert f"probe run: the workspace has been kept for inspection: {ws}\n" in result.stderr
     assert "--capture" not in result.output
 
 
@@ -464,14 +476,14 @@ def test_a_capture_whose_payloads_are_not_json_is_refused_without_a_record(
         tmp_path,
         """{
   "schema_version": 1, "provider": "cursor", "driver": "manual", "depth": null,
-  "question": "q", "version_source": { "kind": "none" },
+  "question": "q", "version_source": { "kind": "none" }, "wait_for": "length > 0",
   "assertion": { "projection": ".", "expected": 1 }
 }
 """,
     )
     (ws / "capture" / "payloads.jsonl").write_text("{not json\n", encoding="utf-8")
 
-    assert manual.record_capture(parse_manifest(pkg / "probe.json"), ws, dry_run=False) == 1
+    assert record_in_process(parse_manifest(pkg / "probe.json"), ws) == 1
     captured = capsys.readouterr()
     assert "the captured payloads at" in captured.err
     assert "are not valid JSON" in captured.err
