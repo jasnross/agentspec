@@ -102,7 +102,9 @@ def judge(ws: Path, probe: OpenCodeFakeProbe) -> JudgeResult:
             raise GateFailure(f"arm {arm}: the fake provider received no request")
     sinks = {arm: views.read_sink(ws / arm / "sink") for arm in arms}
     view = ws / "view.json"
-    views.write_arm_view(view, {arm: values.requests for arm, values in sinks.items()})
+    views.write_arm_view(
+        view, {arm: [e.value for e in values.requests] for arm, values in sinks.items()}
+    )
     requests = bodies.opencode_arms(sinks, ws)
     for arm in arms:
         gates.governed(requests[arm], arm, probe.marker, ws / arm / "stderr")

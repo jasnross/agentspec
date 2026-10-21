@@ -41,7 +41,7 @@ def test_only_request_json_files_count_as_requests(tmp_path: Path) -> None:
 
     values = views.read_sink(sink)
     assert values.requests == []
-    assert values.responses == [{"x": 1}]
+    assert values.responses == [views.SinkEntry(sink / "one.response.json", {"x": 1})]
     _sink(tmp_path, "b", two_request_json="{}\n")
     with pytest.raises(GateFailure) as exc:
         claude_otel.judge(tmp_path, PROBE)
@@ -53,7 +53,13 @@ def test_the_view_maps_each_arm_to_its_parsed_bodies(tmp_path: Path) -> None:
     b = _sink(tmp_path, "b", three_request_json='{"n":3}\n', three_response_json='{"n":99}\n')
     out = tmp_path / "view.json"
 
-    views.write_arm_view(out, {"a": views.read_sink(a).requests, "b": views.read_sink(b).requests})
+    views.write_arm_view(
+        out,
+        {
+            "a": [e.value for e in views.read_sink(a).requests],
+            "b": [e.value for e in views.read_sink(b).requests],
+        },
+    )
 
     # Parsed bodies, not strings — the projection indexes into them.
     assert json.loads(out.read_text(encoding="utf-8")) == {
@@ -65,7 +71,11 @@ def test_the_view_maps_each_arm_to_its_parsed_bodies(tmp_path: Path) -> None:
 def test_a_sink_file_holding_two_concatenated_values_contributes_both(tmp_path: Path) -> None:
     sink = _sink(tmp_path, "a", one_request_json='{"n":1}{"n":2}\n', two_request_json='{"n":3}')
 
-    assert views.read_sink(sink).requests == [{"n": 1}, {"n": 2}, {"n": 3}]
+    assert views.read_sink(sink).requests == [
+        views.SinkEntry(sink / "one.request.json", {"n": 1}, position=1),
+        views.SinkEntry(sink / "one.request.json", {"n": 2}, position=2),
+        views.SinkEntry(sink / "two.request.json", {"n": 3}),
+    ]
 
 
 def test_a_sink_file_that_is_not_json_is_refused_naming_the_file(tmp_path: Path) -> None:
@@ -100,5 +110,5 @@ def test_a_view_carries_an_escaped_lone_surrogate_through(tmp_path: Path) -> Non
     sink = _sink(tmp_path, "a", one_request_json='{"s":"cut \\ud83d"}\n')
     out = tmp_path / "view.json"
 
-    views.write_arm_view(out, {"a": views.read_sink(sink).requests})
+    views.write_arm_view(out, {"a": [e.value for e in views.read_sink(sink).requests]})
     assert "\\ud83d" in out.read_text(encoding="utf-8")

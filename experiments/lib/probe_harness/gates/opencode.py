@@ -1,10 +1,10 @@
-"""The gates of the OpenCode fake-provider probes, over each arm's typed requests."""
+"""The gates of the OpenCode fake-provider probes, over each arm's validated requests."""
 
 from collections.abc import Sequence
 from pathlib import Path
 
 from probe_harness.gates import APPARATUS_FAILURE, GateFailure, stamp
-from probe_harness.gates.bodies import OpenCodeRequest, contains
+from probe_harness.models.opencode_request import OpenCodeRequest
 
 __all__ = ["APPARATUS_FAILURE", "GOVERNED_JQ", "governed", "stamp", "tool_result"]
 
@@ -53,5 +53,7 @@ def _governed_requests(requests: Sequence[OpenCodeRequest], marker: str) -> list
     return [
         r
         for r in requests
-        if any(m.role == "system" and contains(m.content, marker) for m in r.messages)
+        if any(
+            m.role == "system" and any(marker in s for s in m.content.strings()) for m in r.messages
+        )
     ]

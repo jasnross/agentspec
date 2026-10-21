@@ -1,7 +1,7 @@
 """The ten gates of the billed Claude probes, over each arm's typed bodies.
 
-A gate reads `bodies.ClaudeArmBodies`, parsed once per arm by the family's judge, so a body
-that does not fit the model has already refused the run before any gate runs.
+A gate reads `bodies.ClaudeArmBodies`, validated once per arm by the family's judge, so a
+body that does not fit its model has already refused the run before any gate runs.
 
 No gate names an effort level: the effort packages' assertion is relational, comparing
 each arm against the requests nothing governed in the same run.
@@ -9,16 +9,19 @@ each arm against the requests nothing governed in the same run.
 
 from collections.abc import Mapping, Sequence
 
+from pydantic import MISSING
+
 from probe_harness.gates import GateFailure
 from probe_harness.gates.bodies import (
     ClaudeArmBodies,
-    ClaudeRequest,
     MarkerField,
     deferred_tools,
     governed,
     listed_tools,
 )
 from probe_harness.json_values import to_text
+from probe_harness.models.claude_request import ClaudeRequest, ClaudeTool, ToolResultBlock
+from probe_harness.models.claude_response import AgentCall, ToolUseBlock
 
 type Arms = Mapping[str, ClaudeArmBodies]
 
@@ -45,10 +48,10 @@ def control(arms: Arms, marker: str, field: MarkerField = MarkerField.SYSTEM) ->
     definitions partition the requests between them.
     """
     efforts = {
-        r.effort
+        effort
         for arm in arms.values()
         for r in arm.requests
-        if not governed(r, field, marker) and r.effort is not None
+        if not governed(r, field, marker) and (effort := r.output_config.effort) is not MISSING
     }
     if len(efforts) != 1:
         raise GateFailure(
@@ -67,7 +70,7 @@ def deferred_mcp(arms: Arms, marker: str, arm: str, tools: Sequence[str]) -> Non
     requests = _governed(arms, arm, marker)
     deferred = {line for r in requests for line in deferred_tools(r)}
     if set(tools) <= deferred and any(
-        any(t.name == "ToolSearch" for t in r.tools) for r in requests
+        any(t.name == "ToolSearch" for t in r.tool_list) for r in requests
     ):
         return
 
@@ -75,7 +78,7 @@ def deferred_mcp(arms: Arms, marker: str, arm: str, tools: Sequence[str]) -> Non
         f"the {arm} arm's governed requests do not list {' '.join(tools)} as deferred "
         "tools alongside ToolSearch."
     ]
-    if set(tools) <= {t.name for r in requests for t in r.tools}:
+    if set(tools) <= {t.name for r in requests for t in r.tool_list}:
         lines.append(
             "they sit in tools[] instead: tool search was not enabled for this "
             "subagent — off for this run's model, or Claude Code changed when it defers "
@@ -167,11 +170,13 @@ def delegation_background(arms: Arms, arm: str, expected: bool) -> None:
     request body carries no earlier assistant turn, so the call appears only in responses.
     """
     bodies = _with_sink(arms, arm, "delegation")
-    calls = [c for r in bodies.responses for c in r.tool_uses if c.name == "Agent"]
+    calls = [c for c in _tool_uses(bodies) if isinstance(c, AgentCall)]
     results = _tool_results(bodies)
     ok = (
         len(calls) > 0
-        and all(_is_bool(c.input.get("run_in_background"), expected) for c in calls)
+        and all(
+            (mode := c.input.run_in_background) is not MISSING and mode == expected for c in calls
+        )
         and all(
             any(rid == c.id and asynchronous == expected for rid, asynchronous in results)
             for c in calls
@@ -190,7 +195,7 @@ def delegation_background(arms: Arms, arm: str, expected: bool) -> None:
 def tool_answered(arms: Arms, arm: str, tool: str) -> None:
     """Gate 9: the arm's model called <tool>, and some `tool_result` answered the call."""
     bodies = _with_sink(arms, arm, "call")
-    ids = {c.id for r in bodies.responses for c in r.tool_uses if c.name == tool}
+    ids = {c.id for c in _tool_uses(bodies) if c.name == tool}
     if not (ids and any(rid in ids for rid, _ in _tool_results(bodies))):
         raise GateFailure(
             f"arm {arm} has no answered call to {tool}, so it says nothing about "
@@ -208,12 +213,12 @@ def delegation_fork(arms: Arms, arm: str) -> None:
     """
     bodies = _with_sink(arms, arm, "delegation")
     schemas = [
-        t.parameters is not None and "run_in_background" in t.parameters
+        _declares(t, "run_in_background")
         for r in bodies.requests
-        for t in r.tools
+        for t in r.tool_list
         if t.name == "Agent"
     ]
-    calls = [c.id for r in bodies.responses for c in r.tool_uses if c.name == "Agent"]
+    calls = [c.id for c in _tool_uses(bodies) if isinstance(c, AgentCall)]
     results = _tool_results(bodies)
     if not schemas:
         failed = (
@@ -252,7 +257,8 @@ def _main_thread(arm: ClaudeArmBodies, marker: str) -> list[ClaudeRequest]:
     return [
         r
         for r in arm.requests
-        if not governed(r, MarkerField.SYSTEM, marker) and any(t.name == "Agent" for t in r.tools)
+        if not governed(r, MarkerField.SYSTEM, marker)
+        and any(t.name == "Agent" for t in r.tool_list)
     ]
 
 
@@ -271,12 +277,29 @@ def _with_sink(arms: Arms, arm: str, reading: str) -> ClaudeArmBodies:
 def _tool_results(bodies: ClaudeArmBodies) -> list[tuple[str, bool]]:
     """Each user `tool_result`'s id, and whether its text opens "Async agent launched"."""
     return [
-        (result.tool_use_id, result.text.startswith("Async agent launched"))
+        (block.tool_use_id, block.text.startswith("Async agent launched"))
         for r in bodies.requests
         for message in r.messages
-        for result in message.tool_results
+        if message.role == "user" and not isinstance(message.content, str)
+        for block in message.content
+        if isinstance(block, ToolResultBlock)
     ]
 
 
-def _is_bool(value: object, expected: bool) -> bool:
-    return isinstance(value, bool) and value == expected
+def _tool_uses(bodies: ClaudeArmBodies) -> list[ToolUseBlock]:
+    """Every `tool_use` block across the arm's responses; an error response holds none."""
+    return [
+        block
+        for r in bodies.responses
+        if r.content is not MISSING
+        for block in r.content
+        if isinstance(block, ToolUseBlock)
+    ]
+
+
+def _declares(tool: ClaudeTool, parameter: str) -> bool:
+    """Whether <tool>'s input schema declares <parameter>; a tool with no schema declares none."""
+    if tool.input_schema is MISSING:
+        return False
+    declared = tool.input_schema.properties.keys()
+    return parameter in declared

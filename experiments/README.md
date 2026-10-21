@@ -105,6 +105,8 @@ experiments/
 
 `experiments/probe` syncs `uv.lock` into `experiments/.venv` with `uv sync --locked` and re-executes itself there, so a harness feature takes a library by declaring it in `pyproject.toml`; a missing uv or a stale lock is refused with a `probe:` line before any harness code runs. Every jq expression a manifest or a definition carries — a projection, a `wait_for` filter, a `version_source.jq`, a custom check — runs through the jq on your `PATH`, from `lib/probe_harness/jq_cli.py`, the only module that starts jq. jq evaluates those expressions and nothing else: the harness reads and writes JSON itself, including every record and every view. A view — the `view.json` a projection reads — is written by `lib/probe_harness/views.py`: for the fake-provider and Claude families an object mapping each arm to its request bodies, and for a manual probe the list of captured payloads.
 
+Request bodies are read through pydantic models in `lib/probe_harness/models/`, one module per format. A field is required unless a provider is known to omit it. A model's source JSON is reachable only through `RawJson`'s `contains`, `strings` and `keys`, never by key, so a gate reads only fields a model declares. A body that fails its model is refused, naming its file and the field's path, and the workspace is kept.
+
 **One package holds exactly one probe, and one probe answers one question.** A package needing two answers is two packages.
 
 **A package never depends on another package.** Apparatus shared across a family's probes — the stub MCP server and the stub model endpoint — lives in `lib/stubs/` and is parameterized per probe; the files a provider reads stay in the package.

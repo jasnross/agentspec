@@ -12,10 +12,11 @@ from typing import Any
 import pytest
 from probe_harness.gates import GateFailure, bodies, claude_otel
 from probe_harness.gates.bodies import ClaudeArmBodies, MarkerField
-from probe_harness.views import SinkValues
+from probe_harness.views import SinkEntry, SinkValues
 
 from tests.conftest import (
     MARKER,
+    claude_request,
     compact,
     deferred_request,
     direct_request,
@@ -24,7 +25,7 @@ from tests.conftest import (
 
 def marked(effort: str) -> dict[str, Any]:
     """A request body governed by the fixture: the fixture's text is its system prompt."""
-    return {"system": MARKER, "output_config": {"effort": effort}}
+    return claude_request(system=MARKER, output_config={"effort": effort})
 
 
 def echoed(effort: str) -> dict[str, Any]:
@@ -33,25 +34,25 @@ def echoed(effort: str) -> dict[str, Any]:
     The shape a main thread takes after a subagent replies. Not governed by the fixture:
     its effort is the ungoverned level, and it must not be read as the arm's value.
     """
-    return {
-        "system": "main thread",
-        "messages": [{"role": "user", "content": MARKER}],
-        "output_config": {"effort": effort},
-    }
+    return claude_request(
+        system="main thread",
+        messages=[{"role": "user", "content": MARKER}],
+        output_config={"effort": effort},
+    )
 
 
 def governed_in_messages(effort: str) -> dict[str, Any]:
     """A request body governed by a *skill* fixture, whose body lands in `messages[]`."""
-    return {
-        "system": "plain",
-        "messages": [{"role": "user", "content": MARKER}],
-        "output_config": {"effort": effort},
-    }
+    return claude_request(
+        system="plain",
+        messages=[{"role": "user", "content": MARKER}],
+        output_config={"effort": effort},
+    )
 
 
 def ungoverned(effort: str) -> dict[str, Any]:
     """A request body nothing governed: no marker, carries an effort."""
-    return {"system": "plain", "output_config": {"effort": effort}}
+    return claude_request(system="plain", output_config={"effort": effort})
 
 
 def main_thread(*tools: str) -> dict[str, Any]:
@@ -94,9 +95,9 @@ def delegation_sink(ws: Path, arm: str, *specs: str) -> None:
             continue
         text = "ok" if result == "sync" else "Async agent launched successfully."
         content: Any = text if result == "async-string" else [{"type": "text", "text": text}]
-        request = {
-            "system": "main thread",
-            "messages": [
+        request = claude_request(
+            system="main thread",
+            messages=[
                 {
                     "role": "user",
                     "content": [
@@ -104,7 +105,7 @@ def delegation_sink(ws: Path, arm: str, *specs: str) -> None:
                     ],
                 }
             ],
-        }
+        )
         (sink / f"req{n}.request.json").write_text(compact(request) + "\n", encoding="utf-8")
 
 
@@ -117,14 +118,14 @@ def agent_schema_request(ws: Path, arm: str, param: str) -> None:
     props: dict[str, Any] = {"prompt": {"type": "string"}, "subagent_type": {"type": "string"}}
     if param == "with":
         props["run_in_background"] = {"type": "boolean"}
-    request = {
-        "system": "main thread",
-        "messages": [{"role": "user", "content": "delegate"}],
-        "tools": [
+    request = claude_request(
+        system="main thread",
+        messages=[{"role": "user", "content": "delegate"}],
+        tools=[
             {"name": "Read", "input_schema": {"type": "object", "properties": {}}},
             {"name": "Agent", "input_schema": {"type": "object", "properties": props}},
         ],
-    }
+    )
     sink = sink_dir(ws, arm)
     (sink / "schema.request.json").write_text(compact(request) + "\n", encoding="utf-8")
 
@@ -138,27 +139,36 @@ def tool_call_sink(ws: Path, arm: str, tool: str, answer: str = "answered") -> N
         "content": [{"type": "tool_use", "id": "c1", "name": tool, "input": {}}],
     }
     (sink / "r.response.json").write_text(compact(response) + "\n", encoding="utf-8")
-    if answer == "unanswered":
-        request = '{"system":"x","messages":[{"role":"user","content":"hi"}]}'
-    else:
-        request = (
-            '{"system":"x","messages":[{"role":"user","content":'
-            '[{"type":"tool_result","tool_use_id":"c1","content":"ok"}]}]}'
-        )
-    (sink / "q.request.json").write_text(request, encoding="utf-8")
+    content: Any = (
+        "hi"
+        if answer == "unanswered"
+        else [{"type": "tool_result", "tool_use_id": "c1", "content": "ok"}]
+    )
+    request = claude_request(system="x", messages=[{"role": "user", "content": content}])
+    (sink / "q.request.json").write_text(compact(request), encoding="utf-8")
 
 
 def arms_from_view(
     view: dict[str, list[Any]], responses: dict[str, list[Any]] | None = None
 ) -> dict[str, ClaudeArmBodies]:
-    """Each arm's fabricated request bodies, and any response bodies, parsed as a judge does."""
-    return {
-        arm: bodies.claude_arm(
-            SinkValues(requests=requests, responses=(responses or {}).get(arm, [])),
-            Path(arm) / "sink",
-        )
-        for arm, requests in view.items()
-    }
+    """Each arm's fabricated request bodies, and any response bodies, validated as a judge does."""
+    return bodies.claude_arms(
+        {
+            arm: SinkValues(
+                requests=_entries(arm, "request", requests),
+                responses=_entries(arm, "response", (responses or {}).get(arm, [])),
+            )
+            for arm, requests in view.items()
+        },
+        Path(),
+    )
+
+
+def _entries(arm: str, kind: str, values: list[Any]) -> list[SinkEntry]:
+    return [
+        SinkEntry(Path(arm) / "sink" / f"{n:04}.{kind}.json", value)
+        for n, value in enumerate(values)
+    ]
 
 
 def arms_from_ws(ws: Path, *arms: str) -> dict[str, ClaudeArmBodies]:
@@ -249,14 +259,14 @@ def test_gate_control_does_not_admit_a_request_governed_by_one_of_its_messages(
     #
     # Here the two requests disagree, so a control set that admitted the governed `low`
     # would be inconsistent and gate 3 would fail.
-    multi_governed = {
-        "messages": [{"role": "user", "content": MARKER}, {"role": "user", "content": "plain"}],
-        "output_config": {"effort": "low"},
-    }
-    multi_ungoverned = {
-        "messages": [{"role": "user", "content": "plain"}, {"role": "user", "content": "plain"}],
-        "output_config": {"effort": "medium"},
-    }
+    multi_governed = claude_request(
+        messages=[{"role": "user", "content": MARKER}, {"role": "user", "content": "plain"}],
+        output_config={"effort": "low"},
+    )
+    multi_ungoverned = claude_request(
+        messages=[{"role": "user", "content": "plain"}, {"role": "user", "content": "plain"}],
+        output_config={"effort": "medium"},
+    )
     arms = arms_from_view({"a": [multi_governed, multi_ungoverned]})
 
     claude_otel.marker(arms, MARKER, MarkerField.MESSAGES)
@@ -310,10 +320,10 @@ def test_gate_control_excludes_the_effort_less_title_sidecar_rather_than_failing
     # Claude emits an intermittent title-generation request whose `output_config` holds a
     # `format` object and no `effort`. A control stated over all unmarked requests would
     # fail every time it appeared.
-    sidecar = {
-        "system": "generate a title",
-        "output_config": {"format": {"type": "json_schema"}},
-    }
+    sidecar = claude_request(
+        system="generate a title",
+        output_config={"format": {"type": "json_schema"}},
+    )
     arms = arms_from_view(
         {"a": [marked("low"), ungoverned("medium"), sidecar], "b": [ungoverned("medium")]},
     )
@@ -434,7 +444,7 @@ def test_gate_model_fails_when_one_governed_request_carries_a_different_model(
 
 def test_gate_model_ignores_an_ungoverned_request_on_a_different_model(tmp_path: Path) -> None:
     # The main thread's title sidecar runs on another model by design.
-    sidecar = {"model": "sidecar-model", "system": "generate a title", "tools": []}
+    sidecar = claude_request(model="sidecar-model", system="generate a title", tools=[])
     arms = arms_from_view({"a": [deferred_request("mcp__fx__alpha"), sidecar]})
 
     claude_otel.model(arms, MARKER, "pinned-model")
@@ -443,10 +453,10 @@ def test_gate_model_ignores_an_ungoverned_request_on_a_different_model(tmp_path:
 def test_gate_mcp_connected_passes_when_every_arm_s_main_thread_lists_the_tools_deferred_or_direct(
     tmp_path: Path,
 ) -> None:
-    direct_main = {
-        "system": "main thread",
-        "tools": [{"name": "Agent"}, {"name": "mcp__fx__alpha"}, {"name": "mcp__fx__beta"}],
-    }
+    direct_main = claude_request(
+        system="main thread",
+        tools=[{"name": "Agent"}, {"name": "mcp__fx__alpha"}, {"name": "mcp__fx__beta"}],
+    )
     arms = arms_from_view(
         {
             "a": [main_thread("mcp__fx__alpha", "mcp__fx__beta"), direct_request()],
@@ -486,7 +496,7 @@ def test_gate_mcp_connected_fails_and_names_an_arm_with_no_request_offering_agen
 def test_gate_mcp_connected_ignores_governed_and_agent_less_requests(tmp_path: Path) -> None:
     # The subagent's own request and the title sidecar say nothing about the main thread,
     # so an empty tool set on either must not fail the gate.
-    sidecar = {"system": "generate a title", "tools": []}
+    sidecar = claude_request(system="generate a title", tools=[])
     arms = arms_from_view(
         {"a": [main_thread("mcp__fx__alpha"), direct_request(), sidecar]},
     )
@@ -497,10 +507,10 @@ def test_gate_mcp_connected_ignores_governed_and_agent_less_requests(tmp_path: P
 def test_gate_mcp_absent_passes_when_no_main_thread_request_lists_a_tool_with_the_prefix(
     tmp_path: Path,
 ) -> None:
-    plugin_main = {
-        "system": "main thread",
-        "tools": [{"name": "Agent"}, {"name": "mcp__plugin_fxp_fx__alpha"}],
-    }
+    plugin_main = claude_request(
+        system="main thread",
+        tools=[{"name": "Agent"}, {"name": "mcp__plugin_fxp_fx__alpha"}],
+    )
     arms = arms_from_view(
         {"a": [plugin_main, direct_request()], "b": [main_thread("mcp__plugin_fxp_fx__beta")]},
     )
@@ -511,10 +521,10 @@ def test_gate_mcp_absent_passes_when_no_main_thread_request_lists_a_tool_with_th
 def test_gate_mcp_absent_fails_and_names_the_tool_when_a_main_thread_lists_it_directly(
     tmp_path: Path,
 ) -> None:
-    foreign_main = {
-        "system": "main thread",
-        "tools": [{"name": "Agent"}, {"name": "mcp__fx__alpha"}],
-    }
+    foreign_main = claude_request(
+        system="main thread",
+        tools=[{"name": "Agent"}, {"name": "mcp__fx__alpha"}],
+    )
     arms = arms_from_view(
         {"a": [main_thread("mcp__plugin_fxp_fx__alpha")], "b": [foreign_main]},
     )
@@ -537,7 +547,7 @@ def test_gate_mcp_absent_fails_when_a_main_thread_lists_the_tool_as_deferred(
 def test_gate_mcp_absent_ignores_governed_and_agent_less_requests(tmp_path: Path) -> None:
     # A subagent's own grant is the finding, not a foreign server, and the title sidecar
     # offers no Agent; neither may fail the gate.
-    sidecar = {"system": "generate a title", "tools": [{"name": "mcp__fx__alpha"}]}
+    sidecar = claude_request(system="generate a title", tools=[{"name": "mcp__fx__alpha"}])
     arms = arms_from_view(
         {
             "a": [
@@ -599,9 +609,8 @@ def test_gate_delegation_background_fails_when_the_arm_made_no_agent_call(tmp_pa
         '{"type":"message","role":"assistant","content":[{"type":"text","text":"ok"}]}',
         encoding="utf-8",
     )
-    (sink / "q.request.json").write_text(
-        '{"system":"main thread","messages":[{"role":"user","content":"hi"}]}', encoding="utf-8"
-    )
+    request = claude_request(system="main thread", messages=[{"role": "user", "content": "hi"}])
+    (sink / "q.request.json").write_text(compact(request), encoding="utf-8")
 
     with pytest.raises(GateFailure):
         claude_otel.delegation_background(arms_from_ws(ws, "bg"), "bg", True)
@@ -681,7 +690,9 @@ def test_gate_delegation_background_fails_and_says_so_when_the_sink_holds_no_res
 ) -> None:
     ws = tmp_path / "ws"
     sink = sink_dir(ws, "bg")
-    (sink / "q.request.json").write_text('{"system":"main thread","messages":[]}', encoding="utf-8")
+    (sink / "q.request.json").write_text(
+        compact(claude_request(system="main thread")), encoding="utf-8"
+    )
 
     with pytest.raises(GateFailure) as exc:
         claude_otel.delegation_background(arms_from_ws(ws, "bg"), "bg", True)
@@ -817,11 +828,9 @@ def test_gate_tool_answered_fails_when_the_name_appears_only_in_a_user_message_s
         '{"type":"message","role":"assistant","content":[{"type":"text","text":"done"}]}',
         encoding="utf-8",
     )
-    (sink / "q.request.json").write_text(
-        '{"system":"x","messages":[{"role":"user","content":'
-        '[{"type":"text","text":"Call the mcp__fx__alpha tool"}]}]}',
-        encoding="utf-8",
-    )
+    content = [{"type": "text", "text": "Call the mcp__fx__alpha tool"}]
+    request = claude_request(system="x", messages=[{"role": "user", "content": content}])
+    (sink / "q.request.json").write_text(compact(request), encoding="utf-8")
 
     with pytest.raises(GateFailure):
         claude_otel.tool_answered(arms_from_ws(ws, "a"), "a", "mcp__fx__alpha")
@@ -832,7 +841,7 @@ def test_gate_tool_answered_fails_and_says_so_when_the_sink_holds_no_responses(
 ) -> None:
     ws = tmp_path / "ws"
     sink = sink_dir(ws, "a")
-    (sink / "q.request.json").write_text('{"system":"x","messages":[]}', encoding="utf-8")
+    (sink / "q.request.json").write_text(compact(claude_request(system="x")), encoding="utf-8")
 
     with pytest.raises(GateFailure) as exc:
         claude_otel.tool_answered(arms_from_ws(ws, "a"), "a", "mcp__fx__alpha")
@@ -852,11 +861,9 @@ def test_gate_tool_answered_fails_when_the_only_tool_result_answers_a_different_
         '{"type":"tool_use","id":"c1","name":"mcp__fx__alpha","input":{}}]}',
         encoding="utf-8",
     )
-    (sink / "q.request.json").write_text(
-        '{"system":"x","messages":[{"role":"user","content":'
-        '[{"type":"tool_result","tool_use_id":"s1","content":"loaded"}]}]}',
-        encoding="utf-8",
-    )
+    content = [{"type": "tool_result", "tool_use_id": "s1", "content": "loaded"}]
+    request = claude_request(system="x", messages=[{"role": "user", "content": content}])
+    (sink / "q.request.json").write_text(compact(request), encoding="utf-8")
 
     with pytest.raises(GateFailure) as exc:
         claude_otel.tool_answered(arms_from_ws(ws, "a"), "a", "mcp__fx__alpha")

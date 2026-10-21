@@ -13,12 +13,12 @@ import os
 import shutil
 import textwrap
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from tests.conftest import (
     Cli,
+    claude_request,
 )
 
 MARKER = "AGENTSPEC-PROBE-MARKER-CLAUDETEST"
@@ -130,11 +130,7 @@ def _source(
         sink = source / arm / "sink"
         sink.mkdir(parents=True)
         system = f"agent body {MARKER}" if arm in marked else "plain"
-        body: dict[str, Any] = {
-            "system": system,
-            "model": MODEL,
-            "output_config": {"effort": "low"},
-        }
+        body = claude_request(system=system, model=MODEL, output_config={"effort": "low"})
         (sink / "0000.request.json").write_text(json.dumps(body), encoding="utf-8")
         if arm in stamped:
             (source / arm / "fx.stamp").write_text("tools/list\n", encoding="utf-8")
@@ -347,17 +343,17 @@ def _rich_source(tmp_path: Path, *, responses: tuple[str, ...] = ("a", "b")) -> 
     for arm in ("a", "b"):
         sink = source / arm / "sink"
         sink.mkdir(parents=True)
-        request = {
-            "system": f"body {MARKER}",
-            "model": MODEL,
-            "tools": [{"name": "Agent"}],
-            "messages": [
+        request = claude_request(
+            system=f"body {MARKER}",
+            model=MODEL,
+            tools=[{"name": "Agent"}],
+            messages=[
                 {
                     "role": "user",
                     "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}],
                 },
             ],
-        }
+        )
         (sink / "0000.request.json").write_text(json.dumps(request), encoding="utf-8")
         if arm in responses:
             response = {
@@ -374,7 +370,7 @@ def test_a_rich_definition_wires_every_family_hook(cli: Cli, package: Path, tmp_
     _rich(package)
     source = _rich_source(tmp_path)
     for arm in ("a", "b"):
-        extra = {"system": "main thread", "model": MODEL, "tools": [{"name": "Agent"}]}
+        extra = claude_request(system="main thread", model=MODEL, tools=[{"name": "Agent"}])
         (source / arm / "sink" / "0001.request.json").write_text(
             json.dumps(extra), encoding="utf-8"
         )
@@ -412,7 +408,7 @@ def test_after_record_keeps_the_workspace_on_a_real_run(
     _rich(package)
     source = _rich_source(tmp_path)
     for arm in ("a", "b"):
-        extra = {"system": "main thread", "model": MODEL, "tools": [{"name": "Agent"}]}
+        extra = claude_request(system="main thread", model=MODEL, tools=[{"name": "Agent"}])
         (source / arm / "sink" / "0001.request.json").write_text(
             json.dumps(extra), encoding="utf-8"
         )
@@ -437,7 +433,7 @@ def test_a_custom_check_reading_the_marker_can_refuse(
     _rich(package, custom_min=5)
     source = _rich_source(tmp_path)
     for arm in ("a", "b"):
-        extra = {"system": "main thread", "model": MODEL, "tools": [{"name": "Agent"}]}
+        extra = claude_request(system="main thread", model=MODEL, tools=[{"name": "Agent"}])
         (source / arm / "sink" / "0001.request.json").write_text(
             json.dumps(extra), encoding="utf-8"
         )
@@ -453,7 +449,7 @@ def test_an_arm_without_responses_is_refused_when_responses_join_the_view(
     # Arm b has no response, but ToolAnswered only reads arm a, so the append is what refuses.
     source = _rich_source(tmp_path, responses=("a",))
     for arm in ("a", "b"):
-        extra = {"system": "main thread", "model": MODEL, "tools": [{"name": "Agent"}]}
+        extra = claude_request(system="main thread", model=MODEL, tools=[{"name": "Agent"}])
         (source / arm / "sink" / "0001.request.json").write_text(
             json.dumps(extra), encoding="utf-8"
         )

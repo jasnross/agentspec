@@ -220,6 +220,16 @@ def write_view(path: Path, arms: dict[str, list[Any]]) -> Path:
     return path
 
 
+def claude_request(**fields: Any) -> dict[str, Any]:
+    """A Claude request body carrying every field the request model requires, overridden by
+    <fields>.
+
+    `output_config` holds no `effort` unless given one: a request without an effort sits
+    outside gate 3's control set, as Claude's title-generation sidecar does.
+    """
+    return {"model": "pinned-model", "system": "", "messages": [], "output_config": {}, **fields}
+
+
 def deferred_request(
     *tools: str, marker: str = MARKER, model: str = "pinned-model"
 ) -> dict[str, Any]:
@@ -229,21 +239,17 @@ def deferred_request(
     deferred-tools text block.
     """
     text = "\n".join(["The following deferred tools are now available via ToolSearch:", *tools])
-    return {
-        "model": model,
-        "system": marker,
-        "tools": [{"name": "Read"}, {"name": "ToolSearch"}],
-        "messages": [{"role": "user", "content": [{"type": "text", "text": text}]}],
-    }
+    return claude_request(
+        model=model,
+        system=marker,
+        tools=[{"name": "Read"}, {"name": "ToolSearch"}],
+        messages=[{"role": "user", "content": [{"type": "text", "text": text}]}],
+    )
 
 
 def direct_request(*tools: str, marker: str = MARKER) -> dict[str, Any]:
     """The same subagent with tool search off: every MCP tool sits in `tools[]`."""
-    return {
-        "model": "pinned-model",
-        "system": marker,
-        "tools": [{"name": "Read"}, *({"name": t} for t in tools)],
-    }
+    return claude_request(system=marker, tools=[{"name": "Read"}, *({"name": t} for t in tools)])
 
 
 def compact(value: Any) -> str:

@@ -17,11 +17,26 @@ from probe_harness.json_values import JsonValue
 
 
 @dataclass(frozen=True)
-class SinkValues:
-    """The bodies one arm's sink holds, each list in file-name order."""
+class SinkEntry:
+    """One JSON value from a sink file, with the file it came from."""
 
-    requests: list[JsonValue]
-    responses: list[JsonValue]
+    path: Path
+    value: JsonValue
+    # The value's 1-based position in its file, when the file holds more than one.
+    position: int | None = None
+
+    @property
+    def label(self) -> str:
+        """The file, and the value's position in it when that is needed to find it."""
+        return str(self.path) if self.position is None else f"{self.path} value {self.position}"
+
+
+@dataclass(frozen=True)
+class SinkValues:
+    """The bodies one arm's sink holds, one entry per JSON value, in file-name order."""
+
+    requests: list[SinkEntry]
+    responses: list[SinkEntry]
 
 
 def read_sink(sink: Path) -> SinkValues:
@@ -45,14 +60,19 @@ def write_capture_view(payloads: Path, out: Path) -> None:
     _write(out, values)
 
 
-def _read_values(paths: list[Path]) -> list[JsonValue]:
-    values: list[JsonValue] = []
+def _read_values(paths: list[Path]) -> list[SinkEntry]:
+    entries: list[SinkEntry] = []
     for path in paths:
         try:
-            values += json_values.load_stream(path.read_text(encoding="utf-8"))
+            values = json_values.load_stream(path.read_text(encoding="utf-8"))
         except (ValueError, OSError) as e:
             raise GateFailure(f"{path} is not valid JSON: {e}") from None
-    return values
+        several = len(values) > 1
+        entries += (
+            SinkEntry(path, value, n if several else None)
+            for n, value in enumerate(values, start=1)
+        )
+    return entries
 
 
 def _write(out: Path, value: JsonValue) -> None:

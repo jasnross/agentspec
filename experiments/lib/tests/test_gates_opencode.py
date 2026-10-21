@@ -6,16 +6,19 @@ from typing import Any
 import pytest
 from probe_harness.gates import GateFailure, bodies
 from probe_harness.gates import opencode as gates
-from probe_harness.gates.bodies import BodyShapeError, OpenCodeRequest
-from probe_harness.views import SinkValues
+from probe_harness.models.opencode_request import OpenCodeRequest
+from probe_harness.views import SinkEntry, SinkValues
 
 MARKER = "AGENTSPEC-PROBE-MARKER-TEST"
 
 
 def _arm(view: dict[str, list[Any]], arm: str) -> tuple[OpenCodeRequest, ...]:
-    """The arm's fabricated request bodies, parsed as the judge parses them."""
-    values = SinkValues(requests=view.get(arm, []), responses=[])
-    return bodies.opencode_requests(values, Path(arm) / "sink")
+    """The arm's fabricated request bodies, validated as the judge validates them."""
+    entries = [
+        SinkEntry(Path(arm) / "sink" / f"{n:04}.request.json", value)
+        for n, value in enumerate(view.get(arm, []))
+    ]
+    return bodies.opencode_arms({arm: SinkValues(requests=entries, responses=[])}, Path())[arm]
 
 
 def _system(text: Any) -> dict[str, Any]:
@@ -98,6 +101,7 @@ def test_stamp_passes_when_the_stamp_exists(tmp_path: Path) -> None:
     ],
     ids=["string-message", "string-request", "string-messages", "object-messages"],
 )
-def test_a_request_body_of_the_wrong_shape_is_a_shape_error(requests: list[Any]) -> None:
-    with pytest.raises(BodyShapeError):
+def test_a_request_body_of_the_wrong_shape_is_refused(requests: list[Any]) -> None:
+    with pytest.raises(GateFailure) as exc:
         _arm({"a": requests}, "a")
+    assert exc.value.lines[0].startswith(f"arm a: {Path('a') / 'sink' / '0000.request.json'}: ")

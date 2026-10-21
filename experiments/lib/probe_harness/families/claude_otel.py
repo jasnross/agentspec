@@ -194,7 +194,9 @@ def judge(ws: Path, probe: ClaudeOtelProbe) -> JudgeResult:
             raise GateFailure(f"the {name} arm captured no request files in {sink}")
     sinks = {name: views.read_sink(ws / name / "sink") for name in arms}
     view = ws / "view.json"
-    views.write_arm_view(view, {name: values.requests for name, values in sinks.items()})
+    views.write_arm_view(
+        view, {name: [e.value for e in values.requests] for name, values in sinks.items()}
+    )
     typed = bodies.claude_arms(sinks, ws)
     gates.marker(typed, probe.marker, probe.marker_field)
     for gate in probe.gates:
@@ -209,7 +211,11 @@ def judge(ws: Path, probe: ClaudeOtelProbe) -> JudgeResult:
                     f"the {name} arm captured no response files in {ws / name / 'sink'}"
                 )
         views.write_arm_view(
-            view, {name: [*values.requests, *values.responses] for name, values in sinks.items()}
+            view,
+            {
+                name: [e.value for e in (*values.requests, *values.responses)]
+                for name, values in sinks.items()
+            },
         )
     # Printed before recording: a dry or failed record keeps the workspace, and this view is
     # what a candidate projection is iterated against.
