@@ -1,9 +1,9 @@
 """Every committed package's definition, loaded from the tree.
 
 Each loads as its family and keeps its namespace private. Its declared fixture variants
-put `assertion` first, and every declared tree exists. The manual packages load as manual
-probes, and `cursor-hook-command-argv` refuses a workspace root its hook commands could
-not carry.
+put `assertion` first; `test_repo_fixture_reachability.py` checks their trees. The manual
+packages load as manual probes, and `cursor-hook-command-argv` refuses a workspace root its
+hook commands could not carry.
 """
 
 import ast
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 from probe_harness.families import DEFINITION_TYPES
-from probe_harness.families.claude_otel import VARIANT, ClaudeOtelProbe
+from probe_harness.families.claude_otel import ClaudeOtelProbe
 from probe_harness.families.manual import ManualProbe
 from probe_harness.families.opencode_debug import OpenCodeDebugProbe
 from probe_harness.families.opencode_fake import OpenCodeFakeProbe
@@ -143,21 +143,6 @@ def test_every_definition_declares_assertion_first(package: Path) -> None:
     definition = load_definition(package, DEFINITION_TYPES)
     assert definition.variants[0] == "assertion"
     assert len(set(definition.variants)) == len(definition.variants)
-
-
-@pytest.mark.parametrize("package", _packages(), ids=lambda p: p.name)
-def test_every_declared_variant_tree_exists(package: Path) -> None:
-    # Only the families that select a tree by variant have one per variant.
-    definition = load_definition(package, DEFINITION_TYPES)
-    fixtures = package / "fixtures"
-    if isinstance(definition, OpenCodeDebugProbe):
-        for variant in definition.variants:
-            assert (fixtures / variant).is_dir(), f"{package.name}: no fixtures/{variant}"
-    if isinstance(definition, ClaudeOtelProbe):
-        for arm in definition.arms:
-            for variant in definition.variants:
-                tree = arm.tree.replace(VARIANT, variant)
-                assert (fixtures / tree).is_dir(), f"{package.name}: no fixtures/{tree}"
 
 
 @pytest.mark.parametrize("package", _packages(), ids=lambda p: p.name)

@@ -23,7 +23,7 @@ _LIST_RESOURCES = ScriptedCall("list_mcp_resources", '{"server":"fx"}')
 _LIST_TEMPLATES = ScriptedCall("list_mcp_resource_templates", '{"server":"fx"}')
 
 
-def _arrange_arm(package: Path, arm_dir: Path, arm: OpenCodeArm) -> ScriptedCall | None:
+def _arrange_arm(fixtures: Path, arm_dir: Path, arm: OpenCodeArm) -> ScriptedCall | None:
     """Refuse a missing read target, and script the file read for the arm that makes one.
 
     A missing file would fail the `read` arm's call for a reason that has nothing to do with

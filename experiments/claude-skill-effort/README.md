@@ -16,9 +16,9 @@ The question is not academic for this repository. A large share of agentspec-emi
 
 | Arm | Invocation | Prompt | Fixture tree |
 | --- | --- | --- | --- |
-| `inline` | `--allowedTools Skill`; Claude chooses the skill itself, mid-session, through the Skill tool | `Run the agentspec effort probe check.` | `fixtures/<fixture>` |
-| `slash_entry` | the slash command **is** the session's `-p` entry prompt | `/probe-effort run the check` | `fixtures/<fixture>` |
-| `fork` | `--allowedTools Skill` against a tree whose skill declares `context: fork` | `Run the agentspec effort probe check.` | `fixtures/<fixture>-fork` |
+| `inline` | `--allowedTools Skill`; Claude chooses the skill itself, mid-session, through the Skill tool | `Run the agentspec effort probe check.` | `fixtures/<variant>/project` |
+| `slash_entry` | the slash command **is** the session's `-p` entry prompt | `/probe-effort run the check` | `fixtures/<variant>/project` |
+| `fork` | `--allowedTools Skill` against a tree whose skill declares `context: fork` | `Run the agentspec effort probe check.` | `fixtures/<variant>/project-fork` |
 
 The prompts above are the ones that actually activated the skill, not idealized versions of them. The skill's `description` is deliberately a narrow, unambiguous trigger (`Use when the user asks to run the agentspec effort probe check.`) so the `inline` arm's natural-language prompt selects it reliably.
 

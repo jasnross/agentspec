@@ -186,17 +186,20 @@ PROBE = CustomProbe(required_tools=(), arrange=_arrange, act=_act,
                     variants=("assertion", "discriminator"))
 """
 
-
-MANUAL_WITH_VARIANT_PY = """\
-from probe_harness.families.manual import ManualProbe
-
-PROBE = ManualProbe(instructions="do it", variants=("assertion", "discriminator"))
-"""
+BOTH = ("assertion", "discriminator")
 
 
-def _put_custom_package(tree: Path, name: str, probe_py: str, **manifest: Any) -> Path:
+def _put_custom_package(
+    tree: Path,
+    name: str,
+    probe_py: str,
+    *,
+    variants: tuple[str, ...] = ("assertion",),
+    **manifest: Any,
+) -> Path:
     package = tree / name
-    package.mkdir()
+    for variant in variants:
+        (package / "fixtures" / variant).mkdir(parents=True)
     (package / "probe.json").write_text(
         json.dumps(unattended_manifest(**manifest)), encoding="utf-8"
     )
@@ -205,7 +208,7 @@ def _put_custom_package(tree: Path, name: str, probe_py: str, **manifest: Any) -
 
 
 def test_a_custom_probe_s_arrange_receives_the_selected_variant(cli: Cli, tree: Path) -> None:
-    _put_custom_package(tree, "alpha", VARIANT_ECHO_PY)
+    _put_custom_package(tree, "alpha", VARIANT_ECHO_PY, variants=BOTH)
     result = cli("run", "alpha", env={"PROBE_FIXTURE": "discriminator", "PROBE_DRY_RUN": "1"})
     assert result.returncode == 0
     assert "arranged discriminator" in result.stdout
@@ -214,7 +217,9 @@ def test_a_custom_probe_s_arrange_receives_the_selected_variant(cli: Cli, tree: 
 def test_a_custom_probe_over_a_manual_manifest_is_refused_before_a_workspace_exists(
     cli: Cli, tree: Path
 ) -> None:
-    _put_custom_package(tree, "alpha", VARIANT_ECHO_PY, driver="manual", wait_for="length > 0")
+    _put_custom_package(
+        tree, "alpha", VARIANT_ECHO_PY, variants=BOTH, driver="manual", wait_for="length > 0"
+    )
     result = cli("run", "alpha")
     assert result.returncode == 1
     assert 'records without a capture, but its manifest declares driver "manual"' in result.stderr
@@ -224,7 +229,11 @@ def test_a_custom_probe_over_a_manual_manifest_is_refused_before_a_workspace_exi
 
 def test_a_custom_probe_over_a_capture_version_source_is_refused(cli: Cli, tree: Path) -> None:
     _put_custom_package(
-        tree, "alpha", VARIANT_ECHO_PY, version_source={"kind": "capture", "jq": "first"}
+        tree,
+        "alpha",
+        VARIANT_ECHO_PY,
+        variants=BOTH,
+        version_source={"kind": "capture", "jq": "first"},
     )
     result = cli("run", "alpha")
     assert result.returncode == 1
@@ -244,17 +253,15 @@ def test_a_non_object_version_source_is_refused_before_a_workspace_exists(
     assert workspaces("alpha") == []
 
 
-def test_a_manual_probe_declaring_a_second_variant_is_refused(cli: Cli, tree: Path) -> None:
-    _put_custom_package(
-        tree, "alpha", MANUAL_WITH_VARIANT_PY, driver="manual", wait_for="length > 0"
-    )
-    capture = tree / "alpha" / "fixtures" / "capture"
-    capture.mkdir(parents=True)
-    (capture / "dump-hook.sh").write_text("#!/bin/sh\n", encoding="utf-8")
-    result = cli("run", "alpha")
+def test_a_custom_probe_declaring_a_variant_without_a_tree_is_refused(cli: Cli, tree: Path) -> None:
+    _put_custom_package(tree, "alpha", VARIANT_ECHO_PY)
+    result = cli("run", "alpha", env={"PROBE_FIXTURE": "discriminator", "PROBE_DRY_RUN": "1"})
     assert result.returncode == 1
-    assert "whose only fixture variant is assertion" in result.stderr
-    assert "Workspace ready" not in result.output
+    assert (
+        "probe run: alpha declares fixture variant discriminator, but has no "
+        "fixtures/discriminator/\n"
+    ) in result.stderr
+    assert "arranged" not in result.stdout
     assert workspaces("alpha") == []
 
 
@@ -271,7 +278,7 @@ MANIFEST: dict[str, Any] = {
 
 CLAUDE = textwrap.dedent("""\
     from probe_harness.families.claude_otel import (
-        ClaudeArm, ClaudeOtelProbe, DelegationFork, Model, ToolAnswered,
+        ClaudeArm, ClaudeOtelProbe, DelegationFork, McpConfig, Model, PluginDir, ToolAnswered,
     )
 
     PROBE = ClaudeOtelProbe(
@@ -285,7 +292,7 @@ CLAUDE = textwrap.dedent("""\
 
 def _put_definition_package(tree: Path, probe_py: str, **manifest: Any) -> None:
     package = tree / "pkg"
-    package.mkdir()
+    (package / "fixtures" / "assertion" / "tree").mkdir(parents=True)
     (package / "probe.json").write_text(json.dumps({**MANIFEST, **manifest}), encoding="utf-8")
     (package / "probe.py").write_text(probe_py, encoding="utf-8")
 
@@ -334,8 +341,8 @@ def providers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         pytest.param(
             _claude(ONE_ARM, variants='("assertion", "discriminator")'),
             {},
-            "probe run: pkg declares variants assertion, discriminator, but no arm's fixture tree "
-            "contains {variant}",
+            "probe run: pkg declares fixture variant discriminator, but has no "
+            "fixtures/discriminator/",
             id="variant-without-tree",
         ),
         pytest.param(
@@ -344,6 +351,24 @@ def providers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             "probe run: pkg is a ClaudeOtelProbe, which records without a capture, but its "
             'manifest declares driver "manual"',
             id="claude-over-manual",
+        ),
+        pytest.param(
+            _claude('(ClaudeArm("a", "tree", "p"), ClaudeArm("b", "tree", "p", (), McpConfig()))'),
+            {},
+            "probe run: pkg's arm b reads fixtures/assertion/mcp.json, which does not exist",
+            id="claude-missing-mcp-template",
+        ),
+        pytest.param(
+            _claude('(ClaudeArm("a", "tree", "p", (), PluginDir()),)'),
+            {},
+            "probe run: pkg's arm a reads fixtures/assertion/plugin, which does not exist",
+            id="claude-missing-plugin-source",
+        ),
+        pytest.param(
+            _claude('(ClaudeArm("a", "missing", "p"),)'),
+            {},
+            "probe run: pkg's arm a reads fixtures/assertion/missing, which does not exist",
+            id="claude-missing-arm-tree",
         ),
         pytest.param(
             textwrap.dedent("""\
@@ -356,8 +381,9 @@ def providers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
                 )
             """),
             {"provider": "opencode", "driver": "unattended"},
-            "probe run: pkg is an OpenCodeFakeProbe, whose only fixture variant is assertion",
-            id="fake-with-variants",
+            "probe run: pkg declares fixture variant discriminator, but has no "
+            "fixtures/discriminator/",
+            id="fake-variant-without-tree",
         ),
         pytest.param(
             textwrap.dedent("""\

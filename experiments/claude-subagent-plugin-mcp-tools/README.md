@@ -18,7 +18,7 @@ This is Key Assumption 1 of `$THOUGHTS_DIR/designs/2026-10-03-agentspec-mcp-tool
 
 ## The six arms
 
-Every arm runs `claude -p` with `--plugin-dir <arm>/fxp --allowedTools Agent --effort low`. The plugin `fxp` (`fixtures/plugin/`) bundles `fx`, a local MCP stdio server (`experiments/lib/stubs/fx_server.py`) with two tools, `alpha` and `beta`, so Claude names them `mcp__plugin_fxp_fx__alpha` and `mcp__plugin_fxp_fx__beta`. Every arm installs the plugin, so every arm connects `fx` the same way. Two tools are what lets "only the granted tool is visible" be told apart from "every tool is visible".
+Every arm runs `claude -p` with `--plugin-dir <arm>/fxp --allowedTools Agent --effort low`. The plugin `fxp` (`fixtures/assertion/plugin/`) bundles `fx`, a local MCP stdio server (`experiments/lib/stubs/fx_server.py`) with two tools, `alpha` and `beta`, so Claude names them `mcp__plugin_fxp_fx__alpha` and `mcp__plugin_fxp_fx__beta`. Every arm installs the plugin, so every arm connects `fx` the same way. Two tools are what lets "only the granted tool is visible" be told apart from "every tool is visible".
 
 | Arm | Agent location | Delegation name | `tools` |
 | --- | --- | --- | --- |
@@ -29,7 +29,7 @@ Every arm runs `claude -p` with `--plugin-dir <arm>/fxp --allowedTools Agent --e
 | `project_glob` | project | `probe-plug-project-glob` | `Read, mcp__plugin_fxp_fx__*` |
 | `project_unprefixed` | project | `probe-plug-unprefixed` | `Read, mcp__fx__alpha` |
 
-A plugin agent is addressed as `<plugin>:<name>`, where `<name>` is its `name:` field. Plugin-arm agents live in `fixtures/plugin-agents/`, and the runner copies only that arm's agent into that arm's plugin copy; their project trees are empty (`fixtures/<arm>/.gitkeep`). Project-arm agents live in `fixtures/<arm>/.claude/agents/`.
+A plugin agent is addressed as `<plugin>:<name>`, where `<name>` is its `name:` field. Plugin-arm agents live in `fixtures/assertion/plugin-agents/`, and the runner copies only that arm's agent into that arm's plugin copy; their project trees are empty (`fixtures/assertion/<arm>/.gitkeep`). Project-arm agents live in `fixtures/assertion/<arm>/.claude/agents/`.
 
 Each arm's prompt is `Use the Agent tool to delegate to the <delegation name> subagent. Do not answer yourself.` It omits the marker: a marked main-thread request would otherwise be read as governed.
 

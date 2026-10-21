@@ -102,7 +102,7 @@ WAIT_FOR = "length > 0"
 def pkg(tree: Path) -> Path:
     """Package `pkg`, in the tree `probe record` reads through `PROBE_EXPERIMENTS_DIR`."""
     package = tree / "pkg"
-    package.mkdir()
+    (package / "fixtures" / "assertion").mkdir(parents=True)
     return package
 
 

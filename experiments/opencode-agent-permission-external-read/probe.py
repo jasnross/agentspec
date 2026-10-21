@@ -25,7 +25,7 @@ def _preflight() -> None:
     require_tools("git")
 
 
-def _arrange_arm(package: Path, arm_dir: Path, arm: OpenCodeArm) -> ScriptedCall:
+def _arrange_arm(fixtures: Path, arm_dir: Path, arm: OpenCodeArm) -> ScriptedCall:
     """Place the read target beside the project, outside it, and script a read of it.
 
     OpenCode compares a path against the git worktree when the project has one; only a

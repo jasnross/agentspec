@@ -23,14 +23,14 @@ PROBE = ClaudeOtelProbe(
     arms=(
         ClaudeArm(
             "inline",
-            "{variant}",
+            "project",
             "Run the agentspec effort probe check.",
             ("--allowedTools", "Skill"),
         ),
-        ClaudeArm("slash_entry", "{variant}", "/probe-effort run the check"),
+        ClaudeArm("slash_entry", "project", "/probe-effort run the check"),
         ClaudeArm(
             "fork",
-            "{variant}-fork",
+            "project-fork",
             "Run the agentspec effort probe check.",
             ("--allowedTools", "Skill"),
         ),

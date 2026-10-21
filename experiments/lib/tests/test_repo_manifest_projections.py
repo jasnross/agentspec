@@ -39,17 +39,19 @@ def fixture_marker(path: Path) -> str:
 
 
 MARKER_AGENT = fixture_marker(
-    EXPERIMENTS_DIR / "claude-agent-effort/fixtures/assertion/.claude/agents/probe-effort.md"
+    EXPERIMENTS_DIR
+    / "claude-agent-effort/fixtures/assertion/project/.claude/agents/probe-effort.md"
 )
 
 
 MARKER_SKILL = fixture_marker(
-    EXPERIMENTS_DIR / "claude-skill-effort/fixtures/assertion/.claude/skills/probe-effort/SKILL.md"
+    EXPERIMENTS_DIR
+    / "claude-skill-effort/fixtures/assertion/project/.claude/skills/probe-effort/SKILL.md"
 )
 
 
 MARKER_MCP_PATH = (
-    EXPERIMENTS_DIR / "claude-subagent-mcp-tools/fixtures/inherit/.claude/agents/"
+    EXPERIMENTS_DIR / "claude-subagent-mcp-tools/fixtures/assertion/inherit/.claude/agents/"
     "probe-mcp-inherit.md"
 )
 

@@ -26,7 +26,7 @@ Every arm runs `claude -p "/probe-skill"` with `--append-system-prompt AGENTSPEC
 | `plugin_none` | `--plugin-dir` | `Read` | `mcp__plugin_fxp_fx__alpha` |
 | `plugin_glob` | `--plugin-dir` | `mcp__plugin_fxp_fx__*` | `mcp__plugin_fxp_fx__alpha` |
 
-The four user-server arms connect `fx`, a local MCP stdio server (`experiments/lib/stubs/fx_server.py`), through a per-arm `--mcp-config` with `--strict-mcp-config`. `plugin_none` and `plugin_glob` connect the same server through the plugin `fxp` (`fixtures/plugin/`), so Claude names its tool `mcp__plugin_fxp_fx__alpha`. Each server source has its own `Read` arm, so every `"called"` is compared against a refusal from the same setup. A call to either answers `AGENTSPEC-FX-REPLY-CCSKILL7`.
+The four user-server arms connect `fx`, a local MCP stdio server (`experiments/lib/stubs/fx_server.py`), through a per-arm `--mcp-config` with `--strict-mcp-config`. `plugin_none` and `plugin_glob` connect the same server through the plugin `fxp` (`fixtures/assertion/plugin/`), so Claude names its tool `mcp__plugin_fxp_fx__alpha`. Each server source has its own `Read` arm, so every `"called"` is compared against a refusal from the same setup. A call to either answers `AGENTSPEC-FX-REPLY-CCSKILL7`.
 
 - **`--permission-prompts none`** denies any call that would prompt, so a call the skill did not pre-approve fails rather than waiting for an answer.
 - **`--allowedTools ToolSearch`** keeps a deferred `fx` tool loadable without pre-approving any `fx` tool. In the dry run every arm's model called `ToolSearch` beside its `fx` call.

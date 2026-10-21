@@ -131,6 +131,7 @@ def _put_manual(
     capture = package / "fixtures" / "capture"
     capture.mkdir(parents=True)
     shutil.copy2(DUMP_HOOK, capture / "dump-hook.sh")
+    (package / "fixtures" / "assertion").mkdir()
     manifest: dict[str, Any] = {
         "schema_version": 1,
         "provider": "cursor",
@@ -192,6 +193,72 @@ def test_a_dry_run_with_a_matching_capture_writes_no_record(tree: Path) -> None:
     assert json.loads(stdout)["status"] == "confirmed"
     results = package / "results"
     assert not results.exists() or not any(results.iterdir())
+
+
+MANUAL_WITH_VARIANT_PY = """\
+from probe_harness.families.manual import ManualProbe
+
+PROBE = ManualProbe(instructions="do it", variants=("assertion", "discriminator"))
+"""
+
+
+def test_a_discriminator_dry_run_arranges_the_project_from_its_own_tree(tree: Path) -> None:
+    package = _put_manual(tree, "manual-stub", wait_for="length > 0")
+    (package / "probe.py").write_text(MANUAL_WITH_VARIANT_PY, encoding="utf-8")
+    for variant in ("assertion", "discriminator"):
+        (package / "fixtures" / variant).mkdir(exist_ok=True)
+        (package / "fixtures" / variant / "which.txt").write_text(f"{variant}\n", encoding="utf-8")
+
+    process = subprocess.Popen(
+        [str(EXPERIMENTS_DIR / "probe"), "run", "manual-stub"],
+        env={
+            **os.environ,
+            "PROBE_FIXTURE": "discriminator",
+            "PROBE_DRY_RUN": "1",
+            "PROBE_TIMEOUT_SECONDS": "60",
+        },
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+    )
+    try:
+        capture = _await_capture_dir("manual-stub", deadline=time.monotonic() + 30)
+        staged = capture / "payloads.jsonl.tmp"
+        staged.write_text('{"x":1}\n', encoding="utf-8")
+        staged.replace(capture / "payloads.jsonl")
+
+        stdout, stderr = process.communicate(timeout=60)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate()
+
+    assert process.returncode == 0, stdout + stderr
+    ws = capture.parent
+    assert ws.name.endswith("-discriminator")
+    project = ws / "project"
+    assert (project / "which.txt").read_text(encoding="utf-8") == "discriminator\n"
+    # The capture apparatus is shared by every variant and stays outside the project.
+    assert sorted(p.name for p in project.iterdir()) == ["which.txt"]
+    assert (capture / "dump-hook.sh").is_file()
+
+
+def test_a_variant_named_capture_is_refused_before_a_workspace_exists(cli: Cli, tree: Path) -> None:
+    package = _put_manual(tree, "manual-stub", wait_for="length > 0")
+    (package / "probe.py").write_text(
+        MANUAL_WITH_VARIANT_PY.replace('"discriminator"', '"capture"'), encoding="utf-8"
+    )
+
+    result = cli("run", "manual-stub", env={"PROBE_FIXTURE": "capture", "PROBE_DRY_RUN": "1"})
+
+    assert result.returncode == 1, result.output
+    assert (
+        "probe run: manual-stub declares fixture variant capture, the name a manual probe's "
+        "capture apparatus reserves\n"
+    ) in result.stderr
+    assert workspaces("manual-stub") == []
 
 
 def test_a_command_sourced_run_records_the_tool_version_before_the_instructions(

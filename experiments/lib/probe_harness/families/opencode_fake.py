@@ -65,7 +65,8 @@ class OpenCodeArm:
     call: ScriptedCall | None = None
 
 
-# (package, arm directory, arm) -> a replacement call, or None to keep the arm's own.
+# (the variant's fixture directory, arm directory, arm) -> a replacement call, or None to
+# keep the arm's own.
 type ArmArrange = Callable[[Path, Path, OpenCodeArm], ScriptedCall | None]
 
 
@@ -91,7 +92,7 @@ def run(manifest: Manifest, name: str, options: RunOptions, probe: OpenCodeFakeP
         try:
             record_tool_version(manifest, ws)
             for arm in probe.arms:
-                _run_arm(package, ws, arm, probe)
+                _run_arm(package / "fixtures" / options.variant, ws, arm, probe)
             result = judge(ws, probe)
         except GateFailure as e:
             return refused(e, ws)
@@ -127,18 +128,16 @@ def judge(ws: Path, probe: OpenCodeFakeProbe) -> JudgeResult:
     return JudgeResult(view=view, selection=None)
 
 
-def _run_arm(package: Path, ws: Path, arm: OpenCodeArm, probe: OpenCodeFakeProbe) -> None:
+def _run_arm(fixtures: Path, ws: Path, arm: OpenCodeArm, probe: OpenCodeFakeProbe) -> None:
     isolation = OpenCodeIsolation()
     arm_dir = ws / arm.name
     layout = isolation.layout(arm_dir)
     (arm_dir / "sink").mkdir()
-    shutil.copytree(
-        package / "fixtures" / "project", layout.project, symlinks=True, dirs_exist_ok=True
-    )
+    shutil.copytree(fixtures, layout.project, symlinks=True, dirs_exist_ok=True)
 
     call = arm.call
     if probe.arrange_arm is not None:
-        call = probe.arrange_arm(package, arm_dir, arm) or call
+        call = probe.arrange_arm(fixtures, arm_dir, arm) or call
 
     argv = [sys.executable, str(FAKE_PROVIDER), str(arm_dir / "sink")]
     if call is not None:
@@ -158,7 +157,7 @@ def _run_arm(package: Path, ws: Path, arm: OpenCodeArm, probe: OpenCodeFakeProbe
             )
         stamps = {f"{key.upper()}_STAMP": str(arm_dir / f"{key}.stamp") for key in probe.fx_servers}
         template_file(
-            package / "fixtures" / "project" / "opencode.json",
+            fixtures / "opencode.json",
             layout.project / "opencode.json",
             PORT=port,
             PYTHON=sys.executable,

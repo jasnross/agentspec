@@ -29,7 +29,7 @@ from probe_harness.families.base import (
     record_tool_version,
     refused,
 )
-from probe_harness.families.claude_otel import ClaudeOtelProbe
+from probe_harness.families.claude_otel import ClaudeOtelProbe, McpConfig, PluginDir
 from probe_harness.families.manual import ManualProbe
 from probe_harness.families.opencode_debug import OpenCodeDebugProbe
 from probe_harness.families.opencode_fake import OpenCodeFakeProbe
@@ -219,24 +219,30 @@ def _definition_refusal(name: str, definition: ProbeDefinition, manifest: Manife
     For the billed family that matters most: each of these would otherwise surface only after
     every arm had spent a model call.
     """
+    package = manifest.path.parent
     match definition:
         case ManualProbe():
-            return _single_variant(name, definition)
+            return _capture_is_not_a_variant(name, definition) or _variant_trees(
+                name, definition, package
+            )
         case OpenCodeFakeProbe():
             return (
-                _single_variant(name, definition)
+                _variant_trees(name, definition, package)
                 or _unique_arms(name, [arm.name for arm in definition.arms])
                 or _needs_capture(name, definition, manifest)
             )
         case ClaudeOtelProbe():
             return (
-                _unique_arms(name, [arm.name for arm in definition.arms])
+                _variant_trees(name, definition, package)
+                or _unique_arms(name, [arm.name for arm in definition.arms])
                 or _claude_gate_arms(name, definition)
-                or _claude_variant_trees(name, definition)
                 or _needs_capture(name, definition, manifest)
+                or _claude_variant_inputs(name, definition, package)
             )
         case OpenCodeDebugProbe() | CustomProbe():
-            return _needs_capture(name, definition, manifest)
+            return _variant_trees(name, definition, package) or _needs_capture(
+                name, definition, manifest
+            )
         case _:
             assert_never(definition)
 
@@ -246,15 +252,24 @@ def _family(definition: ProbeDefinition) -> str:
     return f"{'an' if family[0] in 'AEIOU' else 'a'} {family}"
 
 
-def _single_variant(name: str, definition: ManualProbe | OpenCodeFakeProbe) -> str | None:
-    # These families materialize one fixed tree (all of fixtures/, or fixtures/project/), so
-    # they have no variant trees for `PROBE_FIXTURE` to select between.
-    if definition.variants == (ASSERTION_VARIANT,):
-        return None
-    return (
-        f"{name} is {_family(definition)}, whose only fixture variant is "
-        f"{ASSERTION_VARIANT}; its definition declares: {', '.join(definition.variants)}"
-    )
+def _variant_trees(name: str, definition: ProbeDefinition, package: Path) -> str | None:
+    # Every family arranges from `fixtures/<variant>/`, so a declared variant without one
+    # could only fail once its run had begun.
+    for variant in definition.variants:
+        if not (package / "fixtures" / variant).is_dir():
+            return f"{name} declares fixture variant {variant}, but has no fixtures/{variant}/"
+    return None
+
+
+def _capture_is_not_a_variant(name: str, definition: ManualProbe) -> str | None:
+    # `fixtures/capture/` is the shared apparatus; a variant of that name would copy it into
+    # the project the operator opens, where the provider could read it.
+    if manual.CAPTURE_DIR in definition.variants:
+        return (
+            f"{name} declares fixture variant {manual.CAPTURE_DIR}, the name a manual "
+            "probe's capture apparatus reserves"
+        )
+    return None
 
 
 def _needs_capture(name: str, definition: ProbeDefinition, manifest: Manifest) -> str | None:
@@ -291,15 +306,29 @@ def _claude_gate_arms(name: str, definition: ClaudeOtelProbe) -> str | None:
     return None
 
 
-def _claude_variant_trees(name: str, definition: ClaudeOtelProbe) -> str | None:
-    if definition.variants == (ASSERTION_VARIANT,):
-        return None
-    if any(claude_otel.VARIANT in arm.tree for arm in definition.arms):
-        return None
-    return (
-        f"{name} declares variants {', '.join(definition.variants)}, but no arm's "
-        f"fixture tree contains {claude_otel.VARIANT}, so every variant would run the same tree"
-    )
+def _claude_variant_inputs(name: str, definition: ClaudeOtelProbe, package: Path) -> str | None:
+    # Each variant tree carries its own copy of every input an arm reads, so one a variant
+    # lacks would fail only at that arm, after the arms before it had spent model calls.
+    for variant in definition.variants:
+        fixtures = package / "fixtures" / variant
+        for arm in definition.arms:
+            match arm.server:
+                case McpConfig(template=template):
+                    missing = None if (fixtures / template).is_file() else template
+                case PluginDir(source=source):
+                    missing = None if (fixtures / source / ".mcp.json").is_file() else source
+                case None:
+                    missing = None
+                case _:
+                    assert_never(arm.server)
+            if not (fixtures / arm.tree).is_dir():
+                missing = arm.tree
+            if missing is not None:
+                return (
+                    f"{name}'s arm {arm.name} reads fixtures/{variant}/{missing}, which does "
+                    "not exist"
+                )
+    return None
 
 
 def _family_tools(definition: ProbeDefinition) -> tuple[str, ...]:

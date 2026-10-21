@@ -34,7 +34,7 @@ _UNSET = (
 _ARGS = ("--allowedTools", "Agent", "--effort", "low")
 _PLUGIN_TOOLS = ("mcp__plugin_fxp_fx__alpha", "mcp__plugin_fxp_fx__beta")
 
-# The fixtures/ subdirectory the plugin arms' agents are copied from, so a reachability
+# The subdirectory of each variant tree the plugin arms' agents are copied from, so a reachability
 # check counts it.
 FIXTURE_PATHS = ("plugin-agents",)
 
@@ -42,13 +42,13 @@ FIXTURE_PATHS = ("plugin-agents",)
 _PLUGIN_AGENTS = {"plugin_exact": "probe-plug-exact", "plugin_glob": "probe-plug-glob"}
 
 
-def _arrange_arm(package: Path, arm_dir: Path, arm: ClaudeArm) -> None:
+def _arrange_arm(fixtures: Path, arm_dir: Path, arm: ClaudeArm) -> None:
     stem = _PLUGIN_AGENTS.get(arm.name)
     if stem is None:
         return
     agents = arm_dir / "fxp" / "agents"
     agents.mkdir(parents=True, exist_ok=True)
-    shutil.copy(package / "fixtures" / "plugin-agents" / f"{stem}.md", agents)
+    shutil.copy(fixtures / "plugin-agents" / f"{stem}.md", agents)
 
 
 PROBE = ClaudeOtelProbe(

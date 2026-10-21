@@ -43,6 +43,9 @@ from probe_harness.workspace import (
 
 FAMILY_TOOLS = ("jq",)
 
+# The directory under `fixtures/` holding the capture apparatus every variant shares.
+CAPTURE_DIR = "capture"
+
 
 @dataclass(frozen=True)
 class ManualProbe:
@@ -148,32 +151,30 @@ def arrange_human_workspace(package: Path, name: str, variant: str) -> Path:
     """Materialize the workspace and return its root, the path `probe record` takes."""
     ws = create_workspace(name, variant)
     with kept_on_failure(ws):
-        _materialize(package, ws)
+        _materialize(package, ws, variant)
     return ws
 
 
-def _materialize(package: Path, ws: Path) -> None:
+def _materialize(package: Path, ws: Path, variant: str) -> None:
     project = ws / "project"
     project.mkdir()
 
     capture_script = ws / "capture" / "dump-hook.sh"
     template_file(
-        package / "fixtures" / "capture" / "dump-hook.sh",
+        package / "fixtures" / CAPTURE_DIR / "dump-hook.sh",
         capture_script,
         JQ=shutil.which("jq") or "jq",
         PAYLOADS=str(ws / "capture" / "payloads.jsonl"),
     )
     _make_executable(capture_script)
 
-    fixtures = package / "fixtures"
+    fixtures = package / "fixtures" / variant
     for src in sorted(fixtures.rglob("*")):
         # Regular files only: a fixture tree is repo-controlled, so a symlink would be a
         # mistake rather than a feature.
         if src.is_symlink() or not src.is_file():
             continue
         rel = src.relative_to(fixtures)
-        if rel.parts[0] == "capture":
-            continue
         dst = project / rel
         template_file(src, dst, CAPTURE_SCRIPT=str(capture_script))
 

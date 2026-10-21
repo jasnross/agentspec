@@ -20,13 +20,13 @@ PROBE = ClaudeOtelProbe(
     arms=(
         ClaudeArm(
             "session_agent",
-            "{variant}",
+            "project",
             "Reply with exactly one word: ok.",
             ("--agent", "probe-effort"),
         ),
         ClaudeArm(
             "delegated",
-            "{variant}",
+            "project",
             "Use the Task tool to delegate to the probe-effort subagent. Do not answer yourself.",
             ("--allowedTools", "Task"),
         ),

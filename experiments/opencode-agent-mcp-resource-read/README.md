@@ -40,7 +40,7 @@ The two agents differ only in `read`:
 
 The three `plain_*` arms are comparison arms, not a control: they are cells of the assertion like any other. They run a plain `read: allow` behind the same deny-all, and each pairs with a `map_*` arm making the same call. A rule denial reads the same whichever rule matched — OpenCode lists every rule for the `read` permission, the top-level `"*": deny` included — so only the pairing shows the `mcp:*` deny, rather than the deny-all, is what refused a call.
 
-Every arm connects `fx`, a local MCP stdio server (`experiments/lib/stubs/fx_server.py`, shared by every probe that needs one) that advertises the `resources` capability and serves one resource (`fx://AGENTSPEC-RESOURCE-OCRES3`) and one template. A successful read returns `AGENTSPEC-RESOURCE-CONTENT-OCRES3`. `fixtures/project/notes.txt` holds `AGENTSPEC-FILE-CONTENT-OCRES3`.
+Every arm connects `fx`, a local MCP stdio server (`experiments/lib/stubs/fx_server.py`, shared by every probe that needs one) that advertises the `resources` capability and serves one resource (`fx://AGENTSPEC-RESOURCE-OCRES3`) and one template. A successful read returns `AGENTSPEC-RESOURCE-CONTENT-OCRES3`. `fixtures/assertion/notes.txt` holds `AGENTSPEC-FILE-CONTENT-OCRES3`.
 
 ## The oracle
 

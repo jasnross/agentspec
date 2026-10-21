@@ -128,8 +128,8 @@ def package(tree: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
 
     package = tree / "fake-family"
-    (package / "fixtures" / "project").mkdir(parents=True)
-    (package / "fixtures" / "project" / "opencode.json").write_text(
+    (package / "fixtures" / "assertion").mkdir(parents=True)
+    (package / "fixtures" / "assertion" / "opencode.json").write_text(
         json.dumps(OPENCODE_JSON, indent=2), encoding="utf-8"
     )
     (package / "probe.json").write_text(json.dumps(MANIFEST), encoding="utf-8")
@@ -240,7 +240,7 @@ def test_a_provider_exiting_nonzero_stops_the_stub_and_keeps_the_workspace(
 
 
 def test_a_template_failure_mid_arm_stops_the_stub(cli: Cli, package: Path, tmp_path: Path) -> None:
-    config = package / "fixtures" / "project" / "opencode.json"
+    config = package / "fixtures" / "assertion" / "opencode.json"
     text = config.read_text(encoding="utf-8").replace('"fake"', '"{{UNKNOWN}}"', 1)
     config.write_text(text, encoding="utf-8")
     result = cli("run", "fake-family", env={"STUB_BODIES": _bodies(tmp_path, MARKER)})
@@ -277,7 +277,7 @@ from probe_harness.families.opencode_fake import OpenCodeArm, OpenCodeFakeProbe,
 from probe_harness.gates.opencode import GOVERNED_JQ
 
 
-def _arrange_arm(package: Path, arm_dir: Path, arm: OpenCodeArm) -> ScriptedCall | None:
+def _arrange_arm(fixtures: Path, arm_dir: Path, arm: OpenCodeArm) -> ScriptedCall | None:
     return ScriptedCall("listing", '{"b": 2}') if arm.name == "two" else None
 
 
@@ -379,3 +379,56 @@ def test_a_terminated_run_stops_the_stub_and_names_the_workspace(
     assert runner.returncode == 128 + signal.SIGTERM
     assert "probe run: the workspace has been kept for inspection: " in stderr
     assert _no_fake_running(tmp_path)
+
+
+VARIANT_DEFINITION = textwrap.dedent(f"""\
+    from pathlib import Path
+
+    from probe_harness.families.opencode_fake import OpenCodeArm, OpenCodeFakeProbe
+
+
+    def _arrange_arm(fixtures: Path, arm_dir: Path, arm: OpenCodeArm) -> None:
+        (arm_dir / "arranged-from").write_text(str(fixtures), encoding="utf-8")
+
+
+    PROBE = OpenCodeFakeProbe(
+        marker="{MARKER}",
+        arms=(OpenCodeArm("one", "agent-one"), OpenCodeArm("two", "agent-two")),
+        fx_servers=("fx",),
+        variants=("assertion", "discriminator"),
+        arrange_arm=_arrange_arm,
+    )
+""")
+
+
+def test_a_discriminator_dry_run_arranges_every_arm_from_its_own_tree(
+    cli: Cli, package: Path, tmp_path: Path
+) -> None:
+    (package / "probe.py").write_text(VARIANT_DEFINITION, encoding="utf-8")
+    for variant in ("assertion", "discriminator"):
+        fixtures = package / "fixtures" / variant
+        fixtures.mkdir(exist_ok=True)
+        config = {**OPENCODE_JSON, "variant": variant}
+        (fixtures / "opencode.json").write_text(json.dumps(config), encoding="utf-8")
+        (fixtures / "which.txt").write_text(variant, encoding="utf-8")
+
+    result = cli(
+        "run",
+        "fake-family",
+        env={
+            "STUB_BODIES": _bodies(tmp_path, MARKER),
+            "PROBE_FIXTURE": "discriminator",
+            "PROBE_DRY_RUN": "1",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    (ws,) = workspaces("fake-family")
+    assert ws.name.endswith("-discriminator")
+    for arm in ("one", "two"):
+        project = ws / arm / "project"
+        assert (project / "which.txt").read_text(encoding="utf-8") == "discriminator"
+        config = json.loads((project / "opencode.json").read_text(encoding="utf-8"))
+        assert config["variant"] == "discriminator"
+        arranged_from = (ws / arm / "arranged-from").read_text(encoding="utf-8")
+        assert arranged_from == str(package / "fixtures" / "discriminator")

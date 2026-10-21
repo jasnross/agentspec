@@ -156,7 +156,11 @@ def tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture
 def put_package(tree: Path) -> Callable[..., Path]:
-    """A package declaring <driver>, whose stub `probe.py` prints and exits with <code>."""
+    """A package declaring <driver>, whose stub `probe.py` prints and exits with <code>.
+
+    It has an `assertion` fixture tree, and a manual one a capture hook, so the definition
+    checks a run applies pass.
+    """
 
     def put(name: str, driver: str, code: int = 0) -> Path:
         package = tree / name
@@ -173,6 +177,11 @@ def put_package(tree: Path) -> Callable[..., Path]:
         (package / "probe.json").write_text(json.dumps(manifest, indent=2) + "\n")
         stub = STUB_MANUAL_PROBE_PY if driver == "manual" else STUB_PROBE_PY
         (package / "probe.py").write_text(stub.format(name=name, code=code))
+        (package / "fixtures" / "assertion").mkdir(parents=True, exist_ok=True)
+        if driver == "manual":
+            capture = package / "fixtures" / "capture"
+            capture.mkdir(exist_ok=True)
+            (capture / "dump-hook.sh").write_text("#!/bin/sh\n", encoding="utf-8")
         return package
 
     return put

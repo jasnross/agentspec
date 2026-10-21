@@ -114,9 +114,10 @@ def package(tree: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
 
     package = tree / "claude-family"
-    (package / "fixtures" / "tree").mkdir(parents=True)
-    (package / "fixtures" / "tree" / "CLAUDE.md").write_text("fixture\n", encoding="utf-8")
-    (package / "fixtures" / "mcp.json").write_text(json.dumps(MCP_JSON), encoding="utf-8")
+    fixtures = package / "fixtures" / "assertion"
+    (fixtures / "tree").mkdir(parents=True)
+    (fixtures / "tree" / "CLAUDE.md").write_text("fixture\n", encoding="utf-8")
+    (fixtures / "mcp.json").write_text(json.dumps(MCP_JSON), encoding="utf-8")
     (package / "probe.json").write_text(json.dumps(MANIFEST), encoding="utf-8")
     (package / "probe.py").write_text(DEFINITION, encoding="utf-8")
     return package
@@ -281,7 +282,7 @@ RICH_DEFINITION = textwrap.dedent(f"""\
     _ORDER = Path(__file__).parent / "order.log"
 
 
-    def _arrange(package: Path, arm_dir: Path, arm: ClaudeArm) -> None:
+    def _arrange(fixtures: Path, arm_dir: Path, arm: ClaudeArm) -> None:
         agents = arm_dir / "fxp" / "agents"
         if arm.name == "b":
             agents.mkdir(parents=True, exist_ok=True)
@@ -299,8 +300,8 @@ RICH_DEFINITION = textwrap.dedent(f"""\
         budget_usd="0.10",
         marker="{MARKER}",
         arms=(
-            ClaudeArm("a", "tree-{{variant}}", "prompt a", (), McpConfig()),
-            ClaudeArm("b", "tree-{{variant}}", "prompt b", (), PluginDir()),
+            ClaudeArm("a", "tree", "prompt a", (), McpConfig()),
+            ClaudeArm("b", "tree", "prompt b", (), PluginDir()),
         ),
         gates=(McpConnected(("Agent",)), ToolAnswered("a", "mcp__fx__alpha")),
         custom_checks=(
@@ -318,12 +319,16 @@ RICH_DEFINITION = textwrap.dedent(f"""\
 
 
 def _rich(package: Path, *, custom_min: int = 2) -> None:
-    fixtures = package / "fixtures"
     for variant in ("assertion", "discriminator"):
-        (fixtures / f"tree-{variant}").mkdir()
-        (fixtures / f"tree-{variant}" / "which.txt").write_text(variant, encoding="utf-8")
-    (fixtures / "plugin").mkdir()
-    (fixtures / "plugin" / ".mcp.json").write_text(json.dumps(MCP_JSON), encoding="utf-8")
+        fixtures = package / "fixtures" / variant
+        (fixtures / "tree").mkdir(parents=True, exist_ok=True)
+        (fixtures / "tree" / "which.txt").write_text(variant, encoding="utf-8")
+        # Each variant's server config is told apart by an extra key, so a test can see which
+        # variant's copy an arm loaded.
+        config = json.dumps({**MCP_JSON, "variant": variant})
+        (fixtures / "mcp.json").write_text(config, encoding="utf-8")
+        (fixtures / "plugin").mkdir()
+        (fixtures / "plugin" / ".mcp.json").write_text(config, encoding="utf-8")
     (package / "probe.py").write_text(
         RICH_DEFINITION.replace("MIN", str(custom_min)), encoding="utf-8"
     )
@@ -376,13 +381,17 @@ def test_a_rich_definition_wires_every_family_hook(cli: Cli, package: Path, tmp_
     assert json.loads(result.stdout)["status"] == "refuted"  # expected counts 2; arms hold 3
 
     calls = {c["arm"]: c for c in map(json.loads, env_file.read_text().splitlines())}
-    # `{variant}` selected the discriminator tree for both arms.
+    # `PROBE_FIXTURE` selected the discriminator tree for both arms.
     assert calls["a"]["which"] == calls["b"]["which"] == "discriminator"
     # The plugin arm loads its own copy, set up before `arrange_arm`, which ran before claude.
     plugin = calls["b"]["argv"][calls["b"]["argv"].index("--plugin-dir") + 1]
     assert Path(plugin).name == "fxp"
     assert calls["b"]["plugin"] == [".mcp.json", "agents/arranged.md"]
     assert "--mcp-config" in calls["a"]["argv"]
+    mcp_config = calls["a"]["argv"][calls["a"]["argv"].index("--mcp-config") + 1]
+    assert json.loads(Path(mcp_config).read_text(encoding="utf-8"))["variant"] == "discriminator"
+    plugin_config = json.loads((Path(plugin) / ".mcp.json").read_text(encoding="utf-8"))
+    assert plugin_config["variant"] == "discriminator"
 
     order = (package / "order.log").read_text(encoding="utf-8").splitlines()
     # The definition's judge saw the view before responses were appended to it.

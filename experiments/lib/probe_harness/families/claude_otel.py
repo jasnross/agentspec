@@ -48,20 +48,19 @@ FAMILY_TOOLS = ("jq", "claude")
 
 FX_SERVER = Path(__file__).resolve().parents[2] / "stubs" / "fx_server.py"
 
-# The variant placeholder in an arm's fixture tree name.
-VARIANT = "{variant}"
-
 
 @dataclass(frozen=True)
 class McpConfig:
-    """Template `fixtures/<template>` to `<arm>/mcp.json` and pass it as the only MCP config."""
+    """Template `<template>` from the variant's fixture tree to `<arm>/mcp.json`, and pass it
+    as the only MCP config."""
 
     template: str = "mcp.json"
 
 
 @dataclass(frozen=True)
 class PluginDir:
-    """Copy `fixtures/<source>` to `<arm>/fxp`, template its `.mcp.json`, and load it."""
+    """Copy `<source>` from the variant's fixture tree to `<arm>/fxp`, template its
+    `.mcp.json`, and load it."""
 
     source: str = "plugin"
 
@@ -69,7 +68,7 @@ class PluginDir:
 @dataclass(frozen=True)
 class ClaudeArm:
     name: str
-    # The fixture tree under fixtures/; `{variant}` is replaced by the selected variant.
+    # The arm's project tree, a directory under `fixtures/<variant>/`.
     tree: str
     prompt: str
     # Passed after the server's arguments.
@@ -143,7 +142,7 @@ type ClaudeGate = (
     | ToolAnswered
 )
 
-# (package, arm directory, arm), run after the arm's server is set up.
+# (the variant's fixture directory, arm directory, arm), run after the arm's server is set up.
 type ArmArrange = Callable[[Path, Path, ClaudeArm], None]
 
 
@@ -175,7 +174,7 @@ def run(manifest: Manifest, name: str, options: RunOptions, probe: ClaudeOtelPro
         try:
             record_tool_version(manifest, ws)
             for arm in probe.arms:
-                _run_arm(package, ws, arm, options.variant, probe)
+                _run_arm(package / "fixtures" / options.variant, ws, arm, probe)
             result = judge(ws, probe)
         except GateFailure as e:
             return refused(e, ws)
@@ -249,18 +248,17 @@ def _check(gate: ClaudeGate, arms: dict[str, ClaudeArmBodies], probe: ClaudeOtel
             assert_never(gate)
 
 
-def _run_arm(package: Path, ws: Path, arm: ClaudeArm, variant: str, probe: ClaudeOtelProbe) -> None:
+def _run_arm(fixtures: Path, ws: Path, arm: ClaudeArm, probe: ClaudeOtelProbe) -> None:
     arm_dir = ws / arm.name
     project = arm_dir / "project"
     sink = arm_dir / "sink"
     project.mkdir(parents=True)
     sink.mkdir()
-    tree = package / "fixtures" / arm.tree.replace(VARIANT, variant)
-    shutil.copytree(tree, project, symlinks=True, dirs_exist_ok=True)
+    shutil.copytree(fixtures / arm.tree, project, symlinks=True, dirs_exist_ok=True)
 
-    server_args = _server(package, arm_dir, arm.server)
+    server_args = _server(fixtures, arm_dir, arm.server)
     if probe.arrange_arm is not None:
-        probe.arrange_arm(package, arm_dir, arm)
+        probe.arrange_arm(fixtures, arm_dir, arm)
 
     env = {
         k: v
@@ -294,7 +292,7 @@ def _run_arm(package: Path, ws: Path, arm: ClaudeArm, variant: str, probe: Claud
         )
 
 
-def _server(package: Path, arm_dir: Path, server: McpConfig | PluginDir | None) -> list[str]:
+def _server(fixtures: Path, arm_dir: Path, server: McpConfig | PluginDir | None) -> list[str]:
     """Set up the arm's MCP server, and return the `claude` arguments that load it."""
     pairs = {
         "PYTHON": sys.executable,
@@ -306,14 +304,12 @@ def _server(package: Path, arm_dir: Path, server: McpConfig | PluginDir | None) 
             return []
         case McpConfig(template=template):
             config = arm_dir / "mcp.json"
-            template_file(package / "fixtures" / template, config, **pairs)
+            template_file(fixtures / template, config, **pairs)
             return ["--mcp-config", str(config), "--strict-mcp-config"]
         case PluginDir(source=source):
             plugin = arm_dir / "fxp"
-            shutil.copytree(package / "fixtures" / source, plugin, symlinks=True)
-            template_file(
-                package / "fixtures" / source / ".mcp.json", plugin / ".mcp.json", **pairs
-            )
+            shutil.copytree(fixtures / source, plugin, symlinks=True)
+            template_file(fixtures / source / ".mcp.json", plugin / ".mcp.json", **pairs)
             return ["--plugin-dir", str(plugin)]
         case _:
             assert_never(server)
