@@ -2,8 +2,8 @@
 
 Each loads as its family and keeps its namespace private. Its declared fixture variants
 put `assertion` first, and every declared tree exists. The manual packages load as manual
-probes, and `cursor-hook-command-argv` refuses a `TMPDIR` its hook commands could not
-carry.
+probes, and `cursor-hook-command-argv` refuses a workspace root its hook commands could
+not carry.
 """
 
 import ast
@@ -75,8 +75,8 @@ def test_no_definition_defines_a_public_name_beyond_probe_and_fixture_paths(
     assert "PROBE" in public
 
 
-# Every character `cursor-hook-command-argv` refuses in `$TMPDIR`: whitespace, quotes, and
-# every character a shell acts on.
+# Every character `cursor-hook-command-argv` refuses in the workspace root: whitespace,
+# quotes, and every character a shell acts on.
 SHELL_SIGNIFICANT = " \t\n'\"$`;&|()<>*?!\\"
 
 
@@ -104,33 +104,37 @@ def test_every_manual_package_loads_as_a_manual_probe(name: str) -> None:
 
 
 @pytest.mark.parametrize("character", list(SHELL_SIGNIFICANT), ids=repr)
-def test_hook_command_argv_refuses_a_shell_significant_tmpdir(
+def test_hook_command_argv_refuses_a_shell_significant_workspace_root(
     cli: Cli, tmp_path: Path, character: str
 ) -> None:
     # Refused before any workspace exists, so the directory itself need not exist.
-    tmpdir = f"{tmp_path}/a{character}b"
+    state = f"{tmp_path}/a{character}b"
+    root = f"{state}/agentspec/probe-workspaces"
     result = cli(
         "run",
         "cursor-hook-command-argv",
-        env={"TMPDIR": tmpdir, "PROBE_TIMEOUT_SECONDS": "1"},
+        env={"XDG_STATE_HOME": state, "PROBE_TIMEOUT_SECONDS": "1"},
     )
     assert result.returncode == 1
     assert result.stderr == (
-        f"probe run: TMPDIR contains whitespace or a shell metacharacter ({tmpdir});\n"
+        "probe run: the probe workspace root contains whitespace or a shell metacharacter "
+        f"({root});\n"
         "probe run: the command strings this probe registers would not measure what they mean to.\n"
     )
     assert "Workspace ready" not in result.output
 
 
-def test_hook_command_argv_accepts_a_plain_tmpdir(cli: Cli, tmp_path: Path) -> None:
-    tmpdir = tmp_path / "plain"
-    tmpdir.mkdir()
+def test_hook_command_argv_accepts_a_plain_workspace_root(cli: Cli, tmp_path: Path) -> None:
     result = cli(
         "run",
         "cursor-hook-command-argv",
-        env={"TMPDIR": str(tmpdir), "PROBE_TIMEOUT_SECONDS": "1", "PROBE_DRY_RUN": "1"},
+        env={
+            "XDG_STATE_HOME": str(tmp_path / "plain"),
+            "PROBE_TIMEOUT_SECONDS": "1",
+            "PROBE_DRY_RUN": "1",
+        },
     )
-    assert "TMPDIR contains" not in result.output
+    assert "workspace root contains" not in result.output
     assert "Workspace ready" in result.output
 
 

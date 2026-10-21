@@ -35,6 +35,9 @@ from probe_harness.contract import (
 )
 from probe_harness.json_values import JsonValue
 
+# Bounds a version command, so a wedged one cannot hang a run or `just check`.
+VERSION_COMMAND_TIMEOUT_SECONDS = 10
+
 
 @dataclass(frozen=True)
 class ComputedRecord:
@@ -77,6 +80,7 @@ def compute(
     view: Path | None = None,
     selection: str | None = None,
     capture: Path | None = None,
+    workspace: Path | None = None,
 ) -> ComputedRecord:
     """Gate the invocation, compare, and return the record; raise `RecordRefused` otherwise.
 
@@ -131,7 +135,7 @@ def compute(
     else:
         status = Status.REFUTED
 
-    tool_version = _tool_version(manifest, capture)
+    tool_version = _tool_version(manifest, capture, workspace)
 
     # One UTC clock read feeds both the record's `date` and the filename. The time
     # component stops a same-day re-run at the same version from overwriting its
@@ -257,11 +261,18 @@ def _project(manifest: Manifest, view: Path) -> JsonValue:
     return values[0] if values else None
 
 
-def _tool_version(manifest: Manifest, capture: Path | None) -> str:
+def _tool_version(manifest: Manifest, capture: Path | None, workspace: Path | None) -> str:
     version: str
     match manifest.version_source:
         case CommandSource(argv=argv):
-            version = run_version_command(argv, timeout=None)
+            # The run read the version just before Act. Running the command again here
+            # would record whatever is installed by now; it remains only for a caller with
+            # no workspace, or a workspace made before runs kept the version.
+            recorded = workspace / "tool_version" if workspace is not None else None
+            if recorded is not None and recorded.is_file():
+                version = recorded.read_text(encoding="utf-8").rstrip("\n")
+            else:
+                version = run_version_command(argv, timeout=None)
         case CaptureSource(jq=expr):
             if capture is None:
                 raise RecordRefused('version_source.kind "capture" requires --capture')

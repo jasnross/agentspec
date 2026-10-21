@@ -23,10 +23,7 @@ from probe_harness.contract import (
     parse_manifest,
     parse_record,
 )
-from probe_harness.record import run_version_command
-
-# Bounds a version command, so a wedged one cannot hang `just check`.
-VERSION_COMMAND_TIMEOUT_SECONDS = 10
+from probe_harness.record import VERSION_COMMAND_TIMEOUT_SECONDS, run_version_command
 
 # The stamped filename shape. An unrelated `.json` dropped into `results/` cannot sort
 # after every record and be taken for the newest.

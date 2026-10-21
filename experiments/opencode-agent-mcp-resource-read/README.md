@@ -82,7 +82,7 @@ A gate failure keeps the workspace and exits 1 without recording, because each d
 
 ## The physical project path
 
-The `read` arm's path is the project directory's physical path (`pwd -P`). On macOS `$TMPDIR` sits under `/var`, a symlink to `/private/var`. The first dry run passed the unresolved spelling, and OpenCode asked `external_directory` for a file inside the project — `permission requested: external_directory (/var/folders/…/map_read_file/project/*); auto-rejecting` — so `map_read_file` projected to `ask-rejected`. That is a property of how OpenCode compares paths, not of the `read` map; the runner sidesteps it, and nothing here measures it.
+The `read` arm's path is the project directory's physical path (`pwd -P`). The workspace root may sit behind a symlink, as macOS's `/var` → `/private/var` does. The first dry run passed the unresolved spelling, and OpenCode asked `external_directory` for a file inside the project — `permission requested: external_directory (/var/folders/…/map_read_file/project/*); auto-rejecting` — so `map_read_file` projected to `ask-rejected`. That is a property of how OpenCode compares paths, not of the `read` map; the runner sidesteps it, and nothing here measures it.
 
 ## Discriminate evidence
 

@@ -4,13 +4,15 @@ Helpers that refuse raise `SystemExit`, so they are called in-process and the ex
 caught.
 """
 
+import datetime
 import io
 import json
+import subprocess
 import threading
 from pathlib import Path
 
 import pytest
-from probe_harness import jq_cli
+from probe_harness import jq_cli, workspace
 from probe_harness.contract import Option
 from probe_harness.workspace import (
     create_workspace,
@@ -19,26 +21,87 @@ from probe_harness.workspace import (
     require_tools,
     template_file,
     wait_for_capture,
+    workspace_root,
 )
 
 from tests.conftest import (
+    REAL_ENVIRONMENT,
     make_capture_workspace,
 )
 
 
-def test_probe_workspace_create_returns_a_workspace_with_a_capture_directory() -> None:
-    # `capture/` is the whole contract now: the hook script and its payloads live there,
-    # and it is the sibling of the project the operator opens.
-    ws = create_workspace("unit-test")
-    assert ws.is_dir()
+class _FrozenClock(datetime.datetime):
+    @classmethod
+    def now(cls, tz: datetime.tzinfo | None = None) -> _FrozenClock:
+        return cls(2026, 10, 21, 9, 30, 5, tzinfo=tz)
+
+
+def test_create_workspace_makes_a_stamped_variant_directory_with_capture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `capture/` is the sibling of the project the operator opens.
+    monkeypatch.setattr(workspace, "datetime", _FrozenClock)
+    ws = create_workspace("unit-test", "assertion")
+    assert ws == workspace_root() / "unit-test" / "2026-10-21T093005-assertion"
     assert (ws / "capture").is_dir()
 
 
-def test_two_workspaces_are_distinct_directories() -> None:
-    first = create_workspace("unit-test")
-    second = create_workspace("unit-test")
-    assert str(first)
-    assert first != second
+def test_a_second_workspace_in_the_same_second_gets_a_suffix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(workspace, "datetime", _FrozenClock)
+    first = create_workspace("unit-test", "assertion")
+    second = create_workspace("unit-test", "assertion")
+    third = create_workspace("unit-test", "assertion")
+    assert second == first.with_name(f"{first.name}-2")
+    assert third == first.with_name(f"{first.name}-3")
+
+
+def test_workspace_root_follows_an_absolute_xdg_state_home(tmp_path: Path) -> None:
+    environ = {"XDG_STATE_HOME": str(tmp_path / "state"), "HOME": str(tmp_path / "home")}
+    assert workspace_root(environ) == tmp_path / "state" / "agentspec" / "probe-workspaces"
+
+
+@pytest.mark.parametrize("state", ["relative/state", ""], ids=["relative", "empty"])
+def test_workspace_root_ignores_a_relative_or_empty_xdg_state_home(
+    tmp_path: Path, state: str
+) -> None:
+    environ = {"XDG_STATE_HOME": state, "HOME": str(tmp_path)}
+    assert workspace_root(environ) == (
+        tmp_path / ".local" / "state" / "agentspec" / "probe-workspaces"
+    )
+
+
+_INSTRUCTION_FILES = ("CLAUDE.md", "AGENTS.md", ".claude", ".cursor")
+
+
+def test_the_real_workspace_root_is_outside_every_repository() -> None:
+    # A provider opened on a workspace inside a repository would load its instructions and
+    # could search it for a marker.
+    root = workspace_root(REAL_ENVIRONMENT)
+    existing = root
+    while not existing.exists():
+        existing = existing.parent
+    inside = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=existing,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert inside.returncode != 0 or inside.stdout.strip() == "false", (
+        f"the workspace root {root} lies inside a git work tree"
+    )
+
+    home = Path(REAL_ENVIRONMENT["HOME"])
+    stop = home if root.is_relative_to(home) else Path("/")
+    directory = root
+    while directory != stop and directory != directory.parent:
+        for name in _INSTRUCTION_FILES:
+            assert not (directory / name).exists(), (
+                f"{directory / name} is above the workspace root, where a provider would read it"
+            )
+        directory = directory.parent
 
 
 def test_probe_require_tools_names_every_missing_tool(capsys: pytest.CaptureFixture[str]) -> None:

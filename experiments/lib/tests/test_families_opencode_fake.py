@@ -26,6 +26,7 @@ import pytest
 from tests.conftest import (
     EXPERIMENTS_DIR,
     Cli,
+    workspaces,
 )
 
 MARKER = "AGENTSPEC-PROBE-MARKER-FAKETEST"
@@ -189,37 +190,36 @@ def test_an_mcp_server_that_never_answered_is_refused(
     assert _no_fake_running(tmp_path)
 
 
-def test_a_real_run_records_and_deletes_the_workspace(
-    cli: Cli, package: Path, tmp_path: Path, _isolated_tmpdir: Path
+def test_a_real_run_records_and_keeps_the_workspace(
+    cli: Cli, package: Path, tmp_path: Path
 ) -> None:
     result = cli("run", "fake-family", env={"STUB_BODIES": _bodies(tmp_path, MARKER)})
     assert result.returncode == 0, result.stderr
     assert len(list((package / "results").glob("*.json"))) == 1
-    assert list(_isolated_tmpdir.glob("probe-fake-family.*")) == []
+    (ws,) = workspaces("fake-family")
+    assert f"probe run: the workspace is kept at {ws}\n" in result.stderr
+    assert (ws / "source.json").is_file()
     assert _no_fake_running(tmp_path)
 
 
-def test_a_run_leaves_no_requests_json_in_any_arm(
-    cli: Cli, package: Path, tmp_path: Path, _isolated_tmpdir: Path
-) -> None:
-    # A dry run, because a real run deletes the workspace this inspects.
+def test_a_run_leaves_no_requests_json_in_any_arm(cli: Cli, package: Path, tmp_path: Path) -> None:
     run = cli(
         "run", "fake-family", env={"STUB_BODIES": _bodies(tmp_path, MARKER), "PROBE_DRY_RUN": "1"}
     )
     assert run.returncode == 0, run.stderr
-    (ws,) = _isolated_tmpdir.glob("probe-fake-family.*")
+    (ws,) = workspaces("fake-family")
     assert (ws / "view.json").is_file()
     assert list(ws.glob("*/requests.json")) == []
 
 
 def test_replay_judges_a_kept_fake_provider_workspace(
-    cli: Cli, package: Path, tmp_path: Path, _isolated_tmpdir: Path
+    cli: Cli, package: Path, tmp_path: Path
 ) -> None:
     run = cli(
         "run", "fake-family", env={"STUB_BODIES": _bodies(tmp_path, MARKER), "PROBE_DRY_RUN": "1"}
     )
     assert run.returncode == 0, run.stderr
-    (ws,) = _isolated_tmpdir.glob("probe-fake-family.*")
+    (ws,) = workspaces("fake-family")
     (ws / "two" / "fx.stamp").unlink()
     replayed = cli("replay", "fake-family", ws)
     assert replayed.returncode == 1

@@ -4,9 +4,9 @@ import os
 import re
 import shutil
 import sys
-import tempfile
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TextIO
 
@@ -26,9 +26,40 @@ _TEMPLATE_KEY = re.compile(r"[A-Za-z0-9_]+")
 _PLACEHOLDER = re.compile(r"\{\{[^}]*\}\}")
 
 
-def create_workspace(name: str) -> Path:
-    """A throwaway workspace for one run, always carrying a `capture/` directory."""
-    ws = Path(tempfile.mkdtemp(prefix=f"probe-{name}.", dir=os.environ.get("TMPDIR") or "/tmp"))
+def workspace_root(environ: Mapping[str, str] = os.environ) -> Path:
+    """The directory every run's workspace lives under.
+
+    `$XDG_STATE_HOME/agentspec/probe-workspaces`, or `~/.local/state/…` when that is unset
+    or relative. It sits outside every repository on purpose: a provider opened on a
+    workspace inside one would load the repository's instructions, and could search the
+    repository for a marker.
+    """
+    state = environ.get("XDG_STATE_HOME", "")
+    if state and Path(state).is_absolute():
+        base = Path(state)
+    else:
+        home = Path(environ["HOME"]) if environ.get("HOME") else Path.home()
+        base = home / ".local" / "state"
+    return base / "agentspec" / "probe-workspaces"
+
+
+def create_workspace(name: str, variant: str) -> Path:
+    """A new workspace for one run of <name>'s <variant>, carrying a `capture/` directory.
+
+    Named for the run's UTC start time and variant. The harness never deletes it.
+    """
+    package_dir = workspace_root() / name
+    package_dir.mkdir(parents=True, exist_ok=True)
+    stem = f"{datetime.now(UTC).strftime('%Y-%m-%dT%H%M%S')}-{variant}"
+    ws = package_dir / stem
+    suffix = 1
+    while True:
+        try:
+            ws.mkdir()
+            break
+        except FileExistsError:
+            suffix += 1
+            ws = package_dir / f"{stem}-{suffix}"
     (ws / "capture").mkdir()
     return ws
 

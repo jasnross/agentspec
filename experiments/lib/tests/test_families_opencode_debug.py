@@ -8,12 +8,15 @@ import json
 import shutil
 from pathlib import Path
 
+from probe_harness.workspace import workspace_root
+
 from tests.conftest import (
     AGENT_VIEW,
     Cli,
     Result,
     copy_package,
     oracle_file,
+    workspaces,
 )
 
 KEPT = "probe run: the workspace has been kept for inspection: "
@@ -106,7 +109,6 @@ def test_a_dry_run_with_a_matching_oracle_records_nothing_and_keeps_the_workspac
     experiments_dir: Path,
     opencode_debug_stub: Path,
     tmp_path: Path,
-    _isolated_tmpdir: Path,
 ) -> None:
     package = copy_package(experiments_dir, tree, "opencode-agent-variant")
     result = cli(
@@ -118,16 +120,15 @@ def test_a_dry_run_with_a_matching_oracle_records_nothing_and_keeps_the_workspac
     assert "probe run: dry run — confirmed" in result.stderr
     assert json.loads(result.stdout)["status"] == "confirmed"
     assert not (package / "results").exists()
-    assert len(list(_isolated_tmpdir.glob("probe-opencode-agent-variant.*"))) == 1
+    assert len(workspaces("opencode-agent-variant")) == 1
 
 
-def test_a_real_run_records_and_deletes_the_workspace(
+def test_a_real_run_records_and_keeps_the_workspace(
     cli: Cli,
     tree: Path,
     experiments_dir: Path,
     opencode_debug_stub: Path,
     tmp_path: Path,
-    _isolated_tmpdir: Path,
 ) -> None:
     package = copy_package(experiments_dir, tree, "opencode-agent-variant")
     result = cli(
@@ -139,11 +140,14 @@ def test_a_real_run_records_and_deletes_the_workspace(
     records = list((package / "results").glob("*.json"))
     assert len(records) == 1
     assert json.loads(records[0].read_text(encoding="utf-8"))["tool_version"] == "9.9.9"
-    assert list(_isolated_tmpdir.glob("probe-opencode-agent-variant.*")) == []
+    (ws,) = workspaces("opencode-agent-variant")
+    assert f"probe run: the workspace is kept at {ws}\n" in result.stderr
+    assert (ws / "source.json").is_file()
+    assert (ws / "tool_version").read_text(encoding="utf-8") == "9.9.9\n"
 
 
 def test_the_discriminator_without_a_dry_run_is_refused(
-    cli: Cli, tree: Path, experiments_dir: Path, opencode_debug_stub: Path, _isolated_tmpdir: Path
+    cli: Cli, tree: Path, experiments_dir: Path, opencode_debug_stub: Path
 ) -> None:
     copy_package(experiments_dir, tree, "opencode-agent-variant")
     result = cli("run", "opencode-agent-variant", env={"PROBE_FIXTURE": "discriminator"})
@@ -151,7 +155,7 @@ def test_the_discriminator_without_a_dry_run_is_refused(
     assert (
         "probe run: the discriminator fixture is dry-run only; set PROBE_DRY_RUN=1" in result.stderr
     )
-    assert list(_isolated_tmpdir.glob("probe-*")) == []
+    assert list(workspace_root().glob("*/*")) == []
 
 
 COMMAND_CONFIG = {
@@ -268,7 +272,6 @@ def test_the_discriminator_dry_run_arranges_the_discriminator_fixture(
     experiments_dir: Path,
     opencode_debug_stub: Path,
     tmp_path: Path,
-    _isolated_tmpdir: Path,
 ) -> None:
     package = copy_package(experiments_dir, tree, "opencode-agent-variant")
     result = cli(
@@ -281,7 +284,7 @@ def test_the_discriminator_dry_run_arranges_the_discriminator_fixture(
         },
     )
     assert result.returncode == 0
-    (ws,) = _isolated_tmpdir.glob("probe-opencode-agent-variant.*")
+    (ws,) = workspaces("opencode-agent-variant")
     source = package / "fixtures" / "discriminator"
     files = [path for path in source.rglob("*") if path.is_file()]
     assert files
@@ -302,7 +305,6 @@ def test_replay_judges_a_kept_debug_workspace(
     experiments_dir: Path,
     opencode_debug_stub: Path,
     tmp_path: Path,
-    _isolated_tmpdir: Path,
 ) -> None:
     package = copy_package(experiments_dir, tree, "opencode-command-variant")
     run = cli(
@@ -314,7 +316,7 @@ def test_replay_judges_a_kept_debug_workspace(
         },
     )
     assert run.returncode == 0
-    (ws,) = _isolated_tmpdir.glob("probe-opencode-command-variant.*")
+    (ws,) = workspaces("opencode-command-variant")
 
     good = tmp_path / "good"
     shutil.copytree(ws, good)

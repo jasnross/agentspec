@@ -14,11 +14,11 @@ experiments/probe run cursor-subagent-effort
 
 One blocking invocation. It prints a workspace path and three instructions, then polls the capture and records automatically — no second command and no keypress. If your terminal closes before the capture arrives, the workspace is kept for inspection, but the run is over: re-run the probe.
 
-The workspace is a throwaway temp directory, never a real project. `agentspec sync` owns `.cursor/hooks.json` through `_agentspec_id` tracking (`CursorAdapter::entry_to_json` and `CursorAdapter::tidy_hooks` in `src/adapters/cursor.rs`), so running this in a synced workspace could collide with that merge logic. Generating the workspace makes the collision structurally impossible rather than merely warned against.
+The workspace is a generated scratch directory, never a real project. `agentspec sync` owns `.cursor/hooks.json` through `_agentspec_id` tracking (`CursorAdapter::entry_to_json` and `CursorAdapter::tidy_hooks` in `src/adapters/cursor.rs`), so running this in a synced workspace could collide with that merge logic. Generating the workspace makes the collision structurally impossible rather than merely warned against.
 
 ## The oracle
 
-Cursor exposes no offline introspection command. The oracle is its hook system: a hook that dumps raw stdin, plus hand-authored subagent definitions in a throwaway workspace. `subagentStart` carries `subagent_model`, the model id Cursor resolved for the subagent. Only `subagentStart` is registered — a narrower registration means less capture noise to project over.
+Cursor exposes no offline introspection command. The oracle is its hook system: a hook that dumps raw stdin, plus hand-authored subagent definitions in a generated workspace. `subagentStart` carries `subagent_model`, the model id Cursor resolved for the subagent. Only `subagentStart` is registered — a narrower registration means less capture noise to project over.
 
 Each arm is a `.cursor/agents/<name>.md` differing only in its `model:` line. The resolved model per arm is read with:
 

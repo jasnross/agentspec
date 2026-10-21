@@ -27,10 +27,10 @@ def _arrange_arm(package: Path, arm_dir: Path, arm: OpenCodeArm) -> ScriptedCall
     """Refuse a missing read target, and script the file read for the arm that makes one.
 
     A missing file would fail the `read` arm's call for a reason that has nothing to do with
-    permissions. The `read` arm's arguments are built here, from the physical path: on macOS
-    `$TMPDIR` sits under `/var`, a symlink to `/private/var`, and OpenCode compares the path
-    against its resolved working directory, so the unresolved spelling would read as outside
-    the project and fail on `external_directory` instead.
+    permissions. The `read` arm's arguments are built here, from the physical path: the
+    workspace root may sit behind a symlink, as macOS's `/var` → `/private/var` does, and
+    OpenCode compares the path against its resolved working directory, so the unresolved
+    spelling would read as outside the project and fail on `external_directory` instead.
     """
     notes = arm_dir / "project" / "notes.txt"
     if not notes.exists():

@@ -18,6 +18,7 @@ import pytest
 from tests.conftest import (
     Cli,
     unattended_manifest,
+    workspaces,
 )
 
 KEPT = "probe run: the workspace has been kept for inspection:"
@@ -80,6 +81,92 @@ def test_a_record_lands_in_the_package_s_results_when_the_tree_is_reached_throug
     assert result.stdout == f"{link / 'alpha' / 'results' / records[0].name}\n"
 
 
+def test_a_real_record_keeps_its_workspace_with_the_source_map(cli: Cli, tree: Path) -> None:
+    _put_custom_package(tree, "alpha", RECORDING_PY)
+
+    result = cli("run", "alpha")
+
+    assert result.returncode == 0, result.output
+    (ws,) = workspaces("alpha")
+    assert f"probe run: the workspace is kept at {ws}\n" in result.stderr
+    source = json.loads((ws / "source.json").read_text(encoding="utf-8"))
+    assert "experiments/alpha/probe.py" in source
+    assert "experiments/lib/probe_harness/source.py" in source
+
+
+# The version stub prints the file named by `VERSION_FILE`; Act rewrites that file, as a
+# provider updating during a run would.
+UPGRADING_PY = """\
+import os
+from pathlib import Path
+from probe_harness.families.base import CustomProbe, JudgeResult
+
+def _act(ws: Path) -> None:
+    Path(os.environ["VERSION_FILE"]).write_text("2.0.0\\n", encoding="utf-8")
+    (ws / "view.json").write_text("1\\n", encoding="utf-8")
+
+PROBE = CustomProbe(required_tools=(), arrange=lambda ws, variant: None, act=_act,
+                    judge=lambda ws: JudgeResult(view=ws / "view.json", selection=None))
+"""
+
+
+def _version_stub(tmp_path: Path, version: str) -> tuple[Path, Path]:
+    """A version command printing the content of a file holding <version>: `(stub, file)`."""
+    version_file = tmp_path / "version.txt"
+    version_file.write_text(f"{version}\n" if version else "", encoding="utf-8")
+    stub = tmp_path / "version-stub"
+    stub.write_text(f'#!/bin/sh\ncat "{version_file}"\n', encoding="utf-8")
+    stub.chmod(0o755)
+    return stub, version_file
+
+
+def test_a_record_carries_the_version_read_before_act_not_after(
+    cli: Cli, tree: Path, tmp_path: Path
+) -> None:
+    stub, version_file = _version_stub(tmp_path, "1.0.0")
+    package = _put_custom_package(
+        tree, "alpha", UPGRADING_PY, version_source={"kind": "command", "command": str(stub)}
+    )
+
+    result = cli("run", "alpha", env={"VERSION_FILE": str(version_file)})
+
+    assert result.returncode == 0, result.output
+    assert version_file.read_text(encoding="utf-8") == "2.0.0\n"
+    (record,) = (package / "results").glob("*.json")
+    assert json.loads(record.read_text(encoding="utf-8"))["tool_version"] == "1.0.0"
+    (ws,) = workspaces("alpha")
+    assert (ws / "tool_version").read_text(encoding="utf-8") == "1.0.0\n"
+
+
+def test_a_version_command_printing_nothing_refuses_the_run_before_act(
+    cli: Cli, tree: Path, tmp_path: Path
+) -> None:
+    stub, version_file = _version_stub(tmp_path, "")
+    package = _put_custom_package(
+        tree, "alpha", UPGRADING_PY, version_source={"kind": "command", "command": str(stub)}
+    )
+
+    result = cli("run", "alpha", env={"VERSION_FILE": str(version_file)})
+
+    assert result.returncode == 1, result.output
+    assert f"probe run: the version command printed nothing within 10s: {stub}\n" in result.stderr
+    assert version_file.read_text(encoding="utf-8") == ""  # Act never ran
+    assert not (package / "results").exists()
+    (ws,) = workspaces("alpha")
+    assert not (ws / "tool_version").exists()
+    assert f"probe run: the workspace has been kept for inspection: {ws}\n" in result.stderr
+
+
+def test_a_dry_run_names_the_workspace_it_keeps(cli: Cli, tree: Path) -> None:
+    _put_custom_package(tree, "alpha", RECORDING_PY)
+
+    result = cli("run", "alpha", env={"PROBE_DRY_RUN": "1"})
+
+    assert result.returncode == 0, result.output
+    (ws,) = workspaces("alpha")
+    assert f"probe run: the workspace is kept at {ws}\n" in result.stderr
+
+
 VARIANT_ECHO_PY = """\
 from pathlib import Path
 from probe_harness.families.base import CustomProbe, JudgeResult
@@ -113,10 +200,6 @@ def _put_custom_package(tree: Path, name: str, probe_py: str, **manifest: Any) -
     return package
 
 
-def _workspaces(tmpdir: Path, name: str) -> list[Path]:
-    return list(tmpdir.glob(f"probe-{name}.*"))
-
-
 def test_a_custom_probe_s_arrange_receives_the_selected_variant(cli: Cli, tree: Path) -> None:
     _put_custom_package(tree, "alpha", VARIANT_ECHO_PY)
     result = cli("run", "alpha", env={"PROBE_FIXTURE": "discriminator", "PROBE_DRY_RUN": "1"})
@@ -125,30 +208,28 @@ def test_a_custom_probe_s_arrange_receives_the_selected_variant(cli: Cli, tree: 
 
 
 def test_a_custom_probe_over_a_manual_manifest_is_refused_before_a_workspace_exists(
-    cli: Cli, tree: Path, _isolated_tmpdir: Path
+    cli: Cli, tree: Path
 ) -> None:
     _put_custom_package(tree, "alpha", VARIANT_ECHO_PY, driver="manual", wait_for="length > 0")
     result = cli("run", "alpha")
     assert result.returncode == 1
     assert 'records without a capture, but its manifest declares driver "manual"' in result.stderr
     assert "arranged" not in result.stdout
-    assert _workspaces(_isolated_tmpdir, "alpha") == []
+    assert workspaces("alpha") == []
 
 
-def test_a_custom_probe_over_a_capture_version_source_is_refused(
-    cli: Cli, tree: Path, _isolated_tmpdir: Path
-) -> None:
+def test_a_custom_probe_over_a_capture_version_source_is_refused(cli: Cli, tree: Path) -> None:
     _put_custom_package(
         tree, "alpha", VARIANT_ECHO_PY, version_source={"kind": "capture", "jq": "first"}
     )
     result = cli("run", "alpha")
     assert result.returncode == 1
     assert "declares a capture version source" in result.stderr
-    assert _workspaces(_isolated_tmpdir, "alpha") == []
+    assert workspaces("alpha") == []
 
 
 def test_a_non_object_version_source_is_refused_before_a_workspace_exists(
-    cli: Cli, tree: Path, _isolated_tmpdir: Path
+    cli: Cli, tree: Path
 ) -> None:
     package = _put_custom_package(tree, "alpha", VARIANT_ECHO_PY, version_source="command")
     result = cli("run", "alpha")
@@ -156,12 +237,10 @@ def test_a_non_object_version_source_is_refused_before_a_workspace_exists(
     assert f"probe run: manifest is invalid: {package / 'probe.json'}\n" in result.stderr
     assert "probe run:   version_source: must be an object" in result.stderr
     assert "arranged" not in result.stdout
-    assert _workspaces(_isolated_tmpdir, "alpha") == []
+    assert workspaces("alpha") == []
 
 
-def test_a_manual_probe_declaring_a_second_variant_is_refused(
-    cli: Cli, tree: Path, _isolated_tmpdir: Path
-) -> None:
+def test_a_manual_probe_declaring_a_second_variant_is_refused(cli: Cli, tree: Path) -> None:
     _put_custom_package(
         tree, "alpha", MANUAL_WITH_VARIANT_PY, driver="manual", wait_for="length > 0"
     )
@@ -172,7 +251,7 @@ def test_a_manual_probe_declaring_a_second_variant_is_refused(
     assert result.returncode == 1
     assert "whose only fixture variant is assertion" in result.stderr
     assert "Workspace ready" not in result.output
-    assert _workspaces(_isolated_tmpdir, "alpha") == []
+    assert workspaces("alpha") == []
 
 
 MANIFEST: dict[str, Any] = {
@@ -293,7 +372,6 @@ def providers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def test_an_inconsistent_definition_is_refused_before_a_workspace_exists(
     cli: Cli,
     tree: Path,
-    _isolated_tmpdir: Path,
     probe_py: str,
     manifest: dict[str, Any],
     message: str,
@@ -302,7 +380,7 @@ def test_an_inconsistent_definition_is_refused_before_a_workspace_exists(
     result = cli("run", "pkg")
     assert result.returncode == 1
     assert message in result.stderr
-    assert list(_isolated_tmpdir.glob("probe-pkg.*")) == []
+    assert workspaces("pkg") == []
 
 
 def test_a_flag_given_with_a_package_exits_2(cli: Cli, put_package: Callable[..., Path]) -> None:

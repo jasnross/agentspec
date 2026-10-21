@@ -19,6 +19,7 @@ import pytest
 from tests.conftest import (
     Cli,
     claude_request,
+    workspaces,
 )
 
 MARKER = "AGENTSPEC-PROBE-MARKER-CLAUDETEST"
@@ -220,16 +221,14 @@ def test_the_environment_reaching_claude_is_isolated_and_pointed_at_the_sink(
     ]
 
 
-def test_replay_judges_a_kept_claude_workspace(
-    cli: Cli, package: Path, tmp_path: Path, _isolated_tmpdir: Path
-) -> None:
+def test_replay_judges_a_kept_claude_workspace(cli: Cli, package: Path, tmp_path: Path) -> None:
     run = cli(
         "run",
         "claude-family",
         env=_env(_source(tmp_path), tmp_path / "env.jsonl", PROBE_DRY_RUN="1"),
     )
     assert run.returncode == 0, run.stderr
-    (ws,) = _isolated_tmpdir.glob("probe-claude-family.*")
+    (ws,) = workspaces("claude-family")
     copy = tmp_path / "copy"
     shutil.copytree(ws, copy)
     replayed = cli("replay", "claude-family", copy)
@@ -293,12 +292,6 @@ RICH_DEFINITION = textwrap.dedent(f"""\
             f.write(f"judge saw {{len(view['a'])}} entries in arm a\\n")
 
 
-    def _after(ws: Path) -> bool:
-        with _ORDER.open("a") as f:
-            f.write("after_record\\n")
-        return True
-
-
     PROBE = ClaudeOtelProbe(
         model="{MODEL}",
         budget_usd="0.10",
@@ -317,7 +310,7 @@ RICH_DEFINITION = textwrap.dedent(f"""\
         responses_in_view=True,
         variants=("assertion", "discriminator"),
         arrange_arm=_arrange,
-        functions=ProbeFunctions(judge=_judge, after_record=_after),
+        functions=ProbeFunctions(judge=_judge),
     )
 """)
 
@@ -390,8 +383,7 @@ def test_a_rich_definition_wires_every_family_hook(cli: Cli, package: Path, tmp_
     assert "--mcp-config" in calls["a"]["argv"]
 
     order = (package / "order.log").read_text(encoding="utf-8").splitlines()
-    # The definition's judge saw the view before responses were appended to it; a dry run
-    # never calls after_record.
+    # The definition's judge saw the view before responses were appended to it.
     assert order == ["judge saw 2 entries in arm a"]
     view_line = next(
         line
@@ -402,8 +394,8 @@ def test_a_rich_definition_wires_every_family_hook(cli: Cli, package: Path, tmp_
     assert len(view["a"]) == 3  # two requests plus the appended response
 
 
-def test_after_record_keeps_the_workspace_on_a_real_run(
-    cli: Cli, package: Path, tmp_path: Path, _isolated_tmpdir: Path
+def test_a_real_run_keeps_the_workspace_with_its_source_map(
+    cli: Cli, package: Path, tmp_path: Path
 ) -> None:
     _rich(package)
     source = _rich_source(tmp_path)
@@ -415,8 +407,9 @@ def test_after_record_keeps_the_workspace_on_a_real_run(
     result = cli("run", "claude-family", env=_env(source, tmp_path / "env.jsonl"))
     assert result.returncode == 0, result.stderr
     assert len(list((package / "results").glob("*.json"))) == 1
-    assert (package / "order.log").read_text(encoding="utf-8").splitlines()[-1] == "after_record"
-    assert len(list(_isolated_tmpdir.glob("probe-claude-family.*"))) == 1
+    (ws,) = workspaces("claude-family")
+    assert f"probe run: the workspace is kept at {ws}\n" in result.stderr
+    assert (ws / "source.json").is_file()
 
 
 def test_a_gate_other_than_model_is_dispatched(cli: Cli, package: Path, tmp_path: Path) -> None:

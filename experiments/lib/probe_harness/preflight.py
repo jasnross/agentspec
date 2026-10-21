@@ -5,25 +5,30 @@ session may first surface at record time. The version guard and the imports run 
 `experiments/probe`; this module runs the rest, in order:
 
     1. the manifest gates
-    2. the family's tools, then a jq compile check of every manifest expression
+    2. the required tools — the family's, git, and a `command` version source's — then a
+       jq compile check of every manifest expression
     3. `PROBE_DRY_RUN`, `PROBE_FIXTURE` and `PROBE_TIMEOUT_SECONDS`
+    4. the source map, which the run writes into its workspace
 
 The definition's own preflight function and any family-specific check run next, in the
 family runner, still before a workspace exists.
 """
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from probe_harness import jq_cli
 from probe_harness.contract import (
     CaptureSource,
+    CommandSource,
     Manifest,
     ManifestError,
     ProjectionAssertion,
     parse_manifest,
 )
+from probe_harness.source import SourceMapError, source_map
 from probe_harness.workspace import DEFAULT_TIMEOUT_SECONDS, require_tools
 
 ASSERTION_VARIANT = "assertion"
@@ -44,6 +49,8 @@ class RunOptions:
     dry_run: bool
     variant: str
     timeout: int
+    # The source map preflight computed, which the run writes into its workspace.
+    source: Mapping[str, str]
 
 
 def check_manifest(package: Path) -> Manifest:
@@ -76,15 +83,30 @@ def run(
 ) -> tuple[Manifest, RunOptions]:
     """Run the preflight sequence, raising `PreflightError` at the first refusal."""
     manifest = _parse(package)
+    tools = [*family_tools, "git"]
+    if isinstance(manifest.version_source, CommandSource):
+        tools.append(manifest.version_source.argv[0])
     try:
-        require_tools(*family_tools)
+        require_tools(*dict.fromkeys(tools))
     except SystemExit as e:
         raise PreflightError(int(e.code or 1)) from None
     check_expressions(manifest)
-    return manifest, run_options(variants)
+    dry_run, variant, timeout = _environment(variants)
+    # Last, so a usage error in a `PROBE_*` variable is reported before any git work.
+    try:
+        source = source_map(package)
+    except SourceMapError as e:
+        raise PreflightError(1, *e.lines) from None
+    return manifest, RunOptions(dry_run, variant, timeout, source)
 
 
-def run_options(variants: tuple[str, ...]) -> RunOptions:
+def run_options(variants: tuple[str, ...], source: Mapping[str, str]) -> RunOptions:
+    """The run's options from the `PROBE_*` variables, carrying <source>."""
+    return RunOptions(*_environment(variants), source=source)
+
+
+def _environment(variants: tuple[str, ...]) -> tuple[bool, str, int]:
+    """`PROBE_DRY_RUN`, `PROBE_FIXTURE` and `PROBE_TIMEOUT_SECONDS`, checked; exit 2 if not."""
     dry_run = os.environ.get("PROBE_DRY_RUN", "")
     if dry_run not in ("", "0", "1"):
         raise PreflightError(2, f"PROBE_DRY_RUN must be 0 or 1 (got: {dry_run})")
@@ -112,7 +134,7 @@ def run_options(variants: tuple[str, ...]) -> RunOptions:
             )
         timeout = int(timeout_text)
 
-    return RunOptions(dry_run=dry_run == "1", variant=variant, timeout=timeout)
+    return dry_run == "1", variant, timeout
 
 
 def _parse(package: Path) -> Manifest:

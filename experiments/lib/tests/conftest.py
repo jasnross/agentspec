@@ -20,8 +20,13 @@ from typing import Any
 
 import pytest
 from probe_harness.contract import Depth
+from probe_harness.workspace import workspace_root
 
 EXPERIMENTS_DIR = Path(__file__).resolve().parents[2]
+
+# The environment pytest started with, captured before any fixture redirects the workspace
+# root, for the test that checks where real workspaces land.
+REAL_ENVIRONMENT = dict(os.environ)
 
 
 # Exactly these seven keys. No more, no fewer.
@@ -82,10 +87,11 @@ type Cli = Callable[..., Result]
 
 @pytest.fixture(autouse=True)
 def _isolated_tmpdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Workspaces a test creates land under its own temporary directory."""
+    """Workspaces and temporary files a test creates land under its own temporary directory."""
     tmpdir = tmp_path / "tmpdir"
     tmpdir.mkdir()
     monkeypatch.setenv("TMPDIR", str(tmpdir))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     # pytest runs under `uv run --locked`, so the harness environment is already synced and
     # the launcher may skip straight to the harness; the launcher's own tests unset this.
     monkeypatch.setenv("_AGENTSPEC_PROBE_SYNCED", "1")
@@ -98,6 +104,12 @@ def _isolated_tmpdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     ):
         monkeypatch.delenv(name, raising=False)
     return tmpdir
+
+
+def workspaces(name: str) -> list[Path]:
+    """Every workspace the harness made for package <name>, in name order."""
+    package_dir = workspace_root() / name
+    return sorted(package_dir.iterdir()) if package_dir.is_dir() else []
 
 
 @pytest.fixture

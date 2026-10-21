@@ -11,7 +11,6 @@ without `--billed`.
 
 from pathlib import Path
 
-from probe_harness import console
 from probe_harness.families.base import GateFailure, ProbeFunctions
 from probe_harness.families.claude_otel import (
     ClaudeArm,
@@ -55,28 +54,6 @@ def _judge(ws: Path) -> None:
             "Claude Code that no longer offers them for this server.",
             detail=e.detail,
         ) from None
-
-
-def _keep_if_offered(ws: Path) -> bool:
-    """Keep the workspace when `inherit` or `explicit` was offered a resource tool.
-
-    Those cells offered the resource tools in one run of eight, and that run's workspace was
-    the only thing that could have shown why.
-    """
-    arms = bodies.read_claude_arms(ws, _ARM_NAMES)
-    offered = any(
-        tool in _RESOURCE_TOOLS
-        for name in ("inherit", "explicit")
-        for request in arms[name].requests
-        if bodies.governed(request, bodies.MarkerField.SYSTEM, _MARKER)
-        for tool in bodies.listed_tools(request)
-    )
-    if offered:
-        console.say(
-            "inherit or explicit was offered a resource tool; the workspace has been "
-            f"kept for inspection: {ws}"
-        )
-    return offered
 
 
 PROBE = ClaudeOtelProbe(
@@ -127,7 +104,7 @@ PROBE = ClaudeOtelProbe(
     ),
     gates=(Model(), DeferredMcp("inherit", _FX_TOOLS), McpConnected(_FX_TOOLS)),
     unset_env=_UNSET,
-    functions=ProbeFunctions(judge=_judge, after_record=_keep_if_offered),
+    functions=ProbeFunctions(judge=_judge),
 )
 
 _ARM_NAMES = tuple(arm.name for arm in PROBE.arms)

@@ -24,11 +24,13 @@ from probe_harness.families.base import (
     file_lines,
     kept_on_failure,
     provider_env,
-    record_and_retain,
+    record_result,
+    record_tool_version,
     refused,
     run_custom_checks,
 )
 from probe_harness.families.opencode_env import OpenCodeIsolation
+from probe_harness.source import write_source
 from probe_harness.workspace import create_workspace
 
 FAMILY_TOOLS = ("jq", "opencode")
@@ -46,14 +48,15 @@ class OpenCodeDebugProbe:
 
 def run(manifest: Manifest, name: str, options: RunOptions, probe: OpenCodeDebugProbe) -> int:
     package = manifest.path.parent
-    ws = create_workspace(name)
+    ws = create_workspace(name, options.variant)
     with kept_on_failure(ws):
+        write_source(ws, options.source)
         try:
-            _arrange_and_act(package, ws, options.variant, probe)
+            _arrange_and_act(manifest, package, ws, options.variant, probe)
             result = judge(ws, probe)
         except GateFailure as e:
             return refused(e, ws)
-        return record_and_retain(manifest, ws, result, options, probe.functions)
+        return record_result(manifest, ws, result, options)
 
 
 def judge(ws: Path, probe: OpenCodeDebugProbe) -> JudgeResult:
@@ -86,7 +89,9 @@ def judge(ws: Path, probe: OpenCodeDebugProbe) -> JudgeResult:
     return JudgeResult(view=view, selection=None)
 
 
-def _arrange_and_act(package: Path, ws: Path, variant: str, probe: OpenCodeDebugProbe) -> None:
+def _arrange_and_act(
+    manifest: Manifest, package: Path, ws: Path, variant: str, probe: OpenCodeDebugProbe
+) -> None:
     source = package / "fixtures" / variant
     env = None
     cwd = ws
@@ -99,6 +104,7 @@ def _arrange_and_act(package: Path, ws: Path, variant: str, probe: OpenCodeDebug
     # Redirected to a file rather than piped: `opencode debug` truncates its stdout at
     # 65536 bytes when it is a pipe, which would hand the recorder a half-written document.
     command = " ".join(("opencode", "debug", *probe.argv))
+    record_tool_version(manifest, ws)
     with (ws / "view.json").open("wb") as out, (ws / "oracle.stderr").open("wb") as err:
         completed = subprocess.run(
             ["opencode", "debug", *probe.argv],

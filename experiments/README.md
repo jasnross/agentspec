@@ -220,7 +220,7 @@ The filename carries a UTC time component because date plus version does not dis
 
 `--dry-run` evaluates a manifest end to end — every gate, the projection, the structural comparison, version resolution, record assembly — and prints what a record would contain instead of writing one. No `results/` directory is created and no record is written. Version resolution still runs, so a manifest declaring `version_source.kind: "command"` still executes that command; what dry-run guarantees is that the recorder itself writes nothing, not that the run is side-effect-free.
 
-**A runner takes no arguments, so `--dry-run` is not one of them.** Every runner reads `PROBE_DRY_RUN=1` from the environment and passes the flag on to the recorder itself — the same shape as `PROBE_FIXTURE`. A dry run keeps its workspace. To re-evaluate a view a run already produced, invoke `experiments/probe record` directly against it, or re-judge the whole workspace with `probe replay` (below).
+**A runner takes no arguments, so `--dry-run` is not one of them.** Every runner reads `PROBE_DRY_RUN=1` from the environment and passes the flag on to the recorder itself — the same shape as `PROBE_FIXTURE`. Every run keeps its workspace. To re-evaluate a view a run already produced, invoke `experiments/probe record` directly against it, or re-judge the whole workspace with `probe replay` (below).
 
 It exits **0 whatever status the comparison computes**, including `refuted`. Validating that an assertion discriminates means running it against an input it is supposed to refute, so a nonzero exit would fail the primary use case every time; it would also make dry-run disagree with real-run semantics, where `refuted` is a finding rather than a failure.
 
@@ -305,9 +305,13 @@ The manual family's runner materializes the workspace, prints the procedure, pol
 
 The cost is that an interrupt or a timeout ends the run. The workspace is kept either way, because discarding one an operator spent a live session on is the single unrecoverable mistake a runner could make, and reading the capture is how they tell a hook that never fired from a procedure that went off the rails. But finishing that run is not possible: **re-run the probe.** The poll timeout is generous for the same reason — an hour, overridable with `PROBE_TIMEOUT_SECONDS`. Its job is diagnostic, not resource protection, and a premature expiry would cost a session outright.
 
+**Every family keeps every workspace,** at `$XDG_STATE_HOME/agentspec/probe-workspaces/<package>/<YYYY-MM-DDTHHMMSS>-<variant>/` (`~/.local/state/…` when `XDG_STATE_HOME` is unset). The harness never deletes one; its owner deletes it once the branch carrying its record ships. The root must lie outside every git work tree, with no provider instruction file (`CLAUDE.md`, `AGENTS.md`, `.claude/`, `.cursor/`) in any directory above it below `$HOME`, since a provider opened on a workspace would read those.
+
+A workspace records what produced its capture. `source.json` holds the git blob id of every file that affects evaluation — the package's `probe.json`, `probe.py` and `fixtures/`, and the harness itself — as it was on disk when the run started. `tool_version` holds a `command` version source's output, read once just before Act; every later judge of the workspace reads the version from there rather than running the command, so a provider updated after the run cannot change the version its record carries.
+
 The recorder's `--capture` flag remains, because it is how the capture directory reaches version resolution for a manifest declaring `version_source.kind: "capture"` — which every Cursor manifest does. A runner itself takes no arguments.
 
-**A toolchain failure cannot cost a capture.** The Python version, the locked environment, the harness's imports, the manifest's gates, whether its jq expressions compile, and the `PROBE_*` environment variables are all checked before the workspace exists, so a failure among them surfaces before the operator is asked to open a provider. A manual workspace is kept whatever happens after that.
+**A toolchain failure cannot cost a capture.** The Python version, the locked environment, the harness's imports, the manifest's gates, the required tools — the family's, git, and a `command` version source's — whether its jq expressions compile, and the `PROBE_*` environment variables are all checked before the workspace exists, so a failure among them surfaces before the operator is asked to open a provider. A manual workspace is kept whatever happens after that.
 
 ## Re-verification
 

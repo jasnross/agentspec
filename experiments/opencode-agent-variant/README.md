@@ -12,7 +12,7 @@
 experiments/probe run opencode-agent-variant
 ```
 
-It materializes `fixtures/assertion/` into a throwaway workspace, runs the oracle from inside it, and hands the raw output to the recorder, which writes a record under `results/`.
+It materializes `fixtures/assertion/` into a fresh workspace, runs the oracle from inside it, and hands the raw output to the recorder, which writes a record under `results/`.
 
 The discriminator arm runs the same way, as a dry run only; the harness refuses to record it:
 

@@ -277,6 +277,10 @@ def test_the_loop_runs_each_package_under_its_own_interpreter_from_any_directory
     jq = shutil.which("jq")
     assert jq is not None
     (bin_dir / "jq").symlink_to(jq)
+    # Preflight requires git, which computes the run's source map.
+    git = shutil.which("git")
+    assert git is not None
+    (bin_dir / "git").symlink_to(git)
     put_package("alpha", "unattended")
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()

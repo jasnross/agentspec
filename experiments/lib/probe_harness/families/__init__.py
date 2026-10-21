@@ -22,7 +22,8 @@ from probe_harness.families.base import (
     JudgeResult,
     RunOptions,
     kept_on_failure,
-    record_and_retain,
+    record_result,
+    record_tool_version,
     refused,
 )
 from probe_harness.families.claude_otel import ClaudeOtelProbe
@@ -32,6 +33,7 @@ from probe_harness.families.opencode_fake import OpenCodeFakeProbe
 from probe_harness.loader import DefinitionError, load_definition
 from probe_harness.preflight import ASSERTION_VARIANT, PreflightError, check_manifest
 from probe_harness.preflight import run as run_preflight
+from probe_harness.source import write_source
 from probe_harness.workspace import create_workspace
 
 type ProbeDefinition = (
@@ -132,7 +134,9 @@ def replay_package(name: str, ws: Path, selection: str | None, experiments_dir: 
                     definition.functions.judge(ws)
             case _:
                 assert_never(definition)
-        computed = record.compute(manifest, view=result.view, selection=result.selection)
+        computed = record.compute(
+            manifest, view=result.view, selection=result.selection, workspace=ws
+        )
         record.report(computed, None)
     except record.RecordRefused as e:
         console.say_refusal(e)
@@ -148,17 +152,19 @@ def replay_package(name: str, ws: Path, selection: str | None, experiments_dir: 
 
 
 def _run_custom(manifest: Manifest, name: str, options: RunOptions, probe: CustomProbe) -> int:
-    ws = create_workspace(name)
+    ws = create_workspace(name, options.variant)
     with kept_on_failure(ws):
+        write_source(ws, options.source)
         try:
             probe.arrange(ws, options.variant)
+            record_tool_version(manifest, ws)
             probe.act(ws)
             result: JudgeResult = probe.judge(ws)
             if probe.functions.judge is not None:
                 probe.functions.judge(ws)
         except GateFailure as e:
             return refused(e, ws)
-        return record_and_retain(manifest, ws, result, options, probe.functions)
+        return record_result(manifest, ws, result, options)
 
 
 def _definition_refusal(name: str, definition: ProbeDefinition, manifest: Manifest) -> str | None:

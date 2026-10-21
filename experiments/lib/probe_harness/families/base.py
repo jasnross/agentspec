@@ -1,18 +1,18 @@
 """What every family shares: definition building blocks and the five-step pipeline.
 
 Each run is Preflight → Arrange → Act → Judge → Record. Judge reads only the workspace, so
-`probe replay` can run it on a workspace some earlier run collected.
+`probe replay` can run it on a workspace some earlier run collected. The harness never
+deletes a workspace: its owner does, once the record it produced has shipped.
 """
 
 import os
-import shutil
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from probe_harness import console, jq_cli, record
-from probe_harness.contract import Manifest
+from probe_harness.contract import CommandSource, Manifest
 from probe_harness.gates import GateFailure
 from probe_harness.preflight import RunOptions
 
@@ -27,9 +27,11 @@ __all__ = [
     "kept_for_inspection",
     "kept_on_failure",
     "provider_env",
-    "record_and_retain",
+    "record_result",
+    "record_tool_version",
     "refused",
     "run_custom_checks",
+    "workspace_kept",
 ]
 
 
@@ -53,8 +55,6 @@ class ProbeFunctions:
     preflight: Callable[[], None] | None = None
     # Receives the workspace path only; raise `GateFailure` to refuse.
     judge: Callable[[Path], None] | None = None
-    # Return True to keep the workspace after a real record.
-    after_record: Callable[[Path], bool] | None = None
 
 
 @dataclass(frozen=True)
@@ -106,6 +106,31 @@ def file_lines(path: Path) -> tuple[str, ...]:
     return tuple(text.rstrip("\n").split("\n")) if text else ()
 
 
+def record_tool_version(manifest: Manifest, ws: Path) -> None:
+    """Write a `command` version source's output to `<ws>/tool_version`, just before Act.
+
+    Every later judge reads the version from there rather than running the command, so a
+    provider updated after the run cannot change the version its record carries. A command
+    that prints nothing refuses the run, still before Act: its record could never carry a
+    version, and no later judge would run the command again.
+    """
+    if not isinstance(manifest.version_source, CommandSource):
+        return
+    timeout = record.VERSION_COMMAND_TIMEOUT_SECONDS
+    version = record.run_version_command(manifest.version_source.argv, timeout=timeout)
+    if not version:
+        raise GateFailure(
+            f"the version command printed nothing within {timeout}s: "
+            f"{manifest.version_source.command}",
+            "the record would carry no tool version; re-run once the command answers.",
+        )
+    (ws / "tool_version").write_text(version + "\n", encoding="utf-8")
+
+
+def workspace_kept(ws: Path) -> None:
+    console.say(f"the workspace is kept at {ws}")
+
+
 def kept_for_inspection(ws: Path) -> None:
     console.say(f"the workspace has been kept for inspection: {ws}")
 
@@ -139,24 +164,22 @@ def kept_on_failure(ws: Path) -> Iterator[None]:
         raise
 
 
-def record_and_retain(
+def record_result(
     manifest: Manifest,
     ws: Path,
     result: JudgeResult,
     options: RunOptions,
-    functions: ProbeFunctions,
     *,
     capture: Path | None = None,
-    delete_after_record: bool = True,
 ) -> int:
-    """Record the judged result, then keep or delete the workspace.
-
-    A dry run and any failure keep it. A real record deletes it unless the family keeps
-    every workspace or the definition's `after_record` asks to keep this one.
-    """
+    """Record the judged result; a dry run prints it instead. The workspace is kept."""
     try:
         computed = record.compute(
-            manifest, view=result.view, selection=result.selection, capture=capture
+            manifest,
+            view=result.view,
+            selection=result.selection,
+            capture=capture,
+            workspace=ws,
         )
         written = None if options.dry_run else record.write(computed)
     except record.RecordRefused as e:
@@ -164,9 +187,5 @@ def record_and_retain(
         kept_for_inspection(ws)
         return 1
     record.report(computed, written)
-    if options.dry_run:
-        return 0
-    keep = functions.after_record(ws) if functions.after_record is not None else False
-    if delete_after_record and not keep:
-        shutil.rmtree(ws, ignore_errors=True)
+    workspace_kept(ws)
     return 0

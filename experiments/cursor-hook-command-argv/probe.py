@@ -7,20 +7,20 @@ Machine-judged: the answer is counted from the capture by a projection, so a
 person drives Cursor but no person interprets the result.
 """
 
-import os
-
 from probe_harness.families.base import GateFailure, ProbeFunctions
 from probe_harness.families.manual import ManualProbe
+from probe_harness.workspace import workspace_root
 
 # Whitespace, quotes, and every character a shell acts on.
 _SHELL_SIGNIFICANT = frozenset(" \t\n'\"$`;&|()<>*?!\\")
 
 
 def _preflight() -> None:
-    """Refuse a `$TMPDIR` that would invalidate the measurement.
+    """Refuse a probe workspace root that would invalidate the measurement.
 
-    Every workspace is created under `$TMPDIR`, so it is the only component of the
-    capture-script path that this repository does not control. That path is substituted
+    Every workspace is created under the workspace root (`$XDG_STATE_HOME`, or `$HOME`,
+    plus `agentspec/probe-workspaces`), so it is the only component of the capture-script
+    path that this repository does not control. That path is substituted
     into a `command` string the provider is expected to hand to a shell, so any character
     with meaning to a shell invalidates the measurement rather than merely inconveniencing
     it: whitespace puts an extra word before the case id, a quote re-quotes a later case,
@@ -31,10 +31,10 @@ def _preflight() -> None:
     placeholder, and the generated-JSON check rejects only a path that breaks JSON. Every
     character here produces valid JSON. Fail before the operator spends a live session.
     """
-    tmpdir = os.environ.get("TMPDIR") or "/tmp"
-    if _SHELL_SIGNIFICANT.intersection(tmpdir):
+    root = str(workspace_root())
+    if _SHELL_SIGNIFICANT.intersection(root):
         raise GateFailure(
-            f"TMPDIR contains whitespace or a shell metacharacter ({tmpdir});",
+            f"the probe workspace root contains whitespace or a shell metacharacter ({root});",
             "the command strings this probe registers would not measure what they mean to.",
         )
 

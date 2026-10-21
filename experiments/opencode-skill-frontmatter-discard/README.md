@@ -14,7 +14,7 @@ This is the harness's first negative finding — the first probe whose **confirm
 experiments/probe run opencode-skill-frontmatter-discard
 ```
 
-It materializes `fixtures/assertion/` into a throwaway workspace, runs the oracle from inside it, and hands the raw output to the recorder, which writes a record under `results/`.
+It materializes `fixtures/assertion/` into a fresh workspace, runs the oracle from inside it, and hands the raw output to the recorder, which writes a record under `results/`.
 
 The discriminator arm runs the same way, as a dry run only; the harness refuses to record it:
 
@@ -65,7 +65,7 @@ The corroboration observation stands in the table above, measured against openco
 
 **The oracle enumerates the operator's global skills, not only the workspace's.** `--pure` excludes external plugins; it does not exclude global config. The projection therefore selects by `name`, and the fixture name `agentspec-probe-discard` is distinctive enough that a collision is implausible. The authoring run confirmed exactly one match against 29 resolved skills; that count is machine-specific, and what transfers is the single-match requirement rather than the total.
 
-**`location` is deliberately absent from the projection.** It resolves to an absolute path inside a throwaway workspace, so no fixed `expected` could match it. It is still present in the asserted key set, which is where it carries its weight.
+**`location` is deliberately absent from the projection.** It resolves to an absolute path inside the run's workspace, so no fixed `expected` could match it. It is still present in the asserted key set, which is where it carries its weight.
 
 **The oracle is enumerating, not name-addressed, so a missing fixture would refute rather than fail.** `opencode debug skill --pure` lists every resolvable skill; it does not take a name. A workspace where the fixture never resolved therefore exits 0 with a valid view of all the _other_ skills, the projection yields `null`, and the recorder compares `null` against `expected` and writes `refuted` — the contract's strong "the provider changed" signal, raised by an apparatus failure, into an append-only directory. The definition guards this with a judge function asserting the fixture resolved exactly once, which refuses the run before anything is recorded when it did not. The sibling `opencode-agent-variant` needs no such guard because `opencode debug agent <name>` is name-addressed and exits nonzero on a missing agent.
 

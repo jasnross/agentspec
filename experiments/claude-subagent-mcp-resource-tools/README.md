@@ -59,7 +59,7 @@ A gate failure is a statement about the run, not about Claude, and writes no rec
 - **Deferred listing on `inherit`** (`gates.claude_otel.deferred_mcp`). The `inherit` arm's governed requests list `mcp__fx__alpha` and `mcp__fx__beta` as deferred and carry `ToolSearch`, so the run is under default tool search. This also pins the deferred listing's one-name-per-line format the projection reads.
 - **MCP connected before delegation, twice** (`gates.claude_otel.mcp_connected`). In every arm, every main-thread request that offers `Agent` lists `mcp__fx__alpha` and `mcp__fx__beta`, and — in a second call — `ListMcpResourcesTool`, `ReadMcpResourceTool`, and `ReadMcpResourceDirTool`, directly or as deferred. The second call reads the same places with the same exact names as the projection, so an empty value cannot mean "not in the session", "renamed", or "the filter is misspelled". If it fails, the definition's judge step adds that a rename or a Claude Code that stopped offering the tools is the likelier cause than a late connection.
 
-After a successful recording the runner removes its workspace, except when `inherit` or `explicit` was offered a resource tool: then it keeps the workspace and prints its path, because such a run is the rare one, and its requests are the only evidence of why it differed.
+Every run keeps its workspace and prints its path. That matters most for the rare run in which `inherit` or `explicit` was offered a resource tool — the record's `observed` value shows it — because that run's requests are the only evidence of why it differed.
 
 ## The assertion
 

@@ -32,7 +32,8 @@ from probe_harness.families.base import (
     file_lines,
     kept_on_failure,
     provider_env,
-    record_and_retain,
+    record_result,
+    record_tool_version,
     refused,
     run_custom_checks,
 )
@@ -40,6 +41,7 @@ from probe_harness.gates import bodies, stamp
 from probe_harness.gates import claude_otel as gates
 from probe_harness.gates.bodies import ClaudeArmBodies
 from probe_harness.gates.bodies import MarkerField as MarkerField
+from probe_harness.source import write_source
 from probe_harness.workspace import create_workspace, template_file
 
 FAMILY_TOOLS = ("jq", "claude")
@@ -167,15 +169,17 @@ class ClaudeOtelProbe:
 
 def run(manifest: Manifest, name: str, options: RunOptions, probe: ClaudeOtelProbe) -> int:
     package = manifest.path.parent
-    ws = create_workspace(name)
+    ws = create_workspace(name, options.variant)
     with kept_on_failure(ws):
+        write_source(ws, options.source)
         try:
+            record_tool_version(manifest, ws)
             for arm in probe.arms:
                 _run_arm(package, ws, arm, options.variant, probe)
             result = judge(ws, probe)
         except GateFailure as e:
             return refused(e, ws)
-        return record_and_retain(manifest, ws, result, options, probe.functions)
+        return record_result(manifest, ws, result, options)
 
 
 def judge(ws: Path, probe: ClaudeOtelProbe) -> JudgeResult:

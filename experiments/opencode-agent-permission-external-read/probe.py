@@ -44,8 +44,8 @@ def _arrange_arm(package: Path, arm_dir: Path, arm: OpenCodeArm) -> ScriptedCall
     if inside_git.returncode == 0:
         raise GateFailure(
             f"arm {arm.name}: the workspace {arm_dir} is inside a git repository.",
-            "OpenCode would compare the read against that worktree instead; set TMPDIR "
-            "outside any repository.",
+            "OpenCode would compare the read against that worktree instead; set "
+            "XDG_STATE_HOME so the probe workspace root lies outside any repository.",
         )
     target = arm_dir / "outside" / "target.txt"
     target.write_text(f"{_OUTSIDE_CONTENT}\n", encoding="utf-8")

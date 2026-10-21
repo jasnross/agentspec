@@ -43,7 +43,7 @@ def test_an_isolated_definition_runs_the_oracle_with_home_inside_the_workspace(
     home = Path(home_file.read_text(encoding="utf-8"))
     assert home.name == "home"
     ws = home.parent
-    assert ws.name.startswith("probe-opencode-agent-variant.")
+    assert ws.parent.name == "opencode-agent-variant"
     assert (ws / "project" / ".opencode").is_dir()
     assert (ws / "xdg" / "config").is_dir()
 

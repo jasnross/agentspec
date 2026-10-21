@@ -23,7 +23,14 @@ import pytest
 from probe_harness.contract import parse_manifest
 from probe_harness.families import manual
 
-from tests.conftest import CURSOR_PACKAGE_NAME, EXPERIMENTS_DIR, Cli, Result, make_capture_workspace
+from tests.conftest import (
+    CURSOR_PACKAGE_NAME,
+    EXPERIMENTS_DIR,
+    Cli,
+    Result,
+    make_capture_workspace,
+    workspaces,
+)
 
 
 def put_capture_package(tmp_path: Path, manifest: str) -> tuple[Path, Path]:
@@ -98,7 +105,13 @@ PROBE = ManualProbe(instructions="Open the workspace and run the session.")
 """
 
 
-def _put_manual(tree: Path, name: str, *, wait_for: str | None) -> Path:
+def _put_manual(
+    tree: Path,
+    name: str,
+    *,
+    wait_for: str | None,
+    version_source: dict[str, Any] | None = None,
+) -> Path:
     package = tree / name
     capture = package / "fixtures" / "capture"
     capture.mkdir(parents=True)
@@ -109,7 +122,7 @@ def _put_manual(tree: Path, name: str, *, wait_for: str | None) -> Path:
         "driver": "manual",
         "depth": None,
         "question": "q",
-        "version_source": {"kind": "none"},
+        "version_source": version_source or {"kind": "none"},
         "assertion": {"projection": ".[0].x", "expected": 1},
     }
     if wait_for is not None:
@@ -117,10 +130,6 @@ def _put_manual(tree: Path, name: str, *, wait_for: str | None) -> Path:
     (package / "probe.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     (package / "probe.py").write_text(MANUAL_PROBE_PY, encoding="utf-8")
     return package
-
-
-def _workspaces(name: str) -> list[Path]:
-    return sorted(Path(os.environ["TMPDIR"]).glob(f"probe-{name}.*"))
 
 
 def test_a_manual_manifest_without_wait_for_fails_before_the_workspace_is_ready(
@@ -133,7 +142,7 @@ def test_a_manual_manifest_without_wait_for_fails_before_the_workspace_is_ready(
     assert result.returncode == 1, result.output
     assert "manifest declares no wait_for filter" in result.output
     assert "Workspace ready" not in result.output
-    assert _workspaces("manual-stub") == []
+    assert workspaces("manual-stub") == []
 
 
 def test_a_dry_run_with_a_matching_capture_writes_no_record(tree: Path) -> None:
@@ -170,9 +179,40 @@ def test_a_dry_run_with_a_matching_capture_writes_no_record(tree: Path) -> None:
     assert not results.exists() or not any(results.iterdir())
 
 
+def test_a_command_sourced_run_records_the_tool_version_before_the_instructions(
+    tree: Path, tmp_path: Path
+) -> None:
+    stub = tmp_path / "version-stub"
+    stub.write_text("#!/bin/sh\nprintf '%s\\n' '4.5.6'\n", encoding="utf-8")
+    stub.chmod(0o755)
+    _put_manual(
+        tree,
+        "manual-stub",
+        wait_for="length > 0",
+        version_source={"kind": "command", "command": str(stub)},
+    )
+    outfile = tmp_path / "probe.out"
+    with outfile.open("w", encoding="utf-8") as out:
+        runner = subprocess.Popen(
+            [str(EXPERIMENTS_DIR / "probe"), "run", "manual-stub"],
+            env={**os.environ, "PROBE_TIMEOUT_SECONDS": "30"},
+            stdin=subprocess.DEVNULL,
+            stdout=out,
+            stderr=subprocess.STDOUT,
+        )
+    try:
+        project = _wait_for_project(outfile)
+        assert project is not None
+        # The instructions are out, so the version must already be on disk.
+        assert (project.parent / "tool_version").read_text(encoding="utf-8") == "4.5.6\n"
+    finally:
+        runner.kill()
+        runner.wait()
+
+
 def _await_capture_dir(name: str, *, deadline: float) -> Path:
     while time.monotonic() < deadline:
-        for ws in _workspaces(name):
+        for ws in workspaces(name):
             # The capture script is templated in after `capture/` is created; once it is
             # present, Arrange has finished with the directory.
             if (ws / "capture" / "dump-hook.sh").is_file():
@@ -324,6 +364,8 @@ def test_the_blocking_path_records_without_a_second_invocation(
             runner.kill()
             runner.wait()
     assert read_record(newest_record(cursor_package))["status"] == "confirmed"
+    assert f"probe run: the workspace is kept at {ws}\n" in outfile.read_text(encoding="utf-8")
+    assert (ws / "source.json").is_file()
 
 
 def test_the_generated_workspace_has_no_unsubstituted_placeholder_anywhere(

@@ -28,8 +28,11 @@ from probe_harness.families.base import (
     RunOptions,
     kept_for_inspection,
     kept_on_failure,
+    record_tool_version,
     refused,
+    workspace_kept,
 )
+from probe_harness.source import write_source
 from probe_harness.workspace import (
     create_workspace,
     prompt_selection,
@@ -55,9 +58,13 @@ def run(
     Blocking is what removes the stale-capture failure: the workspace was created by the
     invocation still running, so there is no earlier capture to mistake for this one.
     """
-    ws = arrange_human_workspace(manifest.path.parent, name)
-
+    ws = arrange_human_workspace(manifest.path.parent, name, options.variant)
     with kept_on_failure(ws):
+        write_source(ws, options.source)
+        try:
+            record_tool_version(manifest, ws)
+        except GateFailure as e:
+            return refused(e, ws)
         print(f"\nWorkspace ready: {ws / 'project'}", file=sys.stderr)
         print(
             f"(capture lives outside it, at {ws / 'capture'})\n{probe.instructions}",
@@ -73,10 +80,8 @@ def run(
             code = record_capture(manifest, ws, dry_run=options.dry_run)
             if code != 0:
                 kept_for_inspection(ws)
-            elif not options.dry_run and probe.functions.after_record is not None:
-                # Every manual workspace is kept, so its answer changes nothing here; the
-                # function still runs for whatever it reports.
-                probe.functions.after_record(ws)
+            else:
+                workspace_kept(ws)
             return code
 
     # The workspace is never deleted: discarding one an operator spent a live session on is
@@ -90,9 +95,9 @@ def run(
     return 1
 
 
-def arrange_human_workspace(package: Path, name: str) -> Path:
+def arrange_human_workspace(package: Path, name: str, variant: str) -> Path:
     """Materialize the workspace and return its root, the path `--capture` takes."""
-    ws = create_workspace(name)
+    ws = create_workspace(name, variant)
     with kept_on_failure(ws):
         _materialize(package, ws)
     return ws
@@ -172,7 +177,9 @@ def record_capture(
             return 1
 
     try:
-        computed = record.compute(manifest, view=view, selection=selection, capture=ws)
+        computed = record.compute(
+            manifest, view=view, selection=selection, capture=ws, workspace=ws
+        )
         written = None if dry_run else record.write(computed)
     except record.RecordRefused as e:
         console.say_refusal(e)

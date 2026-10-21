@@ -1010,6 +1010,26 @@ def test_an_observed_value_too_deep_for_the_record_model_is_refused(tmp_path: Pa
     assert exc.value.lines == ("the observed value cannot be written as a record",)
 
 
+def test_a_workspace_without_tool_version_falls_back_to_running_the_command(
+    tmp_path: Path,
+) -> None:
+    # A workspace made before runs kept their version.
+    stub = tmp_path / "version-stub"
+    stub.write_text("#!/bin/sh\necho 7.7.7\n", encoding="utf-8")
+    stub.chmod(0o755)
+    manifest = _parsed(
+        tmp_path, unattended_manifest(version_source={"kind": "command", "command": str(stub)})
+    )
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    computed = record.compute(manifest, view=_view_file(tmp_path, "1"), workspace=ws)
+    assert computed.tool_version == "7.7.7"
+
+    (ws / "tool_version").write_text("6.6.6\n", encoding="utf-8")
+    computed = record.compute(manifest, view=_view_file(tmp_path, "1"), workspace=ws)
+    assert computed.tool_version == "6.6.6"
+
+
 def test_a_written_record_is_its_parsed_record_s_dump(tmp_path: Path) -> None:
     manifest = _parsed(tmp_path, JUDGE_MANIFEST)
     computed = record.compute(manifest, selection="neither", capture=fresh_capture(tmp_path))
