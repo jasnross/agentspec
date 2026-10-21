@@ -1,4 +1,4 @@
-<!-- next: 52 -->
+<!-- next: 57 -->
 
 - #1 Consider deriving id from path instead of requiring in frontmatter
    - Currently `id` is a required `String` in all frontmatter structs; missing it causes a parse error at load time
@@ -215,3 +215,25 @@
   - `probe status` and `probe run --stale` judge staleness from a record's status, date and tool version, not its projection text, so nothing breaks in the meantime. The harness just reads two record shapes for as long as old ones exist
   - Options in play: keep them as historical evidence indefinitely; let each age out as its package is re-measured; or re-record every package into the new shape (billed and manual probes cost quota and live sessions). Rewriting a record in place is ruled out because records are append-only evidence
   - Deliberately not blocking TODO #49 and #50: `$THOUGHTS_DIR/ideas/2026-10-14-agentspec-probe-harness-assertions-and-runtime-libraries.md`, Non-Goals
+- #52 **Consider a pre-push hook that checks probe records' content ids are reachable.** Once probe records store a git blob id for each file of the code that produced them, a feature branch that edits a covered file before recording and is then rebased over a `main` that also changed that same file leaves its record naming a blob no commit on any branch contains. The `just probe-test` reachability test catches it, but only if it runs between `git town sync` and `git town ship`.
+  - Likely shape: a pre-push hook running only the reachability check (about 0.16 s over `git rev-list --objects HEAD`). `git-town.toml` sets `push-hook = true` and `push-branches = true`, so the hook fires on the push after a sync's rebase and on ship's push to `main`.
+  - Install it through a `just` recipe that adds to `.git/hooks/pre-push`, not via `core.hooksPath`: setting that would make git skip graphify's locally installed `post-checkout` and `post-commit` hooks.
+  - A hook can only shorten detection, never prevent the loss, and it is opt-in per clone, so `just probe-test` stays the guarantee. A lost id costs only a re-judge of the record's kept workspace, so this is worth building only if the reachability test catches real losses often enough for late detection to hurt.
+  - Related: TODO #49, #50.
+- #53 **Even out the probe families' incidental differences.** Divergences between families that no provider or driver difference explains:
+  - The Claude family checks MCP stamps before writing `view.json`; the fake-OpenCode family checks them after.
+  - `claude -p` and `opencode debug` inherit the caller's stdin; the fake-OpenCode family passes `subprocess.DEVNULL`.
+  - No provider subprocess (`claude_otel.py`, `opencode_fake.py`, `opencode_debug.py`) runs with a timeout.
+  - `create_workspace` makes a `capture/` directory for every family, though only the manual family uses it.
+  - `PROBE_TIMEOUT_SECONDS` is parsed for every family but read only by the manual runner.
+- #54 **Consider pinning provider versions through mise for probe runs.** mise can run a specific `claude` or `opencode` version, which would make a probe run reproducible at a recorded `tool_version` and tie "owed a run" to an explicit pin bump rather than to whatever is installed.
+  - Cost: a probe would measure the pinned version, not the one in daily use, and Claude Code auto-updates outside mise.
+  - Cursor cannot be pinned the same way, so its probes stay capture-sourced either way.
+- #55 **Re-measure the OpenCode probes against OpenCode 2.x.** Every committed OpenCode record was taken on 1.18.34; until this is done, run the probes as `mise exec opencode@1.18.34 claude@2.1.287 -- experiments/probe run …`. On 2.1.0 every unattended OpenCode package fails during Act:
+  - The `opencode debug` family (`opencode-agent-variant`, `opencode-command-variant`, `opencode-skill-frontmatter-discard`): 2.x has no `opencode debug agent` ("Did you mean this? agents"), so `families/opencode_debug.py`'s oracle needs its 2.x equivalent, and the projections may need to follow its output.
+  - The fake-OpenCode family: through a mise shim, `opencode` under the probes' isolated `HOME` refuses `~/.config/mise/config.toml` as untrusted. Running the real binary rather than the shim avoids that; see TODO #56.
+  - Once both run, re-run the packages on 2.x and record what changed, following the README's "life of a refutation" where a finding moved. Then drop the `opencode@1.18.34` from the run command.
+- #56 **Have the probe harness pin provider versions through mise instead of using whatever is installed.** Today a run uses the first `opencode`/`claude` on `PATH`, so pinning means wrapping the run in `mise exec <tool>@<version> --` by hand. Even a pin in the repo `mise.toml` would reach a run only under `mise exec` or a shell with mise activated in the repo: a bare shim resolves its version from the provider's working directory, which is the workspace under `~/.local/state`, outside the repo, so it falls back to the global `latest`. `just probe-run` from an unactivated shell therefore runs whatever global version is current, and a mise upgrade mid-session silently changed the providers being measured (1.18.34 → 2.1.0).
+  - Likely shape: the harness resolves each provider to a concrete binary for a declared version (e.g. `mise where <tool>@<version>`, or running it under `mise exec <tool>@<version> --`), and refuses in preflight when that version is not installed. That keeps the toolchain-failure-before-workspace rule.
+  - Decide where the version is declared: the repo `mise.toml` (one pin for every package), or per package/manifest (packages could measure different versions). Square it with the "a package's files state no fact derivable from its layout" rule and with `version_source.command`. `probe status`/`--stale` drift compares the installed version against the record, and should probably compare the pinned one.
+  - Running the real binary rather than a shim also removes the mise-trust failure under the probes' isolated `HOME`.
