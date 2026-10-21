@@ -109,6 +109,15 @@ From the second `PROBE_DRY_RUN=1` run on 2026-10-03 against opencode **1.18.34**
 
 Two records exist from 2026-10-03, both `confirmed`. The first (`T132254`) has five arms and the URI-prefix success token; the second (`T134728`) has the two `plain_list_*` arms and the per-call success tokens above.
 
+On 2026-10-21, against opencode **1.18.34**, the `discriminator` fixture variant ran as a dry run. It changes one file, `.opencode/agent/probe-pattern-map.md`, whose `read` map becomes a plain `read: allow`. That is the permission block `probe-plain-read` carries, so the `plain_*` arms' measurements predict the result. The `status` and `observed` fields are excerpted from the record the run printed:
+
+```
+PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run opencode-agent-mcp-resource-read
+{"status":"refuted","observed":{"map_read_resource":{"tools":["list_mcp_resource_templates","list_mcp_resources","read","read_mcp_resource"],"call":"succeeded"},"map_list_resources":{"tools":["list_mcp_resource_templates","list_mcp_resources","read","read_mcp_resource"],"call":"succeeded"},"map_list_templates":{"tools":["list_mcp_resource_templates","list_mcp_resources","read","read_mcp_resource"],"call":"succeeded"},"map_read_file":{"tools":["list_mcp_resource_templates","list_mcp_resources","read","read_mcp_resource"],"call":"succeeded"},"plain_read_resource":{"tools":["list_mcp_resource_templates","list_mcp_resources","read","read_mcp_resource"],"call":"succeeded"},"plain_list_resources":{"tools":["list_mcp_resource_templates","list_mcp_resources","read","read_mcp_resource"],"call":"succeeded"},"plain_list_templates":{"tools":["list_mcp_resource_templates","list_mcp_resources","read","read_mcp_resource"],"call":"succeeded"}}}
+```
+
+The three `map_*` resource arms differed from `expected`, each `call` moving from `rule-denied` to `succeeded`; `map_read_file` and the `plain_*` arms agreed with it.
+
 ## What the record licenses
 
 At `outbound-request`, this is evidence about what reached the model.

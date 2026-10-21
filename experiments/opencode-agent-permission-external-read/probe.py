@@ -61,4 +61,5 @@ PROBE = OpenCodeFakeProbe(
     tool_result_gate=True,
     arrange_arm=_arrange_arm,
     functions=ProbeFunctions(preflight=_preflight),
+    variants=("assertion", "discriminator"),
 )

@@ -11,7 +11,10 @@
 ```sh
 experiments/probe run opencode-agent-permission-deny-all
 PROBE_DRY_RUN=1 experiments/probe run opencode-agent-permission-deny-all   # evaluate without recording
+PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run opencode-agent-permission-deny-all
 ```
+
+The discriminator is never recorded: a run selecting it must be a dry run.
 
 ## The arms
 
@@ -57,7 +60,7 @@ A gate failure keeps the workspace and exits 1 without recording, because each d
 
 ## The assertion is relational across arms
 
-The five agents differ only in `permission`, so distinct observed values across arms show the projection reads each arm independently. No separate discriminator fixture is wired; `experiments/README.md`, "Fixture variants", states when one is.
+The five agents differ only in `permission`, so distinct observed values across arms show the projection reads each arm independently. The `discriminator` fixture variant changes one agent so that the assertion must disagree with it; see "The assertion discriminates".
 
 `reversed` is what tests key order. Its map holds the same keys as `mcp_one`'s with `fx_alpha` moved ahead of the deny-all. If OpenCode's frontmatter path reordered keys before resolving them — sorting them, say, which puts `*` first — `reversed` would resolve exactly like `mcp_one` and offer `fx_alpha`. Expecting no tools is therefore what shows the authored order reaches the last-match-wins resolution intact.
 
@@ -76,6 +79,15 @@ Measured 2026-10-02 against opencode **1.18.34**, from a `PROBE_DRY_RUN=1` run. 
 | `reversed` | none |
 
 Every measured arm differs from `baseline`. Against the same saved view, the recorder's `--dry-run` printed `refuted` for a copy with `edit_only` replaced by `baseline`'s requests, which projects `edit_only` to the baseline list.
+
+On 2026-10-21, against opencode **1.18.34**, the `discriminator` fixture variant ran as a dry run. It changes one file, `.opencode/agent/probe-reversed.md`, whose `"*": deny` moves ahead of `fx_alpha: allow`. That is `mcp_one`'s map, measured above offering `fx_alpha` alone. The `status` and `observed` fields are excerpted from the record the run printed:
+
+```
+PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run opencode-agent-permission-deny-all
+{"status":"refuted","observed":{"read_edit_bash":["bash","edit","read","write"],"edit_only":["edit","write"],"mcp_one":["fx_alpha"],"reversed":["fx_alpha"]}}
+```
+
+`reversed` differed from `expected`; the other three arms agreed with it.
 
 ## Limits of this oracle
 

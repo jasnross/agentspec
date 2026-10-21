@@ -11,7 +11,10 @@
 ```sh
 experiments/probe run opencode-agent-permission-external-read
 PROBE_DRY_RUN=1 experiments/probe run opencode-agent-permission-external-read   # evaluate without recording
+PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run opencode-agent-permission-external-read
 ```
+
+The discriminator is never recorded: a run selecting it must be a dry run.
 
 ## The arms
 
@@ -69,7 +72,7 @@ A gate failure keeps the workspace and exits 1 without recording, because each d
 
 ## The assertion is relational across arms
 
-The two agents differ only in the restated rules, so distinct `external_read` values across arms show the projection reads each arm independently. No separate discriminator fixture is wired; `experiments/README.md`, "Fixture variants", states when one is.
+The two agents differ only in the restated rules, so distinct `external_read` values across arms show the projection reads each arm independently. The `discriminator` fixture variant changes one agent so that the assertion must disagree with it; see "The assertion discriminates".
 
 An arm with no marked request projects its `tools` to `"arm-had-no-governed-request"`; an arm whose tool result matches none of the strings projects `external_read` to `{unrecognized: [...]}`.
 
@@ -83,6 +86,15 @@ Measured 2026-10-02 against opencode **1.18.34**, from a `PROBE_DRY_RUN=1` run. 
 | `bare` | `read` | "The user has specified a rule which prevents you from using this specific tool call. Here are some of the relevant rules […]" | `rule-denied` |
 
 `restated`'s `opencode run` output carried `permission requested: external_directory (<arm>/outside/*); auto-rejecting`; `bare`'s carried no such line. Against the same saved view, the recorder's `--dry-run` printed `refuted` for a copy with `restated` replaced by `bare`'s requests.
+
+On 2026-10-21, against opencode **1.18.34**, the `discriminator` fixture variant ran as a dry run. It changes one file, `.opencode/agent/probe-restated.md`, which drops `external_directory: ask` and `doom_loop: ask`. Its frontmatter then equals `probe-bare.md`'s, whose arm is measured above as `rule-denied`. The `status` and `observed` fields are excerpted from the record the run printed:
+
+```
+PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run opencode-agent-permission-external-read
+{"status":"refuted","observed":{"restated":{"tools":["read"],"external_read":"rule-denied"},"bare":{"tools":["read"],"external_read":"rule-denied"}}}
+```
+
+`restated` differed from `expected`, its `external_read` moving from `ask-rejected` to `rule-denied`; `bare` agreed with it.
 
 ## Limits of this oracle
 

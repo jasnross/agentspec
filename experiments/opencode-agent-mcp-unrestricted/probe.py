@@ -18,4 +18,5 @@ PROBE = OpenCodeFakeProbe(
         OpenCodeArm("deny_all", "probe-deny-all"),
     ),
     fx_servers=("fx",),
+    variants=("assertion", "discriminator"),
 )

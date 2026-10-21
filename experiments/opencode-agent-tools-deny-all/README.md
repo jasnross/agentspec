@@ -11,7 +11,10 @@
 ```sh
 experiments/probe run opencode-agent-tools-deny-all
 PROBE_DRY_RUN=1 experiments/probe run opencode-agent-tools-deny-all   # evaluate without recording
+PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run opencode-agent-tools-deny-all
 ```
+
+The discriminator is never recorded: a run selecting it must be a dry run.
 
 ## The arms
 
@@ -55,7 +58,7 @@ A gate failure keeps the workspace and exits 1 without recording, because each d
 
 ## The assertion is relational across arms
 
-The three agents differ only in `tools`, so distinct observed values across arms show the projection reads each arm independently. No separate discriminator fixture is wired; `experiments/README.md`, "Fixture variants", states when one is.
+The three agents differ only in `tools`, so distinct observed values across arms show the projection reads each arm independently. The `discriminator` fixture variant changes one agent so that the assertion must disagree with it; see "The assertion discriminates".
 
 An arm with no marked request projects to `"arm-had-no-governed-request"`, so an unmeasured `reversed` can never confirm `[]`. An arm whose marked requests disagree projects to `{inconsistent: [...]}`.
 
@@ -73,6 +76,15 @@ Against the same saved view, the recorder's `--dry-run` printed `refuted` for tw
 
 - `allow_one` replaced by `baseline`'s requests, which projects `allow_one` to the baseline list.
 - `reversed` set to `[]`, which projects `reversed` to `"arm-had-no-governed-request"`.
+
+On 2026-10-21, against opencode **1.18.34**, the `discriminator` fixture variant ran as a dry run. It changes one file, `.opencode/agent/probe-reversed.md`, whose `"*": false` moves ahead of `fx_alpha: true`. That is `allow_one`'s map, measured above offering `fx_alpha` alone. The `status` and `observed` fields are excerpted from the record the run printed:
+
+```
+PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run opencode-agent-tools-deny-all
+{"status":"refuted","observed":{"allow_one":["fx_alpha"],"reversed":["fx_alpha"]}}
+```
+
+`reversed` differed from `expected`; `allow_one` agreed with it.
 
 ## Limits of this oracle
 

@@ -34,4 +34,5 @@ PROBE = OpenCodeFakeProbe(
     ),
     fx_servers=("fx",),
     custom_checks=(_BASELINE_OFFERS_FX,),
+    variants=("assertion", "discriminator"),
 )

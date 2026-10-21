@@ -55,7 +55,7 @@ A gate failure keeps the workspace and exits 1 without recording, because each d
 
 ## The assertion
 
-An arm with no marked request projects to `"arm-had-no-governed-request"`, and one whose marked requests disagree projects to `{inconsistent: [...]}`. `expected` states the over-match OpenCode's source predicts: all four tools, and no built-in. No separate discriminator fixture is wired; `experiments/README.md`, "Fixture variants", states when one is.
+An arm with no marked request projects to `"arm-had-no-governed-request"`, and one whose marked requests disagree projects to `{inconsistent: [...]}`. `expected` states the over-match OpenCode's source predicts: all four tools, and no built-in. The `discriminator` fixture variant changes one agent so that the assertion must disagree with it; see "Discriminate evidence".
 
 ## Discriminate evidence
 
@@ -74,6 +74,15 @@ From the `PROBE_DRY_RUN=1` run on 2026-10-03 against opencode **1.18.34**, each 
 | --- | --- |
 | `baseline` | `bash`, `edit`, `fx_alpha`, `fx_beta`, `fx_extra_alpha`, `fx_extra_beta`, `glob`, `grep`, `read`, `skill`, `task`, `todowrite`, `webfetch`, `write` |
 | `server_glob` | `fx_alpha`, `fx_beta`, `fx_extra_alpha`, `fx_extra_beta` |
+
+On 2026-10-21, against opencode **1.18.34**, the `discriminator` fixture variant ran as a dry run. It changes one file, `.opencode/agent/probe-server-glob.md`, whose `fx_*: allow` becomes `fx_alpha: allow`. `experiments/opencode-agent-permission-deny-all/`'s `mcp_one` arm measured that map offering `fx_alpha` alone. That arm connects only `fx`, but a key without `*` matches one tool name exactly (see "Why it matters"), so it cannot reach `fx_extra`'s tools either. The `status` and `observed` fields are excerpted from the record the run printed:
+
+```
+PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run opencode-agent-mcp-server-glob
+{"status":"refuted","observed":{"server_glob":["fx_alpha"]}}
+```
+
+`server_glob`, the only cell, differed from `expected`.
 
 ## What the record licenses
 

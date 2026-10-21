@@ -56,7 +56,7 @@ There is no baseline tool-listing gate, unlike the deny-all package. `no_map` is
 
 ## The assertion is relational across arms
 
-The two agents differ only in `permission`, so distinct observed values across the arms show the projection reads each arm independently. An arm with no marked request projects to `"arm-had-no-governed-request"`, so an unmeasured `deny_all` can never confirm `[]`. An arm whose marked requests disagree projects to `{inconsistent: [...]}`, so one request carrying both `fx` tools cannot speak for another that carried neither. No separate discriminator fixture is wired; `experiments/README.md`, "Fixture variants", states when one is.
+The two agents differ only in `permission`, so distinct observed values across the arms show the projection reads each arm independently. An arm with no marked request projects to `"arm-had-no-governed-request"`, so an unmeasured `deny_all` can never confirm `[]`. An arm whose marked requests disagree projects to `{inconsistent: [...]}`, so one request carrying both `fx` tools cannot speak for another that carried neither. The `discriminator` fixture variant changes one agent so that the assertion must disagree with it; see "Discriminate evidence".
 
 `expected` states the design's belief: no map offers both `fx` tools, and the deny-all offers neither.
 
@@ -80,6 +80,15 @@ From the `PROBE_DRY_RUN=1` run on 2026-10-03 against opencode **1.18.34**, each 
 | --- | --- |
 | `no_map` | `bash`, `edit`, `fx_alpha`, `fx_beta`, `glob`, `grep`, `read`, `skill`, `task`, `todowrite`, `webfetch`, `write` |
 | `deny_all` | none |
+
+On 2026-10-21, against opencode **1.18.34**, the `discriminator` fixture variant ran as a dry run. It changes one file, `.opencode/agent/probe-deny-all.md`, which gains `fx_alpha: allow` after `"*": deny`. `experiments/opencode-agent-permission-deny-all/`'s `mcp_one` arm measured that map offering `fx_alpha` alone. The `status` and `observed` fields are excerpted from the record the run printed:
+
+```
+PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run opencode-agent-mcp-unrestricted
+{"status":"refuted","observed":{"no_map":["fx_alpha","fx_beta"],"deny_all":["fx_alpha"]}}
+```
+
+`deny_all` differed from `expected`; `no_map` agreed with it.
 
 ## What the record licenses
 
