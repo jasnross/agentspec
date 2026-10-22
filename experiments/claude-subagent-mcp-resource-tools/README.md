@@ -69,7 +69,7 @@ Every run keeps its workspace and prints its path. That matters most for the rar
 
 **What the restricted cells can and cannot show.** An empty restricted cell means the allowlist withheld the tools only if the subagent path offers them at all in that run. In every run but one, the unrestricted `inherit` subagent was offered none either, so in those runs an empty `read`, `exact`, or `server_glob` is what an absent allowlist would also produce. The second MCP-connected gate rules out a session without the tools; it cannot rule that out for a subagent. Only `T154945`, where `inherit` and `explicit` held all three, shows the restricted arms empty while the subagent path offered the tools — and each arm is its own `claude -p` session, so even that is a comparison across sessions run minutes apart, not within one.
 
-No separate discriminator fixture is wired; `experiments/README.md`, "Fixture variants", states when one is.
+The `discriminator` fixture variant changes one agent so that the assertion must disagree with it; see "Discriminate evidence".
 
 ## Discriminate evidence
 
@@ -90,6 +90,15 @@ record: dry run — refuted — observed {"inherit":["ListMcpResourcesTool"],"re
 ```
 
 Live runs also discriminated: `T154945` holds all three tools in `inherit` and `explicit` beside empty restricted arms.
+
+On 2026-10-21, against Claude Code 2.1.287, the `discriminator` fixture variant ran as a dry run. It changes one file, `read/.claude/agents/probe-res-read.md`, whose body gains a deferred-listing line pair naming `ListMcpResourcesTool` before the marker. The `status` and `observed` fields are excerpted from the record the run printed:
+
+```
+PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run claude-subagent-mcp-resource-tools
+{"status":"refuted","observed":{"inherit":"none-or-all","read":["ListMcpResourcesTool"],"exact":[],"server_glob":[],"explicit":"none-or-all"}}
+```
+
+`read` differed from `expected`; the other four arms agreed with it. This discriminator is a perturbation rather than a finding. Claude sends a subagent's body verbatim in `.system`, line breaks included, so the run shows the projection reads `read`'s governed requests and matches deferred-listing lines one per line. It does not show Claude offering the resource tools to a subagent, which no fixture makes reliable: the run table below has `inherit` offered them in one run of nine.
 
 ## The nine runs
 

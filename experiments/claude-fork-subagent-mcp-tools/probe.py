@@ -67,4 +67,5 @@ PROBE = ClaudeOtelProbe(
     ),
     unset_env=_UNSET,
     set_env=(("CLAUDE_CODE_FORK_SUBAGENT", "1"),),
+    variants=("assertion", "discriminator"),
 )

@@ -87,4 +87,5 @@ PROBE = ClaudeOtelProbe(
     ),
     gates=(Model(), DeferredMcp("inherit", _FX_TOOLS), McpConnected(_FX_TOOLS)),
     unset_env=_UNSET,
+    variants=("assertion", "discriminator"),
 )

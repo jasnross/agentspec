@@ -74,7 +74,7 @@ A gate failure is a statement about the run, not about Claude, and writes no rec
 
 ## The assertion is relational across arms
 
-`none` and `plugin_none` expect `"denied"`, every other arm `"called"`. Within each server source the skills differ only in `allowed-tools`, so each `Read` arm's refusal shows `--permission-prompts none` refused an unapproved call to that source's tool, and each `"called"` is non-default against the refusal from its own source. No separate discriminator fixture is wired; `experiments/README.md`, "Fixture variants", states when one is.
+`none` and `plugin_none` expect `"denied"`, every other arm `"called"`. Within each server source the skills differ only in `allowed-tools`, so each `Read` arm's refusal shows `--permission-prompts none` refused an unapproved call to that source's tool, and each `"called"` is non-default against the refusal from its own source. The `discriminator` fixture variant changes one skill so that the assertion must disagree with it; see "Discriminate evidence".
 
 ## Discriminate evidence
 
@@ -101,6 +101,15 @@ From the five-arm `PROBE_DRY_RUN=1` run on 2026-10-03 against Claude Code 2.1.28
 | `exact`, `server`, `server_glob`, `plugin_glob` | `AGENTSPEC-FX-REPLY-CCSKILL7` |
 
 Two records exist from 2026-10-03, both `confirmed`. The first (`T180814`) has five arms and a `"denied"` class that accepted any error; the second (`T181756`) has `plugin_none` and the permission-text requirement.
+
+On 2026-10-21, against Claude Code 2.1.287, the `discriminator` fixture variant ran as a dry run. It changes one file, `exact/.claude/skills/probe-skill/SKILL.md`, whose `allowed-tools` becomes `Read`. The skill then equals `none`'s, measured above as denied. The `status` and `observed` fields are excerpted from the record the run printed:
+
+```
+PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run claude-skill-mcp-allowed-tools
+{"status":"refuted","observed":{"none":"denied","exact":"denied","server":"called","server_glob":"called","plugin_none":"denied","plugin_glob":"called"}}
+```
+
+`exact` differed from `expected`; the other five arms agreed with it.
 
 ## What the record licenses
 

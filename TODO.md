@@ -1,4 +1,4 @@
-<!-- next: 58 -->
+<!-- next: 59 -->
 
 - #1 Consider deriving id from path instead of requiring in frontmatter
    - Currently `id` is a required `String` in all frontmatter structs; missing it causes a parse error at load time
@@ -241,3 +241,8 @@
   - A custom probe that builds its workspace in code must commit a placeholder (`.gitkeep`) per variant.
   - `lib/tests/test_repo_fixture_reachability.py` counts a custom probe's whole variant tree as reachable even if its arrange never reads it.
   - No committed `CustomProbe` exists. Revisit when the first one is written. Likely shape: pass the variant's fixture directory to `arrange`, as the Claude and fake-OpenCode `arrange_arm` hooks receive it.
+- #58 **`claude-agent-effort`'s discriminator is refused by the control gate.** Under `PROBE_FIXTURE=discriminator` (subagent `effort: max`) on Claude Code 2.1.287, two consecutive dry runs on 2026-10-21 failed gate 3 ("the ungoverned control set is empty or internally inconsistent"), so the package has no kept refuting workspace.
+  - At `max` the subagent ignores "reply with one word" and tries tools (a `Bash` denial appears in its turns). Claude then sends tool-less subagent requests (`cc_is_subagent=true` in the billing header, no other system block, no `tools` field) at the subagent's effort. They carry no marker, so `control` in `experiments/lib/probe_harness/gates/claude_otel.py` counts them as ungoverned, and the control set becomes {`medium`, `max`}.
+  - Under the assertion fixture (`effort: low`) the subagent answers in one turn and emits none, so the confirming capture passes.
+  - Likely shape: have `control` exclude subagent requests (by the billing header's `cc_is_subagent=true`) as well as marked ones, or keep the subagent from calling tools; then re-run the discriminator and keep its workspace for the jq-to-Python equivalence work.
+  - Refused workspaces: `${XDG_STATE_HOME:-~/.local/state}/agentspec/probe-workspaces/claude-agent-effort/2026-10-21T233204-discriminator` and `…T233326-discriminator`.

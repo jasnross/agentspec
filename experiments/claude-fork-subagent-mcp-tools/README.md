@@ -73,7 +73,7 @@ The schema check was shown to separate the two modes against real 2.1.287 captur
 
 ## The assertion is relational across arms
 
-`fork_restricted` expects `[]`; `fork_inherit` expects both `fx` tools. The empty cell is readable because `fork_inherit`, delegated the same way, was offered the tools. No separate discriminator fixture is wired; `experiments/README.md`, "Fixture variants", states when one is.
+`fork_restricted` expects `[]`; `fork_inherit` expects both `fx` tools. The empty cell is readable because `fork_inherit`, delegated the same way, was offered the tools. The `discriminator` fixture variant changes one agent so that the assertion must disagree with it; see "Discriminate evidence".
 
 ## Discriminate evidence
 
@@ -85,6 +85,15 @@ record: dry run — refuted — observed {"fork_restricted":["mcp__fx__alpha","m
 ```
 
 Two records exist from 2026-10-03 against Claude Code 2.1.287, both `confirmed`. The first (`T215439`) was written under an earlier gate 10 that checked only the `Agent` call, which a fork-off run would also have passed, so it does not show fork mode was on. The second (`T221149`) was written under the schema check above, and is the record this README's conclusions rest on.
+
+On 2026-10-21, against Claude Code 2.1.287, the `discriminator` fixture variant ran as a dry run. It changes one file, `fork_inherit/.claude/agents/probe-fork-inherit.md`, which gains `tools: Read`. That is `fork_restricted`'s agent, whose record shows it was offered no MCP tool. The `status` and `observed` fields are excerpted from the record the run printed:
+
+```
+PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run claude-fork-subagent-mcp-tools
+{"status":"refuted","observed":{"fork_restricted":[],"fork_inherit":[]}}
+```
+
+`fork_inherit` differed from `expected`; `fork_restricted` agreed with it.
 
 ## What the record licenses
 

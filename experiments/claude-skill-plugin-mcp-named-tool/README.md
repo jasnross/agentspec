@@ -67,7 +67,7 @@ A gate failure is a statement about the run, not about Claude, and writes no rec
 
 ## The assertion is relational across arms
 
-`plugin_none` expects `"denied"` and `plugin_named` expects `"called"`. The skills differ only in `allowed-tools`, so `plugin_none`'s refusal shows `--permission-prompts none` refused an unapproved call to the plugin tool, and `plugin_named`'s `"called"` is non-default against it. No separate discriminator fixture is wired; `experiments/README.md`, "Fixture variants", states when one is.
+`plugin_none` expects `"denied"` and `plugin_named` expects `"called"`. The skills differ only in `allowed-tools`, so `plugin_none`'s refusal shows `--permission-prompts none` refused an unapproved call to the plugin tool, and `plugin_named`'s `"called"` is non-default against it. The `discriminator` fixture variant changes one skill so that the assertion must disagree with it; see "Discriminate evidence".
 
 ## Discriminate evidence
 
@@ -79,6 +79,15 @@ record: dry run — refuted — observed {"plugin_none":"denied","plugin_named":
 ```
 
 The first record, from 2026-10-03 against Claude Code 2.1.287, is `confirmed`.
+
+On 2026-10-21, against Claude Code 2.1.287, the `discriminator` fixture variant ran as a dry run. It changes one file, `plugin_named/.claude/skills/probe-skill/SKILL.md`, whose `allowed-tools` becomes `Read`. The skill then equals `plugin_none`'s, whose record shows its call denied. The `status` and `observed` fields are excerpted from the record the run printed:
+
+```
+PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run claude-skill-plugin-mcp-named-tool
+{"status":"refuted","observed":{"plugin_none":"denied","plugin_named":"denied"}}
+```
+
+`plugin_named` differed from `expected`; `plugin_none` agreed with it.
 
 ## What the record licenses
 

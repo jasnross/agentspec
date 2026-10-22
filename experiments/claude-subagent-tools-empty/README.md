@@ -75,9 +75,18 @@ From the Sonnet dry run on 2026-10-02 against Claude Code 2.1.287, the governed 
 | `empty` | none | none |
 | `read` | `Read`, `advisor` | none |
 
-The dry run printed `confirmed`, observing `{"empty": "no-tools"}`. Against the same saved view, the recorder's `--dry-run` printed `refuted`, observing `{"empty": "same-as-inherit"}`, for a copy with `empty` replaced by `inherit`'s requests.
+The dry run printed `confirmed`, observing `{"empty": "no-tools"}`. Against the same saved view, the recorder's `--dry-run` printed `refuted`, observing `{"empty": "same-as-inherit"}`, for a copy with `empty` replaced by `inherit`'s requests. The `discriminator` fixture variant now produces that value from a real run, below.
 
 `read` received `advisor` beside the one tool it listed, while `empty` received nothing at all. Where `advisor` comes from is not measured here; the read-restricts gate compares tool counts rather than requiring `Read` alone for that reason.
+
+On 2026-10-21, against Claude Code 2.1.287, the `discriminator` fixture variant ran as a dry run. It changes one file, `empty/.claude/agents/probe-tools-empty.md`, which drops `tools: []`. That leaves the agent with no `tools` key, as `inherit`'s agent has. The `status` and `observed` fields are excerpted from the record the run printed:
+
+```
+PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run claude-subagent-tools-empty
+{"status":"refuted","observed":{"empty":"same-as-inherit"}}
+```
+
+`empty`, the only cell, differed from `expected`.
 
 ## Oracle limits
 

@@ -105,6 +105,7 @@ PROBE = ClaudeOtelProbe(
     gates=(Model(), DeferredMcp("inherit", _FX_TOOLS), McpConnected(_FX_TOOLS)),
     unset_env=_UNSET,
     functions=ProbeFunctions(judge=_judge),
+    variants=("assertion", "discriminator"),
 )
 
 _ARM_NAMES = tuple(arm.name for arm in PROBE.arms)

@@ -72,7 +72,7 @@ The four gates live in `experiments/lib/probe_harness/gates/claude_otel.py` with
 
 ## The assertion is relational across arms
 
-The six agents differ only in `tools`, so distinct observed values across arms show the projection reads each arm independently. An arm with no governed request projects to `"arm-had-no-governed-request"`; without it, an unmeasured `read` arm would project exactly to its expected value. No separate discriminator fixture is wired; `experiments/README.md`, "Fixture variants", states when one is.
+The six agents differ only in `tools`, so distinct observed values across arms show the projection reads each arm independently. An arm with no governed request projects to `"arm-had-no-governed-request"`; without it, an unmeasured `read` arm would project exactly to its expected value. The `discriminator` fixture variant changes one agent so that the assertion must disagree with it; see "Discriminate evidence".
 
 `expected` states agentspec's documented belief: tool search defers every granted MCP tool, a granted MCP tool always arrives with `ToolSearch`, and an allowlist without MCP entries grants no MCP tool.
 
@@ -95,6 +95,15 @@ From the Sonnet dry run on 2026-10-02 against Claude Code 2.1.287 (`status` and 
 `read`, `exact`, and `server` all differ, so the projection reads each arm on its own.
 
 Both committed records carry these same values. The first (`2026-10-02T005617`) predates the MCP-connected gate; the second (`2026-10-02T012920`) was made with every gate above in place.
+
+On 2026-10-21, against Claude Code 2.1.287, the `discriminator` fixture variant ran as a dry run. It changes one file, `exact/.claude/agents/probe-mcp-exact.md`, whose `tools` gains `ToolSearch`. That is `exact_search`'s allowlist, measured above deferring `mcp__fx__alpha` behind `ToolSearch`. The `status` and `observed` fields are excerpted from the record the run printed:
+
+```
+PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run claude-subagent-mcp-tools
+{"status":"refuted","observed":{"inherit":{"direct":[],"deferred":["mcp__fx__alpha","mcp__fx__beta"],"tool_search":true},"read":{"direct":[],"deferred":[],"tool_search":false},"exact":{"direct":[],"deferred":["mcp__fx__alpha"],"tool_search":true},"exact_search":{"direct":[],"deferred":["mcp__fx__alpha"],"tool_search":true},"server":{"direct":["mcp__fx__alpha","mcp__fx__beta"],"deferred":[],"tool_search":false},"server_glob":{"direct":["mcp__fx__alpha","mcp__fx__beta"],"deferred":[],"tool_search":false}}}
+```
+
+`exact` differed from `expected`; the other five arms agreed with it.
 
 ## What the record licenses
 

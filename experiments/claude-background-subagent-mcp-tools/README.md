@@ -70,7 +70,7 @@ A gate failure is a statement about the run, not about Claude, and writes no rec
 
 ## The assertion is relational across arms
 
-`foreground` and `background` expect `[]`; `background_inherit` expects both `fx` tools. The two empty cells are readable because `background_inherit`, delegated the same way as `background`, was offered the tools. No separate discriminator fixture is wired; `experiments/README.md`, "Fixture variants", states when one is.
+`foreground` and `background` expect `[]`; `background_inherit` expects both `fx` tools. The two empty cells are readable because `background_inherit`, delegated the same way as `background`, was offered the tools. The `discriminator` fixture variant changes one agent so that the assertion must disagree with it; see "Discriminate evidence".
 
 ## Discriminate evidence
 
@@ -89,6 +89,15 @@ From the `PROBE_DRY_RUN=1` run on 2026-10-03 against Claude Code 2.1.287, each a
 | `foreground` | none | none |
 | `background` | none | none |
 | `background_inherit` | `ToolSearch` | `mcp__fx__alpha`, `mcp__fx__beta` |
+
+On 2026-10-21, against Claude Code 2.1.287, the `discriminator` fixture variant ran as a dry run. It changes one file, `background_inherit/.claude/agents/probe-bg-inherit.md`, which gains `tools: Read`. That is `background`'s agent, measured above as offered no MCP tool. The `status` and `observed` fields are excerpted from the record the run printed:
+
+```
+PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run claude-background-subagent-mcp-tools
+{"status":"refuted","observed":{"foreground":[],"background":[],"background_inherit":[]}}
+```
+
+`background_inherit` differed from `expected`; `foreground` and `background` agreed with it.
 
 ## What the record licenses
 

@@ -76,4 +76,5 @@ PROBE = ClaudeOtelProbe(
         DelegationBackground("background_inherit", True),
     ),
     unset_env=_UNSET,
+    variants=("assertion", "discriminator"),
 )

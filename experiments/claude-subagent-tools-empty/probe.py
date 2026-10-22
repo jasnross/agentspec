@@ -92,4 +92,5 @@ PROBE = ClaudeOtelProbe(
     gates=(Model(),),
     unset_env=_UNSET,
     custom_checks=(_INHERIT_GETS_BUILTINS, _LISTED_TOOLS_RESTRICT),
+    variants=("assertion", "discriminator"),
 )

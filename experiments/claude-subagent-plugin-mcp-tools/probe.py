@@ -110,4 +110,5 @@ PROBE = ClaudeOtelProbe(
     # A claude.ai connector would add MCP tools the projection cannot tell from the fixture's.
     set_env=(("ENABLE_CLAUDEAI_MCP_SERVERS", "false"),),
     arrange_arm=_arrange_arm,
+    variants=("assertion", "discriminator"),
 )

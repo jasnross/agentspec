@@ -68,7 +68,7 @@ If the connection gate fails, re-run the package once by hand before treating it
 
 ## The assertion is relational across arms
 
-The six agents differ only in `tools` and location, so distinct observed values across arms show the projection reads each arm independently. No separate discriminator fixture is wired; `experiments/README.md`, "Fixture variants", states when one is.
+The six agents differ only in `tools` and location, so distinct observed values across arms show the projection reads each arm independently. The `discriminator` fixture variant changes one agent so that the assertion must disagree with it; see "Discriminate evidence".
 
 `expected` states the design's belief: each plugin spelling grants what it names from either location, and the plain spelling grants nothing from a plugin server.
 
@@ -90,6 +90,15 @@ From the `PROBE_DRY_RUN=1` run on 2026-10-03 against Claude Code 2.1.287, each a
 | `plugin_glob`, `project_glob` | `Read`, `mcp__plugin_fxp_fx__alpha`, `mcp__plugin_fxp_fx__beta`, `advisor` |
 
 Two records exist from 2026-10-03, both `confirmed` with the same `observed`. The first (`T140459`) predates the foreign-server gate; the second (`T153213`) was made with every gate above in place.
+
+On 2026-10-21, against Claude Code 2.1.287, the `discriminator` fixture variant ran as a dry run. It changes one file, `project_unprefixed/.claude/agents/probe-plug-unprefixed.md`, whose `tools` names `mcp__plugin_fxp_fx__alpha` in place of `mcp__fx__alpha`. That is `project_exact`'s allowlist, measured above as offered the plugin tool. The `status` and `observed` fields are excerpted from the record the run printed:
+
+```
+PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run claude-subagent-plugin-mcp-tools
+{"status":"refuted","observed":{"read":[],"plugin_exact":["mcp__plugin_fxp_fx__alpha"],"plugin_glob":["mcp__plugin_fxp_fx__alpha","mcp__plugin_fxp_fx__beta"],"project_exact":["mcp__plugin_fxp_fx__alpha"],"project_glob":["mcp__plugin_fxp_fx__alpha","mcp__plugin_fxp_fx__beta"],"project_unprefixed":["mcp__plugin_fxp_fx__alpha"]}}
+```
+
+`project_unprefixed` differed from `expected`; the other five arms agreed with it.
 
 ## What the record licenses
 

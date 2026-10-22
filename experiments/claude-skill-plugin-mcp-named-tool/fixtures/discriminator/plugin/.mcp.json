@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "fx": {
+      "type": "stdio",
+      "command": "{{PYTHON}}",
+      "args": [
+        "{{FX_SERVER}}",
+        "--stamp",
+        "{{FX_STAMP}}",
+        "--reply",
+        "AGENTSPEC-FX-REPLY-CCSKPN9"
+      ]
+    }
+  }
+}
