@@ -61,9 +61,16 @@ That payload also shows multiple options composing, which is the shape a general
 
 ## The assertion discriminates
 
-**This is prior observation, not a current result.** It was measured by hand on 2026-08-14 and 2026-08-15 against Cursor 3.15.19 and 3.16.17, before this package existed, and it is recorded here as the evidence that the assertion discriminates and as the hypothesis the probe tests. What is current is whatever `results/` holds; until this probe is run, `just probe-status` shows no row for it, which is correct — nobody has measured it with this harness yet.
+The table below was measured by hand on 2026-08-14 and 2026-08-15 against Cursor 3.15.19 and 3.16.17, before this package existed. The baseline and the first row are now the package's two fixture variants; the other rows stay as history.
 
-The package ships only the assertion arm, since a probe records one arm. The other arms below are reproducible by editing `model:` in a copy of `fixtures/assertion/.cursor/agents/arm-effort-low.md`.
+`fixtures/discriminator/` is the committed baseline arm. It differs from `fixtures/assertion/` only in `.cursor/agents/arm-effort-low.md`, whose `model:` is the bare `claude-opus-5`. It keeps the filename because `wait_for` and the projection select on `.subagent_type`, which Cursor derives from the filename when the agent has no `name:`. On 2026-10-22, against Cursor 3.26.16, it ran as a dry run; the `status` and `observed` fields are excerpted from the record the run printed:
+
+```
+PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run cursor-subagent-effort
+{"status":"refuted","observed":"claude-opus-5-thinking-high"}
+```
+
+The value differed from `expected`, and it is a real resolved model rather than `null`, so the projection matched the subagent and read a distinct value. The other arms below are reproducible by editing `model:` in a copy of `fixtures/assertion/.cursor/agents/arm-effort-low.md`.
 
 Baseline for `claude-opus-5` with no bracket options is `claude-opus-5-thinking-high`.
 

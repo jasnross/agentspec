@@ -97,7 +97,6 @@ def test_the_tree_holds_manual_packages() -> None:
 def test_every_manual_package_loads_as_a_manual_probe(name: str) -> None:
     definition = load_definition(EXPERIMENTS_DIR / name, DEFINITION_TYPES)
     assert isinstance(definition, ManualProbe)
-    assert definition.variants == ("assertion",)
     # The runner prints the instructions between blank lines, as the bash runners did.
     assert definition.instructions.startswith("\n")
     assert definition.instructions.endswith("\n")

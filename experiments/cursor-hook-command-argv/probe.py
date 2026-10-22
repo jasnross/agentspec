@@ -49,4 +49,5 @@ PROBE = ManualProbe(
 This script is waiting and will record the result automatically.
 """,
     functions=ProbeFunctions(preflight=_preflight),
+    variants=("assertion", "discriminator"),
 )

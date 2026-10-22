@@ -30,9 +30,18 @@ Measured 2026-08-24 against **Cursor 3.17.8**.
 
 The `grok-4.6` row is why this finding is not a single observation. The separator parses on two unrelated model families, which is stronger than one arm could be on its own.
 
+On 2026-10-22, against Cursor 3.26.16, the `discriminator` fixture variant ran as a dry run. It changes one file, `.cursor/agents/arm-two-options.md`, whose `model:` becomes the bare `claude-opus-5` of the baseline row above. The `status` and `observed` fields are excerpted from the record the run printed:
+
+```
+PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run cursor-subagent-model-options
+{"status":"refuted","observed":"claude-opus-5-thinking-high"}
+```
+
+The value differed from `expected`, and it reproduces the baseline row.
+
 ### The baseline shares the probe arm's `subagent_type`
 
-Both captures are of a subagent named `arm-two-options` — the baseline was taken first, then the same file was overwritten with its bracketed form and invoked again.
+Both captures are of a subagent named `arm-two-options` — on 2026-08-24 the baseline was taken first, then the same file was overwritten with its bracketed form and invoked again. The package now commits the two arms as fixture variants that share that filename: `fixtures/assertion/.cursor/agents/arm-two-options.md` carries the bracketed form, and `fixtures/discriminator/` holds the same tree with the bare `claude-opus-5` in that one file.
 
 This matters more than it looks. The projection selects on `.subagent_type`, so a baseline captured under a _different_ name yields no match and the projection returns `null`. That refutes because **nothing matched**, not because a distinct input produced a distinct value — the "misspelled jq path returns `null` forever" failure the contract's discrimination rule exists to catch. The refuting dry-run here observes `claude-opus-5-thinking-high`, a real resolved model, which is what makes it a discrimination check rather than a wiring check.
 

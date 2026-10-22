@@ -34,15 +34,24 @@ baseline  → refuted   — observed "claude-opus-5-thinking-high"
 
 The refuting arm observes a **real resolved model**, not `null`. That distinction is the whole point of the check: `null` would mean the projection matched nothing, which is a wiring bug wearing a refutation's clothes.
 
+On 2026-10-22, against Cursor 3.26.16, the `discriminator` fixture variant ran as a dry run. It changes one file, `.cursor/agents/arm-bracket-tolerance.md`, whose `model:` becomes the bare `claude-opus-5` of the baseline row above. The `status` and `observed` fields are excerpted from the record the run printed:
+
+```
+PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run cursor-subagent-bracket-tolerance
+{"status":"refuted","observed":"claude-opus-5-thinking-high"}
+```
+
+The value differed from `expected`, and it reproduces the baseline row.
+
 ### The baseline shares the probe arm's `subagent_type`
 
 Both captures are of a subagent named `arm-bracket-tolerance`. The projection selects on `.subagent_type`, so a baseline captured under a _different_ name yields no match and the projection returns `null`. That would refute because **nothing matched**, not because a distinct input produced a distinct value — the "misspelled jq path returns `null` forever" failure the contract's discrimination rule exists to catch.
 
 ### The two arms ran in separate workspaces
 
-The recorded run captured the bracketed arm. The baseline was then taken in a **second workspace**, arranged by hand from the same fixtures with the bare model substituted, and evaluated only with the recorder's `--dry-run`.
+The recorded runs captured the bracketed arm. The 2026-08-27 baseline in the table above was taken in a **second workspace**, arranged by hand from the same fixtures with the bare model substituted, and evaluated only with the recorder's `--dry-run`. That baseline is now committed as `fixtures/discriminator/`: the `fixtures/assertion/` tree with the bare model in `arm-bracket-tolerance.md`, so each variant's run arranges its own workspace.
 
-Two workspaces rather than one file, because the projection ends in `| first`: a baseline appended to the recorded capture would leave `first` returning the bracketed value, and the refutation check would pass while measuring nothing. The baseline is also deliberately kept off the runner's recording path — a baseline arm is _supposed_ to refute, and a recorded `refuted` would be a permanent false finding in an append-only directory.
+Two workspaces rather than one file, because the projection ends in `| first`: a baseline appended to the recorded capture would leave `first` returning the bracketed value, and the refutation check would pass while measuring nothing. The baseline must also stay off the recording path — a baseline arm is _supposed_ to refute, and a recorded `refuted` would be a permanent false finding in an append-only directory. The `PROBE_FIXTURE` gate enforces that: a run selecting `discriminator` exits before arranging anything unless `PROBE_DRY_RUN=1` is set.
 
 ### `effort=low` is non-default, and that is mandatory
 

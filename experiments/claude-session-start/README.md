@@ -56,6 +56,16 @@ Distinct values for distinct inputs, and the contaminating case projects the sam
 
 The value is non-default in the sense the contract requires: if `SessionStart` did not fire on resume the projection is `[]`, a different and equally observable result, so a pass is positive proof rather than a reading of an absence. The cross-provider asymmetry is the sharpest discriminator of all — Cursor's equivalent capture projects `0` firings where Claude's projects one.
 
+On 2026-10-22, against Claude Code 2.1.287, the `discriminator` fixture variant ran as a dry run. It changes one file, `.claude/settings.json`, whose `SessionStart` entry registers a second command, `{{CAPTURE_SCRIPT}} second`, beside the first. Claude runs every matching hook in parallel and runs an identical handler only once, so a command whose text differs by a trailing argument fires separately, and a real resume yields two `resume` payloads. The session finished after the runner's one-hour wait had expired, so the run kept its workspace without judging it, and the second command below re-judged that workspace once the capture had arrived. The `status` and `observed` fields are excerpted from the record it printed:
+
+```
+PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run claude-session-start
+experiments/probe record claude-session-start <workspace> --dry-run
+{"status":"refuted","observed":["resume","resume"]}
+```
+
+The value differed from `expected`. This discriminator is a perturbation rather than a finding: it shows the projection counts every `SessionStart` after the first prompt rather than stopping at one. It cannot show a resume that fires no `SessionStart`, because `wait_for` releases only on a `resume` payload.
+
 ## Registrations
 
 Both `SessionStart` and `UserPromptSubmit` are registered. `SessionStart` carries the finding; `UserPromptSubmit` proves hooks are live at all, which is what tells you whether a missing resume payload means "Claude didn't fire it" or "the hook was never wired up."

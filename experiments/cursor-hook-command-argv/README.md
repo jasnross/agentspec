@@ -78,6 +78,15 @@ Validated against three synthetic captures, each a workspace directory holding a
 
 Three distinct values for three distinct inputs. Capture C is the one that matters most: it separates "a shell parsed this" from "something split on whitespace," which a `split`-only matrix could not distinguish. Capture C also models the splitter consistently — with no assignment handling, `AGENTSPEC_PROBE_ENV=probe-value` becomes the command word, which is not an executable, so that case produces **no line at all** and the projection still reads `false`.
 
+On 2026-10-22, against Cursor 3.26.16, the `discriminator` fixture variant ran as a dry run. It changes one file, `.cursor/hooks.json`, whose `envprefix` entry drops its `AGENTSPEC_PROBE_ENV=probe-value ` prefix. Without the prefix the hook sees no `AGENTSPEC_PROBE_ENV`, which `envprefix_control` already checks on the `split` entry. The `status` and `observed` fields are excerpted from the record the run printed:
+
+```
+PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run cursor-hook-command-argv
+{"status":"refuted","observed":{"controls":true,"argv0":true,"split":true,"dquote":true,"squote":true,"var":true,"subst":true,"meta":true,"utf8":true,"envprefix":false,"envprefix_control":true,"anchor":true}}
+```
+
+`envprefix` differed from `expected`; the projection's other eleven keys agreed with it.
+
 ## Three deliberate deviations
 
 - **The capture records argv alongside the payload.** The contract's authoring step 3 asks a capture hook to append "the payload as the provider sent it, with nothing added." Argv is what this probe measures and no other channel carries it, so each line wraps the untouched payload under a `payload` key and adds `case`, `argv0`, `argc`, `argv`, and `probe_env` beside it.

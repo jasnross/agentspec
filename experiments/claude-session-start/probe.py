@@ -15,4 +15,5 @@ PROBE = ManualProbe(
 
 This script is waiting and will record the result automatically.
 """,
+    variants=("assertion", "discriminator"),
 )

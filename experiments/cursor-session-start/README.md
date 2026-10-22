@@ -60,6 +60,8 @@ Distinct values for distinct inputs, and the contaminating case projects the sam
 
 The counting form matters for a second reason: a probe asserting "no second firing" against a provider that _did_ fire sees `1`, an observable value, rather than a silence indistinguishable from a broken hook. That is what keeps this from being an assertion on absence of error.
 
+The package has no discriminator variant. `wait_for` releases only once `resumed` and `fired` already hold, and `after_resume` counts `sessionStart` events that Cursor does not emit on resume, so no fixture can make Cursor produce a capture the assertion refutes. A refuting capture would need its order imposed by the apparatus, such as a delayed hook write, rather than by Cursor. The refuting side therefore rests on the synthetic captures in the table above.
+
 ## The assumption that used to be here
 
 This package once documented an assumption — that it trusted the operator to have resumed, since the evidence was "the operator's word rather than a field in the payload." That was wrong on the facts: `conversation_id` is a field in the payload, and the `resumed` term now checks it.
