@@ -95,6 +95,15 @@ The block is captured output, so it keeps the commands of the runner that produc
 
 The two runs **differ in `delegated` and agree in `session_agent`**. That pairing is the discrimination: it shows the projection reads each arm independently, and that the inert arm is inert rather than merely unread.
 
+The committed `discriminator` variant was also run on Claude Code 2.1.287 on 2026-10-21, and its kept workspace, `…T233326-discriminator`, re-judged on 2026-10-25. In that run the `max` subagent tried tools, so the capture also holds the subagent follow-up requests gate 3 excludes; gate 3 refused the run when it was taken, before that exclusion existed. The `status` and `observed` fields are excerpted from the record the re-judge printed:
+
+```
+experiments/probe record claude-agent-effort <workspace> --dry-run
+{"status":"refuted","observed":{"session_agent":"same-as-ungoverned","delegated":["max"]}}
+```
+
+`delegated` differed from `expected`; `session_agent` agreed with it.
+
 ## What the record licenses
 
 At `outbound-request`, this is evidence about what reached the model, not about what a config file contained.
