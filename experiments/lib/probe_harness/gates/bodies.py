@@ -25,6 +25,7 @@ from probe_harness.models.raw import field_path
 from probe_harness.views import SinkEntry, SinkValues, read_sink
 
 DEFERRED_LISTING = "The following deferred tools are now available via ToolSearch"
+SUBAGENT_FLAG = "cc_is_subagent=true"
 
 
 class MarkerField(StrEnum):
@@ -79,6 +80,16 @@ def governed(request: ClaudeRequest, field: MarkerField, marker: str) -> bool:
             return any(marker in s for s in request.system.strings())
         case MarkerField.MESSAGES:
             return any(marker in s for m in request.messages for s in _content_strings(m))
+
+
+def subagent(request: ClaudeRequest) -> bool:
+    """Whether some `.system` string carries the subagent flag Claude writes in its billing header.
+
+    A subagent's follow-up turn after a tool call carries no agent system prompt, so no
+    marker, yet runs at the subagent's effort; this flag is what still identifies it. It is
+    matched anywhere in `.system`, as the effort projections' `$u` matches it.
+    """
+    return any(SUBAGENT_FLAG in s for s in request.system.strings())
 
 
 def deferred_tools(request: ClaudeRequest) -> list[str]:

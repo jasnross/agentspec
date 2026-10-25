@@ -78,7 +78,7 @@ class ClaudeArm:
 
 @dataclass(frozen=True)
 class Control:
-    """Gate 3: the ungoverned requests declaring an effort agree on one level."""
+    """Gate 3: the ungoverned main-thread requests declaring an effort agree on one level."""
 
 
 @dataclass(frozen=True)

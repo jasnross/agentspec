@@ -44,7 +44,7 @@ Request counts are never compared against an expected number. Across this packag
 
 ## The assertion is relational
 
-Each arm's level is compared against **the requests nothing governed in the same run**, not against a pinned absolute level:
+Each arm's level is compared against **the run's ungoverned main-thread requests**, not against a pinned absolute level:
 
 - `"same-as-ungoverned"` means the arm ran at the same effort as the ungoverned requests captured in that run.
 - An array such as `["low"]` means the arm ran at a level the ungoverned requests did not.
@@ -81,7 +81,7 @@ Every gate asserts on a positive signal in the captured bodies. None of them nam
 
 1. **Every arm captured at least one `*.request.json`.** An empty sink means the arm never ran.
 2. **Every arm holds at least one request the fixture governs** (marker in `.messages`). Without it, "the fixture never engaged" and "the fixture engaged and Claude discarded its effort" are indistinguishable — which would make the most decision-relevant finding the least trustworthy one. **Gate 2 is what makes the `inline` arm assertable**, and it earned that keep during authoring: the first discriminate run failed this gate against the inherited `.system` definition, which is how the `.messages` finding above was discovered rather than silently mis-measured.
-3. **At least one ungoverned request declares `output_config.effort`, and they all agree on one level.** The filter is an explicit exclusion of requests carrying no `effort` key: Claude emits an intermittent title-generation sidecar whose `output_config` holds a `format` object and no `effort`, and a control stated over all unmarked requests would fail on it every time it appeared. Written as an exclusion, the other direction stays loud — a Claude that stopped populating `effort` on governed requests empties the control set and trips the existence clause.
+3. **At least one ungoverned request declares `output_config.effort`, and they all agree on one level.** The filter is an explicit exclusion of requests carrying no `effort` key: Claude emits an intermittent title-generation sidecar whose `output_config` holds a `format` object and no `effort`, and a control stated over all unmarked requests would fail on it every time it appeared. Written as an exclusion, the other direction stays loud — a Claude that stopped populating `effort` on governed requests empties the control set and trips the existence clause. Subagent requests are excluded too, by the `cc_is_subagent=true` that Claude writes into each one's billing header, matched anywhere in its `.system` text: a subagent's follow-up turn after a tool call carries no agent system prompt and runs at the subagent's effort. `claude-agent-effort` measured them and states the rationale. In the discriminator run the `fork` arm's only subagent request carried the skill body in `.messages` and was governed, so the exclusion has not yet removed a request from this package's control set. It is shared with the gate, and applied in `$u` too, so the two keep one definition.
 
 A gate failure is a statement about the run, not about Claude, and writes no record.
 

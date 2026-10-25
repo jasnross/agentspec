@@ -3,7 +3,8 @@
 A projection decides the recorded verdict, so each is checked against a degenerate view —
 one that would tempt it into confirming what the run never measured. The gates keep a real
 run from producing such a view; these tests pin what the projection itself outputs if one
-ever reaches it.
+ever reaches it. Where a projection computes a control set of its own, a test also pins
+that it excludes the requests gate 3 excludes, so the two keep one definition.
 """
 
 import re
@@ -54,6 +55,10 @@ MARKER_MCP_PATH = (
     EXPERIMENTS_DIR / "claude-subagent-mcp-tools/fixtures/assertion/inherit/.claude/agents/"
     "probe-mcp-inherit.md"
 )
+
+
+# The billing-header block Claude writes into a subagent's request, flagging it as one.
+SUBAGENT_SYSTEM = [{"type": "text", "text": "x-anthropic-billing-header: cc_is_subagent=true;"}]
 
 
 def project(manifest_path: Path, view: Path) -> tuple[JsonValue, bool]:
@@ -166,6 +171,67 @@ def test_the_committed_skill_manifest_names_an_arm_that_captured_no_governed_req
     observed, confirmed = project(manifest, view)
     assert not confirmed
     assert "arm-had-no-governed-request" in compact(observed)
+
+
+def test_the_committed_manifest_s_control_set_excludes_a_subagent_s_follow_up(
+    tmp_path: Path,
+) -> None:
+    # A subagent's follow-up turn after a tool call carries no marker but runs at the
+    # subagent's effort. Pooled into `$u`, it makes the control set two levels and the
+    # projection renders every arm `no-usable-control-set`, even with gate 3 excluding it.
+    manifest = EXPERIMENTS_DIR / "claude-agent-effort/probe.json"
+    if not manifest.is_file():
+        pytest.skip("claude-agent-effort is not present")
+    assert MARKER_AGENT
+
+    view = write_view(
+        tmp_path / "subagent.json",
+        {
+            "session_agent": [{"system": MARKER_AGENT, "output_config": {"effort": "medium"}}],
+            "delegated": [
+                {"system": "plain", "output_config": {"effort": "medium"}},
+                {"system": MARKER_AGENT, "output_config": {"effort": "max"}},
+                {"system": SUBAGENT_SYSTEM, "output_config": {"effort": "max"}},
+            ],
+        },
+    )
+
+    observed, _ = project(manifest, view)
+    assert observed == {"session_agent": "same-as-ungoverned", "delegated": ["max"]}
+
+
+def test_the_committed_skill_manifest_s_control_set_excludes_a_subagent_s_follow_up(
+    tmp_path: Path,
+) -> None:
+    # The sibling of the check above. The skill's marker sits in `.messages`, but the
+    # billing header sits in `.system` whichever field governs, so the clause is the same.
+    manifest = EXPERIMENTS_DIR / "claude-skill-effort/probe.json"
+    if not manifest.is_file():
+        pytest.skip("claude-skill-effort is not present")
+    assert MARKER_SKILL
+
+    governed = {
+        "messages": [{"role": "user", "content": MARKER_SKILL}],
+        "output_config": {"effort": "low"},
+    }
+    subagent = {"system": SUBAGENT_SYSTEM, "output_config": {"effort": "max"}}
+    view = write_view(
+        tmp_path / "subagent-skill.json",
+        {
+            "inline": [
+                {
+                    "messages": [{"role": "user", "content": MARKER_SKILL}],
+                    "output_config": {"effort": "medium"},
+                },
+                {"system": "plain", "output_config": {"effort": "medium"}},
+            ],
+            "slash_entry": [governed],
+            "fork": [governed, subagent],
+        },
+    )
+
+    _, confirmed = project(manifest, view)
+    assert confirmed
 
 
 def test_the_committed_mcp_manifest_s_projection_reads_both_direct_and_deferred_tools(

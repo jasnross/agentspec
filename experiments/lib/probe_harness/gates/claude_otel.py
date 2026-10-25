@@ -4,7 +4,7 @@ A gate reads `bodies.ClaudeArmBodies`, validated once per arm by the family's ju
 body that does not fit its model has already refused the run before any gate runs.
 
 No gate names an effort level: the effort packages' assertion is relational, comparing
-each arm against the requests nothing governed in the same run.
+each arm against the run's ungoverned main-thread requests.
 """
 
 from collections.abc import Mapping, Sequence
@@ -18,6 +18,7 @@ from probe_harness.gates.bodies import (
     deferred_tools,
     governed,
     listed_tools,
+    subagent,
 )
 from probe_harness.json_values import to_text
 from probe_harness.models.claude_request import ClaudeRequest, ClaudeTool, ToolResultBlock
@@ -43,15 +44,22 @@ def marker(arms: Arms, marker: str, field: MarkerField = MarkerField.SYSTEM) -> 
 def control(arms: Arms, marker: str, field: MarkerField = MarkerField.SYSTEM) -> None:
     """Gate 3: the ungoverned requests declaring an effort exist and agree on one level.
 
-    Requests without an `effort` are excluded: Claude emits an intermittent title-generation
-    sidecar whose `output_config` holds none. Pass the same field as to gate 2, so the two
-    definitions partition the requests between them.
+    The control set is the session's own level, so two kinds of request Claude sends beside
+    the main thread are excluded. One is the intermittent title-generation sidecar, whose
+    `output_config` holds no `effort`. The other is a subagent's request (`subagent`): its
+    follow-up turns after a tool call carry no marker but run at the subagent's effort.
+    Both are exclusions, so a Claude that stopped marking either kind cannot shift the
+    control level silently: the rejoining requests either agree with it or fail this gate.
+    Pass the same field as to gate 2, so the two agree on which requests the fixture
+    governs.
     """
     efforts = {
         effort
         for arm in arms.values()
         for r in arm.requests
-        if not governed(r, field, marker) and (effort := r.output_config.effort) is not MISSING
+        if not governed(r, field, marker)
+        and not subagent(r)
+        and (effort := r.output_config.effort) is not MISSING
     }
     if len(efforts) != 1:
         raise GateFailure(

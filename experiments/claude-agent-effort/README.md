@@ -29,7 +29,7 @@ Request counts are never compared against an expected number. A single turn has 
 
 ## The assertion is relational
 
-Each arm's level is compared against **the requests nothing governed in the same run**, not against a pinned absolute level:
+Each arm's level is compared against **the run's ungoverned main-thread requests**, not against a pinned absolute level:
 
 - `"same-as-ungoverned"` means the arm ran at the same effort as the ungoverned requests captured in that run.
 - An array such as `["low"]` means the arm ran at a level the ungoverned requests did not.
@@ -48,7 +48,7 @@ A request is **governed** by the fixture when the marker appears in its `.system
 
 Measured on the discriminate run: when the subagent replies, its text comes back to the **main thread** inside a tool result. That main-thread request quotes the marker but is governed by the fixture not at all, and sits at the ungoverned level. Selecting on `tostring | contains(marker)` swept it into the delegated arm, which observed `["max","medium"]` instead of `["max"]` — an incidental echo baked into the asserted value. Selecting on `.system` measures what the arm means to measure.
 
-The same definition runs through gate 2 (which would otherwise pass for an arm whose fixture never engaged, on the strength of an echo) and gate 3's control set (where an echoed request correctly counts as ungoverned — its effort was not set by the fixture).
+The same definition runs through gate 2 (which would otherwise pass for an arm whose fixture never engaged, on the strength of an echo) and gate 3's control set (where an echoed request correctly counts as ungoverned — its effort was not set by the fixture — and only the exclusions gate 3 lists are removed).
 
 `unique` rather than a positional selector, in both arms: the sink names files by UUID, so glob order is not write order, and `| last` would name an arbitrary element while silently discarding disagreement among the rest. Both arms are spelled identically, including the arm where nothing could go wrong, so a reviewer who has checked one has checked them both.
 
@@ -58,7 +58,7 @@ Every gate asserts on a positive signal in the captured bodies. None of them nam
 
 1. **Every arm captured at least one `*.request.json`.** An empty sink means the arm never ran.
 2. **Every arm holds at least one request the fixture governs.** Without it, "the fixture never engaged" and "the fixture engaged and Claude discarded its effort" are indistinguishable — which would make the most decision-relevant finding the least trustworthy one. **Gate 2 is what makes the inert arm assertable.**
-3. **At least one ungoverned request declares `output_config.effort`, and they all agree on one level.** The filter is an explicit exclusion of requests carrying no `effort` key: Claude emits an intermittent title-generation sidecar — observed in this package's own runs, dispatched to `claude-haiku-4-5` rather than to the pinned model — whose `output_config` holds a `format` object and no `effort`, and a control stated over all unmarked requests would fail on it every time it appeared. Written as an exclusion, the other direction stays loud — a Claude that stopped populating `effort` on governed requests empties the control set and trips the existence clause.
+3. **At least one ungoverned request declares `output_config.effort`, and they all agree on one level.** The filter is an explicit exclusion of requests carrying no `effort` key: Claude emits an intermittent title-generation sidecar — observed in this package's own runs, dispatched to `claude-haiku-4-5` rather than to the pinned model — whose `output_config` holds a `format` object and no `effort`, and a control stated over all unmarked requests would fail on it every time it appeared. Written as an exclusion, the other direction stays loud — a Claude that stopped populating `effort` on governed requests empties the control set and trips the existence clause. Subagent requests are excluded too, by the `cc_is_subagent=true` that Claude writes into each one's billing header, matched anywhere in its `.system` text. After a tool call, a subagent's follow-up turn carries no agent system prompt, so no marker, and runs at the subagent's effort. In the 2026-10-21 discriminator run kept as `…T233326-discriminator`, Claude Code 2.1.287 sent five of them, at `max`, when the subagent ignored its one-word instruction and tried tools. Counted as control, they put the subagent's level beside the session's, and the gate refused. The flag is undocumented. If Claude renamed it, those requests would rejoin the control set and the gate would refuse again rather than pass. The projection's control set `$u` applies the same two exclusions, so its verdict does not depend on the gate having run.
 
 A gate failure is a statement about the run, not about Claude, and writes no record.
 

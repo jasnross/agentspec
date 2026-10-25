@@ -55,6 +55,20 @@ def ungoverned(effort: str) -> dict[str, Any]:
     return claude_request(system="plain", output_config={"effort": effort})
 
 
+def subagent_follow_up(effort: str) -> dict[str, Any]:
+    """A subagent's turn after a tool call: flagged as a subagent's in the billing header,
+    with no system prompt to carry the marker."""
+    return claude_request(
+        system=[
+            {
+                "type": "text",
+                "text": "x-anthropic-billing-header: cc_version=0; cc_is_subagent=true;",
+            }
+        ],
+        output_config={"effort": effort},
+    )
+
+
 def main_thread(*tools: str) -> dict[str, Any]:
     """A main-thread request: unmarked, offering `Agent`, the tools listed as deferred."""
     request = deferred_request(*tools)
@@ -225,11 +239,11 @@ def test_gate_marker_scopes_to_the_field_it_is_given(tmp_path: Path) -> None:
     claude_otel.marker(arms, MARKER, MarkerField.MESSAGES)
 
 
-def test_gate_control_s_control_set_is_the_complement_of_the_field_it_is_given(
+def test_gate_control_s_control_set_is_the_ungoverned_requests_under_the_field_it_is_given(
     tmp_path: Path,
 ) -> None:
-    # The two gates partition the requests between them, so they must be passed the same
-    # field — a control set computed under one definition and an arm value computed under
+    # The two gates must agree on which requests the fixture governs, so they must be passed
+    # the same field — a control set computed under one definition and an arm value computed under
     # the other would not describe the same run.
     #
     # Under `.messages` the two governed requests are excluded and the control is the
@@ -329,6 +343,32 @@ def test_gate_control_excludes_the_effort_less_title_sidecar_rather_than_failing
     )
 
     claude_otel.control(arms, MARKER)
+
+
+def test_gate_control_excludes_a_subagent_s_unmarked_follow_up_rather_than_failing_on_it(
+    tmp_path: Path,
+) -> None:
+    # Measured on Claude Code 2.1.287, in the `claude-agent-effort` discriminator: a `max`
+    # subagent that called tools sent its follow-up turns with no marker, at `max`. Counted
+    # as control, they put the subagent's level beside the session's `medium`.
+    arms = arms_from_view(
+        {
+            "a": [marked("max"), ungoverned("medium"), subagent_follow_up("max")],
+            "b": [ungoverned("medium")],
+        },
+    )
+
+    claude_otel.control(arms, MARKER)
+
+
+def test_gate_control_fails_when_every_unmarked_request_is_a_subagent_s(tmp_path: Path) -> None:
+    # The loud direction: a Claude that flagged main-thread requests as a subagent's would
+    # empty the control set, which the existence clause refuses rather than passing.
+    arms = arms_from_view({"a": [marked("low"), subagent_follow_up("low")]})
+
+    with pytest.raises(GateFailure) as exc:
+        claude_otel.control(arms, MARKER)
+    assert "empty or internally inconsistent" in failure_output(exc)
 
 
 def test_gate_deferred_mcp_passes_when_the_governed_request_lists_every_tool_as_deferred_and_carries_toolsearch(  # noqa: E501
