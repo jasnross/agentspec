@@ -611,7 +611,7 @@ fn predict_dir_rmdir(dest_dir: &Path, manifest: &Manifest) -> bool {
 /// parent of kind dirs (e.g. `.claude`) is intentionally left alone by
 /// this function. The cleanup of that parent — when the post-write hooks
 /// have also deleted the host config file — happens inside each adapter's
-/// remove patch (see `hooks_merge::tidy_jsonc_file` and
+/// remove patch (see `hooks_merge::remove_owned` and
 /// `adapters::opencode::remove_opencode_instructions`).
 fn remove_manifest_tracked(w: &RemoveWrite, dry_run: bool) -> Result<Option<RemoveStats>> {
     let manifest_path = Manifest::path(&w.destination);

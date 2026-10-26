@@ -137,7 +137,7 @@ pub fn try_rmdir_if_empty(dir: &Path) -> anyhow::Result<bool> {
 /// matching the live-mode order of `remove_file` then `rmdir`.
 ///
 /// This is the shared "delete-on-empty" tail used by every adapter's remove
-/// post-write hook (Claude/Cursor via `hooks_merge::tidy_jsonc_file`;
+/// post-write hook (Claude/Cursor via `hooks_merge::remove_owned`;
 /// `OpenCode` via `adapters::opencode::remove_opencode_instructions`).
 pub fn delete_host_file_and_rmdir_parent(host_path: &Path, dry_run: bool) -> anyhow::Result<bool> {
     let parent = host_path.parent();

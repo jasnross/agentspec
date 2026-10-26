@@ -12,12 +12,12 @@ A useful test when writing a function: **could a new provider be added by writin
 - **Tests are exempt.** Integration tests and unit tests routinely name a specific provider to set up a scenario; that's not a leak.
 - **Config types may name providers in their fields.** They mirror a user-facing schema that already does; see [Config types that name providers](#config-types-that-name-providers) for where the line falls.
 
-## Shared helpers under `src/adapters/` vs. adapter implementations
+## Shared helpers vs. adapter implementations
 
-`src/adapters/` contains two kinds of files, and the "provider-specific logic belongs in adapters" rule applies differently to each:
+Two kinds of files live in and beside `src/adapters/`, and the "provider-specific logic belongs in adapters" rule applies differently to each:
 
 - **Adapter implementations** (`claude.rs`, `cursor.rs`, `opencode.rs`): one file per provider, each containing the `impl Adapter for X { ... }` block plus the closures and helpers that encode that provider's specifics — frontmatter shapes, JSON wrapping, manifest emission, post-write patches. These files own provider knowledge.
-- **Shared helpers** (`hook_compile.rs`, `hooks_merge.rs`, the `Adapter` trait in `src/adapters.rs`): agentspec-pipeline code that adapters call. These take `Provider` as a parameter (or accept adapter-supplied closures) and produce per-provider output, but they don't _own_ provider knowledge — they dispatch on inputs supplied by the calling adapter or the orchestrator.
+- **Shared helpers** (`hook_compile.rs` and `hooks_helpers.rs` in `src/adapters/`, plus the `Adapter` trait in `src/adapters.rs` and `src/hooks_merge.rs` beside the directory): agentspec-pipeline code that adapters call. These take `Provider` as a parameter (or accept adapter-supplied closures) and produce per-provider output, but they don't _own_ provider knowledge — they dispatch on inputs supplied by the calling adapter or the orchestrator.
 
 A useful litmus test: **does this code change require modifying `src/adapters/<provider>.rs`?**
 
@@ -25,7 +25,7 @@ A useful litmus test: **does this code change require modifying `src/adapters/<p
 - **No, but the work is provider-parameterized** → it belongs in a shared helper. The shared helper can take `Provider` as a parameter and produce per-provider output; that's not provider knowledge leaking, it's normal dispatch on a parameter.
 - **No, and the work is provider-agnostic** → it belongs further up the pipeline (`compile.rs`, `sync.rs`, `plan.rs`, etc.) and should treat providers as opaque.
 
-The distinction matters because "code inside `src/adapters/`" is not synonymous with "adapter code." The shared helpers under `src/adapters/` are agentspec-pipeline machinery that lives there for organizational proximity to the adapter implementations they support, not because they're owned by any specific adapter.
+The distinction matters because "code inside `src/adapters/`" is not synonymous with "adapter code." The shared helpers in that directory are agentspec-pipeline machinery that lives there for organizational proximity to the adapter implementations they support, not because they're owned by any specific adapter.
 
 ### Concrete examples from current code
 
