@@ -3619,10 +3619,9 @@ fn test_remove_drops_empty_event_arrays_in_settings_json() {
 #[test]
 fn test_remove_deletes_settings_when_only_agentspec_content_was_present() {
     // settings.json starts empty (no user content), sync adds agentspec
-    // hooks, remove must delete the host file outright (the prior contract
-    // — "drop the hooks key, leave settings.json as `{}`" — was inverted
-    // for TODO.md #20). The .claude parent directory is rmdir'd as well
-    // because all kind dirs and the host file are gone.
+    // hooks, remove must delete the host file outright rather than leave
+    // settings.json as `{}`. The .claude parent directory is rmdir'd as
+    // well because all kind dirs and the host file are gone.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     install_hook_fixture(&dir);
@@ -3960,9 +3959,8 @@ fn test_remove_strips_agentspec_instructions_from_opencode_json() {
 #[test]
 fn test_remove_deletes_opencode_when_only_agentspec_content_was_present() {
     // opencode.json starts empty, sync adds agentspec instructions, remove
-    // must delete the host file outright (the prior contract — "drop the
-    // instructions key, leave opencode.json as `{}`" — was inverted for
-    // TODO.md #20). The .config/opencode parent is rmdir'd as well.
+    // must delete the host file outright rather than leave opencode.json as
+    // `{}`. The .config/opencode parent is rmdir'd as well.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     write_sync_config(&dir, &[SyncEntry::new("opencode", "user")]);
@@ -4264,10 +4262,9 @@ fn test_remove_opencode_handles_missing_config_file() {
 #[test]
 fn test_remove_deletes_opencode_host_file_when_only_agentspec_entries_present() {
     // Sync writes the only entries (no user content); remove must DELETE
-    // the host file rather than leaving it as a `{}` residue. The new
-    // contract (TODO.md #20) inverts the prior "host file must survive
-    // even when empty" guarantee — a file containing only agentspec content
-    // is informationally equivalent to no file, and is cleaned up.
+    // the host file rather than leaving it as a `{}` residue — a file
+    // containing only agentspec content is informationally equivalent to
+    // no file, and is cleaned up.
     let tmp = TempDir::new().expect("failed to create tmp dir");
     let dir = setup(&tmp);
     write_sync_config(&dir, &[SyncEntry::new("opencode", "user")]);
