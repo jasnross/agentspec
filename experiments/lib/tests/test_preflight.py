@@ -29,14 +29,14 @@ from tests.conftest import (
 VARIANT_PROBE_PY = textwrap.dedent("""\
     import sys
     from pathlib import Path
-    from probe_harness.families.base import CustomProbe, JudgeResult
+    from probe_harness.families.base import CustomProbe
 
     def _act(ws: Path) -> None:
         print("ran {name}")
         sys.exit(0)
 
     PROBE = CustomProbe(required_tools=(), arrange=lambda ws, variant: None, act=_act,
-                        judge=lambda ws: JudgeResult(view=ws / "view.json", selection=None),
+                        judge=lambda ws: ws / "view.json",
                         variants=("assertion", "discriminator"))
 """)
 

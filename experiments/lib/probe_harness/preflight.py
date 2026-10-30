@@ -8,7 +8,8 @@ session may first surface at record time. The version guard and the imports run 
     2. the required tools — the family's, git, and a `command` version source's — then a
        jq compile check of every manifest expression
     3. `PROBE_DRY_RUN`, `PROBE_FIXTURE` and `PROBE_TIMEOUT_SECONDS`
-    4. the source map, which the run writes into its workspace
+    4. the source map, which the run writes into its workspace, and for a real run of a v2
+       manifest the clean-tree gate: the map must equal `HEAD`'s ids
 
 The definition's own preflight function and any family-specific check run next, in the
 family runner, still before a workspace exists.
@@ -21,14 +22,16 @@ from pathlib import Path
 
 from probe_harness import jq_cli
 from probe_harness.contract import (
-    CaptureSource,
+    CaptureSourceV1,
     CommandSource,
     Manifest,
     ManifestError,
-    ProjectionAssertion,
+    ManifestV1,
+    ManifestV2,
+    ProjectionAssertionV1,
     parse_manifest,
 )
-from probe_harness.source import SourceMapError, source_map
+from probe_harness.source import SourceMapError, clean_tree_refusal, source_map
 from probe_harness.workspace import DEFAULT_TIMEOUT_SECONDS, require_tools
 
 ASSERTION_VARIANT = "assertion"
@@ -65,12 +68,15 @@ def check_manifest(package: Path) -> Manifest:
 
 
 def check_expressions(manifest: Manifest) -> None:
+    """Compile every jq expression a v1 manifest declares; a v2 manifest declares none."""
+    if not isinstance(manifest, ManifestV1):
+        return
     expressions: list[tuple[str, str]] = []
-    if isinstance(manifest.assertion, ProjectionAssertion):
+    if isinstance(manifest.assertion, ProjectionAssertionV1):
         expressions.append(("projection", manifest.assertion.projection))
     if manifest.wait_for is not None:
         expressions.append(("wait_for", manifest.wait_for))
-    if isinstance(manifest.version_source, CaptureSource):
+    if isinstance(manifest.version_source, CaptureSourceV1):
         expressions.append(("version_source.jq", manifest.version_source.jq))
     for name, expr in expressions:
         error = jq_cli.compile_error(expr)
@@ -99,8 +105,16 @@ def run(
     # Last, so a usage error in a `PROBE_*` variable is reported before any git work.
     try:
         source = source_map(package)
+        # A v2 record names its code by blob id alone, so the ids must be committed ones.
+        refusal = (
+            clean_tree_refusal(source, package)
+            if isinstance(manifest, ManifestV2) and not dry_run
+            else None
+        )
     except SourceMapError as e:
         raise PreflightError(1, *e.lines) from None
+    if refusal is not None:
+        raise PreflightError(1, *refusal)
     return manifest, RunOptions(dry_run, variant, timeout, source)
 
 

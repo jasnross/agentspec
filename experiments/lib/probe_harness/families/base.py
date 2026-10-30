@@ -6,33 +6,41 @@ deletes a workspace: its owner does, once the record it produced has shipped.
 """
 
 import os
+import traceback
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from probe_harness import console, jq_cli, record
-from probe_harness.contract import CommandSource, Manifest
+from probe_harness import console, jq_cli, json_values, record
+from probe_harness.contract import CommandSource, Manifest, ManifestV2
 from probe_harness.gates import GateFailure
+from probe_harness.json_values import JsonValue
 from probe_harness.preflight import RunOptions
-from probe_harness.record import JudgeResult
+from probe_harness.record import JudgeResult, Observed, Projected, Selected
+from probe_harness.source import SourceMapError, source_map
 
 __all__ = [
     "CustomCheck",
     "CustomProbe",
     "GateFailure",
     "JudgeResult",
+    "Observed",
     "ProbeFunctions",
+    "Projected",
     "RunOptions",
+    "Selected",
     "UsageError",
     "file_lines",
     "kept_for_inspection",
     "kept_on_failure",
+    "observe",
     "provider_env",
     "record_result",
     "record_tool_version",
     "refused",
     "run_custom_checks",
+    "source_changed",
     "workspace_kept",
 ]
 
@@ -57,26 +65,48 @@ class CustomCheck:
 
 
 @dataclass(frozen=True)
-class ProbeFunctions:
+class ProbeFunctions[V]:
     """A definition's own steps, for needs only one probe of a family has."""
 
     # Raise `GateFailure` to refuse before a workspace exists.
     preflight: Callable[[], None] | None = None
-    # Receives the workspace path only; raise `GateFailure` to refuse.
-    judge: Callable[[Path], None] | None = None
+    # Receives the family's judged input; raise `GateFailure` to refuse.
+    judge: Callable[[V], None] | None = None
 
 
 @dataclass(frozen=True)
-class CustomProbe:
+class CustomProbe[V]:
     """A probe fitting no family. Its definition supplies every step itself."""
 
     required_tools: tuple[str, ...]
     # Receives the workspace and the selected fixture variant.
     arrange: Callable[[Path, str], None]
     act: Callable[[Path], None]
-    judge: Callable[[Path], JudgeResult]
+    # Reads the workspace into what the assertion receives. Under a v1 manifest it must
+    # return the path of the view the manifest's projection runs over.
+    judge: Callable[[Path], V]
+    # Required by a v2 manifest declaring `expected`, and refused by a v1 one.
+    assertion: Callable[[V], JsonValue] | None = None
     variants: tuple[str, ...] = ("assertion",)
-    functions: ProbeFunctions = field(default_factory=ProbeFunctions)
+    functions: ProbeFunctions[V] = field(default_factory=ProbeFunctions)
+
+
+def observe[V](assertion: Callable[[V], JsonValue], value: V) -> Observed:
+    """The assertion's value over <value>, refusing when it raises or yields no JSON value.
+
+    Either refusal is a fault in the definition, not a statement about the provider, so it
+    is a `GateFailure` and keeps the workspace.
+    """
+    observed = _call("assertion", assertion, value)
+    try:
+        json_values.check(observed)
+    except ValueError as e:
+        raise GateFailure(f"the assertion did not yield a JSON value: {e}") from None
+    except RecursionError:
+        raise GateFailure(
+            "the assertion did not yield a JSON value: it is cyclic or nested too deeply"
+        ) from None
+    return Observed(observed)
 
 
 def run_custom_checks(checks: Sequence[CustomCheck], view: Path, marker: str | None) -> None:
@@ -84,6 +114,23 @@ def run_custom_checks(checks: Sequence[CustomCheck], view: Path, marker: str | N
     for check in checks:
         if not jq_cli.test(check.expression, view, args=args):
             raise GateFailure(*check.failure)
+
+
+def source_changed(source: Mapping[str, str], package: Path) -> record.RecordRefused | None:
+    """A refusal when <package>'s source map no longer equals <source>, the one it judged by."""
+    try:
+        now = source_map(package)
+    except SourceMapError as e:
+        return record.RecordRefused(*e.lines)
+    if now == dict(source):
+        return None
+    paths = sorted(key for key in now.keys() | source.keys() if now.get(key) != source.get(key))
+    return record.RecordRefused(
+        "the probe's source changed after its map was computed, so the record could not "
+        "name the code that judged it:",
+        *(f"  {path}" for path in paths[:10]),
+        *((f"  … and {len(paths) - 10} more",) if len(paths) > 10 else ()),
+    )
 
 
 def provider_env(cwd: Path, env: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -166,12 +213,42 @@ def kept_on_failure(ws: Path) -> Iterator[None]:
 
 
 def record_result(manifest: Manifest, ws: Path, result: JudgeResult, options: RunOptions) -> int:
-    """Record the judged result; a dry run prints it instead. The workspace is kept."""
+    """Record the judged result; a dry run prints it instead. The workspace is kept.
+
+    A v2 record carries the source map preflight computed, which a real run computes again
+    before writing: an edit made while the run was under way would otherwise be recorded
+    as code that never ran.
+    """
+    source = options.source if isinstance(manifest, ManifestV2) else None
     try:
-        computed = record.compute(manifest, ws, result, dry_run=options.dry_run)
+        computed = record.compute(manifest, ws, result, dry_run=options.dry_run, source=source)
+        if source is not None and not options.dry_run:
+            changed = source_changed(source, manifest.path.parent)
+            if changed is not None:
+                raise changed
         written = None if options.dry_run else record.write(computed)
     except record.RecordRefused as e:
         return refused(e, ws)
     record.report(computed, written)
     workspace_kept(ws)
     return 0
+
+
+def _call[V, R](name: str, function: Callable[[V], R], value: V) -> R:
+    """<function> over <value>; an exception it raises becomes a `GateFailure` naming <name>."""
+    try:
+        return function(value)
+    except GateFailure:
+        # A definition refusing in its own words.
+        raise
+    except Exception as e:
+        raise GateFailure(
+            f"the {name} raised {type(e).__name__}: {e}", detail=_traceback_lines(e)
+        ) from None
+
+
+def _traceback_lines(e: BaseException) -> tuple[str, ...]:
+    """<e>'s traceback as printed lines."""
+    return tuple(
+        line for chunk in traceback.format_exception(e) for line in chunk.rstrip("\n").split("\n")
+    )

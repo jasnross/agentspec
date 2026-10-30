@@ -57,6 +57,24 @@ def put_record(tree: Path, name: str, version: str) -> None:
     path.write_text(json.dumps(record, indent=2) + "\n")
 
 
+def put_record_v2(tree: Path, name: str, version: str) -> None:
+    """A v2 record pinning <version>, carrying a source map."""
+    results = tree / name / "results"
+    results.mkdir(parents=True, exist_ok=True)
+    record = {
+        "schema_version": 2,
+        "provider": "opencode",
+        "status": "confirmed",
+        "depth": None,
+        "date": "2026-01-01",
+        "tool_version": version,
+        "source": {f"experiments/{name}/probe.py": "0" * 40},
+        "assertion": {"expected": 1, "observed": 1},
+    }
+    path = results / f"2026-01-01T000000-opencode-{version}.json"
+    path.write_text(json.dumps(record, indent=2) + "\n")
+
+
 def test_an_unattended_package_runs(cli: Cli, put_package: PutPackage) -> None:
     put_package("alpha", "unattended")
 
@@ -541,3 +559,33 @@ def test_an_empty_tree_exits_0(cli: Cli, tree: Path) -> None:
     result = cli("run")
     assert result.returncode == 0
     assert "0 ran" in result.output
+
+
+def test_stale_passes_over_a_v2_package_whose_v2_record_is_at_the_installed_version(
+    cli: Cli, tree: Path, put_package: PutPackage
+) -> None:
+    put_package("alpha", "unattended")
+    put_version_stub(tree, "alpha", "1.0.0")
+    manifest = tree / "alpha" / "probe.json"
+    data = json.loads(manifest.read_text())
+    data.update(schema_version=2, assertion={"expected": 1})
+    manifest.write_text(json.dumps(data, indent=2) + "\n")
+    put_record_v2(tree, "alpha", "1.0.0")
+
+    result = cli("run", "--stale")
+    assert result.returncode == 0
+    assert "1.0.0 unchanged" in result.output
+    assert "1 fresh" in result.output
+
+
+def test_stale_runs_a_package_whose_v2_record_has_drifted(
+    cli: Cli, tree: Path, put_package: PutPackage
+) -> None:
+    put_package("alpha", "unattended")
+    put_version_stub(tree, "alpha", "2.0.0")
+    put_record_v2(tree, "alpha", "1.0.0")
+
+    result = cli("run", "--stale")
+    assert result.returncode == 0
+    assert "ran alpha" in result.output
+    assert "1 ran" in result.output

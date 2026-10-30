@@ -56,18 +56,18 @@ def test_record_refuses_a_selection_for_a_projection_manifest(
     ws.mkdir()
     result = cli("record", "alpha", ws, "--dry-run", "--selection", "x")
     assert result.returncode == 2
-    assert "declares a projection; --selection does not apply" in result.stderr
+    assert "declares no options; --selection does not apply" in result.stderr
 
 
 RECORDING_PY = """\
 from pathlib import Path
-from probe_harness.families.base import CustomProbe, JudgeResult
+from probe_harness.families.base import CustomProbe
 
 def _act(ws: Path) -> None:
     (ws / "view.json").write_text("1\\n", encoding="utf-8")
 
 PROBE = CustomProbe(required_tools=(), arrange=lambda ws, variant: None, act=_act,
-                    judge=lambda ws: JudgeResult(view=ws / "view.json", selection=None))
+                    judge=lambda ws: ws / "view.json")
 """
 
 
@@ -103,14 +103,14 @@ def test_a_real_record_keeps_its_workspace_with_the_source_map(cli: Cli, tree: P
 UPGRADING_PY = """\
 import os
 from pathlib import Path
-from probe_harness.families.base import CustomProbe, JudgeResult
+from probe_harness.families.base import CustomProbe
 
 def _act(ws: Path) -> None:
     Path(os.environ["VERSION_FILE"]).write_text("2.0.0\\n", encoding="utf-8")
     (ws / "view.json").write_text("1\\n", encoding="utf-8")
 
 PROBE = CustomProbe(required_tools=(), arrange=lambda ws, variant: None, act=_act,
-                    judge=lambda ws: JudgeResult(view=ws / "view.json", selection=None))
+                    judge=lambda ws: ws / "view.json")
 """
 
 
@@ -173,7 +173,7 @@ def test_a_dry_run_names_the_workspace_it_keeps(cli: Cli, tree: Path) -> None:
 
 VARIANT_ECHO_PY = """\
 from pathlib import Path
-from probe_harness.families.base import CustomProbe, JudgeResult
+from probe_harness.families.base import CustomProbe
 
 def _arrange(ws: Path, variant: str) -> None:
     print(f"arranged {variant}")
@@ -182,7 +182,7 @@ def _act(ws: Path) -> None:
     raise SystemExit(0)
 
 PROBE = CustomProbe(required_tools=(), arrange=_arrange, act=_act,
-                    judge=lambda ws: JudgeResult(view=ws / "view.json", selection=None),
+                    judge=lambda ws: ws / "view.json",
                     variants=("assertion", "discriminator"))
 """
 

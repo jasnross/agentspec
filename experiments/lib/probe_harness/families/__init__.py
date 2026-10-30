@@ -6,14 +6,19 @@ existing family writes only what is specific to it; a probe fitting no family wr
 """
 
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import assert_never
+from typing import Any, assert_never
 
 from probe_harness import console, jq_cli, record
 from probe_harness.contract import (
     CaptureSource,
+    CaptureSourceV1,
     Driver,
+    ExpectedAssertion,
     Manifest,
+    ManifestV1,
+    ManifestV2,
     OptionsAssertion,
 )
 from probe_harness.families import claude_otel, manual, opencode_debug, opencode_fake
@@ -21,13 +26,16 @@ from probe_harness.families.base import (
     CustomProbe,
     GateFailure,
     JudgeResult,
+    Projected,
     RunOptions,
     UsageError,
     kept_for_inspection,
     kept_on_failure,
+    observe,
     record_result,
     record_tool_version,
     refused,
+    source_changed,
 )
 from probe_harness.families.claude_otel import ClaudeOtelProbe, McpConfig, PluginDir
 from probe_harness.families.manual import ManualProbe
@@ -42,11 +50,17 @@ from probe_harness.preflight import (
     dry_run_from_environment,
 )
 from probe_harness.preflight import run as run_preflight
-from probe_harness.source import write_source
+from probe_harness.source import (
+    SourceMapError,
+    clean_tree_refusal,
+    read_source,
+    source_map,
+    write_source,
+)
 from probe_harness.workspace import create_workspace, read_workspace_run, require_tools
 
 type ProbeDefinition = (
-    ManualProbe | OpenCodeDebugProbe | OpenCodeFakeProbe | ClaudeOtelProbe | CustomProbe
+    ManualProbe | OpenCodeDebugProbe | OpenCodeFakeProbe | ClaudeOtelProbe | CustomProbe[Any]
 )
 
 DEFINITION_TYPES: tuple[type, ...] = (
@@ -82,7 +96,7 @@ def run_package(name: str, experiments_dir: Path) -> int:
     try:
         match definition:
             case ManualProbe():
-                wait_for = manifest.wait_for
+                wait_for = manifest.wait_for if isinstance(manifest, ManifestV1) else None
                 if wait_for is None:
                     # A missing filter would poll a literal that never matches, burning the
                     # whole timeout of a live session for no reason.
@@ -127,6 +141,18 @@ def record_package(
         refusal = _definition_refusal(name, definition, manifest)
         if refusal is not None:
             raise PreflightError(1, refusal)
+        # A v2 record names the code that judged it. Computed before judging, and for a real
+        # recording checked against `HEAD` then, and against the files again before writing.
+        source = None
+        if isinstance(manifest, ManifestV2):
+            require_tools("git")
+            source = source_map(package)
+        gate = clean_tree_refusal(source, package) if source is not None and not dry_run else None
+        if gate is not None:
+            raise PreflightError(1, *gate)
+    except SourceMapError as e:
+        console.say(*e.lines)
+        return 1
     except DefinitionError as e:
         console.say(str(e))
         return 1
@@ -138,7 +164,7 @@ def record_package(
         console.say(f"not a workspace directory: {ws}")
         return 1
     if selection is not None and not isinstance(manifest.assertion, OptionsAssertion):
-        console.say(f"{name} declares a projection; --selection does not apply")
+        console.say(f"{name} declares no options; --selection does not apply")
         return 2
     run = read_workspace_run(ws)
     if run is not None and run.package != name:
@@ -157,6 +183,15 @@ def record_package(
                 DISAGREEING_FIXTURE,
             )
             return 1
+    # A v2 record without `arranged` claims the judging code arranged the workspace, so a
+    # real one needs the map the arranging run wrote to know whether that is so.
+    arranged = read_source(ws) if source is not None else None
+    if source is not None and arranged is None and not dry_run:
+        console.say(
+            f"{ws / 'source.json'} is missing or is not a source map, so a record could not "
+            "say which code arranged the workspace; it can only be judged with --dry-run"
+        )
+        return 1
 
     try:
         match definition:
@@ -173,10 +208,21 @@ def record_package(
             case ClaudeOtelProbe():
                 result = claude_otel.judge(ws, definition)
             case CustomProbe():
-                result = _judge_custom(ws, definition)
+                result = _judge_custom(manifest, ws, definition)
             case _:
                 assert_never(definition)
-        computed = record.compute(manifest, ws, result, dry_run=dry_run)
+        computed = record.compute(
+            manifest,
+            ws,
+            result,
+            dry_run=dry_run,
+            source=source,
+            arranged=arranged if arranged is not None and arranged != source else None,
+        )
+        if source is not None and not dry_run:
+            changed = source_changed(source, package)
+            if changed is not None:
+                raise changed
         record.report(computed, None if dry_run else record.write(computed))
     except UsageError as e:
         console.say(str(e))
@@ -191,7 +237,7 @@ def record_package(
     return 0
 
 
-def _run_custom(manifest: Manifest, name: str, options: RunOptions, probe: CustomProbe) -> int:
+def _run_custom(manifest: Manifest, name: str, options: RunOptions, probe: CustomProbe[Any]) -> int:
     ws = create_workspace(name, options.variant)
     with kept_on_failure(ws):
         write_source(ws, options.source)
@@ -199,18 +245,31 @@ def _run_custom(manifest: Manifest, name: str, options: RunOptions, probe: Custo
             probe.arrange(ws, options.variant)
             record_tool_version(manifest, ws)
             probe.act(ws)
-            result = _judge_custom(ws, probe)
+            result = _judge_custom(manifest, ws, probe)
         except GateFailure as e:
             return refused(e, ws)
         return record_result(manifest, ws, result, options)
 
 
-def _judge_custom(ws: Path, probe: CustomProbe) -> JudgeResult:
-    """A custom probe's judge: its own, then the definition's judge function when set."""
-    result = probe.judge(ws)
+def _judge_custom(manifest: Manifest, ws: Path, probe: CustomProbe[Any]) -> JudgeResult:
+    """A custom probe's judge: its own, the definition's judge function, then the outcome.
+
+    A v1 manifest's projection runs over the view the probe's judge returned; a v2 one's
+    assertion runs over whatever it returned.
+    """
+    value = probe.judge(ws)
     if probe.functions.judge is not None:
-        probe.functions.judge(ws)
-    return result
+        probe.functions.judge(value)
+    if isinstance(manifest, ManifestV1):
+        if not isinstance(value, Path):
+            raise GateFailure(
+                f"{manifest.path.parent.name}'s judge returned a {type(value).__name__}, but "
+                "a schema 1 manifest projects over the view path it returns"
+            )
+        return JudgeResult(Projected(value))
+    # The agreement check guarantees an assertion for a v2 manifest declaring `expected`.
+    assert probe.assertion is not None
+    return JudgeResult(observe(probe.assertion, value))
 
 
 def _definition_refusal(name: str, definition: ProbeDefinition, manifest: Manifest) -> str | None:
@@ -222,29 +281,88 @@ def _definition_refusal(name: str, definition: ProbeDefinition, manifest: Manife
     package = manifest.path.parent
     match definition:
         case ManualProbe():
-            return _capture_is_not_a_variant(name, definition) or _variant_trees(
-                name, definition, package
+            return (
+                _agreement(name, definition, manifest, assertion=None)
+                or _manual_agreement(name, manifest, wait_for=None)
+                or _capture_is_not_a_variant(name, definition)
+                or _variant_trees(name, definition, package)
             )
         case OpenCodeFakeProbe():
             return (
-                _variant_trees(name, definition, package)
+                _agreement(name, definition, manifest, assertion=None)
+                or _variant_trees(name, definition, package)
                 or _unique_arms(name, [arm.name for arm in definition.arms])
                 or _needs_capture(name, definition, manifest)
             )
         case ClaudeOtelProbe():
             return (
-                _variant_trees(name, definition, package)
+                _agreement(name, definition, manifest, assertion=None)
+                or _variant_trees(name, definition, package)
                 or _unique_arms(name, [arm.name for arm in definition.arms])
                 or _claude_gate_arms(name, definition)
                 or _needs_capture(name, definition, manifest)
                 or _claude_variant_inputs(name, definition, package)
             )
-        case OpenCodeDebugProbe() | CustomProbe():
-            return _variant_trees(name, definition, package) or _needs_capture(
-                name, definition, manifest
+        case OpenCodeDebugProbe():
+            return (
+                _agreement(name, definition, manifest, assertion=None)
+                or _variant_trees(name, definition, package)
+                or _needs_capture(name, definition, manifest)
+            )
+        case CustomProbe():
+            return (
+                _agreement(name, definition, manifest, assertion=definition.assertion)
+                or _variant_trees(name, definition, package)
+                or _needs_capture(name, definition, manifest)
             )
         case _:
             assert_never(definition)
+
+
+def _agreement(
+    name: str,
+    definition: ProbeDefinition,
+    manifest: Manifest,
+    *,
+    assertion: Callable[..., Any] | None,
+) -> str | None:
+    """Whether the manifest's version and the definition's assertion agree.
+
+    A v1 manifest is judged by its own jq, so a Python assertion beside it would be code
+    that never runs. A v2 manifest declaring `expected` is judged by the definition's
+    assertion, so it needs one, and an option set is answered by a person, so it refuses one.
+    """
+    family = _family(definition)
+    if isinstance(manifest, ManifestV1):
+        if assertion is not None:
+            return (
+                f"{name}'s definition carries an assertion, but its manifest is schema 1, "
+                "whose projection decides the record"
+            )
+        return None
+    if isinstance(manifest.assertion, ExpectedAssertion) and assertion is None:
+        return (
+            f"{name}'s manifest is schema 2 and declares expected, but {family} definition "
+            "carries no assertion to compare with it"
+        )
+    if isinstance(manifest.assertion, OptionsAssertion) and assertion is not None:
+        return (
+            f"{name}'s manifest declares options, which a person answers, but its definition "
+            "carries an assertion"
+        )
+    return None
+
+
+def _manual_agreement(
+    name: str, manifest: Manifest, *, wait_for: Callable[..., Any] | None
+) -> str | None:
+    """A v2 manual probe polls with its definition's `wait_for`, so it needs one."""
+    if isinstance(manifest, ManifestV2) and wait_for is None:
+        return (
+            f"{name}'s manifest is schema 2, but its definition carries no wait_for to poll "
+            "the capture with"
+        )
+    return None
 
 
 def _family(definition: ProbeDefinition) -> str:
@@ -279,7 +397,7 @@ def _needs_capture(name: str, definition: ProbeDefinition, manifest: Manifest) -
             f"{name} is {_family(definition)}, which records without a capture, but its "
             'manifest declares driver "manual"'
         )
-    if isinstance(manifest.version_source, CaptureSource):
+    if isinstance(manifest.version_source, CaptureSourceV1 | CaptureSource):
         return (
             f"{name} is {_family(definition)}, which records without a capture, but its "
             "manifest declares a capture version source"

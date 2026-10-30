@@ -13,6 +13,7 @@ import json
 import re
 import subprocess
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,13 +23,20 @@ from pydantic import MISSING, ValidationError
 from probe_harness import console, contract, jq_cli, json_values
 from probe_harness.contract import (
     CaptureSource,
+    CaptureSourceV1,
     CommandSource,
     Driver,
+    ExpectedAssertion,
     Manifest,
+    ManifestV1,
+    ManifestV2,
     NoSource,
     OptionsAssertion,
-    ProjectionAssertion,
-    RecordAssertion,
+    ProjectionAssertionV1,
+    RecordAssertionV1,
+    RecordAssertionV2,
+    RecordV1,
+    RecordV2,
     Status,
 )
 from probe_harness.json_values import JsonValue
@@ -38,11 +46,37 @@ VERSION_COMMAND_TIMEOUT_SECONDS = 10
 
 
 @dataclass(frozen=True)
-class JudgeResult:
-    """What Judge hands to Record: exactly one of a view or a selected option id."""
+class Projected:
+    """A v1 manifest's outcome: the manifest's jq projection runs over <view>."""
 
-    view: Path | None
-    selection: str | None
+    view: Path
+
+
+@dataclass(frozen=True)
+class Observed:
+    """A v2 manifest's outcome: the definition's assertion already ran and yielded <value>."""
+
+    value: JsonValue
+
+
+@dataclass(frozen=True)
+class Selected:
+    """An option set's outcome: the option id a person chose."""
+
+    option: str
+
+
+type Outcome = Projected | Observed | Selected
+
+
+@dataclass(frozen=True)
+class JudgeResult:
+    """What Judge hands to Record."""
+
+    outcome: Outcome
+    # A v2 `capture` version source's value, computed by the definition's
+    # `capture_version`; None for every other source.
+    captured_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -80,19 +114,33 @@ class RecordRefused(Exception):
         self.detail = detail
 
 
-def compute(manifest: Manifest, ws: Path, result: JudgeResult, *, dry_run: bool) -> ComputedRecord:
+def compute(
+    manifest: Manifest,
+    ws: Path,
+    result: JudgeResult,
+    *,
+    dry_run: bool,
+    source: Mapping[str, str] | None = None,
+    arranged: Mapping[str, str] | None = None,
+) -> ComputedRecord:
     """Compare a judged workspace's result and return the record; raise `RecordRefused`.
 
+    A v2 manifest's record carries <source>, which it requires, and <arranged> when given.
     Writes nothing. Prints only the dry-run warning for a workspace with no recorded tool
-    version. Assumes jq is installed, which every caller has checked.
+    version. Assumes jq is installed for a v1 manifest, which every caller has checked.
     """
-    # The judge hands over a view for a projection and a selection for an option set; a
-    # mismatch would be a wiring error, since a projection over an options manifest
-    # resolves to `null` and records a false `refuted`.
-    if isinstance(manifest.assertion, ProjectionAssertion):
-        assert result.view is not None and result.selection is None
-    else:
-        assert result.selection is not None and result.view is None
+    # Each outcome pairs with one assertion shape; a mismatch is a wiring error, since a
+    # projection over an options manifest resolves to `null` and records a false `refuted`.
+    match manifest.assertion, result.outcome:
+        case (ProjectionAssertionV1(), Projected()) | (ExpectedAssertion(), Observed()):
+            pass
+        case (OptionsAssertion(), Selected()):
+            pass
+        case _:
+            raise AssertionError(
+                f"a {type(result.outcome).__name__} outcome cannot answer a "
+                f"{type(manifest.assertion).__name__}"
+            )
 
     # The non-empty check reads the file the *provider* wrote, never the view, which the
     # judge writes moments before recording. A hook that never fired is what it catches.
@@ -105,11 +153,13 @@ def compute(manifest: Manifest, ws: Path, result: JudgeResult, *, dry_run: bool)
     # status could assert one the evidence does not support.
     option_status = ""
     observed: JsonValue
-    if result.selection is not None:
-        observed, option_status = _select(manifest, result.selection)
-    else:
-        assert result.view is not None
-        observed = _project(manifest, result.view)
+    match result.outcome:
+        case Selected(option=option):
+            observed, option_status = _select(manifest, option)
+        case Projected(view=view):
+            observed = _project(manifest, view)
+        case Observed(value=value):
+            observed = value
 
     if option_status:
         # A `couldnt-tell` option declares `inconclusive`, so a tired operator picking it
@@ -120,31 +170,39 @@ def compute(manifest: Manifest, ws: Path, result: JudgeResult, *, dry_run: bool)
     else:
         status = Status.REFUTED
 
-    tool_version = _tool_version(manifest, ws, dry_run=dry_run)
+    tool_version = _tool_version(manifest, ws, result, dry_run=dry_run)
 
     # One UTC clock read feeds both the record's `date` and the filename. The time
     # component stops a same-day re-run at the same version from overwriting its
     # predecessor.
     stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H%M%S")
     version = tool_version or None
-    assertion: RecordAssertion
+    document: contract.Record
     try:
-        match manifest.assertion:
-            case ProjectionAssertion(projection=projection, expected=expected):
-                assertion = RecordAssertion(
-                    projection=projection, expected=expected, observed=observed
+        match manifest:
+            case ManifestV1():
+                document = RecordV1(
+                    schema_version=1,
+                    provider=manifest.provider,
+                    status=status,
+                    depth=manifest.depth,
+                    date=stamp.split("T", 1)[0],
+                    tool_version=version,
+                    assertion=_assertion_v1(manifest, observed),
                 )
-            case OptionsAssertion(options=options, expected=expected):
-                assertion = RecordAssertion(options=options, expected=expected, observed=observed)
-        document = contract.Record(
-            schema_version=1,
-            provider=manifest.provider,
-            status=status,
-            depth=manifest.depth,
-            date=stamp.split("T", 1)[0],
-            tool_version=version,
-            assertion=assertion,
-        )
+            case ManifestV2():
+                assert source is not None, "a v2 record carries the source map that judged it"
+                document = RecordV2(
+                    schema_version=2,
+                    provider=manifest.provider,
+                    status=status,
+                    depth=manifest.depth,
+                    date=stamp.split("T", 1)[0],
+                    tool_version=version,
+                    source=dict(source),
+                    arranged=MISSING if arranged is None else dict(arranged),
+                    assertion=_assertion_v2(manifest, observed),
+                )
     except ValidationError as e:
         # pydantic refuses a JSON value nested past about 255 levels, which a projection can
         # still yield. Its location would repeat once per level, so only the messages show.
@@ -182,6 +240,22 @@ def report(record: ComputedRecord, written: Path | None) -> None:
     console.say(f"{record.status} — observed {_compact(record.observed)}")
 
 
+def _assertion_v1(manifest: ManifestV1, observed: JsonValue) -> RecordAssertionV1:
+    match manifest.assertion:
+        case ProjectionAssertionV1(projection=projection, expected=expected):
+            return RecordAssertionV1(projection=projection, expected=expected, observed=observed)
+        case OptionsAssertion(options=options, expected=expected):
+            return RecordAssertionV1(options=options, expected=expected, observed=observed)
+
+
+def _assertion_v2(manifest: ManifestV2, observed: JsonValue) -> RecordAssertionV2:
+    match manifest.assertion:
+        case ExpectedAssertion(expected=expected):
+            return RecordAssertionV2(expected=expected, observed=observed)
+        case OptionsAssertion(options=options, expected=expected):
+            return RecordAssertionV2(options=options, expected=expected, observed=observed)
+
+
 def _select(manifest: Manifest, selection: str) -> tuple[str, str]:
     """The selected option id and the option's declared status."""
     assert isinstance(manifest.assertion, OptionsAssertion)
@@ -193,7 +267,7 @@ def _select(manifest: Manifest, selection: str) -> tuple[str, str]:
 
 def _project(manifest: Manifest, view: Path) -> JsonValue:
     """The projection's single value over <view>; `null` when it yields none."""
-    assert isinstance(manifest.assertion, ProjectionAssertion)
+    assert isinstance(manifest.assertion, ProjectionAssertionV1)
     projection = manifest.assertion.projection
     try:
         output = jq_cli.evaluate(projection, view, compact=True)
@@ -214,7 +288,7 @@ def _project(manifest: Manifest, view: Path) -> JsonValue:
     return values[0] if values else None
 
 
-def _tool_version(manifest: Manifest, ws: Path, *, dry_run: bool) -> str:
+def _tool_version(manifest: Manifest, ws: Path, result: JudgeResult, *, dry_run: bool) -> str:
     version: str
     match manifest.version_source:
         case CommandSource():
@@ -231,13 +305,16 @@ def _tool_version(manifest: Manifest, ws: Path, *, dry_run: bool) -> str:
                     f"no recorded tool version in {ws}",
                     "re-run the probe; a later judge never runs the version command.",
                 )
-        case CaptureSource(jq=expr):
+        case CaptureSourceV1(jq=expr):
             # Slurped, as every declared capture expression is array-shaped.
             try:
                 out = jq_cli.evaluate(expr, ws / "capture" / "payloads.jsonl", slurp=True, raw=True)
             except jq_cli.JqError as e:
                 out = e.stdout
             version = out.rstrip("\n")
+        case CaptureSource():
+            # The judge computed it with the definition's `capture_version`.
+            version = result.captured_version or ""
         case NoSource():
             version = ""
     return "" if version == "null" else version

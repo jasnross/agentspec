@@ -5,9 +5,12 @@
     probe record <package> <workspace> [--selection <id>] [--dry-run]
                                                         judge a kept workspace and record it
     probe status [--summary]                            report on committed records
+    probe source <record> <dir> [--arranged]            write a v2 record's files to <dir>
 
-Every harness module is imported here, at the top, so an import error surfaces before any
-work starts, and never after a manual operator has spent a live session.
+Every harness module a subcommand needs is imported before it does any work, so an import
+error surfaces before any work starts, and never after a manual operator has spent a live
+session. `probe source` imports none that loads a definition: like `probe status`, it
+executes no probe-authored code.
 
 Exit codes: 0 success, 1 a refusal, 2 a usage error or an invalid `PROBE_*` variable. Every
 diagnostic line the harness writes starts with the subcommand that wrote it (`console.py`).
@@ -18,7 +21,7 @@ import os
 import signal
 from pathlib import Path
 
-from probe_harness import console, families, run_all, status
+from probe_harness import console, contract, source
 
 # `experiments/` is the directory above `lib/`, which holds this package.
 _DEFAULT_EXPERIMENTS_DIR = Path(__file__).resolve().parents[2]
@@ -33,6 +36,13 @@ def main(argv: list[str]) -> int:
     parser, subparsers = _parser()
     args, extra = parser.parse_known_args(argv)
     console.set_command(f"probe {args.command}")
+
+    if args.command == "source":
+        _no_extra(subparsers["source"], extra)
+        return _source(Path(args.record), Path(args.dir), arranged=args.arranged)
+
+    # Imported only here, so `probe source` never loads a module that loads a definition.
+    from probe_harness import families, run_all, status
 
     match args.command:
         case "run":
@@ -98,11 +108,43 @@ def _parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParse
     status_parser = commands.add_parser("status", prog="probe status", allow_abbrev=False)
     status_parser.add_argument("--summary", action="store_true")
 
+    source_parser = commands.add_parser("source", prog="probe source", allow_abbrev=False)
+    source_parser.add_argument("record")
+    source_parser.add_argument("dir")
+    source_parser.add_argument("--arranged", action="store_true")
+
     return parser, {
         "run": run,
         "record": record_parser,
         "status": status_parser,
+        "source": source_parser,
     }
+
+
+def _source(record_path: Path, out_dir: Path, *, arranged: bool) -> int:
+    """`probe source`: write the files a v2 record names, out of its repository's objects."""
+    parsed = contract.parse_record(record_path)
+    if parsed is None:
+        console.say(f"not a readable record: {record_path}")
+        return 1
+    if isinstance(parsed, contract.RecordV1):
+        console.say(f"{record_path} is a schema 1 record; its assertion text is in the record")
+        return 1
+    try:
+        missing = source.materialize(parsed, record_path, out_dir, arranged=arranged)
+    except FileExistsError as e:
+        console.say(f"refusing to overwrite {e.args[0]}")
+        return 1
+    except ValueError as e:
+        console.say(str(e))
+        return 1
+    if missing:
+        console.say("these files' objects are missing from the repository:")
+        for path in missing:
+            print(path)
+        return 1
+    print(f"wrote {len(source.recorded_files(parsed, arranged=arranged))} files to {out_dir}")
+    return 0
 
 
 def _no_extra(parser: argparse.ArgumentParser, extra: list[str]) -> None:

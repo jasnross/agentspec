@@ -5,14 +5,24 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from probe_harness import json_values
 from probe_harness.contract import (
+    CaptureSource,
     CommandSource,
+    ExpectedAssertion,
     ManifestError,
+    ManifestV1,
+    ManifestV2,
     NoSource,
     Option,
     OptionsAssertion,
+    RecordAssertionV2,
+    RecordV1,
+    RecordV2,
     parse_manifest,
+    parse_record,
 )
+from pydantic import ValidationError
 
 from tests.conftest import EXPERIMENTS_DIR
 
@@ -39,6 +49,16 @@ OPTIONS: dict[str, Any] = {
         "expected": "a",
     },
 }
+
+
+V2: dict[str, Any] = {**PROJECTION, "schema_version": 2, "assertion": {"expected": 1}}
+
+V2_OPTIONS: dict[str, Any] = {
+    **{k: v for k, v in OPTIONS.items() if k != "wait_for"},
+    "schema_version": 2,
+}
+
+BLOB = "0123456789abcdef0123456789abcdef01234567"
 
 
 def _write(tmp_path: Path, document: Any) -> Path:
@@ -101,10 +121,143 @@ def test_a_root_that_is_not_an_object_is_refused(tmp_path: Path, root: Any) -> N
     assert exc.value.lines == (f"manifest must be a JSON object: {path}",)
 
 
-@pytest.mark.parametrize("version", [1.0, True, "1", 2], ids=repr)
-def test_schema_version_must_be_the_integer_1(tmp_path: Path, version: Any) -> None:
+@pytest.mark.parametrize("version", [1.0, True, "1", 3, None], ids=repr)
+def test_schema_version_must_be_the_integer_1_or_2(tmp_path: Path, version: Any) -> None:
     document = {**PROJECTION, "schema_version": version}
-    assert _names(_refusal(tmp_path, document), "schema_version")
+    assert _refusal(tmp_path, document) == ["schema_version must be 1 or 2"]
+
+
+def test_schema_version_1_parses_as_a_v1_manifest(tmp_path: Path) -> None:
+    assert isinstance(parse_manifest(_write(tmp_path, PROJECTION)), ManifestV1)
+
+
+def test_schema_version_2_parses_as_a_v2_manifest(tmp_path: Path) -> None:
+    manifest = parse_manifest(_write(tmp_path, V2))
+    assert isinstance(manifest, ManifestV2)
+    assert manifest.assertion == ExpectedAssertion(expected=1)
+    assert manifest.path == tmp_path / "probe.json"
+
+
+def test_a_v2_manifest_refuses_a_projection_by_its_path(tmp_path: Path) -> None:
+    document = {**V2, "assertion": {"projection": ".", "expected": 1}}
+    assert _refusal(tmp_path, document) == ["assertion.projection: Extra inputs are not permitted"]
+
+
+def test_a_v2_manifest_refuses_wait_for(tmp_path: Path) -> None:
+    document = {**V2_OPTIONS, "wait_for": "length > 0"}
+    assert _refusal(tmp_path, document) == ["wait_for: Extra inputs are not permitted"]
+
+
+def test_a_v2_manifest_refuses_a_capture_source_s_jq(tmp_path: Path) -> None:
+    document = {**V2_OPTIONS, "version_source": {"kind": "capture", "jq": ".[0]"}}
+    assert _refusal(tmp_path, document) == ["version_source.jq: Extra inputs are not permitted"]
+
+
+def test_a_v2_manifest_accepts_a_capture_source_with_no_expression(tmp_path: Path) -> None:
+    document = {**V2_OPTIONS, "version_source": {"kind": "capture"}}
+    manifest = parse_manifest(_write(tmp_path, document))
+    assert manifest.version_source == CaptureSource(kind="capture")
+    assert isinstance(manifest.assertion, OptionsAssertion)
+
+
+def test_a_v2_options_assertion_still_requires_a_manual_driver(tmp_path: Path) -> None:
+    document = {**V2_OPTIONS, "driver": "unattended"}
+    assert _refusal(tmp_path, document) == ["an options assertion requires a manual driver"]
+
+
+@pytest.mark.parametrize("assertion", ["x", None], ids=repr)
+def test_a_v2_assertion_that_is_not_an_object_is_refused(tmp_path: Path, assertion: Any) -> None:
+    assert _refusal(tmp_path, {**V2, "assertion": assertion}) == [
+        "assertion: must be an object declaring expected, and options for an option set"
+    ]
+
+
+def _record_v2(**overrides: Any) -> dict[str, Any]:
+    document: dict[str, Any] = {
+        "schema_version": 2,
+        "provider": "opencode",
+        "status": "confirmed",
+        "depth": None,
+        "date": "2026-10-30",
+        "tool_version": "1.0",
+        "source": {"experiments/pkg/probe.py": BLOB},
+        "assertion": {"expected": 1, "observed": 1},
+    }
+    document.update(overrides)
+    return document
+
+
+@pytest.mark.parametrize("blob", ["", "abc", BLOB.upper(), BLOB + "0", BLOB[:-1] + "g"], ids=repr)
+def test_a_v2_record_refuses_a_malformed_blob_id(blob: str) -> None:
+    with pytest.raises(ValidationError):
+        RecordV2.model_validate(_record_v2(source={"experiments/pkg/probe.py": blob}))
+
+
+def test_a_v2_record_accepts_a_sha256_blob_id() -> None:
+    sha256 = BLOB + "0" * 24
+    record = RecordV2.model_validate(_record_v2(source={"experiments/pkg/probe.py": sha256}))
+    assert record.source == {"experiments/pkg/probe.py": sha256}
+
+
+def test_a_v2_record_dumps_in_the_documented_key_order_without_arranged() -> None:
+    record = RecordV2.model_validate(_record_v2())
+    assert list(record.model_dump(mode="json")) == [
+        "schema_version",
+        "provider",
+        "status",
+        "depth",
+        "date",
+        "tool_version",
+        "source",
+        "assertion",
+    ]
+
+
+def test_a_v2_record_dumps_in_the_documented_key_order_with_arranged() -> None:
+    record = RecordV2.model_validate(_record_v2(arranged={"experiments/pkg/probe.py": BLOB}))
+    dumped = record.model_dump(mode="json")
+    assert list(dumped) == [
+        "schema_version",
+        "provider",
+        "status",
+        "depth",
+        "date",
+        "tool_version",
+        "source",
+        "arranged",
+        "assertion",
+    ]
+    assert list(dumped["assertion"]) == ["expected", "observed"]
+
+
+def test_a_v2_record_dumps_an_option_set_s_options_first() -> None:
+    options = [{"id": "a", "text": "first"}]
+    record = RecordV2.model_validate(
+        _record_v2(assertion={"options": options, "expected": "a", "observed": "a"})
+    )
+    assert isinstance(record.assertion, RecordAssertionV2)
+    assert list(record.model_dump(mode="json")["assertion"]) == ["options", "expected", "observed"]
+
+
+def test_parse_record_reads_either_version(tmp_path: Path) -> None:
+    v2 = tmp_path / "v2.json"
+    v2.write_text(json_values.dumps(_record_v2()), encoding="utf-8")
+    v1 = tmp_path / "v1.json"
+    v1_document = {
+        **{k: v for k, v in _record_v2().items() if k != "source"},
+        "schema_version": 1,
+        "assertion": {"projection": ".", "expected": 1, "observed": 1},
+    }
+    v1.write_text(json_values.dumps(v1_document), encoding="utf-8")
+    assert isinstance(parse_record(v2), RecordV2)
+    assert isinstance(parse_record(v1), RecordV1)
+
+
+def test_parse_record_refuses_a_v2_record_without_a_source(tmp_path: Path) -> None:
+    path = tmp_path / "r.json"
+    document = {k: v for k, v in _record_v2().items() if k != "source"}
+    path.write_text(json_values.dumps(document), encoding="utf-8")
+    assert parse_record(path) is None
 
 
 @pytest.mark.parametrize("options", [5, [], {"id": "a"}, None], ids=repr)
@@ -289,6 +442,7 @@ def test_an_options_manifest_parses_into_typed_options(tmp_path: Path) -> None:
         ),
         expected="a",
     )
+    assert isinstance(manifest, ManifestV1)
     assert manifest.wait_for == "length > 0"
     assert manifest.path == tmp_path / "probe.json"
 

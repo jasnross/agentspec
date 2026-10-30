@@ -21,12 +21,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from probe_harness import console, jq_cli, json_values, views
-from probe_harness.contract import Manifest, OptionsAssertion
+from probe_harness.contract import Manifest, ManifestV1, OptionsAssertion
 from probe_harness.families.base import (
     GateFailure,
     JudgeResult,
     ProbeFunctions,
+    Projected,
     RunOptions,
+    Selected,
     UsageError,
     kept_on_failure,
     record_result,
@@ -51,7 +53,7 @@ CAPTURE_DIR = "capture"
 class ManualProbe:
     instructions: str
     variants: tuple[str, ...] = ("assertion",)
-    functions: ProbeFunctions = field(default_factory=ProbeFunctions)
+    functions: ProbeFunctions[Path] = field(default_factory=ProbeFunctions)
 
 
 def run(
@@ -111,7 +113,7 @@ def judge(
     never recorded. The assertion's shape, not the driver, then decides the answer: an
     option set is a person choosing from a list, and a projection is jq over the capture.
     """
-    if manifest.wait_for is None:
+    if not isinstance(manifest, ManifestV1) or manifest.wait_for is None:
         raise GateFailure("manifest declares no wait_for filter")
     capture = ws / "capture"
     if not capture.is_dir():
@@ -143,8 +145,8 @@ def judge(
             # The machine has already proved the apparatus worked, so the person answers
             # only the question no machine can.
             selection = prompt_selection(manifest.assertion.options, manifest.question)
-        return JudgeResult(view=None, selection=selection)
-    return JudgeResult(view=view, selection=None)
+        return JudgeResult(Selected(selection))
+    return JudgeResult(Projected(view))
 
 
 def arrange_human_workspace(package: Path, name: str, variant: str) -> Path:

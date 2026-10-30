@@ -1,4 +1,4 @@
-<!-- next: 59 -->
+<!-- next: 60 -->
 
 - #1 Consider deriving id from path instead of requiring in frontmatter
    - Currently `id` is a required `String` in all frontmatter structs; missing it causes a parse error at load time
@@ -233,3 +233,4 @@
   - A custom probe that builds its workspace in code must commit a placeholder (`.gitkeep`) per variant.
   - `lib/tests/test_repo_fixture_reachability.py` counts a custom probe's whole variant tree as reachable even if its arrange never reads it.
   - No committed `CustomProbe` exists. Revisit when the first one is written. Likely shape: pass the variant's fixture directory to `arrange`, as the Claude and fake-OpenCode `arrange_arm` hooks receive it.
+- #59 **Decide the cadence for upgrading `experiments/uv.lock`.** The probe harness's locked environment has no stated rule for when its dependencies are upgraded, or which commit type an upgrade takes (a harness-only change is never `feat`/`fix`). pydantic is bounded below 3 in `experiments/pyproject.toml`, so a minor upgrade can still change validation behaviour the harness's formats rely on (`contract.py` documents four strictness rules measured against one pydantic version).

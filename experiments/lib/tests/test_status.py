@@ -30,6 +30,25 @@ def put_record(
     (results / f"{stamp}-{provider}-{version}.json").write_text(json.dumps(record) + "\n")
 
 
+def put_record_v2(
+    tree: Path, package: str, stamp: str, provider: str, record_status: str, version: str
+) -> None:
+    """Write a v2 record, carrying a source map, into <package>/results/."""
+    results = tree / package / "results"
+    results.mkdir(parents=True, exist_ok=True)
+    record = {
+        "schema_version": 2,
+        "provider": provider,
+        "status": record_status,
+        "depth": None,
+        "date": stamp.split("T", 1)[0],
+        "tool_version": version,
+        "source": {f"experiments/{package}/probe.py": "0" * 40},
+        "assertion": {"expected": 1, "observed": 1},
+    }
+    (results / f"{stamp}-{provider}-{version}.json").write_text(json.dumps(record) + "\n")
+
+
 def put_manifest(tree: Path, package: str, content: str) -> None:
     (tree / package).mkdir(parents=True, exist_ok=True)
     (tree / package / "probe.json").write_text(content)
@@ -228,7 +247,7 @@ def test_a_manifest_failing_a_gate_marks_its_row_and_is_not_counted_as_billed(
 ) -> None:
     put_billed_manifest(tree, "alpha")
     manifest = json.loads((tree / "alpha" / "probe.json").read_text())
-    manifest["wait_for"] = ""
+    manifest["depth"] = "emitted-bytes"
     write_manifest(tree, "alpha", manifest)
     put_record(tree, "alpha", "2026-06-01T000000", "claude", "confirmed", "1.0.0")
 
@@ -241,7 +260,7 @@ def test_a_manifest_failing_a_gate_marks_its_row_and_is_not_counted_as_billed(
 def test_a_package_with_no_record_and_an_invalid_manifest_gets_a_row(cli: Cli, tree: Path) -> None:
     put_billed_manifest(tree, "alpha")
     manifest = json.loads((tree / "alpha" / "probe.json").read_text())
-    manifest["wait_for"] = ""
+    manifest["depth"] = "emitted-bytes"
     write_manifest(tree, "alpha", manifest)
 
     result = cli("status")
@@ -507,3 +526,43 @@ def test_a_billed_package_holding_an_unreadable_record_is_not_labelled_not_yet_r
     assert result.returncode == 0
     assert "not yet run" not in result.output
     assert "1 billed" in result.output
+
+
+def test_a_v2_record_and_a_v2_capture_manifest_are_reported_like_v1(cli: Cli, tree: Path) -> None:
+    put_record_v2(tree, "alpha", "2026-06-01T000000", "cursor", "refuted", "3.1.0")
+    write_manifest(
+        tree,
+        "alpha",
+        {
+            "schema_version": 2,
+            "provider": "cursor",
+            "driver": "manual",
+            "depth": None,
+            "question": "q",
+            "version_source": {"kind": "capture"},
+            "assertion": {"expected": 1},
+        },
+    )
+    put_record(tree, "beta", "2026-06-02T000000", "cursor", "confirmed", "3.0.0")
+
+    result = cli("status")
+    assert result.returncode == 0
+    assert any(
+        line.split() == ["alpha", "REFUTED", "—", "2026-06-01", "3.1.0", "(from", "capture)"]
+        for line in lines(result)
+    )
+    assert "probes: 2 recorded · 1 refuted · 0 inconclusive · 0 version drift" in result.output
+
+    summary = cli("status", "--summary")
+    assert summary.stdout == ("probes: 2 recorded · 1 refuted · 0 inconclusive · 0 version drift\n")
+
+
+def test_a_v2_record_s_version_drift_is_counted(cli: Cli, tree: Path) -> None:
+    put_version_stub(tree, "alpha", "2.0.0")
+    manifest = json.loads((tree / "alpha" / "probe.json").read_text())
+    manifest = {**manifest, "schema_version": 2, "assertion": {"expected": 1}}
+    write_manifest(tree, "alpha", manifest)
+    put_record_v2(tree, "alpha", "2026-06-01T000000", "opencode", "confirmed", "1.0.0")
+
+    result = cli("status", "--summary")
+    assert result.stdout == "probes: 1 recorded · 0 refuted · 0 inconclusive · 1 version drift\n"

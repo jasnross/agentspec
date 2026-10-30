@@ -52,6 +52,33 @@ def equal(a: JsonValue, b: JsonValue) -> bool:
     return type(a) is type(b) and a == b
 
 
+def check(value: object) -> None:
+    """Raise `ValueError` unless <value> is a JSON value, naming the first type that is not.
+
+    A tuple, a set, a non-finite float, a non-string key, and a subclass of a JSON type are
+    each refused: every one either serializes as something else, cannot be written at all,
+    or (a `StrEnum` member) compares unequal to the plain value its record would show.
+    """
+    kind = type(value)
+    if value is None or kind in (bool, int, str):
+        return
+    if kind is float:
+        if value != value or value in (float("inf"), float("-inf")):
+            raise ValueError(f"{value} is not a finite number")
+        return
+    if isinstance(value, list) and kind is list:
+        for item in value:
+            check(item)
+        return
+    if isinstance(value, dict) and kind is dict:
+        for key, item in value.items():
+            if type(key) is not str:
+                raise ValueError(f"an object key must be a string, not {type(key).__name__}")
+            check(item)
+        return
+    raise ValueError(f"a {kind.__name__} is not a JSON value")
+
+
 def to_text(value: Any) -> str:
     """A JSON value as display text: a string as-is, anything else as compact JSON."""
     if isinstance(value, str):

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 from probe_harness import jq_cli, json_values
-from probe_harness.contract import ProjectionAssertion, parse_manifest
+from probe_harness.contract import ProjectionAssertionV1, parse_manifest
 from probe_harness.json_values import JsonValue
 
 from tests.conftest import (
@@ -64,7 +64,7 @@ SUBAGENT_SYSTEM = [{"type": "text", "text": "x-anthropic-billing-header: cc_is_s
 def project(manifest_path: Path, view: Path) -> tuple[JsonValue, bool]:
     """The committed manifest's projection over <view>, and whether it equals `expected`."""
     manifest = parse_manifest(manifest_path)
-    assert isinstance(manifest.assertion, ProjectionAssertion)
+    assert isinstance(manifest.assertion, ProjectionAssertionV1)
     output = jq_cli.evaluate(manifest.assertion.projection, view, compact=True)
     values = json_values.load_stream(output)
     # As the recorder reads it: no value observes `null`, several are an error.

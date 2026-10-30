@@ -1,5 +1,7 @@
 """The harness's JSON reading, writing and comparison in `json_values.py`."""
 
+from enum import StrEnum
+
 import pytest
 from probe_harness import json_values
 
@@ -64,3 +66,39 @@ def test_the_loaders_refuse_a_number_too_large_to_be_finite(text: str) -> None:
         json_values.loads(text)
     with pytest.raises(ValueError):
         json_values.load_stream(text)
+
+
+class _Variant(StrEnum):
+    HIGH = "high"
+
+
+class _Count(int):
+    pass
+
+
+@pytest.mark.parametrize(
+    "value",
+    [None, True, 0, 1.5, "s", [1, {"k": [None]}], {"a": {"b": "c"}}],
+    ids=repr,
+)
+def test_check_accepts_a_json_value(value: object) -> None:
+    json_values.check(value)
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ((1, 2), "a tuple is not a JSON value"),
+        ({1}, "a set is not a JSON value"),
+        (float("nan"), "nan is not a finite number"),
+        (float("inf"), "inf is not a finite number"),
+        ({1: "a"}, "an object key must be a string, not int"),
+        ([_Variant.HIGH], "a _Variant is not a JSON value"),
+        ({"n": _Count(1)}, "a _Count is not a JSON value"),
+        ({_Variant.HIGH: 1}, "an object key must be a string, not _Variant"),
+    ],
+    ids=repr,
+)
+def test_check_names_the_first_value_that_is_not_json(value: object, message: str) -> None:
+    with pytest.raises(ValueError, match=f"^{message}$"):
+        json_values.check(value)

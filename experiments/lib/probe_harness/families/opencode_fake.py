@@ -24,6 +24,7 @@ from probe_harness.families.base import (
     GateFailure,
     JudgeResult,
     ProbeFunctions,
+    Projected,
     RunOptions,
     file_lines,
     kept_on_failure,
@@ -81,7 +82,7 @@ class OpenCodeFakeProbe:
     custom_checks: tuple[CustomCheck, ...] = ()
     variants: tuple[str, ...] = ("assertion",)
     arrange_arm: ArmArrange | None = None
-    functions: ProbeFunctions = field(default_factory=ProbeFunctions)
+    functions: ProbeFunctions[Path] = field(default_factory=ProbeFunctions)
 
 
 def run(manifest: Manifest, name: str, options: RunOptions, probe: OpenCodeFakeProbe) -> int:
@@ -125,7 +126,7 @@ def judge(ws: Path, probe: OpenCodeFakeProbe) -> JudgeResult:
     # Printed before recording: a dry or failed record keeps the workspace, and this view is
     # what a candidate projection is iterated against.
     console.say(f"the assembled view is at {view}")
-    return JudgeResult(view=view, selection=None)
+    return JudgeResult(Projected(view))
 
 
 def _run_arm(fixtures: Path, ws: Path, arm: OpenCodeArm, probe: OpenCodeFakeProbe) -> None:

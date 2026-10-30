@@ -29,8 +29,15 @@ EXPERIMENTS_DIR = Path(__file__).resolve().parents[2]
 REAL_ENVIRONMENT = dict(os.environ)
 
 
-# Exactly these seven keys. No more, no fewer.
+# A v1 record: exactly these seven keys. No more, no fewer.
 RECORD_KEYS = ["assertion", "date", "depth", "provider", "schema_version", "status", "tool_version"]
+
+# A v2 record: the seven, plus the source map that judged it, plus `arranged` when the code
+# that arranged its workspace differed.
+RECORD_V2_KEYS = sorted([*RECORD_KEYS, "source"])
+RECORD_V2_OPTIONAL_KEYS = ["arranged"]
+
+BLOB_ID = re.compile(r"[0-9a-f]{40}([0-9a-f]{24})?")
 
 
 # Six fields removed during planning. A schema is only as narrow as what rejects additions,
@@ -43,14 +50,14 @@ RECORD_FORBIDDEN_KEYS = ["probe", "kind", "driver", "capture", "finding", "block
 STUB_PROBE_PY = textwrap.dedent("""\
     import sys
     from pathlib import Path
-    from probe_harness.families.base import CustomProbe, JudgeResult
+    from probe_harness.families.base import CustomProbe
 
     def _act(ws: Path) -> None:
         print("ran {name}")
         sys.exit({code})
 
     PROBE = CustomProbe(required_tools=(), arrange=lambda ws, variant: None, act=_act,
-                        judge=lambda ws: JudgeResult(view=ws / "view.json", selection=None))
+                        judge=lambda ws: ws / "view.json")
 """)
 
 
@@ -196,8 +203,13 @@ def record_problems(path: Path) -> list[str]:
     if not isinstance(record, dict):
         return [f"key set mismatch in {path}: not an object"]
 
-    if sorted(record) != RECORD_KEYS:
-        return [f"key set mismatch in {path}\n  want: {RECORD_KEYS}\n  got:  {sorted(record)}"]
+    v2 = record.get("schema_version") == 2
+    keys = sorted(record)
+    if v2:
+        keys = [key for key in keys if key not in RECORD_V2_OPTIONAL_KEYS]
+    want = RECORD_V2_KEYS if v2 else RECORD_KEYS
+    if keys != want:
+        return [f"key set mismatch in {path}\n  want: {want}\n  got:  {sorted(record)}"]
     if any(key in record for key in RECORD_FORBIDDEN_KEYS):
         return [f"forbidden key present in {path}: {sorted(record)}"]
     if record["status"] not in ("confirmed", "refuted", "inconclusive"):
@@ -208,7 +220,20 @@ def record_problems(path: Path) -> list[str]:
     if depth is not None and not (isinstance(depth, str) and depth in {d.value for d in Depth}):
         return [f"depth not one of resolved-config/outbound-request/null in {path}"]
     assertion = record["assertion"]
-    if not (
+    if v2:
+        for key in ("source", *(k for k in RECORD_V2_OPTIONAL_KEYS if k in record)):
+            source = record[key]
+            if not (
+                isinstance(source, dict)
+                and all(isinstance(b, str) and BLOB_ID.fullmatch(b) for b in source.values())
+            ):
+                return [f"{key} is not a map from path to blob id in {path}"]
+        if not (
+            isinstance(assertion, dict)
+            and sorted(set(assertion) - {"options"}) == ["expected", "observed"]
+        ):
+            return [f"assertion is not expected/observed/(options) in {path}"]
+    elif not (
         isinstance(assertion, dict)
         and "expected" in assertion
         and "observed" in assertion
@@ -365,3 +390,58 @@ def unattended_manifest(**overrides: Any) -> dict[str, Any]:
 
 
 STUBS = EXPERIMENTS_DIR / "lib" / "stubs"
+
+
+@dataclass(frozen=True)
+class GitRepo:
+    """A git repository a test owns, with a local identity and no global configuration."""
+
+    root: Path
+
+    def git(self, *args: str) -> str:
+        completed = subprocess.run(
+            ["git", *args],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return completed.stdout
+
+    def commit(self, *paths: Path) -> str:
+        """Stage <paths> (every change when none are given), commit, and return `HEAD`."""
+        self.git("add", "--", *(map(str, paths) if paths else ["."]))
+        self.git("commit", "--quiet", "--no-verify", "--allow-empty", "-m", "commit")
+        return self.git("rev-parse", "HEAD").strip()
+
+
+@pytest.fixture
+def git_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> GitRepo:
+    """A fresh repository at `<tmp>/repo`, isolated from the operator's git configuration."""
+    # Neither the operator's global configuration (signing, hooks, templates) nor the
+    # system one reaches the test's repository.
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    root = tmp_path / "repo"
+    root.mkdir()
+    repo = GitRepo(root)
+    repo.git("init", "--quiet", "--initial-branch=main")
+    repo.git("config", "user.name", "Probe Test")
+    repo.git("config", "user.email", "probe-test@example.invalid")
+    return repo
+
+
+def fake_harness(experiments: Path) -> Path:
+    """A stand-in for the harness's covered files under <experiments>, for `HARNESS_ROOT`."""
+    for relative in (
+        "lib/probe_harness/__init__.py",
+        "lib/probe_harness/cli.py",
+        "lib/stubs/stub.py",
+        "probe",
+        "pyproject.toml",
+        "uv.lock",
+    ):
+        path = experiments / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# {relative}\n", encoding="utf-8")
+    return experiments

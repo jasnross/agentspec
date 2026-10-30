@@ -15,6 +15,7 @@ from probe_harness import json_values
 from probe_harness.contract import (
     Driver,
     Manifest,
+    ManifestV1,
     OptionsAssertion,
     parse_manifest,
     parse_record,
@@ -80,7 +81,7 @@ def test_every_manual_manifest_declares_a_wait_for_filter() -> None:
     # The runner polls against it; without one the run burns its full timeout.
     for path in _manifests():
         manifest = parse_manifest(path)
-        if manifest.driver == Driver.MANUAL:
+        if manifest.driver == Driver.MANUAL and isinstance(manifest, ManifestV1):
             assert manifest.wait_for is not None, f"manual manifest declares no wait_for: {path}"
 
 

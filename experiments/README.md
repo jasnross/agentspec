@@ -133,16 +133,18 @@ and it prints the record it would have written, which should be `refuted`.
 
 The only hand-authored file in the contract.
 
+**A schema 2 manifest carries no expression.** Its `assertion` is `{expected}` or `{options, expected}`, it has no `wait_for`, and a capture version source is `{"kind": "capture"}` with no `jq`: every expression it is judged by is Python on the package's definition. A schema 1 manifest carries its projection, `wait_for` filter and capture version as jq, and the rows and sections below marked _schema 1_ apply to it alone. A stray `projection`, `wait_for` or `jq` in a schema 2 manifest is refused by its path.
+
 | Field | Meaning |
 | --- | --- |
-| `schema_version` | `1`. |
+| `schema_version` | `1` or `2`. |
 | `provider` | `claude`, `cursor`, or `opencode`. |
 | `driver` | `unattended`, `billed`, or `manual` — what running the probe requires. Read by `probe run` to decide what it can execute, by the recorder, which refuses a `manual` probe's workspace whose capture is empty, and for the options correspondence below. Never on a record. |
 | `depth` | Required: `resolved-config`, `outbound-request`, or `null`. |
 | `question` | Required. What this probe answers, in one sentence. |
 | `version_source` | Where the tool version comes from. See below. |
-| `wait_for` | Optional jq filter the runner polls the capture against; a non-empty string when present. Present on every `manual` manifest. |
-| `assertion` | Either `{projection, expected}` or `{options, expected}`. Never both. An `options` assertion additionally requires `driver: "manual"` — see below. |
+| `wait_for` | _Schema 1._ Optional jq filter the runner polls the capture against; a non-empty string when present. Present on every schema 1 `manual` manifest. |
+| `assertion` | Schema 1: either `{projection, expected}` or `{options, expected}`, never both. Schema 2: `{expected}` or `{options, expected}`. An `options` assertion additionally requires `driver: "manual"` — see below. |
 
 **`depth: null` is the right answer for a finding that is not on the config-rendering chain at all.** Output handling and hook-firing semantics are not weaker points on that chain; they are off it, and claiming a position on a chain the evidence never touched is a category error.
 
@@ -154,10 +156,10 @@ The only hand-authored file in the contract.
 
 ### `version_source`
 
-| `kind`    | Extra field | Behavior                                     |
-| --------- | ----------- | -------------------------------------------- |
-| `command` | `command`   | Run it; take the first line.                 |
-| `capture` | `jq`        | Apply the expression to the capture payload. |
+| `kind` | Extra field | Behavior |
+| --- | --- | --- |
+| `command` | `command` | Run it; take the first line. |
+| `capture` | `jq` (schema 1 only) | Schema 1: apply the expression to the capture payload. Schema 2: the definition's `capture_version` reads it from the parsed capture. |
 
 `kind` is one of `command`, `capture`, or `none`; an omitted `version_source` or `kind` means `none`, but a `null` one is refused. A `command` must be a non-empty, single-line string, and a `jq` a non-empty string.
 
@@ -169,7 +171,7 @@ The only hand-authored file in the contract.
 
 ### Every jq expression reads slurped, array-shaped input
 
-`payloads.jsonl` is JSONL, but the runner evaluates every capture-facing expression with `jq -s`. So `wait_for` filters read `any(.[]; …)` and `version_source.jq` reads `[.[] | .cursor_version] | map(select(. != null)) | first`. Writing one against a stream shape instead means it never matches, and the runner polls to timeout on a capture that already holds the answer.
+_Schema 1._ `payloads.jsonl` is JSONL, but the runner evaluates every capture-facing expression with `jq -s`. So `wait_for` filters read `any(.[]; …)` and `version_source.jq` reads `[.[] | .cursor_version] | map(select(. != null)) | first`. Writing one against a stream shape instead means it never matches, and the runner polls to timeout on a capture that already holds the answer.
 
 A projection over a capture must reduce the array to the shape `expected` is written in. The recorder compares structurally, so an expression yielding a one-element array will never equal a string `expected` — and the mismatch records `refuted` after a live session rather than erroring.
 
@@ -200,19 +202,31 @@ This is what makes the runner's read safe: the manual family's judge (`manual.ju
 
 **Every record is produced by a run or by `probe record`, from a judged workspace.** Nothing is hand-written, so there is one record shape and no exception to the never-hand-edit rule. Records are append-only: superseding a result means adding a newer file, never editing an existing one. `experiments/*/results/` is prettier-ignored so a probe run is the last thing that touches its own record.
 
-Seven keys, every one consumed by `probe status`:
+A schema 1 record has seven keys, and a schema 2 record adds `source` and, when it applies, `arranged`. `probe status` reads `provider`, `status`, `depth`, `date` and `tool_version`; `schema_version` decides which format the record is read as, and `assertion` and the source maps are what a reader recovers the finding and its code from.
 
 | Key | Meaning |
 | --- | --- |
-| `schema_version` | Makes a future migration decidable. |
+| `schema_version` | `1` or `2`. Makes a migration decidable. |
 | `provider` | Groups the report. |
 | `status` | `confirmed`, `refuted`, or `inconclusive`. |
 | `depth` | Nullable; copied from the manifest. |
-| `date` | UTC date of the run. |
+| `date` | UTC date of the judge that wrote the record: the run's, or the `probe record` invocation's. |
 | `tool_version` | Nullable. |
-| `assertion` | `{projection, expected, observed}` or `{options, expected, observed}`. |
+| `source` | _Schema 2._ The git blob id of every file that judged the workspace — the package's `probe.json`, `probe.py` and fixtures, and the harness — keyed by repository-relative path. |
+| `arranged` | _Schema 2, optional._ The same map for the code that arranged the workspace, present only when it differs from `source`: a workspace re-judged by `probe record` after the code changed. |
+| `assertion` | Schema 1: `{projection, expected, observed}` or `{options, expected, observed}`. Schema 2: `{expected, observed}` or `{options, expected, observed}`. |
 
-Fields that would merely restate a derivable fact — the probe's name, its driver, the capture's provenance — are absent, because storing a derivable fact means storing a way for it to disagree with its source.
+Fields that would merely restate a derivable fact — the probe's name, its driver, the workspace it was judged from — are absent, because storing a derivable fact means storing a way for it to disagree with its source. `source` is not one: the package's files change after a record is written, and nothing in the package's layout names the content that judged it. A schema 1 record needed no such map, because its projection's text travelled inside `assertion`; a schema 2 assertion is Python on the definition, so `source` is the only way back to it.
+
+**`probe source <record> <dir> [--arranged]` writes a schema 2 record's files back out.** Each file the record names is written to `<dir>/<path>` from the record's repository's object store, `--arranged` choosing the arranging code over the judging code (the same files when the record carries no `arranged`). It refuses to overwrite an existing file, lists each path whose object is missing and exits 1, and refuses a schema 1 record, whose assertion text is in the record. Like `probe status`, it executes no probe-authored code.
+
+### The clean-tree rule
+
+**A schema 2 record is written only when every file its `source` names matches `HEAD`.** A blob id names committed content only if the content was committed, so a real `probe run` checks the map in preflight, before the workspace exists, and `probe record` checks it before judging. A covered path added, deleted or modified since the last commit refuses, naming up to ten of them; commit them and re-run. The map is computed again just before the record is written, and a change since the first computation refuses too, keeping the workspace. A dry run makes neither check: it prints the record a real run would write, from the files on disk. A package outside any git work tree has no `HEAD` and its records cannot be committed, so the rule is skipped for it — which is how the harness's own tests record end to end.
+
+### The reachability rule
+
+**Every id a package's newest schema 2 record names in `source` must be reachable from `HEAD`.** A rebase or squash that rewrites the commit holding a probe's code before it reaches `main` leaves the record naming objects no ref reaches, and `git gc` eventually deletes them. `lib/tests/test_repo_record_sources.py` enumerates `HEAD`'s objects and fails naming each unreachable file, so `just check` run after the branch's last `git town sync` is the moment it catches a lost id. The repair is to re-judge the kept workspace with `probe record`, which writes a newer record naming the code as it now stands. `arranged` is not checked: it names code that may never have been committed.
 
 **`blocked` is not a status.** A probe that cannot run makes its runner exit nonzero with a diagnostic, which produces no record at all. Recording "this could not run" would mean writing a record for a run that never happened. Nor is there anywhere for such a status to live: a probe that cannot run has no package at all, so its question sits in `TODO.md` until someone can measure it.
 
@@ -224,7 +238,7 @@ The filename carries a UTC time component because date plus version does not dis
 experiments/probe record <probe-name> <workspace> [--selection <id>] [--dry-run]
 ```
 
-`probe record` judges a kept workspace and records it. It loads the definition, checks the manifest (its fields, and that its jq compiles) and the definition's consistency with it as a run does, runs the family's own judge — the same one `probe run` uses: every gate, the custom checks, `wait_for` for a manual probe, view assembly — over the workspace as it stands, and records the result. A workspace its gates refuse is never recorded. It reads only the workspace, never the provider: the version a `command` source names comes from the workspace's `tool_version`, so a real record over a workspace without one is refused. The checks a run makes only to arrange — the definition's own preflight function, the run's required tools beyond jq, the other `PROBE_*` variables, the source map — are not made, since judging needs none of them. `PROBE_DRY_RUN=1` makes it a dry run, as `--dry-run` does. It refuses a workspace whose `run.json` names another package, and writes a record only over one whose `run.json` names the `assertion` variant: a discriminator's run is dry-run only, as it is under `probe run`, and a workspace with no `run.json` can only be judged dry. The judge may write `view.json` into the workspace, as a live run's does.
+`probe record` judges a kept workspace and records it. It loads the definition, checks the manifest (its fields, and for schema 1 that its jq compiles) and the definition's consistency with it as a run does, runs the family's own judge — the same one `probe run` uses: every gate, the custom checks, `wait_for` for a manual probe, view assembly — over the workspace as it stands, and records the result. A workspace its gates refuse is never recorded. It reads only the workspace, never the provider: the version a `command` source names comes from the workspace's `tool_version`, so a real record over a workspace without one is refused. The checks a run makes only to arrange — the definition's own preflight function, the run's required tools beyond jq, the other `PROBE_*` variables — are not made, since judging needs none of them. For a schema 2 manifest it computes the source map before judging, and a real recording applies [the clean-tree rule](#the-clean-tree-rule) to it then and again before writing. The record's `source` is that map; when the workspace's `source.json`, written by the run that arranged it, names different content, the record also carries it as `arranged`. A real recording refuses a workspace whose `source.json` is missing or is not a source map, since its record could not say which code arranged it; such a workspace can still be judged with `--dry-run`. `PROBE_DRY_RUN=1` makes it a dry run, as `--dry-run` does. It refuses a workspace whose `run.json` names another package, and writes a record only over one whose `run.json` names the `assertion` variant: a discriminator's run is dry-run only, as it is under `probe run`, and a workspace with no `run.json` can only be judged dry. The judge may write `view.json` into the workspace, as a live run's does.
 
 A manual probe with an option set asks for a selection when stdin is a terminal; otherwise, and always under `--dry-run`, it needs `--selection <id>` naming the option, and exits 2 without one. `--selection` with a projection manifest is a usage error.
 
@@ -315,7 +329,7 @@ A workspace records what produced its capture. `run.json` names the package and 
 
 `probe record <package> <workspace>` records a kept manual capture after a fix, and refuses one whose `wait_for` does not hold. A runner itself takes no arguments.
 
-**A toolchain failure cannot cost a capture.** The Python version, the locked environment, the harness's imports, the manifest's gates, the required tools — the family's, git, and a `command` version source's — whether its jq expressions compile, and the `PROBE_*` environment variables are all checked before the workspace exists, so a failure among them surfaces before the operator is asked to open a provider. A manual workspace is kept whatever happens after that.
+**A toolchain failure cannot cost a capture.** The Python version, the locked environment, the harness's imports, the manifest's gates, the required tools — the family's, git, and a `command` version source's — whether its jq expressions compile, the `PROBE_*` environment variables, and for a real run of a schema 2 manifest [the clean-tree rule](#the-clean-tree-rule) are all checked before the workspace exists, so a failure among them surfaces before the operator is asked to open a provider. A manual workspace is kept whatever happens after that.
 
 ## Re-verification
 
