@@ -469,7 +469,8 @@ def test_record_refuses_a_manual_workspace_whose_manifest_has_no_wait_for(
 ) -> None:
     package = put_package("alpha", "manual", 0)
     manifest = json.loads((package / "probe.json").read_text())
-    assert "wait_for" not in manifest
+    del manifest["wait_for"]
+    (package / "probe.json").write_text(json.dumps(manifest))
     ws = tmp_path / "ws"
     (ws / "capture").mkdir(parents=True)
     (ws / "capture" / "payloads.jsonl").write_text('{"x":1}\n')

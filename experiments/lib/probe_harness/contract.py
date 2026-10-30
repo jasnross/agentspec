@@ -374,6 +374,57 @@ class RecordV2(HarnessModel):
 type Record = RecordV1 | RecordV2
 
 
+class SampleOrigin(StrEnum):
+    """Where a sample's input came from.
+
+    `capture` is a real capture, reduced; `prefix` its first lines, for a `wait_for`'s false
+    side; `edited` a hand-edited copy of a reduced sample, for a false side no fixture makes
+    a provider produce.
+    """
+
+    CAPTURE = "capture"
+    PREFIX = "prefix"
+    EDITED = "edited"
+
+
+class SampleResults(HarnessModel):
+    """What each expression a definition carries yields over a sample's input.
+
+    A key is present exactly when the definition carries that expression.
+    """
+
+    assertion: JsonValue | MISSING = MISSING
+    wait_for: bool | MISSING = MISSING
+    # None for a capture carrying no version.
+    capture_version: str | MISSING | None = MISSING
+    # Keyed by `CustomCheck.name`.
+    custom_checks: dict[NonEmpty, bool] | MISSING = MISSING
+
+
+class Sample(HarnessModel):
+    """`<package>/samples/<name>.json`: an input and the results each expression yields on it."""
+
+    origin: Annotated[SampleOrigin, Field(strict=False)]
+    # Why an edited sample was edited; required for `edited`, and refused otherwise.
+    note: NonEmpty | MISSING = MISSING
+    input: JsonValue
+    results: SampleResults
+
+    @model_validator(mode="after")
+    def _note_iff_edited(self) -> Self:
+        edited = self.origin == SampleOrigin.EDITED
+        if edited and self.note is MISSING:
+            raise ValueError("an edited sample needs a note saying what was edited and why")
+        if not edited and self.note is not MISSING:
+            raise ValueError(f"a note belongs only on an edited sample, not a {self.origin} one")
+        return self
+
+
+def parse_sample_file(path: Path) -> Sample:
+    """The sample at <path>; `ValueError` (a `ValidationError` among them) when it is not one."""
+    return Sample.model_validate(json_values.loads(path.read_text(encoding="utf-8")))
+
+
 def _schema_version(value: Any) -> str | None:
     """The tag of a manifest or record: its `schema_version`, when that is exactly 1 or 2."""
     if isinstance(value, dict):

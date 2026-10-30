@@ -181,6 +181,9 @@ def put_package(tree: Path) -> Callable[..., Path]:
             "version_source": {"kind": "none"},
             "assertion": {"projection": ".", "expected": 1},
         }
+        if driver == "manual":
+            # A schema 1 manual manifest polls with its own filter, or is refused unrun.
+            manifest["wait_for"] = "true"
         (package / "probe.json").write_text(json.dumps(manifest, indent=2) + "\n")
         stub = STUB_MANUAL_PROBE_PY if driver == "manual" else STUB_PROBE_PY
         (package / "probe.py").write_text(stub.format(name=name, code=code))

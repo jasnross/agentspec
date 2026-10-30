@@ -157,7 +157,7 @@ def compute(
         case Selected(option=option):
             observed, option_status = _select(manifest, option)
         case Projected(view=view):
-            observed = _project(manifest, view)
+            observed = project(manifest, view)
         case Observed(value=value):
             observed = value
 
@@ -265,7 +265,7 @@ def _select(manifest: Manifest, selection: str) -> tuple[str, str]:
     return selection, "" if option.status is MISSING else option.status
 
 
-def _project(manifest: Manifest, view: Path) -> JsonValue:
+def project(manifest: Manifest, view: Path) -> JsonValue:
     """The projection's single value over <view>; `null` when it yields none."""
     assert isinstance(manifest.assertion, ProjectionAssertionV1)
     projection = manifest.assertion.projection
@@ -306,18 +306,23 @@ def _tool_version(manifest: Manifest, ws: Path, result: JudgeResult, *, dry_run:
                     "re-run the probe; a later judge never runs the version command.",
                 )
         case CaptureSourceV1(jq=expr):
-            # Slurped, as every declared capture expression is array-shaped.
-            try:
-                out = jq_cli.evaluate(expr, ws / "capture" / "payloads.jsonl", slurp=True, raw=True)
-            except jq_cli.JqError as e:
-                out = e.stdout
-            version = out.rstrip("\n")
+            version = capture_version_v1(expr, ws / "capture" / "payloads.jsonl")
         case CaptureSource():
             # The judge computed it with the definition's `capture_version`.
             version = result.captured_version or ""
         case NoSource():
             version = ""
     return "" if version == "null" else version
+
+
+def capture_version_v1(expr: str, payloads: Path) -> str:
+    """A schema 1 capture version expression's raw output over <payloads>, slurped as every
+    declared capture expression is array-shaped; `null` when it yields no version."""
+    try:
+        out = jq_cli.evaluate(expr, payloads, slurp=True, raw=True)
+    except jq_cli.JqError as e:
+        out = e.stdout
+    return out.rstrip("\n")
 
 
 def run_version_command(argv: tuple[str, ...], *, timeout: float | None) -> str:

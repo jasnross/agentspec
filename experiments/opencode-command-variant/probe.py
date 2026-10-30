@@ -3,16 +3,15 @@
 Fully script-driven: no human step, no network, no credentials.
 """
 
-from pathlib import Path
-
-from probe_harness import json_values
 from probe_harness.families.base import GateFailure, ProbeFunctions
 from probe_harness.families.opencode_debug import OpenCodeDebugProbe
+from probe_harness.models.opencode_debug import OpenCodeConfig
+from pydantic import MISSING
 
 _FIXTURE_COMMAND = "agentspec-probe-variant"
 
 
-def _judge(ws: Path) -> None:
+def _judge(config: OpenCodeConfig) -> None:
     """Refuse a view in which the fixture command never resolved.
 
     This oracle resolves the whole config rather than addressing one command by name, so a
@@ -22,11 +21,8 @@ def _judge(ws: Path) -> None:
     refutes on a *present* command resolving `variant` to `null`, which is a different
     observation.
     """
-    view = json_values.loads((ws / "view.json").read_text(encoding="utf-8"))
     # A config with no commands at all omits the key, and is still this failure.
-    commands = (view.get("command") if isinstance(view, dict) else None) or {}
-    if not isinstance(commands, dict):
-        commands = {}
+    commands = {} if config.command is MISSING else config.command
     if _FIXTURE_COMMAND in commands:
         return
     # The names, not just a count: the likeliest cause is a change in how OpenCode
@@ -40,6 +36,7 @@ def _judge(ws: Path) -> None:
 
 PROBE = OpenCodeDebugProbe(
     argv=("config", "--pure"),
+    output=OpenCodeConfig,
     variants=("assertion", "discriminator"),
     functions=ProbeFunctions(judge=_judge),
 )

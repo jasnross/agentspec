@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from probe_harness import console, jq_cli, json_values, record
+from probe_harness.arms import ArmCapture, Arms
 from probe_harness.contract import CommandSource, Manifest, ManifestV2
 from probe_harness.gates import GateFailure
 from probe_harness.json_values import JsonValue
@@ -21,9 +22,12 @@ from probe_harness.record import JudgeResult, Observed, Projected, Selected
 from probe_harness.source import SourceMapError, source_map
 
 __all__ = [
+    "ArmCapture",
+    "Arms",
     "CustomCheck",
     "CustomProbe",
     "GateFailure",
+    "JqCustomCheck",
     "JudgeResult",
     "Observed",
     "ProbeFunctions",
@@ -31,7 +35,10 @@ __all__ = [
     "RunOptions",
     "Selected",
     "UsageError",
+    "call",
+    "decide",
     "file_lines",
+    "holds",
     "kept_for_inspection",
     "kept_on_failure",
     "observe",
@@ -39,8 +46,11 @@ __all__ = [
     "record_result",
     "record_tool_version",
     "refused",
-    "run_custom_checks",
+    "run_checks",
+    "run_jq_checks",
+    "run_wait_for",
     "source_changed",
+    "split_checks",
     "workspace_kept",
 ]
 
@@ -53,13 +63,27 @@ class UsageError(Exception):
 
 
 @dataclass(frozen=True)
-class CustomCheck:
-    """A jq expression over the view that must yield true, run with `-e`.
+class CustomCheck[V]:
+    """A predicate over the family's parsed input that must hold for the run to be read.
 
-    Evaluated with `--arg m <marker>` when the definition declares a marker. <failure> is
-    printed line by line when it does not hold.
+    <name> keys the check's declared result in a sample. <failure> is printed line by line
+    when it does not hold.
     """
 
+    name: str
+    holds: Callable[[V], bool]
+    failure: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class JqCustomCheck:
+    """The schema 1 form of a custom check: a jq expression over the view, run with `-e`.
+
+    Evaluated with `--arg m <marker>` when the definition declares a marker. <name> is the
+    name its `CustomCheck` replacement takes.
+    """
+
+    name: str
     expression: str
     failure: tuple[str, ...]
 
@@ -91,13 +115,25 @@ class CustomProbe[V]:
     functions: ProbeFunctions[V] = field(default_factory=ProbeFunctions)
 
 
+def decide[V](
+    manifest: Manifest, assertion: Callable[[V], JsonValue] | None, value: V, view: Path
+) -> JudgeResult:
+    """The outcome of a family whose answer is computed: jq over <view> for a schema 1
+    manifest, or the definition's assertion over <value> for a schema 2 one."""
+    if not isinstance(manifest, ManifestV2):
+        return JudgeResult(Projected(view))
+    # The agreement check guarantees an assertion for a v2 manifest declaring `expected`.
+    assert assertion is not None
+    return JudgeResult(observe(assertion, value))
+
+
 def observe[V](assertion: Callable[[V], JsonValue], value: V) -> Observed:
     """The assertion's value over <value>, refusing when it raises or yields no JSON value.
 
     Either refusal is a fault in the definition, not a statement about the provider, so it
     is a `GateFailure` and keeps the workspace.
     """
-    observed = _call("assertion", assertion, value)
+    observed = call("assertion", assertion, value)
     try:
         json_values.check(observed)
     except ValueError as e:
@@ -109,11 +145,46 @@ def observe[V](assertion: Callable[[V], JsonValue], value: V) -> Observed:
     return Observed(observed)
 
 
-def run_custom_checks(checks: Sequence[CustomCheck], view: Path, marker: str | None) -> None:
+def run_jq_checks(checks: Sequence[JqCustomCheck], view: Path, marker: str | None) -> None:
+    """Refuse at the first schema 1 check whose expression does not hold over <view>."""
     args = {"m": marker} if marker is not None else {}
     for check in checks:
         if not jq_cli.test(check.expression, view, args=args):
             raise GateFailure(*check.failure)
+
+
+def run_checks[V](checks: Sequence[CustomCheck[V]], value: V) -> None:
+    """Refuse at the first check that does not hold over <value>, or that raises."""
+    for check in checks:
+        if not holds(check, value):
+            raise GateFailure(*check.failure)
+
+
+def holds[V](check: CustomCheck[V], value: V) -> bool:
+    """Whether <check> holds over <value>; one that raises or yields no bool refuses."""
+    result = call(f"custom check {check.name}", check.holds, value)
+    if type(result) is not bool:
+        raise GateFailure(
+            f"the custom check {check.name} yielded a {type(result).__name__}, not a bool"
+        )
+    return result
+
+
+def run_wait_for[L](wait_for: Callable[[Sequence[L]], bool], lines: Sequence[L]) -> bool:
+    """Whether <wait_for> holds over <lines>; one that raises or yields no bool refuses."""
+    result = call("wait_for", wait_for, lines)
+    if type(result) is not bool:
+        raise GateFailure(f"the wait_for yielded a {type(result).__name__}, not a bool")
+    return result
+
+
+def split_checks[V](
+    checks: Sequence[CustomCheck[V] | JqCustomCheck],
+) -> tuple[list[CustomCheck[V]], list[JqCustomCheck]]:
+    """A definition's checks, split into the Python ones and the schema 1 jq ones."""
+    python = [c for c in checks if isinstance(c, CustomCheck)]
+    jq = [c for c in checks if isinstance(c, JqCustomCheck)]
+    return python, jq
 
 
 def source_changed(source: Mapping[str, str], package: Path) -> record.RecordRefused | None:
@@ -234,7 +305,7 @@ def record_result(manifest: Manifest, ws: Path, result: JudgeResult, options: Ru
     return 0
 
 
-def _call[V, R](name: str, function: Callable[[V], R], value: V) -> R:
+def call[V, R](name: str, function: Callable[[V], R], value: V) -> R:
     """<function> over <value>; an exception it raises becomes a `GateFailure` naming <name>."""
     try:
         return function(value)

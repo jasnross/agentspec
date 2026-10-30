@@ -1,19 +1,21 @@
 """The ten gates of the billed Claude probes, over each arm's typed bodies.
 
-A gate reads `bodies.ClaudeArmBodies`, validated once per arm by the family's judge, so a
+A gate reads each arm's `ArmCapture`, validated once per arm by the family's parse step, so a
 body that does not fit its model has already refused the run before any gate runs.
 
 No gate names an effort level: the effort packages' assertion is relational, comparing
 each arm against the run's ungoverned main-thread requests.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
+from pathlib import Path
 
 from pydantic import MISSING
 
+from probe_harness.arms import ArmCapture
 from probe_harness.gates import GateFailure
 from probe_harness.gates.bodies import (
-    ClaudeArmBodies,
+    ClaudeArms,
     MarkerField,
     deferred_tools,
     governed,
@@ -22,9 +24,10 @@ from probe_harness.gates.bodies import (
 )
 from probe_harness.json_values import to_text
 from probe_harness.models.claude_request import ClaudeRequest, ClaudeTool, ToolResultBlock
-from probe_harness.models.claude_response import AgentCall, ToolUseBlock
+from probe_harness.models.claude_response import AgentCall, ClaudeResponse, ToolUseBlock
 
-type Arms = Mapping[str, ClaudeArmBodies]
+type Arms = ClaudeArms
+type _Capture = ArmCapture[ClaudeRequest, ClaudeResponse]
 
 
 def marker(arms: Arms, marker: str, field: MarkerField = MarkerField.SYSTEM) -> None:
@@ -53,20 +56,28 @@ def control(arms: Arms, marker: str, field: MarkerField = MarkerField.SYSTEM) ->
     Pass the same field as to gate 2, so the two agree on which requests the fixture
     governs.
     """
-    efforts = {
+    if len(set(control_efforts(arms, marker, field))) != 1:
+        raise GateFailure(
+            "the ungoverned control set is empty or internally inconsistent.",
+            "the assertion compares each arm against that set, so it cannot be read.",
+            "this is a statement about the run, not about Claude. No record written.",
+        )
+
+
+def control_efforts(arms: Arms, marker: str, field: MarkerField = MarkerField.SYSTEM) -> list[str]:
+    """The efforts gate 3 compares: each ungoverned, non-subagent request's, in capture order.
+
+    The effort assertions read the control level from the same set, so the gate and the
+    assertion cannot disagree on which requests are the session's own.
+    """
+    return [
         effort
         for arm in arms.values()
         for r in arm.requests
         if not governed(r, field, marker)
         and not subagent(r)
         and (effort := r.output_config.effort) is not MISSING
-    }
-    if len(efforts) != 1:
-        raise GateFailure(
-            "the ungoverned control set is empty or internally inconsistent.",
-            "the assertion compares each arm against that set, so it cannot be read.",
-            "this is a statement about the run, not about Claude. No record written.",
-        )
+    ]
 
 
 def deferred_mcp(arms: Arms, marker: str, arm: str, tools: Sequence[str]) -> None:
@@ -169,7 +180,7 @@ def mcp_absent(arms: Arms, marker: str, prefix: str) -> None:
     )
 
 
-def delegation_background(arms: Arms, arm: str, expected: bool) -> None:
+def delegation_background(arms: Arms, ws: Path, arm: str, expected: bool) -> None:
     """Gate 8: the arm delegated in the expected mode, as asked and as run.
 
     Every `Agent` call in the arm's responses set `run_in_background` to <expected>, there
@@ -177,7 +188,7 @@ def delegation_background(arms: Arms, arm: str, expected: bool) -> None:
     launched" exactly when <expected> is true. It reads responses as well as requests: a
     request body carries no earlier assistant turn, so the call appears only in responses.
     """
-    bodies = _with_sink(arms, arm, "delegation")
+    bodies = _with_sink(arms, ws, arm, "delegation")
     calls = [c for c in _tool_uses(bodies) if isinstance(c, AgentCall)]
     results = _tool_results(bodies)
     ok = (
@@ -200,9 +211,9 @@ def delegation_background(arms: Arms, arm: str, expected: bool) -> None:
         )
 
 
-def tool_answered(arms: Arms, arm: str, tool: str) -> None:
+def tool_answered(arms: Arms, ws: Path, arm: str, tool: str) -> None:
     """Gate 9: the arm's model called <tool>, and some `tool_result` answered the call."""
-    bodies = _with_sink(arms, arm, "call")
+    bodies = _with_sink(arms, ws, arm, "call")
     ids = {c.id for c in _tool_uses(bodies) if c.name == tool}
     if not (ids and any(rid in ids for rid, _ in _tool_results(bodies))):
         raise GateFailure(
@@ -211,7 +222,7 @@ def tool_answered(arms: Arms, arm: str, tool: str) -> None:
         )
 
 
-def delegation_fork(arms: Arms, arm: str) -> None:
+def delegation_fork(arms: Arms, ws: Path, arm: str) -> None:
     """Gate 10: fork mode was on in the arm, and the arm delegated under it.
 
     Fork mode removes the `Agent` tool's `run_in_background` parameter and runs every
@@ -219,7 +230,7 @@ def delegation_fork(arms: Arms, arm: str) -> None:
     positive signal. Every request offering `Agent` must lack it, and every `Agent` call
     must be answered "Async agent launched".
     """
-    bodies = _with_sink(arms, arm, "delegation")
+    bodies = _with_sink(arms, ws, arm, "delegation")
     schemas = [
         _declares(t, "run_in_background")
         for r in bodies.requests
@@ -260,7 +271,7 @@ def _governed(arms: Arms, arm: str, marker: str) -> list[ClaudeRequest]:
     return [r for r in _requests(arms, arm) if governed(r, MarkerField.SYSTEM, marker)]
 
 
-def _main_thread(arm: ClaudeArmBodies, marker: str) -> list[ClaudeRequest]:
+def _main_thread(arm: _Capture, marker: str) -> list[ClaudeRequest]:
     """The ungoverned requests that offer `Agent`: the requests that can delegate."""
     return [
         r
@@ -270,19 +281,19 @@ def _main_thread(arm: ClaudeArmBodies, marker: str) -> list[ClaudeRequest]:
     ]
 
 
-def _with_sink(arms: Arms, arm: str, reading: str) -> ClaudeArmBodies:
+def _with_sink(arms: Arms, ws: Path, arm: str, reading: str) -> _Capture:
     """The arm's bodies, refusing when it holds no response or no request."""
     bodies = arms[arm]
     if not bodies.responses or not bodies.requests:
         raise GateFailure(
             f"the {arm} arm captured {len(bodies.responses)} response and "
-            f"{len(bodies.requests)} request files in {bodies.sink}, so its {reading} cannot "
-            "be read."
+            f"{len(bodies.requests)} request files in {ws / arm / 'sink'}, so its {reading} "
+            "cannot be read."
         )
     return bodies
 
 
-def _tool_results(bodies: ClaudeArmBodies) -> list[tuple[str, bool]]:
+def _tool_results(bodies: _Capture) -> list[tuple[str, bool]]:
     """Each user `tool_result`'s id, and whether its text opens "Async agent launched"."""
     return [
         (block.tool_use_id, block.text.startswith("Async agent launched"))
@@ -294,7 +305,7 @@ def _tool_results(bodies: ClaudeArmBodies) -> list[tuple[str, bool]]:
     ]
 
 
-def _tool_uses(bodies: ClaudeArmBodies) -> list[ToolUseBlock]:
+def _tool_uses(bodies: _Capture) -> list[ToolUseBlock]:
     """Every `tool_use` block across the arm's responses; an error response holds none."""
     return [
         block

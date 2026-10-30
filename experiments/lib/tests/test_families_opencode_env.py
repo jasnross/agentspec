@@ -24,8 +24,11 @@ def test_an_isolated_definition_runs_the_oracle_with_home_inside_the_workspace(
         textwrap.dedent("""\
             from probe_harness.families.opencode_debug import OpenCodeDebugProbe
             from probe_harness.families.opencode_env import OpenCodeIsolation
+            from probe_harness.models.opencode_debug import OpenCodeAgent
 
-            PROBE = OpenCodeDebugProbe(argv=("agent", "probe"), isolation=OpenCodeIsolation())
+            PROBE = OpenCodeDebugProbe(
+                argv=("agent", "probe"), output=OpenCodeAgent, isolation=OpenCodeIsolation()
+            )
         """),
         encoding="utf-8",
     )
@@ -56,8 +59,11 @@ def test_an_isolated_oracle_sees_no_operator_config_and_its_own_directories(
         textwrap.dedent("""\
             from probe_harness.families.opencode_debug import OpenCodeDebugProbe
             from probe_harness.families.opencode_env import OpenCodeIsolation
+            from probe_harness.models.opencode_debug import OpenCodeAgent
 
-            PROBE = OpenCodeDebugProbe(argv=("agent", "probe"), isolation=OpenCodeIsolation())
+            PROBE = OpenCodeDebugProbe(
+                argv=("agent", "probe"), output=OpenCodeAgent, isolation=OpenCodeIsolation()
+            )
         """),
         encoding="utf-8",
     )

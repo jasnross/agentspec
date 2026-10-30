@@ -9,18 +9,17 @@ this package declares `driver: billed` and `just probe-run` withholds it
 without `--billed`.
 """
 
-from pathlib import Path
-
 from probe_harness.families.base import GateFailure, ProbeFunctions
 from probe_harness.families.claude_otel import (
     ClaudeArm,
+    ClaudeArms,
     ClaudeOtelProbe,
     DeferredMcp,
     McpConfig,
     McpConnected,
     Model,
 )
-from probe_harness.gates import bodies, claude_otel
+from probe_harness.gates import claude_otel
 
 # Each would change what is measured: whether tool search is on, whether the MCP server
 # has connected when the subagent spawns, or which model the subagent runs.
@@ -39,14 +38,14 @@ _MARKER = "AGENTSPEC-PROBE-MARKER-CCRES5"
 _RESOURCE_TOOLS = ("ListMcpResourcesTool", "ReadMcpResourceTool", "ReadMcpResourceDirTool")
 
 
-def _judge(ws: Path) -> None:
+def _judge(arms: ClaudeArms) -> None:
     """The unrestricted main thread lists all three resource tools.
 
     Only then can an arm's empty value mean "not offered" rather than "renamed", or "not yet
     offered because the server's resources had not been seen".
     """
     try:
-        claude_otel.mcp_connected(bodies.read_claude_arms(ws, _ARM_NAMES), _MARKER, _RESOURCE_TOOLS)
+        claude_otel.mcp_connected(arms, _MARKER, _RESOURCE_TOOLS)
     except GateFailure as e:
         raise GateFailure(
             *e.lines,
@@ -107,5 +106,3 @@ PROBE = ClaudeOtelProbe(
     functions=ProbeFunctions(judge=_judge),
     variants=("assertion", "discriminator"),
 )
-
-_ARM_NAMES = tuple(arm.name for arm in PROBE.arms)

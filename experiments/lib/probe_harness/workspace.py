@@ -5,12 +5,12 @@ import re
 import shutil
 import sys
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TextIO
 
-from probe_harness import console, jq_cli, json_values
+from probe_harness import console, json_values
 from probe_harness.contract import HarnessModel, NonEmpty, Option
 
 # How long a human-driven probe waits for its capture, in seconds. It is generous because
@@ -127,18 +127,15 @@ def template_file(src: Path, dst: Path, **pairs: str) -> None:
     dst.write_text(content + "\n", encoding="utf-8")
 
 
-def wait_for_capture(ws: Path, filter_expr: str, timeout: int) -> bool:
-    """Poll `<ws>/capture/payloads.jsonl` until <filter_expr> holds against it.
+def wait_for_capture(ws: Path, matches: Callable[[], bool], timeout: int) -> bool:
+    """Poll until <matches> holds for `<ws>`'s capture.
 
-    The filter is evaluated over the slurped payloads, so every jq expression in the
-    contract sees the same array-shaped input. Returns whether it matched before the
-    timeout, recording nothing either way.
+    Returns whether it held before the timeout, recording nothing either way.
     """
-    payloads = ws / "capture" / "payloads.jsonl"
     waited = 0
     last_progress = 0
     while waited < timeout:
-        if _capture_matches(payloads, filter_expr):
+        if matches():
             return True
         time.sleep(POLL_INTERVAL_SECONDS)
         waited += POLL_INTERVAL_SECONDS
@@ -147,7 +144,7 @@ def wait_for_capture(ws: Path, filter_expr: str, timeout: int) -> bool:
             last_progress = waited
     # One final check past the deadline: a capture that landed during the last sleep is a
     # match, not a timeout.
-    return _capture_matches(payloads, filter_expr)
+    return matches()
 
 
 def prompt_selection(options: Sequence[Option], question: str) -> str:
@@ -183,15 +180,6 @@ def read_selection(options: Sequence[Option], question: str, stream: TextIO) -> 
         if answer in ids:
             return answer
         console.say(f'"{answer}" is not one of the option ids.')
-
-
-def _capture_matches(payloads: Path, filter_expr: str) -> bool:
-    try:
-        if payloads.stat().st_size == 0:
-            return False
-    except OSError:
-        return False
-    return jq_cli.test(filter_expr, payloads, slurp=True)
 
 
 def _render_options(options: Sequence[Option]) -> str:

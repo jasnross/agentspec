@@ -12,6 +12,9 @@ class ToolUseBlock(ProviderModel):
     """A call to any tool. Its input stays undeclared: a gate never reads another tool's
     input, so a malformed one cannot refuse the run."""
 
+    # Declared because the union holding this block is discriminated on it and on `name`, so
+    # a sample reduced to declared keys still parses as the same member.
+    type: str
     id: str
     name: str
 

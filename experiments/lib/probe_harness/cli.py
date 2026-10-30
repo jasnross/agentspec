@@ -6,6 +6,9 @@
                                                         judge a kept workspace and record it
     probe status [--summary]                            report on committed records
     probe source <record> <dir> [--arranged]            write a v2 record's files to <dir>
+    probe sample <package> <workspace> <name> [--lines N]
+                                                        write a sample from a kept workspace
+    probe sample <package> --regenerate                 recompute every sample's results
 
 Every harness module a subcommand needs is imported before it does any work, so an import
 error surfaces before any work starts, and never after a manual operator has spent a live
@@ -74,6 +77,9 @@ def main(argv: list[str]) -> int:
         case "status":
             _no_extra(subparsers["status"], extra)
             return status.main(summary=args.summary, experiments_dir=experiments_dir())
+        case "sample":
+            _no_extra(subparsers["sample"], extra)
+            return _sample(subparsers["sample"], args)
         case _:
             raise AssertionError(args.command)
 
@@ -108,6 +114,13 @@ def _parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParse
     status_parser = commands.add_parser("status", prog="probe status", allow_abbrev=False)
     status_parser.add_argument("--summary", action="store_true")
 
+    sample_parser = commands.add_parser("sample", prog="probe sample", allow_abbrev=False)
+    sample_parser.add_argument("package")
+    sample_parser.add_argument("workspace", nargs="?")
+    sample_parser.add_argument("name", nargs="?")
+    sample_parser.add_argument("--lines", type=_count)
+    sample_parser.add_argument("--regenerate", action="store_true")
+
     source_parser = commands.add_parser("source", prog="probe source", allow_abbrev=False)
     source_parser.add_argument("record")
     source_parser.add_argument("dir")
@@ -118,7 +131,58 @@ def _parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParse
         "record": record_parser,
         "status": status_parser,
         "source": source_parser,
+        "sample": sample_parser,
     }
+
+
+def _sample(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
+    """`probe sample`: write one sample from a kept workspace, or regenerate every result."""
+    # Imported here: `samples` loads every family, which `probe source` must not.
+    from probe_harness import families, samples
+    from probe_harness.families.base import UsageError
+    from probe_harness.families.manual import ManualProbe
+    from probe_harness.gates import GateFailure
+    from probe_harness.loader import DefinitionError
+    from probe_harness.preflight import PreflightError
+
+    if args.regenerate:
+        if args.workspace is not None or args.name is not None or args.lines is not None:
+            parser.error("--regenerate takes only a package")
+    elif args.workspace is None or args.name is None:
+        parser.error("a workspace and a sample name are required without --regenerate")
+    package = experiments_dir() / args.package
+    try:
+        definition, manifest = families.load_package(package)
+        if args.lines is not None and not isinstance(definition, ManualProbe):
+            parser.error("--lines applies only to a manual package")
+        if args.regenerate:
+            for line in samples.regenerate(definition, manifest):
+                print(line)
+            return 0
+        workspace, name = str(args.workspace), str(args.name)
+        written = samples.write_sample(
+            definition, manifest, Path(workspace), name, lines=args.lines
+        )
+    except DefinitionError as e:
+        console.say(str(e))
+        return 1
+    except PreflightError as e:
+        console.say_refusal(e)
+        return e.code
+    except (GateFailure, samples.SampleRefused) as e:
+        console.say_refusal(e)
+        return 1
+    except UsageError as e:
+        console.say(str(e))
+        return 2
+    print(written)
+    return 0
+
+
+def _count(text: str) -> int:
+    if not (text.isascii() and text.isdecimal()):
+        raise argparse.ArgumentTypeError(f"must be a non-negative integer (got: {text})")
+    return int(text)
 
 
 def _source(record_path: Path, out_dir: Path, *, arranged: bool) -> int:

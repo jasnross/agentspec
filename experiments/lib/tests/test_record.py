@@ -1411,7 +1411,7 @@ def test_a_v1_manifest_whose_definition_carries_an_assertion_is_refused(
     assert result.returncode == 1
     assert (
         "probe record: pkg's definition carries an assertion, but its manifest is schema 1, "
-        "whose projection decides the record\n" in result.stderr
+        "whose jq decides the record\n" in result.stderr
     )
 
 

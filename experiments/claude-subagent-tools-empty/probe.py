@@ -7,7 +7,7 @@ declares `driver: billed` and `just probe-run` withholds it without
 `--billed`.
 """
 
-from probe_harness.families.base import CustomCheck
+from probe_harness.families.base import JqCustomCheck
 from probe_harness.families.claude_otel import (
     ClaudeArm,
     ClaudeOtelProbe,
@@ -30,7 +30,8 @@ _RUN_IS_SAFE = "this is a statement about the run, not about Claude. No record w
 
 # An unrestricted subagent receives the built-ins, so an empty tool set elsewhere describes
 # a restriction rather than a subagent that never got tools.
-_INHERIT_GETS_BUILTINS = CustomCheck(
+_INHERIT_GETS_BUILTINS = JqCustomCheck(
+    "inherit_gets_builtins",
     expression="""
         [.inherit[] | select(.system | tostring | contains($m))]
         | length > 0 and all(.[]; any(.tools[]?; .name == "Read"))
@@ -45,7 +46,8 @@ _INHERIT_GETS_BUILTINS = CustomCheck(
 
 # A listed `tools` field restricts the subagent: `read` offers Read, and fewer tools than
 # `inherit`. Without this, `empty`'s value could not be told from an ignored field.
-_LISTED_TOOLS_RESTRICT = CustomCheck(
+_LISTED_TOOLS_RESTRICT = JqCustomCheck(
+    "listed_tools_restrict",
     expression="""
         def governed: [.[] | select(.system | tostring | contains($m))];
         (.read | governed) as $r | (.inherit | governed) as $i

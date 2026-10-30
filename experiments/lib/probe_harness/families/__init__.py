@@ -7,6 +7,7 @@ existing family writes only what is specific to it; a probe fitting no family wr
 
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, assert_never
 
@@ -23,8 +24,10 @@ from probe_harness.contract import (
 )
 from probe_harness.families import claude_otel, manual, opencode_debug, opencode_fake
 from probe_harness.families.base import (
+    CustomCheck,
     CustomProbe,
     GateFailure,
+    JqCustomCheck,
     JudgeResult,
     Projected,
     RunOptions,
@@ -41,6 +44,7 @@ from probe_harness.families.claude_otel import ClaudeOtelProbe, McpConfig, Plugi
 from probe_harness.families.manual import ManualProbe
 from probe_harness.families.opencode_debug import OpenCodeDebugProbe
 from probe_harness.families.opencode_fake import OpenCodeFakeProbe
+from probe_harness.json_values import JsonValue
 from probe_harness.loader import DefinitionError, load_definition
 from probe_harness.preflight import (
     ASSERTION_VARIANT,
@@ -60,7 +64,11 @@ from probe_harness.source import (
 from probe_harness.workspace import create_workspace, read_workspace_run, require_tools
 
 type ProbeDefinition = (
-    ManualProbe | OpenCodeDebugProbe | OpenCodeFakeProbe | ClaudeOtelProbe | CustomProbe[Any]
+    ManualProbe[Any]
+    | OpenCodeDebugProbe[Any]
+    | OpenCodeFakeProbe
+    | ClaudeOtelProbe
+    | CustomProbe[Any]
 )
 
 DEFINITION_TYPES: tuple[type, ...] = (
@@ -96,13 +104,7 @@ def run_package(name: str, experiments_dir: Path) -> int:
     try:
         match definition:
             case ManualProbe():
-                wait_for = manifest.wait_for if isinstance(manifest, ManifestV1) else None
-                if wait_for is None:
-                    # A missing filter would poll a literal that never matches, burning the
-                    # whole timeout of a live session for no reason.
-                    console.say("manifest declares no wait_for filter")
-                    return 1
-                return manual.run(manifest, name, wait_for, options, definition)
+                return manual.run(manifest, name, options, definition)
             case OpenCodeDebugProbe():
                 return opencode_debug.run(manifest, name, options, definition)
             case OpenCodeFakeProbe():
@@ -202,11 +204,11 @@ def record_package(
                 interactive = not dry_run and sys.stdin.isatty()
                 result = manual.judge(manifest, ws, definition, selection, interactive=interactive)
             case OpenCodeDebugProbe():
-                result = opencode_debug.judge(ws, definition)
+                result = opencode_debug.judge(ws, definition, manifest)
             case OpenCodeFakeProbe():
-                result = opencode_fake.judge(ws, definition)
+                result = opencode_fake.judge(ws, definition, manifest)
             case ClaudeOtelProbe():
-                result = claude_otel.judge(ws, definition)
+                result = claude_otel.judge(ws, definition, manifest)
             case CustomProbe():
                 result = _judge_custom(manifest, ws, definition)
             case _:
@@ -272,6 +274,88 @@ def _judge_custom(manifest: Manifest, ws: Path, probe: CustomProbe[Any]) -> Judg
     return JudgeResult(observe(probe.assertion, value))
 
 
+def load_package(package: Path) -> tuple[ProbeDefinition, Manifest]:
+    """<package>'s definition and manifest, refused unless they agree.
+
+    Raises `DefinitionError` or `PreflightError`, as `probe record` would refuse them.
+    """
+    definition: ProbeDefinition = load_definition(package, DEFINITION_TYPES)
+    manifest = check_manifest(package)
+    refusal = _definition_refusal(package.name, definition, manifest)
+    if refusal is not None:
+        raise PreflightError(1, refusal)
+    return definition, manifest
+
+
+def parse_workspace(definition: ProbeDefinition, ws: Path, lines: int | None = None) -> Any:
+    """<ws> read through the definition's family, as its judge reads it before any gate.
+
+    <lines> reads only that many capture lines, which only the manual family has.
+    """
+    match definition:
+        case ManualProbe():
+            return manual.parse(ws, definition, lines=lines)
+        case OpenCodeDebugProbe():
+            return opencode_debug.parse(ws, definition)
+        case OpenCodeFakeProbe():
+            return opencode_fake.parse(ws, definition)
+        case ClaudeOtelProbe():
+            return claude_otel.parse(ws, definition)
+        case CustomProbe():
+            raise UsageError(f"{ws}: a CustomProbe has no sample format")
+        case _:
+            assert_never(definition)
+
+
+def parse_sample(definition: ProbeDefinition, document: JsonValue, label: str) -> Any:
+    """A sample's input read through the definition's family, as `parse_workspace` reads a
+    workspace. A custom probe has no sample format."""
+    match definition:
+        case ManualProbe():
+            return manual.parse_sample(document, label, definition)
+        case OpenCodeDebugProbe():
+            return opencode_debug.parse_sample(document, label, definition)
+        case OpenCodeFakeProbe():
+            return opencode_fake.parse_sample(document, label, definition)
+        case ClaudeOtelProbe():
+            return claude_otel.parse_sample(document, label, definition)
+        case CustomProbe():
+            raise UsageError(f"{label}: a CustomProbe has no sample format")
+        case _:
+            assert_never(definition)
+
+
+@dataclass(frozen=True)
+class Expressions:
+    """The Python expressions a definition carries, whatever its family."""
+
+    assertion: Callable[..., Any] | None
+    custom_checks: tuple[CustomCheck[Any] | JqCustomCheck, ...] = ()
+    capture_version: Callable[..., Any] | None = None
+    # Whether the family polls a capture, and so takes a `wait_for` and a `payload`.
+    manual: bool = False
+    wait_for: Callable[..., Any] | None = None
+    payload: type | None = None
+
+
+def expressions(definition: ProbeDefinition) -> Expressions:
+    match definition:
+        case ManualProbe():
+            return Expressions(
+                definition.assertion,
+                capture_version=definition.capture_version,
+                manual=True,
+                wait_for=definition.wait_for,
+                payload=definition.payload,
+            )
+        case OpenCodeDebugProbe() | OpenCodeFakeProbe() | ClaudeOtelProbe():
+            return Expressions(definition.assertion, definition.custom_checks)
+        case CustomProbe():
+            return Expressions(definition.assertion)
+        case _:
+            assert_never(definition)
+
+
 def _definition_refusal(name: str, definition: ProbeDefinition, manifest: Manifest) -> str | None:
     """A definition and manifest that could only fail later, refused before any workspace.
 
@@ -279,88 +363,108 @@ def _definition_refusal(name: str, definition: ProbeDefinition, manifest: Manife
     every arm had spent a model call.
     """
     package = manifest.path.parent
+    agreement = _agreement(name, definition, manifest)
+    if agreement is not None:
+        return agreement
     match definition:
         case ManualProbe():
-            return (
-                _agreement(name, definition, manifest, assertion=None)
-                or _manual_agreement(name, manifest, wait_for=None)
-                or _capture_is_not_a_variant(name, definition)
-                or _variant_trees(name, definition, package)
+            return _capture_is_not_a_variant(name, definition) or _variant_trees(
+                name, definition, package
             )
         case OpenCodeFakeProbe():
             return (
-                _agreement(name, definition, manifest, assertion=None)
-                or _variant_trees(name, definition, package)
+                _variant_trees(name, definition, package)
                 or _unique_arms(name, [arm.name for arm in definition.arms])
                 or _needs_capture(name, definition, manifest)
             )
         case ClaudeOtelProbe():
             return (
-                _agreement(name, definition, manifest, assertion=None)
-                or _variant_trees(name, definition, package)
+                _variant_trees(name, definition, package)
                 or _unique_arms(name, [arm.name for arm in definition.arms])
                 or _claude_gate_arms(name, definition)
                 or _needs_capture(name, definition, manifest)
                 or _claude_variant_inputs(name, definition, package)
             )
-        case OpenCodeDebugProbe():
-            return (
-                _agreement(name, definition, manifest, assertion=None)
-                or _variant_trees(name, definition, package)
-                or _needs_capture(name, definition, manifest)
-            )
-        case CustomProbe():
-            return (
-                _agreement(name, definition, manifest, assertion=definition.assertion)
-                or _variant_trees(name, definition, package)
-                or _needs_capture(name, definition, manifest)
+        case OpenCodeDebugProbe() | CustomProbe():
+            return _variant_trees(name, definition, package) or _needs_capture(
+                name, definition, manifest
             )
         case _:
             assert_never(definition)
 
 
-def _agreement(
-    name: str,
-    definition: ProbeDefinition,
-    manifest: Manifest,
-    *,
-    assertion: Callable[..., Any] | None,
-) -> str | None:
-    """Whether the manifest's version and the definition's assertion agree.
+def _agreement(name: str, definition: ProbeDefinition, manifest: Manifest) -> str | None:
+    """Whether the manifest's version and the definition's expressions agree.
 
-    A v1 manifest is judged by its own jq, so a Python assertion beside it would be code
-    that never runs. A v2 manifest declaring `expected` is judged by the definition's
-    assertion, so it needs one, and an option set is answered by a person, so it refuses one.
+    A schema 1 manifest is judged by its own jq, so a Python expression beside it would be
+    code that never runs; a schema 2 one by the definition's Python, so a jq check beside it
+    would be. A manifest declaring `expected` needs an assertion to compare with it, and an
+    option set, which a person answers, refuses one. A schema 2 manual probe polls with its
+    definition's `wait_for` over lines its `payload` parses, and a schema 2 `capture`
+    version source is read by its `capture_version`.
     """
+    found = expressions(definition)
     family = _family(definition)
+    python_checks = [c for c in found.custom_checks if isinstance(c, CustomCheck)]
+    jq_checks = [c for c in found.custom_checks if isinstance(c, JqCustomCheck)]
+    names = [c.name for c in found.custom_checks]
+    if "" in names:
+        return f"{name}'s definition declares a custom check with an empty name"
+    duplicates = sorted({n for n in names if names.count(n) > 1})
+    if duplicates:
+        return f"{name}'s definition declares custom check {duplicates[0]} more than once"
     if isinstance(manifest, ManifestV1):
-        if assertion is not None:
-            return (
-                f"{name}'s definition carries an assertion, but its manifest is schema 1, "
-                "whose projection decides the record"
+        carried = [
+            label
+            for label, present in (
+                ("an assertion", found.assertion is not None),
+                ("a wait_for", found.wait_for is not None),
+                ("a capture_version", found.capture_version is not None),
+                ("a Python custom check", bool(python_checks)),
             )
+            if present
+        ]
+        if carried:
+            return (
+                f"{name}'s definition carries {carried[0]}, but its manifest is schema 1, "
+                "whose jq decides the record"
+            )
+        if found.manual and manifest.wait_for is None:
+            # A missing filter would poll a literal that never matches, burning the whole
+            # timeout of a live session for no reason.
+            return "manifest declares no wait_for filter"
         return None
-    if isinstance(manifest.assertion, ExpectedAssertion) and assertion is None:
+    if jq_checks:
+        return (
+            f"{name}'s manifest is schema 2, but its definition carries the jq custom check "
+            f"{jq_checks[0].name}, which only a schema 1 view can run"
+        )
+    if isinstance(manifest.assertion, ExpectedAssertion) and found.assertion is None:
         return (
             f"{name}'s manifest is schema 2 and declares expected, but {family} definition "
             "carries no assertion to compare with it"
         )
-    if isinstance(manifest.assertion, OptionsAssertion) and assertion is not None:
+    if isinstance(manifest.assertion, OptionsAssertion) and found.assertion is not None:
         return (
             f"{name}'s manifest declares options, which a person answers, but its definition "
             "carries an assertion"
         )
-    return None
-
-
-def _manual_agreement(
-    name: str, manifest: Manifest, *, wait_for: Callable[..., Any] | None
-) -> str | None:
-    """A v2 manual probe polls with its definition's `wait_for`, so it needs one."""
-    if isinstance(manifest, ManifestV2) and wait_for is None:
+    if found.manual and (found.payload is None or found.wait_for is None):
+        missing = "payload" if found.payload is None else "wait_for"
         return (
-            f"{name}'s manifest is schema 2, but its definition carries no wait_for to poll "
-            "the capture with"
+            f"{name}'s manifest is schema 2, but its definition carries no {missing} to "
+            "read the capture with"
+        )
+    capture = isinstance(manifest.version_source, CaptureSource)
+    if capture and found.manual and found.capture_version is None:
+        return (
+            f"{name}'s manifest declares a capture version source, but its definition "
+            "carries no capture_version to read it"
+        )
+    if not capture and found.capture_version is not None:
+        return (
+            f"{name}'s definition carries a capture_version, but its manifest's version "
+            "source is not a capture"
         )
     return None
 
@@ -379,7 +483,7 @@ def _variant_trees(name: str, definition: ProbeDefinition, package: Path) -> str
     return None
 
 
-def _capture_is_not_a_variant(name: str, definition: ManualProbe) -> str | None:
+def _capture_is_not_a_variant(name: str, definition: ManualProbe[Any]) -> str | None:
     # `fixtures/capture/` is the shared apparatus; a variant of that name would copy it into
     # the project the operator opens, where the provider could read it.
     if manual.CAPTURE_DIR in definition.variants:
@@ -468,7 +572,12 @@ def _family_tools(definition: ProbeDefinition) -> tuple[str, ...]:
 
 __all__ = [
     "DEFINITION_TYPES",
+    "Expressions",
     "ProbeDefinition",
+    "expressions",
+    "load_package",
+    "parse_sample",
+    "parse_workspace",
     "record_package",
     "run_package",
 ]

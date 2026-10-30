@@ -272,7 +272,7 @@ def test_the_provider_runs_in_the_arm_project_with_a_matching_pwd(
 SCRIPTED = """\
 from pathlib import Path
 
-from probe_harness.families.base import CustomCheck
+from probe_harness.families.base import JqCustomCheck
 from probe_harness.families.opencode_fake import OpenCodeArm, OpenCodeFakeProbe, ScriptedCall
 from probe_harness.gates.opencode import GOVERNED_JQ
 
@@ -290,7 +290,8 @@ PROBE = OpenCodeFakeProbe(
     fx_servers=("fx",),
     tool_result_gate=True,
     custom_checks=(
-        CustomCheck(
+        JqCustomCheck(
+            "governed_one",
             expression=f"[.one[] | select(any({GOVERNED_JQ}))] | length >= CHECK_MIN",
             failure=("the custom check refused.",),
         ),

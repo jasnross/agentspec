@@ -39,6 +39,11 @@ def dumps(value: JsonValue) -> str:
     return json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False)
 
 
+def dumps_line(value: JsonValue) -> str:
+    """<value> as one line of compact JSON, as a JSONL file holds it."""
+    return json.dumps(value, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+
+
 def equal(a: JsonValue, b: JsonValue) -> bool:
     """Structural equality: key order is irrelevant, and a boolean never equals a number."""
     if isinstance(a, bool) or isinstance(b, bool):

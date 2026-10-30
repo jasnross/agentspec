@@ -18,7 +18,7 @@ def _arm(view: dict[str, list[Any]], arm: str) -> tuple[OpenCodeRequest, ...]:
         SinkEntry(Path(arm) / "sink" / f"{n:04}.request.json", value)
         for n, value in enumerate(view.get(arm, []))
     ]
-    return bodies.opencode_arms({arm: SinkValues(requests=entries, responses=[])}, Path())[arm]
+    return bodies.opencode_arms({arm: SinkValues(requests=entries, responses=[])})[arm].requests
 
 
 def _system(text: Any) -> dict[str, Any]:

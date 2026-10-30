@@ -188,6 +188,8 @@ When adding a rendering agentspec will emit, check whether a probe already answe
 
 **A capability accessor is a claim about a provider, so a probe is the thing to consult before changing one.** `fully_implements_canonical_output` and `session_start_fires_on_resume` name the probes their values came from, which is worth doing where a value was measured — but the manifest's `expected` is the binding record of that belief, not the doc comment. When a probe refutes one, correct whatever encoded the old belief _and_ the manifest's `expected` — see the contract's "life of a refutation," which exists because leaving them disagreeing is the drift this harness was built to stop.
 
+**A probe's expressions are typed Python, and its samples prove them.** The assertion, a manual probe's `wait_for` and capture version, and every custom check are callables on the definition in the package's `probe.py`. Every field they read is declared in a model under `experiments/lib/probe_harness/models/`, and the committed samples in the package's `samples/` show, under `just probe-test`, that each one takes both outcomes.
+
 **Probe first when the outcome could change the design; defer when it can only confirm.** agentspec's tests compare emitted bytes against agentspec's own belief about what each provider reads, and that belief has been wrong — a design revision once asserted an OpenCode `provider/model#variant` suffix no parser would have accepted.
 
 All three providers degrade silently on a rendering they do not understand, so a probe asserts on a positive signal in the provider's own resolved view, never on absence of an error. The full contract is `experiments/README.md`.

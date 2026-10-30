@@ -9,13 +9,14 @@ every request body to disk. That dump is the oracle, so the measurement is at
 `opencode debug agent`.
 """
 
-from probe_harness.families.base import CustomCheck
+from probe_harness.families.base import JqCustomCheck
 from probe_harness.families.opencode_fake import OpenCodeArm, OpenCodeFakeProbe
 from probe_harness.gates.opencode import APPARATUS_FAILURE, GOVERNED_JQ
 
 # The stamps prove both servers connected; this proves all four tools reach a request when
 # nothing filters them, so the glob arm cannot read as under-matching by default.
-_BASELINE_OFFERS_ALL = CustomCheck(
+_BASELINE_OFFERS_ALL = JqCustomCheck(
+    "baseline_offers_all",
     expression=(
         f"[.baseline[] | select(any({GOVERNED_JQ})) | .tools[]?.function.name] as $n"
         ' | all("fx_alpha", "fx_beta", "fx_extra_alpha", "fx_extra_beta";'

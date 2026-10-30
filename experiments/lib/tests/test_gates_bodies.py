@@ -56,7 +56,7 @@ def _refusal(body: Any) -> str:
     """The first line of the refusal `claude_arms` raises for a request <body>."""
     values = SinkValues(requests=[SinkEntry(SINK_FILE, body)], responses=[])
     with pytest.raises(GateFailure) as exc:
-        claude_arms({"a": values}, Path())
+        claude_arms({"a": values})
     assert exc.value.lines[1] == (
         "the gates cannot read this body, so the run describes nothing. No record written."
     )
@@ -146,7 +146,7 @@ def _response_refusal(body: Any) -> str:
     response_file = Path("a") / "sink" / "one.response.json"
     values = SinkValues(requests=[], responses=[SinkEntry(response_file, body)])
     with pytest.raises(GateFailure) as exc:
-        claude_arms({"a": values}, Path())
+        claude_arms({"a": values})
     prefix = f"arm a: {response_file}: "
     assert exc.value.lines[0].startswith(prefix)
     return exc.value.lines[0].removeprefix(prefix)
@@ -201,7 +201,7 @@ def test_a_refusal_names_the_value_s_position_in_a_file_holding_several() -> Non
         SinkEntry(SINK_FILE, {"model": "m"}, position=2),
     ]
     with pytest.raises(GateFailure) as exc:
-        claude_arms({"a": SinkValues(requests=entries, responses=[])}, Path())
+        claude_arms({"a": SinkValues(requests=entries, responses=[])})
     assert exc.value.lines[0] == f"arm a: {SINK_FILE} value 2: system: Field required"
 
 
@@ -319,7 +319,7 @@ def test_an_opencode_message_may_carry_null_content() -> None:
         requests=[SinkEntry(SINK_FILE, {"messages": [{"role": "assistant", "content": None}]})],
         responses=[],
     )
-    (request,) = opencode_arms({"a": values}, Path())["a"]
+    (request,) = opencode_arms({"a": values})["a"].requests
     assert list(request.messages[0].content.strings()) == []
 
 
@@ -333,7 +333,7 @@ def test_the_claude_judge_refuses_a_body_that_does_not_fit(tmp_path: Path) -> No
     )
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.judge(tmp_path, probe)
+        claude_otel.parse(tmp_path, probe)
     assert exc.value.lines == (
         f"arm a: {sink / 'one.request.json'}: model: Field required",
         "the gates cannot read this body, so the run describes nothing. No record written.",
@@ -347,7 +347,7 @@ def test_the_opencode_judge_refuses_a_body_that_does_not_fit(tmp_path: Path) -> 
     probe = OpenCodeFakeProbe(marker="M", arms=(OpenCodeArm("a", "agent"),))
 
     with pytest.raises(GateFailure) as exc:
-        opencode_fake.judge(tmp_path, probe)
+        opencode_fake.parse(tmp_path, probe)
     assert exc.value.lines[0] == (
         f"arm a: {sink / 'one.request.json'}: messages: Input should be a valid tuple"
     )

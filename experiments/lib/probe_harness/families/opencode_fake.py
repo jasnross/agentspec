@@ -22,21 +22,27 @@ from probe_harness.contract import Manifest
 from probe_harness.families.base import (
     CustomCheck,
     GateFailure,
+    JqCustomCheck,
     JudgeResult,
     ProbeFunctions,
-    Projected,
     RunOptions,
+    decide,
     file_lines,
     kept_on_failure,
     provider_env,
     record_result,
     record_tool_version,
     refused,
-    run_custom_checks,
+    run_checks,
+    run_jq_checks,
+    split_checks,
 )
 from probe_harness.families.opencode_env import OpenCodeIsolation
 from probe_harness.gates import bodies
 from probe_harness.gates import opencode as gates
+from probe_harness.gates.bodies import OpenCodeArms as OpenCodeArms
+from probe_harness.json_values import JsonValue
+from probe_harness.models.raw import sample_source
 from probe_harness.source import write_source
 from probe_harness.workspace import create_workspace, template_file
 
@@ -79,10 +85,12 @@ class OpenCodeFakeProbe:
     # `<KEY>_STAMP`, and a stamp gate.
     fx_servers: tuple[str, ...] = ()
     tool_result_gate: bool = False
-    custom_checks: tuple[CustomCheck, ...] = ()
+    # Required by a schema 2 manifest declaring `expected`, and refused by a schema 1 one.
+    assertion: Callable[[OpenCodeArms], JsonValue] | None = None
+    custom_checks: tuple[CustomCheck[OpenCodeArms] | JqCustomCheck, ...] = ()
     variants: tuple[str, ...] = ("assertion",)
     arrange_arm: ArmArrange | None = None
-    functions: ProbeFunctions[Path] = field(default_factory=ProbeFunctions)
+    functions: ProbeFunctions[OpenCodeArms] = field(default_factory=ProbeFunctions)
 
 
 def run(manifest: Manifest, name: str, options: RunOptions, probe: OpenCodeFakeProbe) -> int:
@@ -94,39 +102,55 @@ def run(manifest: Manifest, name: str, options: RunOptions, probe: OpenCodeFakeP
             record_tool_version(manifest, ws)
             for arm in probe.arms:
                 _run_arm(package / "fixtures" / options.variant, ws, arm, probe)
-            result = judge(ws, probe)
+            result = judge(ws, probe, manifest)
         except GateFailure as e:
             return refused(e, ws)
         return record_result(manifest, ws, result, options)
 
 
-def judge(ws: Path, probe: OpenCodeFakeProbe) -> JudgeResult:
-    """Judge a workspace from the sinks and stamps its arms left."""
+def parse(ws: Path, probe: OpenCodeFakeProbe) -> OpenCodeArms:
+    """Every arm's sink as models, refusing an arm the fake provider never heard from."""
     arms = [arm.name for arm in probe.arms]
     for arm in arms:
         if not any((ws / arm / "sink").glob("*.request.json")):
             raise GateFailure(f"arm {arm}: the fake provider received no request")
-    sinks = {arm: views.read_sink(ws / arm / "sink") for arm in arms}
-    view = ws / "view.json"
-    views.write_arm_view(
-        view, {arm: [e.value for e in values.requests] for arm, values in sinks.items()}
-    )
-    requests = bodies.opencode_arms(sinks, ws)
-    for arm in arms:
-        gates.governed(requests[arm], arm, probe.marker, ws / arm / "stderr")
-    for arm in arms:
+    return bodies.opencode_arms({arm: views.read_sink(ws / arm / "sink") for arm in arms})
+
+
+def parse_sample(document: JsonValue, label: str, probe: OpenCodeFakeProbe) -> OpenCodeArms:
+    """A sample's input as the arms `parse` would have read."""
+    return bodies.opencode_sample_arms(document, label, [arm.name for arm in probe.arms])
+
+
+def view(arms: OpenCodeArms) -> dict[str, list[JsonValue]]:
+    """The schema 1 view: each arm's request bodies."""
+    return {
+        name: [sample_source(body) for body in capture.requests] for name, capture in arms.items()
+    }
+
+
+def judge(ws: Path, probe: OpenCodeFakeProbe, manifest: Manifest) -> JudgeResult:
+    """Judge a workspace from the sinks and stamps its arms left."""
+    arms = parse(ws, probe)
+    view_path = ws / "view.json"
+    views.write_arm_view(view_path, view(arms))
+    for name, capture in arms.items():
+        gates.governed(capture.requests, name, probe.marker, ws / name / "stderr")
+    for name in arms:
         for key in probe.fx_servers:
-            gates.stamp(ws, arm, key)
+            gates.stamp(ws, name, key)
     if probe.tool_result_gate:
-        for arm in arms:
-            gates.tool_result(requests[arm], arm, probe.marker, ws / arm / "stderr")
-    run_custom_checks(probe.custom_checks, view, probe.marker)
+        for name, capture in arms.items():
+            gates.tool_result(capture.requests, name, probe.marker, ws / name / "stderr")
+    python_checks, jq_checks = split_checks(probe.custom_checks)
+    run_jq_checks(jq_checks, view_path, probe.marker)
+    run_checks(python_checks, arms)
     if probe.functions.judge is not None:
-        probe.functions.judge(ws)
+        probe.functions.judge(arms)
     # Printed before recording: a dry or failed record keeps the workspace, and this view is
     # what a candidate projection is iterated against.
-    console.say(f"the assembled view is at {view}")
-    return JudgeResult(Projected(view))
+    console.say(f"the assembled view is at {view_path}")
+    return decide(manifest, probe.assertion, arms, view_path)
 
 
 def _run_arm(fixtures: Path, ws: Path, arm: OpenCodeArm, probe: OpenCodeFakeProbe) -> None:

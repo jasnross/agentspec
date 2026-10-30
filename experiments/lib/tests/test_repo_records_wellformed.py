@@ -20,6 +20,8 @@ from probe_harness.contract import (
     parse_manifest,
     parse_record,
 )
+from probe_harness.families.manual import ManualProbe
+from probe_harness.loader import load_definition
 
 from tests.conftest import (
     EXPERIMENTS_DIR,
@@ -77,12 +79,18 @@ def test_every_options_manifest_s_expected_names_one_of_its_own_option_ids() -> 
         )
 
 
-def test_every_manual_manifest_declares_a_wait_for_filter() -> None:
-    # The runner polls against it; without one the run burns its full timeout.
+def test_every_manual_package_has_a_wait_for() -> None:
+    # The runner polls against it; without one the run burns its full timeout. A schema 1
+    # package's sits in its manifest, and a schema 2 package's on its definition.
     for path in _manifests():
         manifest = parse_manifest(path)
-        if manifest.driver == Driver.MANUAL and isinstance(manifest, ManifestV1):
+        if manifest.driver != Driver.MANUAL:
+            continue
+        if isinstance(manifest, ManifestV1):
             assert manifest.wait_for is not None, f"manual manifest declares no wait_for: {path}"
+        else:
+            definition = load_definition(path.parent, (ManualProbe,))
+            assert definition.wait_for is not None, f"manual definition has no wait_for: {path}"
 
 
 def test_every_probe_package_is_a_measurement() -> None:

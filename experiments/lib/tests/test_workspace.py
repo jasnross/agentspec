@@ -9,11 +9,13 @@ import io
 import json
 import subprocess
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 from probe_harness import jq_cli, workspace
 from probe_harness.contract import Option
+from probe_harness.families.manual import capture_matches
 from probe_harness.workspace import (
     create_workspace,
     prompt_selection,
@@ -128,6 +130,11 @@ def test_probe_require_tools_succeeds_when_every_tool_is_present(
     assert captured.out + captured.err == ""
 
 
+def _jq(ws: Path, expr: str) -> Callable[[], bool]:
+    """A schema 1 poll test: <expr> over the slurped capture."""
+    return lambda: capture_matches(ws / "capture" / "payloads.jsonl", expr)
+
+
 def test_probe_wait_for_capture_returns_0_once_a_matching_payload_is_appended(
     tmp_path: Path,
 ) -> None:
@@ -140,7 +147,7 @@ def test_probe_wait_for_capture_returns_0_once_a_matching_payload_is_appended(
     writer = threading.Timer(1, append)
     writer.start()
     try:
-        matched = wait_for_capture(ws, 'any(.[]; .hook_event_name == "target")', 20)
+        matched = wait_for_capture(ws, _jq(ws, 'any(.[]; .hook_event_name == "target")'), 20)
     finally:
         writer.join()
     assert matched is True
@@ -149,7 +156,7 @@ def test_probe_wait_for_capture_returns_0_once_a_matching_payload_is_appended(
 def test_probe_wait_for_capture_returns_1_on_timeout_and_records_nothing(tmp_path: Path) -> None:
     ws = make_capture_workspace(tmp_path / "ws-timeout", '{"hook_event_name":"other"}\n')
 
-    assert wait_for_capture(ws, 'any(.[]; .hook_event_name == "never")', 1) is False
+    assert wait_for_capture(ws, _jq(ws, 'any(.[]; .hook_event_name == "never")'), 1) is False
     assert not (ws / "results").is_dir()
 
 
@@ -158,7 +165,7 @@ def test_probe_wait_for_capture_slurps_so_an_any_filter_matches_jsonl(tmp_path: 
     # capture that already holds the answer.
     ws = make_capture_workspace(tmp_path / "ws-slurp", '{"a":1}\n{"cursor_version":"3.16.17"}\n')
 
-    assert wait_for_capture(ws, "any(.[]; .cursor_version != null)", 5) is True
+    assert wait_for_capture(ws, _jq(ws, "any(.[]; .cursor_version != null)"), 5) is True
 
 
 def test_probe_template_file_substitutes_every_placeholder_and_keeps_json_valid(

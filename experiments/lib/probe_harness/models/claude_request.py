@@ -24,6 +24,9 @@ class OutputConfig(ProviderModel):
 
 
 class TextPart(ProviderModel):
+    # Declared because the union holding this part is discriminated on it, so a sample
+    # reduced to declared keys still parses as the same member.
+    type: str
     text: str
 
 
@@ -37,6 +40,8 @@ type ToolResultPart = Annotated[
 
 
 class ToolResultBlock(ProviderModel):
+    # Declared because the union holding this block is discriminated on it.
+    type: str
     tool_use_id: str
     content: Annotated[
         Annotated[str, tag("string")]

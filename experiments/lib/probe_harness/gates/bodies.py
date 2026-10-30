@@ -11,13 +11,15 @@ A gate reads a model's declared fields, and searches a body's source JSON only t
 """
 
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import Never
 
 from pydantic import BaseModel, ValidationError
 
+from probe_harness.arms import ArmCapture, Arms
 from probe_harness.gates import GateFailure
+from probe_harness.json_values import JsonValue
 from probe_harness.models.claude_request import ClaudeMessage, ClaudeRequest
 from probe_harness.models.claude_response import ClaudeResponse
 from probe_harness.models.opencode_request import OpenCodeRequest
@@ -38,39 +40,66 @@ class MarkerField(StrEnum):
     MESSAGES = "messages"
 
 
-@dataclass(frozen=True)
-class ClaudeArmBodies:
-    """What one arm's sink holds, and where."""
-
-    sink: Path
-    requests: tuple[ClaudeRequest, ...]
-    responses: tuple[ClaudeResponse, ...]
+type ClaudeArms = Arms[ClaudeRequest, ClaudeResponse]
+type OpenCodeArms = Arms[OpenCodeRequest, Never]
 
 
-def claude_arms(sinks: Mapping[str, SinkValues], ws: Path) -> dict[str, ClaudeArmBodies]:
+def claude_arms(
+    sinks: Mapping[str, SinkValues],
+) -> dict[str, ArmCapture[ClaudeRequest, ClaudeResponse]]:
     """Each arm's sink values as models, refusing the run on a body that does not fit."""
     return {
-        name: ClaudeArmBodies(
-            sink=ws / name / "sink",
-            requests=_validated(ClaudeRequest, values.requests, name),
-            responses=_validated(ClaudeResponse, values.responses, name),
+        name: ArmCapture(
+            requests=_validated(ClaudeRequest, _labelled(values.requests), name),
+            responses=_validated(ClaudeResponse, _labelled(values.responses), name),
         )
         for name, values in sinks.items()
     }
 
 
-def opencode_arms(
-    sinks: Mapping[str, SinkValues], ws: Path
-) -> dict[str, tuple[OpenCodeRequest, ...]]:
+def opencode_arms(sinks: Mapping[str, SinkValues]) -> dict[str, ArmCapture[OpenCodeRequest, Never]]:
     """Each arm's sink values as models, refusing the run on a body that does not fit."""
     return {
-        name: _validated(OpenCodeRequest, values.requests, name) for name, values in sinks.items()
+        name: ArmCapture(
+            requests=_validated(OpenCodeRequest, _labelled(values.requests), name), responses=()
+        )
+        for name, values in sinks.items()
     }
 
 
-def read_claude_arms(ws: Path, arm_names: Sequence[str]) -> dict[str, ClaudeArmBodies]:
-    """Read and validate each `<ws>/<arm>/sink`, for a judge or a probe function."""
-    return claude_arms({name: read_sink(ws / name / "sink") for name in arm_names}, ws)
+def read_claude_arms(
+    ws: Path, arm_names: Sequence[str]
+) -> dict[str, ArmCapture[ClaudeRequest, ClaudeResponse]]:
+    """Read and validate each `<ws>/<arm>/sink`."""
+    return claude_arms({name: read_sink(ws / name / "sink") for name in arm_names})
+
+
+def claude_sample_arms(
+    document: JsonValue, label: str, arm_names: Sequence[str]
+) -> dict[str, ArmCapture[ClaudeRequest, ClaudeResponse]]:
+    """A sample's `{"<arm>": {"requests": [...], "responses": [...]}}` as models."""
+    arms = _sample_arms(document, label, arm_names, ("requests", "responses"))
+    return {
+        name: ArmCapture(
+            requests=_validated(ClaudeRequest, _elements(label, name, "requests", arm), name),
+            responses=_validated(ClaudeResponse, _elements(label, name, "responses", arm), name),
+        )
+        for name, arm in arms.items()
+    }
+
+
+def opencode_sample_arms(
+    document: JsonValue, label: str, arm_names: Sequence[str]
+) -> dict[str, ArmCapture[OpenCodeRequest, Never]]:
+    """A sample's `{"<arm>": {"requests": [...]}}` as models."""
+    arms = _sample_arms(document, label, arm_names, ("requests",))
+    return {
+        name: ArmCapture(
+            requests=_validated(OpenCodeRequest, _elements(label, name, "requests", arm), name),
+            responses=(),
+        )
+        for name, arm in arms.items()
+    }
 
 
 def governed(request: ClaudeRequest, field: MarkerField, marker: str) -> bool:
@@ -111,21 +140,52 @@ def _content_strings(message: ClaudeMessage) -> Iterator[str]:
         yield from block.raw.strings()
 
 
+def _labelled(entries: Sequence[SinkEntry]) -> list[tuple[str, JsonValue]]:
+    return [(entry.label, entry.value) for entry in entries]
+
+
+def _sample_arms(
+    document: JsonValue, label: str, arm_names: Sequence[str], keys: tuple[str, ...]
+) -> dict[str, dict[str, JsonValue]]:
+    """A sample document's arms, refusing unless it holds exactly the definition's arms."""
+    if not isinstance(document, dict) or list(document) != list(arm_names):
+        found = list(document) if isinstance(document, dict) else type(document).__name__
+        raise GateFailure(
+            f"{label}: input must be an object holding the arms {', '.join(arm_names)} in "
+            f"order, but holds {found}"
+        )
+    arms: dict[str, dict[str, JsonValue]] = {}
+    for name, arm in document.items():
+        if not isinstance(arm, dict) or sorted(arm) != sorted(keys):
+            raise GateFailure(f"{label}: {name} must be an object holding {', '.join(keys)}")
+        arms[name] = arm
+    return arms
+
+
+def _elements(
+    label: str, arm: str, key: str, document: Mapping[str, JsonValue]
+) -> list[tuple[str, JsonValue]]:
+    values = document[key]
+    if not isinstance(values, list):
+        raise GateFailure(f"{label}: {arm}.{key} must be a list")
+    return [(f"{label} {arm}.{key}[{i}]", value) for i, value in enumerate(values)]
+
+
 def _validated[M: BaseModel](
-    model: type[M], entries: Sequence[SinkEntry], arm: str
+    model: type[M], entries: Sequence[tuple[str, JsonValue]], arm: str
 ) -> tuple[M, ...]:
-    """Each entry as <model>, refusing at the first body that does not fit."""
+    """Each labelled value as <model>, refusing at the first body that does not fit."""
     validated: list[M] = []
-    for entry in entries:
+    for label, value in entries:
         try:
-            validated.append(model.model_validate(entry.value))
+            validated.append(model.model_validate(value))
         except ValidationError as e:
             error = e.errors()[0]
             where = field_path(error["loc"])
             # An empty path is the body itself, which is not an object.
             problem = f"{where}: {error['msg']}" if where else "the body is not a JSON object"
             raise GateFailure(
-                f"arm {arm}: {entry.label}: {problem}",
+                f"arm {arm}: {label}: {problem}",
                 "the gates cannot read this body, so the run describes nothing. No record written.",
             ) from None
     return tuple(validated)

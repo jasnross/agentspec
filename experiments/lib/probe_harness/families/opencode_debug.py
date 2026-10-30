@@ -1,8 +1,8 @@
 """The OpenCode debug family: one `opencode debug …` oracle whose output is the view.
 
 Fully script-driven: no human step, no network, no credentials. The oracle's raw output
-goes to `view.json` unprojected, because the recorder owns projection, so the expression a
-probe author validates is the one that runs.
+goes to `view.json` unprojected, and is validated against the definition's `output` model:
+a schema 1 manifest's projection reads the file, and a schema 2 assertion the model.
 
 Workspace layout: the variant's fixture tree copied to `<ws>/` (or to `<ws>/project/`
 under an isolated layout), plus `<ws>/view.json` and `<ws>/oracle.stderr`.
@@ -10,8 +10,12 @@ under an isolated layout), plus `<ws>/view.json` and `<ws>/oracle.stderr`.
 
 import shutil
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, cast
+
+from pydantic import RootModel, ValidationError
 
 from probe_harness import console, json_values
 from probe_harness.contract import Manifest
@@ -20,17 +24,19 @@ from probe_harness.families.base import (
     GateFailure,
     JudgeResult,
     ProbeFunctions,
-    Projected,
     RunOptions,
+    decide,
     file_lines,
     kept_on_failure,
     provider_env,
     record_result,
     record_tool_version,
     refused,
-    run_custom_checks,
+    run_checks,
 )
 from probe_harness.families.opencode_env import OpenCodeIsolation
+from probe_harness.json_values import JsonValue
+from probe_harness.models.raw import ProviderModel, field_path
 from probe_harness.source import write_source
 from probe_harness.workspace import create_workspace
 
@@ -38,30 +44,36 @@ FAMILY_TOOLS = ("jq", "opencode")
 
 
 @dataclass(frozen=True)
-class OpenCodeDebugProbe:
+class OpenCodeDebugProbe[D: ProviderModel | RootModel[Any]]:
     # After `opencode debug`, e.g. ("config", "--pure").
     argv: tuple[str, ...]
+    # The model the oracle's document is validated against.
+    output: type[D]
     variants: tuple[str, ...] = ("assertion",)
     isolation: OpenCodeIsolation | None = None
-    custom_checks: tuple[CustomCheck, ...] = ()
-    functions: ProbeFunctions[Path] = field(default_factory=ProbeFunctions)
+    # Required by a schema 2 manifest declaring `expected`, and refused by a schema 1 one.
+    assertion: Callable[[D], JsonValue] | None = None
+    custom_checks: tuple[CustomCheck[D], ...] = ()
+    functions: ProbeFunctions[D] = field(default_factory=ProbeFunctions)
 
 
-def run(manifest: Manifest, name: str, options: RunOptions, probe: OpenCodeDebugProbe) -> int:
+def run[D: ProviderModel | RootModel[Any]](
+    manifest: Manifest, name: str, options: RunOptions, probe: OpenCodeDebugProbe[D]
+) -> int:
     package = manifest.path.parent
     ws = create_workspace(name, options.variant)
     with kept_on_failure(ws):
         write_source(ws, options.source)
         try:
             _arrange_and_act(manifest, package, ws, options.variant, probe)
-            result = judge(ws, probe)
+            result = judge(ws, probe, manifest)
         except GateFailure as e:
             return refused(e, ws)
         return record_result(manifest, ws, result, options)
 
 
-def judge(ws: Path, probe: OpenCodeDebugProbe) -> JudgeResult:
-    """Judge a workspace from the files the oracle left: its output and its stderr."""
+def parse[D: ProviderModel | RootModel[Any]](ws: Path, probe: OpenCodeDebugProbe[D]) -> D:
+    """The oracle's document as the definition's `output` model, from the files it left."""
     view = ws / "view.json"
     if not view.is_file() or view.stat().st_size == 0:
         raise GateFailure(
@@ -81,17 +93,50 @@ def judge(ws: Path, probe: OpenCodeDebugProbe) -> JudgeResult:
             f"the oracle wrote a document that is not valid JSON — {view.stat().st_size} bytes at "
             f"{view}"
         )
-    run_custom_checks(probe.custom_checks, view, None)
+    return _validated(probe, document, str(view))
+
+
+def parse_sample[D: ProviderModel | RootModel[Any]](
+    document: JsonValue, label: str, probe: OpenCodeDebugProbe[D]
+) -> D:
+    """A sample's input as the model `parse` would have read."""
+    return _validated(probe, document, label)
+
+
+def judge[D: ProviderModel | RootModel[Any]](
+    ws: Path, probe: OpenCodeDebugProbe[D], manifest: Manifest
+) -> JudgeResult:
+    """Judge a workspace from the files the oracle left: its output and its stderr."""
+    value = parse(ws, probe)
+    run_checks(probe.custom_checks, value)
     if probe.functions.judge is not None:
-        probe.functions.judge(ws)
+        probe.functions.judge(value)
+    view = ws / "view.json"
     # Printed before recording: a dry or failed record keeps the workspace, and this view is
     # what a candidate projection is iterated against.
     console.say(f"the assembled view is at {view}")
-    return JudgeResult(Projected(view))
+    return decide(manifest, probe.assertion, value, view)
 
 
-def _arrange_and_act(
-    manifest: Manifest, package: Path, ws: Path, variant: str, probe: OpenCodeDebugProbe
+def _validated[D: ProviderModel | RootModel[Any]](
+    probe: OpenCodeDebugProbe[D], document: JsonValue, label: str
+) -> D:
+    try:
+        # `model_validate` returns an instance of `output`, which is `D`; mypy cannot follow
+        # `Self` through a union bound.
+        return cast(D, probe.output.model_validate(document))
+    except ValidationError as e:
+        error = e.errors()[0]
+        where = field_path(error["loc"]) or "the document"
+        raise GateFailure(
+            f"{label}: {where}: {error['msg']}",
+            f"the oracle's output does not fit {probe.output.__name__}, so the run cannot be "
+            "read. No record written.",
+        ) from None
+
+
+def _arrange_and_act[D: ProviderModel | RootModel[Any]](
+    manifest: Manifest, package: Path, ws: Path, variant: str, probe: OpenCodeDebugProbe[D]
 ) -> None:
     source = package / "fixtures" / variant
     env = None

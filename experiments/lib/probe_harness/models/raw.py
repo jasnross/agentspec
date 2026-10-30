@@ -18,6 +18,7 @@ declared.
 
 import json
 from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from typing import Any, Self, final
 
 from pydantic import (
@@ -102,6 +103,26 @@ class ProviderModel(BaseModel):
         model = handler(data)
         model._source = data
         return model
+
+
+@dataclass(frozen=True)
+class ExpectedAbsent:
+    """`Annotated` metadata on a `MISSING`-able field no committed sample is expected to carry.
+
+    The field-coverage test requires every such field to be present in some sample, so a
+    field declared for a shape no capture shows must say why it is declared anyway.
+    """
+
+    reason: str
+
+
+def sample_source(value: ProviderModel | RawJson) -> JsonValue:
+    """The JSON <value> was validated from, for `samples.py`, which rewrites a body.
+
+    No gate or assertion reads a body through this: they read declared fields, and search
+    the rest through `RawJson`.
+    """
+    return value._source if isinstance(value, ProviderModel) else value._value
 
 
 def tag(name: str) -> Tag:

@@ -30,7 +30,7 @@ def test_a_sink_with_no_request_file_is_the_family_s_refusal(tmp_path: Path) -> 
     _sink(tmp_path, "b")
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.judge(tmp_path, PROBE)
+        claude_otel.parse(tmp_path, PROBE)
     assert exc.value.lines == (f"the b arm captured no request files in {tmp_path}/b/sink",)
 
 
@@ -44,7 +44,7 @@ def test_only_request_json_files_count_as_requests(tmp_path: Path) -> None:
     assert values.responses == [views.SinkEntry(sink / "one.response.json", {"x": 1})]
     _sink(tmp_path, "b", two_request_json="{}\n")
     with pytest.raises(GateFailure) as exc:
-        claude_otel.judge(tmp_path, PROBE)
+        claude_otel.parse(tmp_path, PROBE)
     assert "a arm captured no request files" in exc.value.lines[0]
 
 

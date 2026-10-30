@@ -552,6 +552,137 @@ def test_a_capture_whose_payloads_are_not_json_is_refused_without_a_record(
 
     assert record_in_process(parse_manifest(pkg / "probe.json"), ws) == 1
     captured = capsys.readouterr()
-    assert "the captured payloads at" in captured.err
-    assert "are not valid JSON" in captured.err
+    assert "the capture holds 1 line(s) the payload model does not recognize:" in captured.err
+    assert "  line 1: not JSON: " in captured.err
     assert not (pkg / "results").exists()
+
+
+V2_MANUAL_PROBE_PY = """\
+from pydantic import MISSING
+from probe_harness.families.manual import ManualProbe
+from probe_harness.models.raw import ProviderModel
+
+
+class Line(ProviderModel):
+    hook_event_name: {event_type}
+
+
+def _wait_for(lines) -> bool:
+    events = [getattr(line, "hook_event_name", None) for line in lines]
+    # Raises only while a boom is the newest line, so a later line lets the poll finish.
+    if events and events[-1] == "boom":
+        raise RuntimeError("cannot read a boom")
+    return "stop" in events
+
+
+PROBE = ManualProbe(
+    instructions="drive it",
+    payload=Line,
+    wait_for=_wait_for,
+    assertion=lambda lines: len(lines),
+)
+"""
+
+
+def _put_v2_manual(tree: Path, name: str, expected: int) -> Path:
+    package = tree / name
+    capture = package / "fixtures" / "capture"
+    capture.mkdir(parents=True)
+    shutil.copy2(DUMP_HOOK, capture / "dump-hook.sh")
+    (package / "fixtures" / "assertion").mkdir()
+    manifest = {
+        "schema_version": 2,
+        "provider": "cursor",
+        "driver": "manual",
+        "depth": None,
+        "question": "q",
+        "version_source": {"kind": "none"},
+        "assertion": {"expected": expected},
+    }
+    (package / "probe.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    (package / "probe.py").write_text(V2_MANUAL_PROBE_PY.format(event_type="str"), encoding="utf-8")
+    return package
+
+
+def _live_run(name: str, outfile: Path, steps: list[tuple[float, str]]) -> tuple[int, Path]:
+    """Run <name> live, appending each step's line to the capture after its delay."""
+    with outfile.open("w", encoding="utf-8") as out:
+        runner = subprocess.Popen(
+            [str(EXPERIMENTS_DIR / "probe"), "run", name],
+            env={**os.environ, "PROBE_TIMEOUT_SECONDS": "40"},
+            stdin=subprocess.DEVNULL,
+            stdout=out,
+            stderr=subprocess.STDOUT,
+        )
+    try:
+        project = _wait_for_project(outfile)
+        assert project is not None, outfile.read_text(encoding="utf-8")
+        payloads = project.parent / "capture" / "payloads.jsonl"
+        for delay, line in steps:
+            time.sleep(delay)
+            with payloads.open("a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        return runner.wait(timeout=60), project.parent
+    finally:
+        if runner.poll() is None:
+            runner.kill()
+            runner.wait()
+
+
+def test_unrecognized_lines_and_a_raising_wait_for_are_reported_once_while_polling(
+    tree: Path, tmp_path: Path
+) -> None:
+    _put_v2_manual(tree, "v2-manual", expected=4)
+    outfile = tmp_path / "probe.out"
+
+    code, ws = _live_run(
+        "v2-manual",
+        outfile,
+        [
+            (0, '{"hook_event_name":"start"}'),
+            (0, '{"other":1}'),
+            (0, "not json at all"),
+            (0, '{"hook_event_name":"boom"}'),
+            # Long enough for several polls to see the lines above.
+            (5, '{"hook_event_name":"stop"}'),
+        ],
+    )
+
+    output = outfile.read_text(encoding="utf-8")
+    assert code == 1, output
+    unrecognized = "probe run: the capture holds a line the payload model does not recognize: "
+    assert output.count(f"{unrecognized}line 2: hook_event_name: Field required") == 1
+    assert output.count(f"{unrecognized}line 3: not JSON: ") == 1
+    raised = "probe run: the wait_for raised RuntimeError: cannot read a boom (polling continues)"
+    assert output.count(raised) == 1
+    assert "probe run: the capture holds 2 line(s) the payload model does not recognize:" in output
+    assert f"the workspace has been kept for inspection: {ws}" in output
+    assert not (tree / "v2-manual" / "results").exists()
+
+
+def test_a_capture_refused_for_a_model_gap_records_once_the_model_is_fixed(
+    cli: Cli, tree: Path, tmp_path: Path
+) -> None:
+    package = _put_v2_manual(tree, "v2-manual", expected=3)
+    outfile = tmp_path / "probe.out"
+
+    code, ws = _live_run(
+        "v2-manual",
+        outfile,
+        [
+            (0, '{"hook_event_name":"start"}'),
+            (0, '{"event":"renamed"}'),
+            (3, '{"hook_event_name":"stop"}'),
+        ],
+    )
+    output = outfile.read_text(encoding="utf-8")
+    assert code == 1, output
+    assert "probe run:   line 2: hook_event_name: Field required" in output
+    assert not (package / "results").exists()
+
+    (package / "probe.py").write_text(
+        V2_MANUAL_PROBE_PY.format(event_type="str | MISSING = MISSING"), encoding="utf-8"
+    )
+    recorded = cli("record", "v2-manual", ws)
+    assert recorded.returncode == 0, recorded.output
+    assert "probe record: confirmed — observed 3" in recorded.stderr

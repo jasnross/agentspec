@@ -10,6 +10,10 @@ an exported one would make a probe measure the operator's shell.
 
 Workspace layout, per arm: `<ws>/<arm>/{project, sink, stdout, stderr, mcp.json | fxp/,
 fx.stamp}`, plus `<ws>/view.json`.
+
+Judging is `parse`, which reads every arm's sink into models, then the gates, the custom
+checks and the definition's judge function, then the outcome. The expressions see the arms
+`expression_input` gives them: responses only when the definition requires them.
 """
 
 import os
@@ -22,26 +26,32 @@ from pathlib import Path
 from typing import assert_never
 
 from probe_harness import console, views
+from probe_harness.arms import ArmCapture
 from probe_harness.contract import Manifest
 from probe_harness.families.base import (
     CustomCheck,
     GateFailure,
+    JqCustomCheck,
     JudgeResult,
     ProbeFunctions,
-    Projected,
     RunOptions,
+    decide,
     file_lines,
     kept_on_failure,
     provider_env,
     record_result,
     record_tool_version,
     refused,
-    run_custom_checks,
+    run_checks,
+    run_jq_checks,
+    split_checks,
 )
 from probe_harness.gates import bodies, stamp
 from probe_harness.gates import claude_otel as gates
-from probe_harness.gates.bodies import ClaudeArmBodies
+from probe_harness.gates.bodies import ClaudeArms as ClaudeArms
 from probe_harness.gates.bodies import MarkerField as MarkerField
+from probe_harness.json_values import JsonValue
+from probe_harness.models.raw import sample_source
 from probe_harness.source import write_source
 from probe_harness.workspace import create_workspace, template_file
 
@@ -159,12 +169,15 @@ class ClaudeOtelProbe:
     marker_field: MarkerField = MarkerField.SYSTEM
     unset_env: tuple[str, ...] = ()
     set_env: tuple[tuple[str, str], ...] = ()
-    # Append each arm's response bodies to its view entry, for projections reading calls.
-    responses_in_view: bool = False
-    custom_checks: tuple[CustomCheck, ...] = ()
+    # Hand each arm's response bodies to the expressions, for an assertion reading calls; a
+    # schema 1 view appends them to each arm's requests.
+    requires_responses: bool = False
+    # Required by a schema 2 manifest declaring `expected`, and refused by a schema 1 one.
+    assertion: Callable[[ClaudeArms], JsonValue] | None = None
+    custom_checks: tuple[CustomCheck[ClaudeArms] | JqCustomCheck, ...] = ()
     variants: tuple[str, ...] = ("assertion",)
     arrange_arm: ArmArrange | None = None
-    functions: ProbeFunctions[Path] = field(default_factory=ProbeFunctions)
+    functions: ProbeFunctions[ClaudeArms] = field(default_factory=ProbeFunctions)
 
 
 def run(manifest: Manifest, name: str, options: RunOptions, probe: ClaudeOtelProbe) -> int:
@@ -176,14 +189,14 @@ def run(manifest: Manifest, name: str, options: RunOptions, probe: ClaudeOtelPro
             record_tool_version(manifest, ws)
             for arm in probe.arms:
                 _run_arm(package / "fixtures" / options.variant, ws, arm, probe)
-            result = judge(ws, probe)
+            result = judge(ws, probe, manifest)
         except GateFailure as e:
             return refused(e, ws)
         return record_result(manifest, ws, result, options)
 
 
-def judge(ws: Path, probe: ClaudeOtelProbe) -> JudgeResult:
-    """Judge a workspace from the sinks and stamps its arms left."""
+def parse(ws: Path, probe: ClaudeOtelProbe) -> ClaudeArms:
+    """Every arm's sink as models, refusing an arm that captured nothing it can be read by."""
     arms = [arm.name for arm in probe.arms]
     # Without a connected server, an arm's tool set describes nothing.
     for served in (arm for arm in probe.arms if arm.server is not None):
@@ -196,38 +209,62 @@ def judge(ws: Path, probe: ClaudeOtelProbe) -> JudgeResult:
         sink = ws / name / "sink"
         if not any(sink.glob("*.request.json")):
             raise GateFailure(f"the {name} arm captured no request files in {sink}")
-    sinks = {name: views.read_sink(ws / name / "sink") for name in arms}
-    view = ws / "view.json"
-    views.write_arm_view(
-        view, {name: [e.value for e in values.requests] for name, values in sinks.items()}
-    )
-    typed = bodies.claude_arms(sinks, ws)
-    gates.marker(typed, probe.marker, probe.marker_field)
-    for gate in probe.gates:
-        _check(gate, typed, probe)
-    run_custom_checks(probe.custom_checks, view, probe.marker)
-    if probe.functions.judge is not None:
-        probe.functions.judge(ws)
-    if probe.responses_in_view:
+    if probe.requires_responses:
         for name in arms:
             if not any((ws / name / "sink").glob("*.response.json")):
                 raise GateFailure(
                     f"the {name} arm captured no response files in {ws / name / 'sink'}"
                 )
-        views.write_arm_view(
-            view,
-            {
-                name: [e.value for e in (*values.requests, *values.responses)]
-                for name, values in sinks.items()
-            },
-        )
+    return bodies.read_claude_arms(ws, arms)
+
+
+def parse_sample(document: JsonValue, label: str, probe: ClaudeOtelProbe) -> ClaudeArms:
+    """A sample's input as the arms `parse` would have read."""
+    return bodies.claude_sample_arms(document, label, [arm.name for arm in probe.arms])
+
+
+def expression_input(arms: ClaudeArms, probe: ClaudeOtelProbe) -> ClaudeArms:
+    """What the assertion, custom checks and judge function see: responses only on request."""
+    if probe.requires_responses:
+        return arms
+    return {name: ArmCapture(capture.requests, ()) for name, capture in arms.items()}
+
+
+def view(arms: ClaudeArms, *, with_responses: bool) -> dict[str, list[JsonValue]]:
+    """The schema 1 view: each arm's request bodies, then, <with_responses>, its responses."""
+    return {
+        name: [
+            sample_source(body)
+            for body in (*capture.requests, *(capture.responses if with_responses else ()))
+        ]
+        for name, capture in arms.items()
+    }
+
+
+def judge(ws: Path, probe: ClaudeOtelProbe, manifest: Manifest) -> JudgeResult:
+    """Judge a workspace from the sinks and stamps its arms left."""
+    arms = parse(ws, probe)
+    view_path = ws / "view.json"
+    # Requests only, for the schema 1 custom checks; responses join after them.
+    views.write_arm_view(view_path, view(arms, with_responses=False))
+    gates.marker(arms, probe.marker, probe.marker_field)
+    for gate in probe.gates:
+        _check(gate, arms, ws, probe)
+    value = expression_input(arms, probe)
+    python_checks, jq_checks = split_checks(probe.custom_checks)
+    run_jq_checks(jq_checks, view_path, probe.marker)
+    run_checks(python_checks, value)
+    if probe.functions.judge is not None:
+        probe.functions.judge(value)
+    if probe.requires_responses:
+        views.write_arm_view(view_path, view(arms, with_responses=True))
     # Printed before recording: a dry or failed record keeps the workspace, and this view is
     # what a candidate projection is iterated against.
-    console.say(f"the assembled view is at {view}")
-    return JudgeResult(Projected(view))
+    console.say(f"the assembled view is at {view_path}")
+    return decide(manifest, probe.assertion, value, view_path)
 
 
-def _check(gate: ClaudeGate, arms: dict[str, ClaudeArmBodies], probe: ClaudeOtelProbe) -> None:
+def _check(gate: ClaudeGate, arms: ClaudeArms, ws: Path, probe: ClaudeOtelProbe) -> None:
     match gate:
         case Control():
             gates.control(arms, probe.marker, probe.marker_field)
@@ -240,11 +277,11 @@ def _check(gate: ClaudeGate, arms: dict[str, ClaudeArmBodies], probe: ClaudeOtel
         case McpAbsent(prefix=prefix):
             gates.mcp_absent(arms, probe.marker, prefix)
         case DelegationBackground(arm=arm, expected=expected):
-            gates.delegation_background(arms, arm, expected)
+            gates.delegation_background(arms, ws, arm, expected)
         case DelegationFork(arm=arm):
-            gates.delegation_fork(arms, arm)
+            gates.delegation_fork(arms, ws, arm)
         case ToolAnswered(arm=arm, tool=tool):
-            gates.tool_answered(arms, arm, tool)
+            gates.tool_answered(arms, ws, arm, tool)
         case _:
             assert_never(gate)
 

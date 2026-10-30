@@ -6,5 +6,8 @@ no resolution check of its own.
 """
 
 from probe_harness.families.opencode_debug import OpenCodeDebugProbe
+from probe_harness.models.opencode_debug import OpenCodeAgent
 
-PROBE = OpenCodeDebugProbe(argv=("agent", "probe"), variants=("assertion", "discriminator"))
+PROBE = OpenCodeDebugProbe(
+    argv=("agent", "probe"), output=OpenCodeAgent, variants=("assertion", "discriminator")
+)

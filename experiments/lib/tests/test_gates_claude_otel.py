@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 from probe_harness.gates import GateFailure, bodies, claude_otel
-from probe_harness.gates.bodies import ClaudeArmBodies, MarkerField
+from probe_harness.gates.bodies import ClaudeArms, MarkerField
 from probe_harness.views import SinkEntry, SinkValues
 
 from tests.conftest import (
@@ -164,7 +164,7 @@ def tool_call_sink(ws: Path, arm: str, tool: str, answer: str = "answered") -> N
 
 def arms_from_view(
     view: dict[str, list[Any]], responses: dict[str, list[Any]] | None = None
-) -> dict[str, ClaudeArmBodies]:
+) -> ClaudeArms:
     """Each arm's fabricated request bodies, and any response bodies, validated as a judge does."""
     return bodies.claude_arms(
         {
@@ -173,8 +173,7 @@ def arms_from_view(
                 responses=_entries(arm, "response", (responses or {}).get(arm, [])),
             )
             for arm, requests in view.items()
-        },
-        Path(),
+        }
     )
 
 
@@ -185,7 +184,7 @@ def _entries(arm: str, kind: str, values: list[Any]) -> list[SinkEntry]:
     ]
 
 
-def arms_from_ws(ws: Path, *arms: str) -> dict[str, ClaudeArmBodies]:
+def arms_from_ws(ws: Path, *arms: str) -> ClaudeArms:
     """The fabricated sinks under <ws>, read and parsed as a judge reads them."""
     return bodies.read_claude_arms(ws, arms)
 
@@ -607,7 +606,7 @@ def test_gate_delegation_background_passes_for_true_when_every_call_asked_for_an
     ws = tmp_path / "ws"
     delegation_sink(ws, "bg", "t1:true:async", "t2:true:async")
 
-    claude_otel.delegation_background(arms_from_ws(ws, "bg"), "bg", True)
+    claude_otel.delegation_background(arms_from_ws(ws, "bg"), ws, "bg", True)
 
 
 def test_gate_delegation_background_passes_for_false_when_the_call_set_false_and_ran_synchronously(
@@ -616,7 +615,7 @@ def test_gate_delegation_background_passes_for_false_when_the_call_set_false_and
     ws = tmp_path / "ws"
     delegation_sink(ws, "fg", "t1:false:sync")
 
-    claude_otel.delegation_background(arms_from_ws(ws, "fg"), "fg", False)
+    claude_otel.delegation_background(arms_from_ws(ws, "fg"), ws, "fg", False)
 
 
 def test_gate_delegation_background_fails_for_false_when_the_field_is_absent_and_the_call_ran_async(
@@ -628,7 +627,7 @@ def test_gate_delegation_background_fails_for_false_when_the_field_is_absent_and
     delegation_sink(ws, "fg", "t1:omit:async")
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.delegation_background(arms_from_ws(ws, "fg"), "fg", False)
+        claude_otel.delegation_background(arms_from_ws(ws, "fg"), ws, "fg", False)
     assert "did not delegate with run_in_background=false" in failure_output(exc)
 
 
@@ -639,7 +638,7 @@ def test_gate_delegation_background_fails_when_the_call_asked_for_false_but_ran_
     delegation_sink(ws, "fg", "t1:false:async")
 
     with pytest.raises(GateFailure):
-        claude_otel.delegation_background(arms_from_ws(ws, "fg"), "fg", False)
+        claude_otel.delegation_background(arms_from_ws(ws, "fg"), ws, "fg", False)
 
 
 def test_gate_delegation_background_fails_when_the_arm_made_no_agent_call(tmp_path: Path) -> None:
@@ -653,7 +652,7 @@ def test_gate_delegation_background_fails_when_the_arm_made_no_agent_call(tmp_pa
     (sink / "q.request.json").write_text(compact(request), encoding="utf-8")
 
     with pytest.raises(GateFailure):
-        claude_otel.delegation_background(arms_from_ws(ws, "bg"), "bg", True)
+        claude_otel.delegation_background(arms_from_ws(ws, "bg"), ws, "bg", True)
 
 
 def test_gate_delegation_background_fails_when_one_of_two_calls_disagrees(tmp_path: Path) -> None:
@@ -661,7 +660,7 @@ def test_gate_delegation_background_fails_when_one_of_two_calls_disagrees(tmp_pa
     delegation_sink(ws, "bg", "t1:true:async", "t2:false:sync")
 
     with pytest.raises(GateFailure):
-        claude_otel.delegation_background(arms_from_ws(ws, "bg"), "bg", True)
+        claude_otel.delegation_background(arms_from_ws(ws, "bg"), ws, "bg", True)
 
 
 def test_gate_delegation_background_fails_when_a_call_was_never_answered(tmp_path: Path) -> None:
@@ -669,7 +668,7 @@ def test_gate_delegation_background_fails_when_a_call_was_never_answered(tmp_pat
     delegation_sink(ws, "bg", "t1:true:async", "t2:true:none")
 
     with pytest.raises(GateFailure):
-        claude_otel.delegation_background(arms_from_ws(ws, "bg"), "bg", True)
+        claude_otel.delegation_background(arms_from_ws(ws, "bg"), ws, "bg", True)
 
 
 def test_gate_delegation_background_fails_for_true_when_the_field_is_absent_even_though_the_call_ran_async(  # noqa: E501
@@ -681,7 +680,7 @@ def test_gate_delegation_background_fails_for_true_when_the_field_is_absent_even
     delegation_sink(ws, "bg", "t1:omit:async")
 
     with pytest.raises(GateFailure):
-        claude_otel.delegation_background(arms_from_ws(ws, "bg"), "bg", True)
+        claude_otel.delegation_background(arms_from_ws(ws, "bg"), ws, "bg", True)
 
 
 def test_gate_delegation_background_fails_for_false_when_the_field_is_absent_even_though_the_call_ran_synchronously(  # noqa: E501
@@ -691,7 +690,7 @@ def test_gate_delegation_background_fails_for_false_when_the_field_is_absent_eve
     delegation_sink(ws, "fg", "t1:omit:sync")
 
     with pytest.raises(GateFailure):
-        claude_otel.delegation_background(arms_from_ws(ws, "fg"), "fg", False)
+        claude_otel.delegation_background(arms_from_ws(ws, "fg"), ws, "fg", False)
 
 
 def test_gate_delegation_background_does_not_read_a_number_as_true(tmp_path: Path) -> None:
@@ -703,7 +702,7 @@ def test_gate_delegation_background_does_not_read_a_number_as_true(tmp_path: Pat
     )
 
     with pytest.raises(GateFailure):
-        claude_otel.delegation_background(arms_from_ws(ws, "bg"), "bg", True)
+        claude_otel.delegation_background(arms_from_ws(ws, "bg"), ws, "bg", True)
 
 
 def test_gate_delegation_background_fails_when_the_call_asked_for_true_but_ran_synchronously(
@@ -713,7 +712,7 @@ def test_gate_delegation_background_fails_when_the_call_asked_for_true_but_ran_s
     delegation_sink(ws, "bg", "t1:true:sync")
 
     with pytest.raises(GateFailure):
-        claude_otel.delegation_background(arms_from_ws(ws, "bg"), "bg", True)
+        claude_otel.delegation_background(arms_from_ws(ws, "bg"), ws, "bg", True)
 
 
 def test_gate_delegation_background_reads_a_tool_result_whose_content_is_a_bare_string(
@@ -722,7 +721,7 @@ def test_gate_delegation_background_reads_a_tool_result_whose_content_is_a_bare_
     ws = tmp_path / "ws"
     delegation_sink(ws, "bg", "t1:true:async-string")
 
-    claude_otel.delegation_background(arms_from_ws(ws, "bg"), "bg", True)
+    claude_otel.delegation_background(arms_from_ws(ws, "bg"), ws, "bg", True)
 
 
 def test_gate_delegation_background_fails_and_says_so_when_the_sink_holds_no_responses(
@@ -735,7 +734,7 @@ def test_gate_delegation_background_fails_and_says_so_when_the_sink_holds_no_res
     )
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.delegation_background(arms_from_ws(ws, "bg"), "bg", True)
+        claude_otel.delegation_background(arms_from_ws(ws, "bg"), ws, "bg", True)
     assert "captured 0 response and 1 request files" in failure_output(exc)
 
 
@@ -746,7 +745,7 @@ def test_gate_delegation_fork_passes_when_the_agent_schema_lacks_run_in_backgrou
     agent_schema_request(ws, "fork", "without")
     delegation_sink(ws, "fork", "t1:omit:async", "t2:omit:async-string")
 
-    claude_otel.delegation_fork(arms_from_ws(ws, "fork"), "fork")
+    claude_otel.delegation_fork(arms_from_ws(ws, "fork"), ws, "fork")
 
 
 def test_gate_delegation_fork_fails_when_the_agent_schema_declares_run_in_background_though_the_call_ran_async(  # noqa: E501
@@ -759,7 +758,7 @@ def test_gate_delegation_fork_fails_when_the_agent_schema_declares_run_in_backgr
     delegation_sink(ws, "fork", "t1:omit:async")
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.delegation_fork(arms_from_ws(ws, "fork"), "fork")
+        claude_otel.delegation_fork(arms_from_ws(ws, "fork"), ws, "fork")
     output = failure_output(exc)
     assert "declares run_in_background, so fork mode was off" in output
     assert "No record written" in output
@@ -770,7 +769,7 @@ def test_gate_delegation_fork_fails_when_no_request_offers_the_agent_tool(tmp_pa
     delegation_sink(ws, "fork", "t1:omit:async")
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.delegation_fork(arms_from_ws(ws, "fork"), "fork")
+        claude_otel.delegation_fork(arms_from_ws(ws, "fork"), ws, "fork")
     assert "has no request offering the Agent tool" in failure_output(exc)
 
 
@@ -782,7 +781,7 @@ def test_gate_delegation_fork_fails_when_a_call_s_result_is_not_asynchronous(
     delegation_sink(ws, "fork", "t1:omit:sync")
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.delegation_fork(arms_from_ws(ws, "fork"), "fork")
+        claude_otel.delegation_fork(arms_from_ws(ws, "fork"), ws, "fork")
     assert "did not run in the background" in failure_output(exc)
 
 
@@ -792,7 +791,7 @@ def test_gate_delegation_fork_fails_when_a_call_was_never_answered(tmp_path: Pat
     delegation_sink(ws, "fork", "t1:omit:async", "t2:omit:none")
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.delegation_fork(arms_from_ws(ws, "fork"), "fork")
+        claude_otel.delegation_fork(arms_from_ws(ws, "fork"), ws, "fork")
     assert "did not run in the background" in failure_output(exc)
 
 
@@ -805,7 +804,7 @@ def test_gate_delegation_fork_fails_when_the_arm_made_no_agent_call(tmp_path: Pa
     )
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.delegation_fork(arms_from_ws(ws, "fork"), "fork")
+        claude_otel.delegation_fork(arms_from_ws(ws, "fork"), ws, "fork")
     assert "made no Agent call" in failure_output(exc)
 
 
@@ -829,7 +828,7 @@ def test_gate_delegation_fork_fails_and_says_so_when_the_sink_holds_no_responses
     agent_schema_request(ws, "fork", "without")
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.delegation_fork(arms_from_ws(ws, "fork"), "fork")
+        claude_otel.delegation_fork(arms_from_ws(ws, "fork"), ws, "fork")
     assert "captured 0 response and 1 request files" in failure_output(exc)
 
 
@@ -839,7 +838,7 @@ def test_gate_tool_answered_passes_when_the_named_tool_was_called_and_answered(
     ws = tmp_path / "ws"
     tool_call_sink(ws, "a", "mcp__fx__alpha")
 
-    claude_otel.tool_answered(arms_from_ws(ws, "a"), "a", "mcp__fx__alpha")
+    claude_otel.tool_answered(arms_from_ws(ws, "a"), ws, "a", "mcp__fx__alpha")
 
 
 def test_gate_tool_answered_fails_when_the_call_has_no_tool_result(tmp_path: Path) -> None:
@@ -847,7 +846,7 @@ def test_gate_tool_answered_fails_when_the_call_has_no_tool_result(tmp_path: Pat
     tool_call_sink(ws, "a", "mcp__fx__alpha", "unanswered")
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.tool_answered(arms_from_ws(ws, "a"), "a", "mcp__fx__alpha")
+        claude_otel.tool_answered(arms_from_ws(ws, "a"), ws, "a", "mcp__fx__alpha")
     assert "no answered call to mcp__fx__alpha" in failure_output(exc)
 
 
@@ -856,7 +855,7 @@ def test_gate_tool_answered_fails_when_only_a_different_tool_was_called(tmp_path
     tool_call_sink(ws, "a", "ToolSearch")
 
     with pytest.raises(GateFailure):
-        claude_otel.tool_answered(arms_from_ws(ws, "a"), "a", "mcp__fx__alpha")
+        claude_otel.tool_answered(arms_from_ws(ws, "a"), ws, "a", "mcp__fx__alpha")
 
 
 def test_gate_tool_answered_fails_when_the_name_appears_only_in_a_user_message_s_text(
@@ -873,7 +872,7 @@ def test_gate_tool_answered_fails_when_the_name_appears_only_in_a_user_message_s
     (sink / "q.request.json").write_text(compact(request), encoding="utf-8")
 
     with pytest.raises(GateFailure):
-        claude_otel.tool_answered(arms_from_ws(ws, "a"), "a", "mcp__fx__alpha")
+        claude_otel.tool_answered(arms_from_ws(ws, "a"), ws, "a", "mcp__fx__alpha")
 
 
 def test_gate_tool_answered_fails_and_says_so_when_the_sink_holds_no_responses(
@@ -884,7 +883,7 @@ def test_gate_tool_answered_fails_and_says_so_when_the_sink_holds_no_responses(
     (sink / "q.request.json").write_text(compact(claude_request(system="x")), encoding="utf-8")
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.tool_answered(arms_from_ws(ws, "a"), "a", "mcp__fx__alpha")
+        claude_otel.tool_answered(arms_from_ws(ws, "a"), ws, "a", "mcp__fx__alpha")
     assert "captured 0 response and 1 request files" in failure_output(exc)
 
 
@@ -906,7 +905,7 @@ def test_gate_tool_answered_fails_when_the_only_tool_result_answers_a_different_
     (sink / "q.request.json").write_text(compact(request), encoding="utf-8")
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.tool_answered(arms_from_ws(ws, "a"), "a", "mcp__fx__alpha")
+        claude_otel.tool_answered(arms_from_ws(ws, "a"), ws, "a", "mcp__fx__alpha")
     assert "no answered call to mcp__fx__alpha" in failure_output(exc)
 
 
@@ -922,5 +921,5 @@ def test_gate_tool_answered_fails_and_says_so_when_the_sink_holds_no_requests(
     )
 
     with pytest.raises(GateFailure) as exc:
-        claude_otel.tool_answered(arms_from_ws(ws, "a"), "a", "mcp__fx__alpha")
+        claude_otel.tool_answered(arms_from_ws(ws, "a"), ws, "a", "mcp__fx__alpha")
     assert "captured 1 response and 0 request files" in failure_output(exc)

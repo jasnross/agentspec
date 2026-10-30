@@ -6,11 +6,18 @@ from pathlib import Path
 from probe_harness.gates import APPARATUS_FAILURE, GateFailure, stamp
 from probe_harness.models.opencode_request import OpenCodeRequest
 
-__all__ = ["APPARATUS_FAILURE", "GOVERNED_JQ", "governed", "stamp", "tool_result"]
+__all__ = [
+    "APPARATUS_FAILURE",
+    "GOVERNED_JQ",
+    "governed",
+    "governed_requests",
+    "stamp",
+    "tool_result",
+]
 
 
 # The `any(…)` arguments selecting a governed request (the marker in a system message), for a
-# definition's custom check. `$m` is the marker; `_governed_requests` is the same in Python.
+# schema 1 custom check. `$m` is the marker; `governed_requests` is the same in Python.
 GOVERNED_JQ = '.messages[]?; .role == "system" and (.content | tostring | contains($m))'
 
 
@@ -20,7 +27,7 @@ def governed(requests: Sequence[OpenCodeRequest], arm: str, marker: str, stderr:
     OpenCode warns rather than fails on an unknown `--agent` and runs its default agent,
     whose requests carry no marker, so an arm without one measured another agent.
     """
-    if not _governed_requests(requests, marker):
+    if not governed_requests(requests, marker):
         raise GateFailure(
             f"arm {arm}: no request carried {marker} in a system message.",
             f"OpenCode may have fallen back to its default agent; see {stderr}.",
@@ -36,7 +43,7 @@ def tool_result(requests: Sequence[OpenCodeRequest], arm: str, marker: str, stde
     the rejection before sending a follow-up.
     """
     if not any(
-        any(m.role == "tool" for m in r.messages) for r in _governed_requests(requests, marker)
+        any(m.role == "tool" for m in r.messages) for r in governed_requests(requests, marker)
     ):
         raise GateFailure(
             f"arm {arm}: no marked request carried a tool result.",
@@ -48,7 +55,7 @@ def tool_result(requests: Sequence[OpenCodeRequest], arm: str, marker: str, stde
         )
 
 
-def _governed_requests(requests: Sequence[OpenCodeRequest], marker: str) -> list[OpenCodeRequest]:
+def governed_requests(requests: Sequence[OpenCodeRequest], marker: str) -> list[OpenCodeRequest]:
     """The requests carrying <marker> in a system message."""
     return [
         r

@@ -271,12 +271,11 @@ def test_a_nonzero_claude_exit_refuses_with_its_stderr(
 
 
 RICH_DEFINITION = textwrap.dedent(f"""\
-    import json
     from pathlib import Path
 
     from probe_harness.families.base import CustomCheck, ProbeFunctions
     from probe_harness.families.claude_otel import (
-        ClaudeArm, ClaudeOtelProbe, McpConfig, McpConnected, PluginDir, ToolAnswered,
+        ClaudeArm, ClaudeArms, ClaudeOtelProbe, McpConfig, McpConnected, PluginDir, ToolAnswered,
     )
 
     _ORDER = Path(__file__).parent / "order.log"
@@ -289,10 +288,19 @@ RICH_DEFINITION = textwrap.dedent(f"""\
             (agents / "arranged.md").write_text("arranged")
 
 
-    def _judge(ws: Path) -> None:
-        view = json.loads((ws / "view.json").read_text())
+    def _judge(arms: ClaudeArms) -> None:
+        a = arms["a"]
         with _ORDER.open("a") as f:
-            f.write(f"judge saw {{len(view['a'])}} entries in arm a\\n")
+            f.write(f"judge saw {{len(a.requests)}} requests and {{len(a.responses)}} responses\\n")
+
+
+    def _marked(arms: ClaudeArms) -> bool:
+        return sum(
+            1
+            for capture in arms.values()
+            for request in capture.requests
+            if any("{MARKER}" in s for s in request.system.strings())
+        ) >= MIN
 
 
     PROBE = ClaudeOtelProbe(
@@ -304,13 +312,11 @@ RICH_DEFINITION = textwrap.dedent(f"""\
             ClaudeArm("b", "tree", "prompt b", (), PluginDir()),
         ),
         gates=(McpConnected(("Agent",)), ToolAnswered("a", "mcp__fx__alpha")),
-        custom_checks=(
-            CustomCheck(
-                expression="[.[][] | select(.system | tostring | contains($m))] | length >= MIN",
-                failure=("the custom check refused.",),
-            ),
-        ),
-        responses_in_view=True,
+        custom_checks=(CustomCheck("marked", _marked, ("the custom check refused.",)),),
+        requires_responses=True,
+        assertion=lambda arms: {{
+            name: len(capture.requests) + len(capture.responses) for name, capture in arms.items()
+        }},
         variants=("assertion", "discriminator"),
         arrange_arm=_arrange,
         functions=ProbeFunctions(judge=_judge),
@@ -333,7 +339,7 @@ def _rich(package: Path, *, custom_min: int = 2) -> None:
         RICH_DEFINITION.replace("MIN", str(custom_min)), encoding="utf-8"
     )
     manifest = json.loads((package / "probe.json").read_text(encoding="utf-8"))
-    manifest["assertion"]["expected"] = {"a": 2, "b": 2}
+    manifest.update(schema_version=2, assertion={"expected": {"a": 2, "b": 2}})
     (package / "probe.json").write_text(json.dumps(manifest), encoding="utf-8")
 
 
@@ -394,8 +400,8 @@ def test_a_rich_definition_wires_every_family_hook(cli: Cli, package: Path, tmp_
     assert plugin_config["variant"] == "discriminator"
 
     order = (package / "order.log").read_text(encoding="utf-8").splitlines()
-    # The definition's judge saw the view before responses were appended to it.
-    assert order == ["judge saw 2 entries in arm a"]
+    # The definition's judge function saw the requests, and the response separately.
+    assert order == ["judge saw 2 requests and 1 responses"]
     view_line = next(
         line
         for line in result.stderr.splitlines()

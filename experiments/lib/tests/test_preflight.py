@@ -138,7 +138,7 @@ def test_probe_timeout_seconds_overrides_the_caller_s_timeout(
     assert options.timeout == 1
 
     started = time.monotonic()
-    assert wait_for_capture(ws, "any(.[]; .never == true)", options.timeout) is False
+    assert wait_for_capture(ws, lambda: False, options.timeout) is False
     assert time.monotonic() - started < options.timeout + POLL_INTERVAL_SECONDS
 
 
