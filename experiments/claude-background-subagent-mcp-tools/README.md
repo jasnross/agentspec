@@ -35,7 +35,7 @@ Each arm's prompt is `Use the Agent tool with run_in_background set to <mode> to
 
 ## The oracle
 
-`CLAUDE_CODE_ENABLE_TELEMETRY=1` plus `OTEL_LOG_RAW_API_BODIES=file:<dir>` writes each untruncated request body to `<dir>/<uuid>.request.json`. The projection reads only requests whose `.system` carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-CCBG6` — the subagent's own requests.
+`CLAUDE_CODE_ENABLE_TELEMETRY=1` plus `OTEL_LOG_RAW_API_BODIES=file:<dir>` writes each untruncated request body to `<dir>/<uuid>.request.json`. The assertion reads only requests whose `.system` carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-CCBG6` — the subagent's own requests.
 
 Each arm's value is the sorted union of tool names in `tools[]` and names listed as deferred, on lines of a text block opening "The following deferred tools are now available via ToolSearch", kept to names starting `mcp__fx__`. The union makes the value the same whether or not tool search defers a tool. An arm with no governed request projects to `"arm-had-no-governed-request"`.
 
@@ -64,23 +64,15 @@ A gate failure is a statement about the run, not about Claude, and writes no rec
 - **Marker** (`gates.claude_otel.marker`). Every arm holds a request whose `.system` carries the marker, so the arm's subagent actually ran.
 - **Model** (`gates.claude_otel.model`). Every governed request ran on the pinned model.
 - **MCP connected before delegation** (`gates.claude_otel.mcp_connected`). In every arm, every main-thread request that offers `Agent` lists `mcp__fx__alpha` and `mcp__fx__beta`, so `fx`'s tools existed before the subagent did.
-- **Delegation mode** (`gates.claude_otel.delegation_background`), once per arm. It judges every `Agent` call in the arm's sink, a subagent's own included; none of these agents delegates. Every `Agent` call in the arm's `*.response.json` files set `run_in_background` to exactly the arm's boolean — a missing field fails — and every such call was answered by a `tool_result` that opens "Async agent launched" exactly when the arm is a background one. It reads the arm's sink rather than the view, because on 2.1.287 a request body carries no earlier assistant turn: the `Agent` call appears only in the responses.
+- **Delegation mode** (`gates.claude_otel.delegation_background`), once per arm. It judges every `Agent` call in the arm's sink, a subagent's own included; none of these agents delegates. Every `Agent` call in the arm's `*.response.json` files set `run_in_background` to exactly the arm's boolean — a missing field fails — and every such call was answered by a `tool_result` that opens "Async agent launched" exactly when the arm is a background one. It reads the arm's responses as well as its requests, because on 2.1.287 a request body carries no earlier assistant turn: the `Agent` call appears only in the responses.
 
-`gates.claude_otel.deferred_mcp` is not used: no arm pins the deferred listing's format. `background_inherit`'s governed request listed both `fx` tools as deferred beside `ToolSearch` in the dry run, which is the format the projection reads.
+`gates.claude_otel.deferred_mcp` is not used: no arm pins the deferred listing's format. `background_inherit`'s governed request listed both `fx` tools as deferred beside `ToolSearch` in the dry run, which is the format the assertion reads.
 
 ## The assertion is relational across arms
 
 `foreground` and `background` expect `[]`; `background_inherit` expects both `fx` tools. The two empty cells are readable because `background_inherit`, delegated the same way as `background`, was offered the tools. The `discriminator` fixture variant changes one agent so that the assertion must disagree with it; see "Discriminate evidence".
 
 ## Discriminate evidence
-
-Before the first billed run of the three-arm manifest, the recorder's `--dry-run` against fabricated views printed `confirmed` for one matching the then-current `expected` and `refuted` for one where `background` was empty and one where `background_inherit` was empty:
-
-```
-record: dry run — confirmed — observed {"foreground":[],"background":["mcp__fx__alpha","mcp__fx__beta"],"background_inherit":["mcp__fx__alpha","mcp__fx__beta"]} (no file written)
-record: dry run — refuted — observed {"foreground":[],"background":[],"background_inherit":["mcp__fx__alpha","mcp__fx__beta"]} (no file written)
-record: dry run — refuted — observed {"foreground":[],"background":["mcp__fx__alpha","mcp__fx__beta"],"background_inherit":[]} (no file written)
-```
 
 From the `PROBE_DRY_RUN=1` run on 2026-10-03 against Claude Code 2.1.287, each arm's one governed request ran on `claude-sonnet-5-5`:
 
@@ -90,14 +82,14 @@ From the `PROBE_DRY_RUN=1` run on 2026-10-03 against Claude Code 2.1.287, each a
 | `background` | none | none |
 | `background_inherit` | `ToolSearch` | `mcp__fx__alpha`, `mcp__fx__beta` |
 
-On 2026-10-21, against Claude Code 2.1.287, the `discriminator` fixture variant ran as a dry run. It changes one file, `background_inherit/.claude/agents/probe-bg-inherit.md`, which gains `tools: Read`. That is `background`'s agent, measured above as offered no MCP tool. The `status` and `observed` fields are excerpted from the record the run printed:
+`samples/confirming.json` and `samples/refuting.json` come from kept workspaces of the `assertion` and `discriminator` fixture variants, both taken on Claude Code **2.1.287**; the refuting one, `…T233726-discriminator`, on 2026-10-21. The `discriminator` variant changes one file, `background_inherit/.claude/agents/probe-bg-inherit.md`, which gains `tools: Read`. That is `background`'s agent, measured above as offered no MCP tool.
 
-```
-PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run claude-background-subagent-mcp-tools
-{"status":"refuted","observed":{"foreground":[],"background":[],"background_inherit":[]}}
-```
+| Sample | Assertion |
+| --- | --- |
+| `confirming.json` | `{"foreground":[],"background":[],"background_inherit":["mcp__fx__alpha","mcp__fx__beta"]}` |
+| `refuting.json` | `{"foreground":[],"background":[],"background_inherit":[]}` |
 
-`background_inherit` differed from `expected`; `foreground` and `background` agreed with it.
+The confirming sample equals `expected`. In the refuting sample `background_inherit` differs from it and `foreground` and `background` agree. `just probe-test` re-proves every result on every run.
 
 ## What the record licenses
 

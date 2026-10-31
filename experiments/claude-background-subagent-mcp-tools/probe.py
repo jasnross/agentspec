@@ -12,14 +12,18 @@ this package declares `driver: billed` and `just probe-run` withholds it
 without `--billed`.
 """
 
+from probe_harness.assertions import NO_GOVERNED_REQUEST
 from probe_harness.families.claude_otel import (
     ClaudeArm,
+    ClaudeArms,
     ClaudeOtelProbe,
     DelegationBackground,
     McpConfig,
     McpConnected,
     Model,
 )
+from probe_harness.gates.bodies import governed_requests, offered
+from probe_harness.json_values import JsonValue
 
 # Each would change what is measured: whether tool search is on, whether the MCP server
 # has connected when the subagent spawns, or which model the subagent runs.
@@ -37,11 +41,26 @@ _UNSET = (
 
 _ARGS = ("--allowedTools", "Agent", "--effort", "low")
 _FX_TOOLS = ("mcp__fx__alpha", "mcp__fx__beta")
+_MARKER = "AGENTSPEC-PROBE-MARKER-CCBG6"
+
+
+def _fx(name: str) -> bool:
+    return name.startswith("mcp__fx__")
+
+
+def _assertion(arms: ClaudeArms) -> JsonValue:
+    """The `fx` tools each arm's governed requests offer, directly or deferred."""
+    value: dict[str, JsonValue] = {}
+    for arm, capture in arms.items():
+        governed = governed_requests(capture.requests, _MARKER)
+        value[arm] = offered(governed, _fx) if governed else NO_GOVERNED_REQUEST
+    return value
+
 
 PROBE = ClaudeOtelProbe(
     model="claude-sonnet-5-5",
     budget_usd="0.50",
-    marker="AGENTSPEC-PROBE-MARKER-CCBG6",
+    marker=_MARKER,
     arms=(
         ClaudeArm(
             "foreground",
@@ -76,5 +95,6 @@ PROBE = ClaudeOtelProbe(
         DelegationBackground("background_inherit", True),
     ),
     unset_env=_UNSET,
+    assertion=_assertion,
     variants=("assertion", "discriminator"),
 )
