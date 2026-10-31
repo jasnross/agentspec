@@ -14,13 +14,55 @@ import json
 from pathlib import Path
 
 from probe_harness.families.base import GateFailure
-from probe_harness.families.opencode_fake import OpenCodeArm, OpenCodeFakeProbe, ScriptedCall
+from probe_harness.families.opencode_fake import (
+    OpenCodeArm,
+    OpenCodeArms,
+    OpenCodeFakeProbe,
+    ScriptedCall,
+)
+from probe_harness.gates.opencode import tool_results, toolset
+from probe_harness.json_values import JsonValue
+
+_MARKER = "AGENTSPEC-PROBE-MARKER-OCRES3"
+# What a successful call returns: the resource's content, the listed resource or template, or
+# the project file's content.
+_SUCCESS_TEXT = (
+    "AGENTSPEC-RESOURCE-CONTENT-OCRES3",
+    "probe-doc",
+    "probe-template",
+    "AGENTSPEC-FILE-CONTENT-OCRES3",
+)
 
 _RESOURCE_CALL = ScriptedCall(
     "read_mcp_resource", '{"server":"fx","uri":"fx://AGENTSPEC-RESOURCE-OCRES3"}'
 )
 _LIST_RESOURCES = ScriptedCall("list_mcp_resources", '{"server":"fx"}')
 _LIST_TEMPLATES = ScriptedCall("list_mcp_resource_templates", '{"server":"fx"}')
+
+
+def _outcome(results: list[str]) -> JsonValue:
+    """How the arm's scripted call ended, read from its tool results, checked in this order."""
+    if not results:
+        return "no-tool-result"
+    if any("The user has specified a rule" in r for r in results):
+        return "rule-denied"
+    if any("The user rejected permission" in r for r in results):
+        return "ask-rejected"
+    if any(text in r for r in results for text in _SUCCESS_TEXT):
+        return "succeeded"
+    unrecognized: list[JsonValue] = [*results]
+    return {"unrecognized": unrecognized}
+
+
+def _assertion(arms: OpenCodeArms) -> JsonValue:
+    """Each arm's tool set and how its scripted call ended."""
+    return {
+        arm: {
+            "tools": toolset(capture.requests, _MARKER),
+            "call": _outcome(tool_results(capture.requests, _MARKER)),
+        }
+        for arm, capture in arms.items()
+    }
 
 
 def _arrange_arm(fixtures: Path, arm_dir: Path, arm: OpenCodeArm) -> ScriptedCall | None:
@@ -44,7 +86,7 @@ def _arrange_arm(fixtures: Path, arm_dir: Path, arm: OpenCodeArm) -> ScriptedCal
 
 
 PROBE = OpenCodeFakeProbe(
-    marker="AGENTSPEC-PROBE-MARKER-OCRES3",
+    marker=_MARKER,
     arms=(
         OpenCodeArm("map_read_resource", "probe-pattern-map", _RESOURCE_CALL),
         OpenCodeArm("map_list_resources", "probe-pattern-map", _LIST_RESOURCES),
@@ -58,5 +100,6 @@ PROBE = OpenCodeFakeProbe(
     fx_servers=("fx",),
     tool_result_gate=True,
     arrange_arm=_arrange_arm,
+    assertion=_assertion,
     variants=("assertion", "discriminator"),
 )

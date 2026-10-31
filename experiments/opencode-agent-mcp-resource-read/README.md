@@ -83,18 +83,23 @@ A gate failure keeps the workspace and exits 1 without recording, because each d
 
 ## The physical project path
 
-The `read` arm's path is the project directory's physical path (`pwd -P`). The workspace root may sit behind a symlink, as macOS's `/var` → `/private/var` does. The first dry run passed the unresolved spelling, and OpenCode asked `external_directory` for a file inside the project — `permission requested: external_directory (/var/folders/…/map_read_file/project/*); auto-rejecting` — so `map_read_file` projected to `ask-rejected`. That is a property of how OpenCode compares paths, not of the `read` map; the runner sidesteps it, and nothing here measures it.
+The `read` arm's path is the project directory's physical path (`pwd -P`). The workspace root may sit behind a symlink, as macOS's `/var` → `/private/var` does. The first dry run passed the unresolved spelling, and OpenCode asked `external_directory` for a file inside the project — `permission requested: external_directory (/var/folders/…/map_read_file/project/*); auto-rejecting` — so `map_read_file`'s call came out `ask-rejected`. That is a property of how OpenCode compares paths, not of the `read` map; the runner sidesteps it, and nothing here measures it.
 
 ## Discriminate evidence
 
-Before the first run, the recorder's `--dry-run` against two fabricated views printed `confirmed` for one matching `expected` and `refuted` for one where `map_read_resource.call` was `succeeded`. Against the current projection, three more printed `confirmed` for a matching view, `refuted` with `plain_read_resource.call` as `{unrecognized: ["Error: Failed to read MCP resource: fx/fx://AGENTSPEC-RESOURCE-OCRES3"]}` for one carrying OpenCode's read-failure text, and `refuted` for one where `plain_list_resources` was rule-denied:
+`samples/confirming.json` and `samples/refuting.json` were captured on 2026-10-31 against opencode **1.18.34**, from dry runs of the `assertion` and `discriminator` fixture variants. The `discriminator` variant changes one file, `.opencode/agent/probe-pattern-map.md`, whose `read` map becomes a plain `read: allow`. That is the permission block `probe-plain-read` carries, so the `plain_*` arms' measurements predict the result. In both samples the assertion yields the same `tools` for every arm, `["list_mcp_resource_templates","list_mcp_resources","read","read_mcp_resource"]`, and these `call`s:
 
-```
-record: dry run — confirmed — observed {"map_read_resource":{…,"call":"rule-denied"},…} (no file written)
-record: dry run — refuted — observed {"map_read_resource":{…,"call":"succeeded"},…} (no file written)
-record: dry run — refuted — observed {…,"plain_read_resource":{…,"call":{"unrecognized":["Error: Failed to read MCP resource: fx/fx://AGENTSPEC-RESOURCE-OCRES3"]}},…} (no file written)
-record: dry run — refuted — observed {…,"plain_list_resources":{…,"call":"rule-denied"},…} (no file written)
-```
+| Arm | `call` in `confirming.json` | `call` in `refuting.json` |
+| --- | --- | --- |
+| `map_read_resource` | `rule-denied` | `succeeded` |
+| `map_list_resources` | `rule-denied` | `succeeded` |
+| `map_list_templates` | `rule-denied` | `succeeded` |
+| `map_read_file` | `succeeded` | `succeeded` |
+| `plain_read_resource` | `succeeded` | `succeeded` |
+| `plain_list_resources` | `succeeded` | `succeeded` |
+| `plain_list_templates` | `succeeded` | `succeeded` |
+
+The confirming sample's assertion equals `expected`. In the refuting sample the three `map_*` resource arms differ from it, each `call` moving from `rule-denied` to `succeeded`; `map_read_file` and the `plain_*` arms agree with it. `samples/edited-failed-resource-read.json` is the confirming sample with `plain_read_resource`'s tool result replaced by OpenCode's error for a failed MCP read, `Error: Failed to read MCP resource: fx/fx://AGENTSPEC-RESOURCE-OCRES3`; that arm's `call` yields `{"unrecognized": [...]}` rather than `succeeded`, which is the reason no success token is drawn from the URI. `just probe-test` re-proves all three results on every run.
 
 The first live dry run, with the unresolved path, also discriminated: it printed `refuted` with `map_read_file.call` as `ask-rejected`, beside `rule-denied` and `succeeded` in the other arms — three distinct classes from one run.
 
@@ -109,15 +114,6 @@ From the second `PROBE_DRY_RUN=1` run on 2026-10-03 against opencode **1.18.34**
 | `plain_list_templates` | a `resourceTemplates` list holding `probe-template` |
 
 Two records exist from 2026-10-03, both `confirmed`. The first (`T132254`) has five arms and the URI-prefix success token; the second (`T134728`) has the two `plain_list_*` arms and the per-call success tokens above.
-
-On 2026-10-21, against opencode **1.18.34**, the `discriminator` fixture variant ran as a dry run. It changes one file, `.opencode/agent/probe-pattern-map.md`, whose `read` map becomes a plain `read: allow`. That is the permission block `probe-plain-read` carries, so the `plain_*` arms' measurements predict the result. The `status` and `observed` fields are excerpted from the record the run printed:
-
-```
-PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run opencode-agent-mcp-resource-read
-{"status":"refuted","observed":{"map_read_resource":{"tools":["list_mcp_resource_templates","list_mcp_resources","read","read_mcp_resource"],"call":"succeeded"},"map_list_resources":{"tools":["list_mcp_resource_templates","list_mcp_resources","read","read_mcp_resource"],"call":"succeeded"},"map_list_templates":{"tools":["list_mcp_resource_templates","list_mcp_resources","read","read_mcp_resource"],"call":"succeeded"},"map_read_file":{"tools":["list_mcp_resource_templates","list_mcp_resources","read","read_mcp_resource"],"call":"succeeded"},"plain_read_resource":{"tools":["list_mcp_resource_templates","list_mcp_resources","read","read_mcp_resource"],"call":"succeeded"},"plain_list_resources":{"tools":["list_mcp_resource_templates","list_mcp_resources","read","read_mcp_resource"],"call":"succeeded"},"plain_list_templates":{"tools":["list_mcp_resource_templates","list_mcp_resources","read","read_mcp_resource"],"call":"succeeded"}}}
-```
-
-The three `map_*` resource arms differed from `expected`, each `call` moving from `rule-denied` to `succeeded`; `map_read_file` and the `plain_*` arms agreed with it.
 
 ## What the record licenses
 
