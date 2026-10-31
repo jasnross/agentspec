@@ -243,7 +243,8 @@ def test_a_skill_list_without_the_fixture_is_refused(
 def test_the_oracle_runs_in_the_workspace_with_stdout_to_a_file(
     cli: Cli, tree: Path, experiments_dir: Path, opencode_debug_stub: Path, tmp_path: Path
 ) -> None:
-    # A pipe would truncate `opencode debug` output at 64 KB.
+    # A pipe would truncate `opencode debug` output at 64 KB. The package runs isolated, so
+    # the oracle's directory is the workspace's `project/`.
     copy_package(experiments_dir, tree, "opencode-agent-variant")
     call = tmp_path / "call.txt"
     result = cli(
@@ -262,8 +263,46 @@ def test_the_oracle_runs_in_the_workspace_with_stdout_to_a_file(
         for line in result.stderr.splitlines()
         if line.startswith("probe run: the assembled view")
     )
-    assert view_line == f"probe run: the assembled view is at {cwd}/view.json"
+    assert Path(cwd).name == "project"
+    assert view_line == f"probe run: the assembled view is at {Path(cwd).parent}/view.json"
     assert kind == "file"
+
+
+UNISOLATED_DEFINITION = """\
+from probe_harness.families.opencode_debug import OpenCodeDebugProbe
+from probe_harness.models.opencode_debug import OpenCodeAgent
+
+PROBE = OpenCodeDebugProbe(
+    argv=("agent", "probe"),
+    output=OpenCodeAgent,
+    assertion=lambda agent: {"model": {"providerID": agent.model.providerID,
+                                       "modelID": agent.model.modelID},
+                             "variant": agent.variant},
+)
+"""
+
+
+def test_an_unisolated_definition_runs_the_oracle_in_the_workspace_itself(
+    cli: Cli, tree: Path, experiments_dir: Path, opencode_debug_stub: Path, tmp_path: Path
+) -> None:
+    package = copy_package(experiments_dir, tree, "opencode-agent-variant")
+    (package / "probe.py").write_text(UNISOLATED_DEFINITION, encoding="utf-8")
+    call = tmp_path / "call.txt"
+    result = cli(
+        "run",
+        "opencode-agent-variant",
+        env={
+            "STUB_ORACLE": oracle_file(tmp_path, json.dumps(AGENT_VIEW)),
+            "STUB_CALL_FILE": str(call),
+            "PROBE_DRY_RUN": "1",
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    (ws,) = workspaces("opencode-agent-variant")
+    cwd, _ = call.read_text(encoding="utf-8").splitlines()
+    assert Path(cwd).resolve() == ws.resolve()
+    assert (ws / ".opencode").is_dir()
+    assert not (ws / "project").exists()
 
 
 def test_the_discriminator_dry_run_arranges_the_discriminator_fixture(
@@ -285,16 +324,18 @@ def test_the_discriminator_dry_run_arranges_the_discriminator_fixture(
     )
     assert result.returncode == 0
     (ws,) = workspaces("opencode-agent-variant")
+    project = ws / "project"
     source = package / "fixtures" / "discriminator"
     files = [path for path in source.rglob("*") if path.is_file()]
     assert files
     for path in files:
-        assert (ws / path.relative_to(source)).read_bytes() == path.read_bytes()
+        assert (project / path.relative_to(source)).read_bytes() == path.read_bytes()
     assertion = package / "fixtures" / "assertion"
     differs = [
         path
         for path in assertion.rglob("*")
-        if path.is_file() and (ws / path.relative_to(assertion)).read_bytes() != path.read_bytes()
+        if path.is_file()
+        and (project / path.relative_to(assertion)).read_bytes() != path.read_bytes()
     ]
     assert differs
 

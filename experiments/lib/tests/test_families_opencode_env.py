@@ -5,7 +5,6 @@ environment it was run with.
 """
 
 import json
-import textwrap
 from pathlib import Path
 
 from tests.conftest import (
@@ -19,19 +18,8 @@ from tests.conftest import (
 def test_an_isolated_definition_runs_the_oracle_with_home_inside_the_workspace(
     cli: Cli, tree: Path, experiments_dir: Path, opencode_debug_stub: Path, tmp_path: Path
 ) -> None:
-    package = copy_package(experiments_dir, tree, "opencode-agent-variant")
-    (package / "probe.py").write_text(
-        textwrap.dedent("""\
-            from probe_harness.families.opencode_debug import OpenCodeDebugProbe
-            from probe_harness.families.opencode_env import OpenCodeIsolation
-            from probe_harness.models.opencode_debug import OpenCodeAgent
-
-            PROBE = OpenCodeDebugProbe(
-                argv=("agent", "probe"), output=OpenCodeAgent, isolation=OpenCodeIsolation()
-            )
-        """),
-        encoding="utf-8",
-    )
+    # `opencode-agent-variant` runs isolated.
+    copy_package(experiments_dir, tree, "opencode-agent-variant")
     home_file = tmp_path / "home.txt"
     result = cli(
         "run",
@@ -54,19 +42,8 @@ def test_an_isolated_definition_runs_the_oracle_with_home_inside_the_workspace(
 def test_an_isolated_oracle_sees_no_operator_config_and_its_own_directories(
     cli: Cli, tree: Path, experiments_dir: Path, opencode_debug_stub: Path, tmp_path: Path
 ) -> None:
-    package = copy_package(experiments_dir, tree, "opencode-agent-variant")
-    (package / "probe.py").write_text(
-        textwrap.dedent("""\
-            from probe_harness.families.opencode_debug import OpenCodeDebugProbe
-            from probe_harness.families.opencode_env import OpenCodeIsolation
-            from probe_harness.models.opencode_debug import OpenCodeAgent
-
-            PROBE = OpenCodeDebugProbe(
-                argv=("agent", "probe"), output=OpenCodeAgent, isolation=OpenCodeIsolation()
-            )
-        """),
-        encoding="utf-8",
-    )
+    # `opencode-agent-variant` runs isolated.
+    copy_package(experiments_dir, tree, "opencode-agent-variant")
     env_file = tmp_path / "env.txt"
     operator = {
         name: "operator"

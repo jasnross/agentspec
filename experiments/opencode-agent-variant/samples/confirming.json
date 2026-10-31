@@ -1,0 +1,27 @@
+{
+  "origin": "capture",
+  "input": {
+    "name": null,
+    "mode": null,
+    "permission": null,
+    "options": null,
+    "native": null,
+    "model": {
+      "providerID": "anthropic",
+      "modelID": "claude-sonnet-4-5"
+    },
+    "variant": "high",
+    "prompt": null,
+    "description": null,
+    "tools": null
+  },
+  "results": {
+    "assertion": {
+      "model": {
+        "providerID": "anthropic",
+        "modelID": "claude-sonnet-4-5"
+      },
+      "variant": "high"
+    }
+  }
+}

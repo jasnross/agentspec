@@ -12,7 +12,7 @@
 experiments/probe run opencode-agent-variant
 ```
 
-It materializes `fixtures/assertion/` into a fresh workspace, runs the oracle from inside it, and hands the raw output to the recorder, which writes a record under `results/`.
+It materializes `fixtures/assertion/` into a fresh workspace's `project/` directory and runs the oracle from inside it, isolated: OpenCode gets its own home and XDG directories under the workspace, and its external skill scan is off, so it resolves only its built-in agents and the fixture's. The definition's assertion in `probe.py` reads the resolved agent's `model` and `variant`, and the recorder writes a record under `results/`.
 
 The discriminator arm runs the same way, as a dry run only; the harness refuses to record it:
 
@@ -22,12 +22,12 @@ PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run opencode-agent
 
 ## The assertion discriminates
 
-Measured 2026-08-15 against opencode 1.18.18, the two fixture arms project to distinct values:
+The samples under `samples/`, captured 2026-10-31 against opencode 1.18.34, show the two fixture arms yielding distinct values, and `just probe-test` re-proves it on every run:
 
-| Arm | Frontmatter | `{model, variant}` |
-| --- | --- | --- |
-| `fixtures/assertion/` | `model: anthropic/claude-sonnet-4-5` + `variant: high` | `{"model":{"providerID":"anthropic","modelID":"claude-sonnet-4-5"},"variant":"high"}` |
-| `fixtures/discriminator/` | `model: anthropic/claude-sonnet-4-5#high` | `{"model":{"providerID":"anthropic","modelID":"claude-sonnet-4-5#high"},"variant":null}` |
+| Sample | Arm | Frontmatter | Assertion |
+| --- | --- | --- | --- |
+| `confirming` | `fixtures/assertion/` | `model: anthropic/claude-sonnet-4-5` + `variant: high` | `{"model":{"providerID":"anthropic","modelID":"claude-sonnet-4-5"},"variant":"high"}` |
+| `refuting` | `fixtures/discriminator/` | `model: anthropic/claude-sonnet-4-5#high` | `{"model":{"providerID":"anthropic","modelID":"claude-sonnet-4-5#high"},"variant":null}` |
 
 `variant: high` is a non-default value — OpenCode's default is `null`, as the discriminator arm shows — so a match is positive proof rather than a possible reading of the default.
 
@@ -52,11 +52,11 @@ These came out of hand-run probes on adjacent surfaces. Two have since been give
 **Now measured, so no longer prose:**
 
 - **OpenCode's skill schema declares only `name`, `description`, and `slash`** (`packages/core/src/skill.ts:33-38`). `model`, `variant`, **and `tools`** are parsed as frontmatter and discarded — a resolved skill record is exactly `{content, description, location, name}`. `tools` matters most in practice: agentspec emits it as a non-`Option` map, so every generated OpenCode skill file carries a dead `tools:` block, whereas `model`/`variant` appear only when a preset applies. → **`experiments/opencode-skill-frontmatter-discard/`**, recorded against 1.18.21.
-- **OpenCode's command schema does read `variant`**, unlike the skill schema. Surfaces diverging within one provider is the standing example of why a rendering confirmed on one surface says nothing about another. → **`experiments/opencode-command-variant/`**, recorded against 1.18.21. Note the two resolve `model` differently — a bare string on commands, a `{providerID, modelID}` object on agents — so a projection copied between that package and this one will not compare equal.
+- **OpenCode's command schema does read `variant`**, unlike the skill schema. Surfaces diverging within one provider is the standing example of why a rendering confirmed on one surface says nothing about another. → **`experiments/opencode-command-variant/`**, recorded against 1.18.21. Note the two resolve `model` differently — a bare string on commands, a `{providerID, modelID}` object on agents — so an assertion copied between that package and this one will not compare equal.
 
 **Still prose:**
 
-**Provenance for these two:** opencode **1.18.15**, source `anomalyco/opencode` @ `cc4b456`, probed **2026-08-12** and **2026-08-15**. That is a different version from the 1.18.18 the measured content above was taken against, and neither claim has been re-checked since. Provenance is the only thing separating them from the guesses this harness exists to expose, which is why it is stated rather than assumed.
+**Provenance for these two:** opencode **1.18.15**, source `anomalyco/opencode` @ `cc4b456`, probed **2026-08-12** and **2026-08-15**. That is a different version from the 1.18.34 the samples above were captured against, and neither claim has been re-checked since. Provenance is the only thing separating them from the guesses this harness exists to expose, which is why it is stated rather than assumed.
 
 - **Skills are discovered under both `.opencode/skill/` and `.opencode/skills/`**, so agentspec's `skills` directory name resolves correctly. The singular is incidentally demonstrated — `opencode-skill-frontmatter-discard` places its fixture under `.opencode/skill/` and records `confirmed` — but nothing measures the plural, and no package asks the question. `TODO.md` #16 stays open for it.
 - **A `variant:` with no `model:` is accepted silently** and is inert per OpenCode's schema annotation. This one is about the very surface this package probes, but it is a different question — "is it accepted" rather than "is it read" — so it stays prose until someone gives it a package.
