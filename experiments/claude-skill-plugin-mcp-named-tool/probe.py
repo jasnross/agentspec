@@ -11,11 +11,14 @@ package declares `driver: billed` and `just probe-run` withholds it without
 
 from probe_harness.families.claude_otel import (
     ClaudeArm,
+    ClaudeArms,
     ClaudeOtelProbe,
     Model,
     PluginDir,
     ToolAnswered,
 )
+from probe_harness.gates.claude_otel import call_outcome
+from probe_harness.json_values import JsonValue
 
 # Each would change what is measured: whether tool search is on, whether the MCP server
 # has connected by the first turn, or which model a subagent would run; kept from the
@@ -42,6 +45,14 @@ _ARGS = (
     "low",
 )
 _PLUGIN_ALPHA = "mcp__plugin_fxp_fx__alpha"
+# What `fx` answers a call with, so a result carrying it is a call that ran.
+_REPLY = "AGENTSPEC-FX-REPLY-CCSKPN9"
+
+
+def _assertion(arms: ClaudeArms) -> JsonValue:
+    """Whether each arm's call to the plugin's tool ran, was refused for permission, or neither."""
+    return {arm: call_outcome(capture, _PLUGIN_ALPHA, _REPLY) for arm, capture in arms.items()}
+
 
 PROBE = ClaudeOtelProbe(
     model="claude-sonnet-5-5",
@@ -57,8 +68,9 @@ PROBE = ClaudeOtelProbe(
         ToolAnswered("plugin_named", _PLUGIN_ALPHA),
     ),
     unset_env=_UNSET,
-    # A claude.ai connector would add MCP tools the projection cannot tell from the fixture's.
+    # A claude.ai connector would add MCP tools the assertion cannot tell from the fixture's.
     set_env=(("ENABLE_CLAUDEAI_MCP_SERVERS", "false"),),
     requires_responses=True,
+    assertion=_assertion,
     variants=("assertion", "discriminator"),
 )

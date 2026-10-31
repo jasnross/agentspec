@@ -34,9 +34,9 @@ The skill is user-invoked: `/probe-skill` in the `-p` prompt. A model-invoked sk
 
 `CLAUDE_CODE_ENABLE_TELEMETRY=1` plus `OTEL_LOG_RAW_API_BODIES=file:<dir>` writes each request body to `<dir>/<uuid>.request.json` and each response to `<dir>/<request_id>.response.json`.
 
-On 2.1.287 a request body carries the latest user turn but no earlier assistant turn, so the model's call appears only in a response and the tool result only in the request that follows. The runner therefore appends each arm's response bodies to its array in the view, after the gates have read the request-only view.
+On 2.1.287 a request body carries the latest user turn but no earlier assistant turn, so the model's call appears only in a response and the tool result only in the request that follows. The definition therefore sets `requires_responses`, which hands the assertion each arm's response bodies beside its requests.
 
-The projection is the sibling package's `classify`, matching this package's reply marker. For each arm it collects the ids of `tool_use` blocks naming `mcp__plugin_fxp_fx__alpha`, then the `tool_result` blocks answering those ids, and classifies:
+The assertion is the sibling package's, `gates.claude_otel.call_outcome`, matching this package's reply marker. For each arm it collects the ids of `tool_use` blocks naming `mcp__plugin_fxp_fx__alpha`, then the `tool_result` blocks answering those ids, and classifies:
 
 - any result's text contains `AGENTSPEC-FX-REPLY-CCSKPN9` → `"called"`
 - every result has `is_error: true` and its text contains "Permission for this tool use was denied" → `"denied"`
@@ -71,23 +71,17 @@ A gate failure is a statement about the run, not about Claude, and writes no rec
 
 ## Discriminate evidence
 
-Before the first billed run, the recorder's `--dry-run` (`--manifest experiments/claude-skill-plugin-mcp-named-tool/probe.json --view <view>`) (the form `probe record` took then) against two fabricated views printed `confirmed` for one matching `expected` and `refuted` for one where `plugin_named`'s call was denied for permission:
-
-```
-record: dry run — confirmed — observed {"plugin_none":"denied","plugin_named":"called"} (no file written)
-record: dry run — refuted — observed {"plugin_none":"denied","plugin_named":"denied"} (no file written)
-```
-
 The first record, from 2026-10-03 against Claude Code 2.1.287, is `confirmed`.
 
-On 2026-10-21, against Claude Code 2.1.287, the `discriminator` fixture variant ran as a dry run. It changes one file, `plugin_named/.claude/skills/probe-skill/SKILL.md`, whose `allowed-tools` becomes `Read`. The skill then equals `plugin_none`'s, whose record shows its call denied. The `status` and `observed` fields are excerpted from the record the run printed:
+`samples/confirming.json` and `samples/refuting.json` come from kept workspaces of the `assertion` and `discriminator` fixture variants, both taken on Claude Code **2.1.287**; the refuting one, `…T233905-discriminator`, on 2026-10-21. The `discriminator` variant changes one file, `plugin_named/.claude/skills/probe-skill/SKILL.md`, whose `allowed-tools` becomes `Read`. The skill then equals `plugin_none`'s, whose record shows its call denied. `samples/edited-unrecognized-call.json` is the confirming sample with `plugin_named`'s `fx` result replaced by an MCP server error flagged `is_error: true`. It is an error that does not refuse permission, so it reads as unrecognized rather than denied, which is what requiring the permission text is for.
 
-```
-PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run claude-skill-plugin-mcp-named-tool
-{"status":"refuted","observed":{"plugin_none":"denied","plugin_named":"denied"}}
-```
+| Sample | Assertion |
+| --- | --- |
+| `confirming.json` | `{"plugin_none":"denied","plugin_named":"called"}` |
+| `refuting.json` | `{"plugin_none":"denied","plugin_named":"denied"}` |
+| `edited-unrecognized-call.json` | `{"plugin_none":"denied","plugin_named":{"unrecognized":["MCP error -32603: the fx server is unavailable"]}}` |
 
-`plugin_named` differed from `expected`; `plugin_none` agreed with it.
+The confirming sample equals `expected`. In the refuting sample `plugin_named` differs from it and `plugin_none` agrees. `just probe-test` re-proves every result on every run.
 
 ## What the record licenses
 
@@ -105,5 +99,5 @@ At `outbound-request`, this is evidence about what reached the model after the c
 
 ## Related
 
-- `experiments/claude-skill-mcp-allowed-tools/` — the other MCP spellings on the same skill surface, and the source of this package's fixtures and projection.
+- `experiments/claude-skill-mcp-allowed-tools/` — the other MCP spellings on the same skill surface, and the source of this package's fixtures and assertion.
 - `experiments/claude-subagent-plugin-mcp-tools/` — the plugin spelling in a subagent's `tools`.
