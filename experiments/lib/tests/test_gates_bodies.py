@@ -13,6 +13,7 @@ from probe_harness.gates.bodies import (
     MarkerField,
     claude_arms,
     governed,
+    governed_requests,
     listed_tools,
     offered,
     opencode_arms,
@@ -305,6 +306,21 @@ def test_listed_tools_names_direct_tools_then_the_deferred_listing() -> None:
         "Read",
         "The following deferred tools are now available via ToolSearch:",
         "mcp__fx__alpha",
+    ]
+
+
+def test_governed_requests_keeps_the_marked_requests_in_order_under_the_field_given() -> None:
+    in_system = _request(system="AGENTSPEC-PROBE-MARKER-X two", model="a")
+    in_messages = _request(
+        system="plain", messages=[{"role": "user", "content": "AGENTSPEC-PROBE-MARKER-X"}]
+    )
+    plain = _request(system="plain", messages=[{"role": "user", "content": "plain"}])
+    requests = [plain, in_system, in_messages, _request(model="b")]
+
+    by_system = governed_requests(requests, "AGENTSPEC-PROBE-MARKER-X")
+    assert [r.model for r in by_system] == ["a", "b"]
+    assert governed_requests(requests, "AGENTSPEC-PROBE-MARKER-X", MarkerField.MESSAGES) == [
+        in_messages
     ]
 
 

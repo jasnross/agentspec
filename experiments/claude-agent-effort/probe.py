@@ -9,14 +9,28 @@ and `just probe-run` withholds it without `--billed`.
 
 from probe_harness.families.claude_otel import (
     ClaudeArm,
+    ClaudeArms,
     ClaudeOtelProbe,
     Control,
+    MarkerField,
 )
+from probe_harness.gates.claude_otel import relative_effort
+from probe_harness.json_values import JsonValue
+
+_MARKER = "AGENTSPEC-PROBE-MARKER-7Q4XKD"
+# An agent file becomes the system prompt of the requests it governs.
+_FIELD = MarkerField.SYSTEM
+
+
+def _assertion(arms: ClaudeArms) -> JsonValue:
+    """Each arm's governed efforts, relative to the session's own level."""
+    return {arm: relative_effort(arms, arm, _MARKER, _FIELD) for arm in arms}
+
 
 PROBE = ClaudeOtelProbe(
     model="claude-opus-4-8",
     budget_usd="0.50",
-    marker="AGENTSPEC-PROBE-MARKER-7Q4XKD",
+    marker=_MARKER,
     arms=(
         ClaudeArm(
             "session_agent",
@@ -32,5 +46,7 @@ PROBE = ClaudeOtelProbe(
         ),
     ),
     gates=(Control(),),
+    marker_field=_FIELD,
+    assertion=_assertion,
     variants=("assertion", "discriminator"),
 )

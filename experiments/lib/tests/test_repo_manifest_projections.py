@@ -39,12 +39,6 @@ def fixture_marker(path: Path) -> str:
     return ""
 
 
-MARKER_AGENT = fixture_marker(
-    EXPERIMENTS_DIR
-    / "claude-agent-effort/fixtures/assertion/project/.claude/agents/probe-effort.md"
-)
-
-
 MARKER_SKILL = fixture_marker(
     EXPERIMENTS_DIR
     / "claude-skill-effort/fixtures/assertion/project/.claude/skills/probe-effort/SKILL.md"
@@ -73,44 +67,12 @@ def project(manifest_path: Path, view: Path) -> tuple[JsonValue, bool]:
     return observed, json_values.equal(observed, manifest.assertion.expected)
 
 
-def test_the_committed_manifest_s_projection_does_not_confirm_an_unmeasured_arm(
-    tmp_path: Path,
-) -> None:
-    # The gates keep a real run from producing an arm that was never measured, but the
-    # projection must not depend on them: a pass value an unmeasured arm can reach is a
-    # projection bug that only the gates are hiding.
-    #
-    # The degenerate shape: an arm with zero governed requests and an empty control set.
-    # `unique` yields `[]` for both, and an unguarded `. == $u` collapses `[] == []` to the
-    # same-as-ungoverned pass value.
-    #
-    # `rel` closes that on its **control-set** branch, not on the arm-empty one: once
-    # `($u | length) != 1` has been ruled out, a single-element `$u` can never equal an
-    # empty arm, so `arm-had-no-governed-request` is legibility rather than the guard. This
-    # view reaches the control-set branch — see the skill package's sibling for one that
-    # reaches the other.
-    manifest = EXPERIMENTS_DIR / "claude-agent-effort/probe.json"
-    if not manifest.is_file():
-        pytest.skip("claude-agent-effort is not present")
-
-    view = write_view(
-        tmp_path / "degenerate.json",
-        {
-            "session_agent": [{"system": "plain"}],
-            "delegated": [{"system": MARKER_AGENT, "output_config": {"effort": "low"}}],
-        },
-    )
-
-    _, confirmed = project(manifest, view)
-    assert not confirmed
-
-
 def test_the_committed_skill_manifest_s_projection_does_not_confirm_an_unmeasured_arm(
     tmp_path: Path,
 ) -> None:
-    # The sibling of the check above, against the skill package's own manifest and its own
-    # governed field. Here too the projection must not lean on the gates to keep an
-    # unmeasured arm from confirming.
+    # The skill package's manifest, under its own governed field (`claude-agent-effort`'s
+    # samples pin the same shape for that package). Here too the projection must not lean on
+    # the gates to keep an unmeasured arm from confirming.
     #
     # Which branch of `rel` does the work here is worth stating, because it is not the one
     # the shape suggests: the pass value `. == $u` is only reachable once
@@ -173,38 +135,12 @@ def test_the_committed_skill_manifest_names_an_arm_that_captured_no_governed_req
     assert "arm-had-no-governed-request" in compact(observed)
 
 
-def test_the_committed_manifest_s_control_set_excludes_a_subagent_s_follow_up(
-    tmp_path: Path,
-) -> None:
-    # A subagent's follow-up turn after a tool call carries no marker but runs at the
-    # subagent's effort. Pooled into `$u`, it makes the control set two levels and the
-    # projection renders every arm `no-usable-control-set`, even with gate 3 excluding it.
-    manifest = EXPERIMENTS_DIR / "claude-agent-effort/probe.json"
-    if not manifest.is_file():
-        pytest.skip("claude-agent-effort is not present")
-    assert MARKER_AGENT
-
-    view = write_view(
-        tmp_path / "subagent.json",
-        {
-            "session_agent": [{"system": MARKER_AGENT, "output_config": {"effort": "medium"}}],
-            "delegated": [
-                {"system": "plain", "output_config": {"effort": "medium"}},
-                {"system": MARKER_AGENT, "output_config": {"effort": "max"}},
-                {"system": SUBAGENT_SYSTEM, "output_config": {"effort": "max"}},
-            ],
-        },
-    )
-
-    observed, _ = project(manifest, view)
-    assert observed == {"session_agent": "same-as-ungoverned", "delegated": ["max"]}
-
-
 def test_the_committed_skill_manifest_s_control_set_excludes_a_subagent_s_follow_up(
     tmp_path: Path,
 ) -> None:
-    # The sibling of the check above. The skill's marker sits in `.messages`, but the
-    # billing header sits in `.system` whichever field governs, so the clause is the same.
+    # `claude-agent-effort`'s samples pin the same exclusion for that package. The skill's
+    # marker sits in `.messages`, but the billing header sits in `.system` whichever field
+    # governs, so the clause is the same.
     manifest = EXPERIMENTS_DIR / "claude-skill-effort/probe.json"
     if not manifest.is_file():
         pytest.skip("claude-skill-effort is not present")

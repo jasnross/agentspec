@@ -40,7 +40,7 @@ Each arm's level is compared against **the run's ungoverned main-thread requests
 
 This matters because the model's default effort is not a fact this repository controls, observes for free, or gets a drift signal about (`probe-status` compares `claude --version`, and a model's default effort is not a property the CLI version tracks). Vendor documentation records the default moving between levels, and scopes it by **subscription tier** — so an absolute gate's discriminating power would vary by whose machine ran the probe.
 
-The collision is self-detecting rather than silent. If the model default were `low` and the fixture's pin failed to load, the ungoverned requests would read `low` too, `rel` would render the delegated arm as `"same-as-ungoverned"`, and the record would refute. The do-nothing case refutes for the same reason: a Claude that ignored frontmatter entirely would put every request at one level, so both arms would render `"same-as-ungoverned"` and `delegated` would fail to match.
+The collision is self-detecting rather than silent. If the model default were `low` and the fixture's pin failed to load, the ungoverned requests would read `low` too, the assertion would render the delegated arm as `"same-as-ungoverned"`, and the record would refute. The do-nothing case refutes for the same reason: a Claude that ignored frontmatter entirely would put every request at one level, so both arms would render `"same-as-ungoverned"` and `delegated` would fail to match.
 
 ### Governed vs. ungoverned is decided by `.system`
 
@@ -50,7 +50,7 @@ Measured on the discriminate run: when the subagent replies, its text comes back
 
 The same definition runs through gate 2 (which would otherwise pass for an arm whose fixture never engaged, on the strength of an echo) and gate 3's control set (where an echoed request correctly counts as ungoverned — its effort was not set by the fixture — and only the exclusions gate 3 lists are removed).
 
-`unique` rather than a positional selector, in both arms: the sink names files by UUID, so glob order is not write order, and `| last` would name an arbitrary element while silently discarding disagreement among the rest. Both arms are spelled identically, including the arm where nothing could go wrong, so a reviewer who has checked one has checked them both.
+Each arm's value is the distinct efforts of its governed requests rather than one positional element: the sink names files by UUID, so glob order is not write order, and taking the last would name an arbitrary element while silently discarding disagreement among the rest. One function reads both arms, including the arm where nothing could go wrong, so a reviewer who has checked one has checked them both.
 
 ## The three gates
 
@@ -58,7 +58,7 @@ Every gate asserts on a positive signal in the captured bodies. None of them nam
 
 1. **Every arm captured at least one `*.request.json`.** An empty sink means the arm never ran.
 2. **Every arm holds at least one request the fixture governs.** Without it, "the fixture never engaged" and "the fixture engaged and Claude discarded its effort" are indistinguishable — which would make the most decision-relevant finding the least trustworthy one. **Gate 2 is what makes the inert arm assertable.**
-3. **At least one ungoverned request declares `output_config.effort`, and they all agree on one level.** The filter is an explicit exclusion of requests carrying no `effort` key: Claude emits an intermittent title-generation sidecar — observed in this package's own runs, dispatched to `claude-haiku-4-5` rather than to the pinned model — whose `output_config` holds a `format` object and no `effort`, and a control stated over all unmarked requests would fail on it every time it appeared. Written as an exclusion, the other direction stays loud — a Claude that stopped populating `effort` on governed requests empties the control set and trips the existence clause. Subagent requests are excluded too, by the `cc_is_subagent=true` that Claude writes into each one's billing header, matched anywhere in its `.system` text. After a tool call, a subagent's follow-up turn carries no agent system prompt, so no marker, and runs at the subagent's effort. In the 2026-10-21 discriminator run kept as `…T233326-discriminator`, Claude Code 2.1.287 sent five of them, at `max`, when the subagent ignored its one-word instruction and tried tools. Counted as control, they put the subagent's level beside the session's, and the gate refused. The flag is undocumented. If Claude renamed it, those requests would rejoin the control set and the gate would refuse again rather than pass. The projection's control set `$u` applies the same two exclusions, so its verdict does not depend on the gate having run.
+3. **At least one ungoverned request declares `output_config.effort`, and they all agree on one level.** The filter is an explicit exclusion of requests carrying no `effort` key: Claude emits an intermittent title-generation sidecar — observed in this package's own runs, dispatched to `claude-haiku-4-5` rather than to the pinned model — whose `output_config` holds a `format` object and no `effort`, and a control stated over all unmarked requests would fail on it every time it appeared. Written as an exclusion, the other direction stays loud — a Claude that stopped populating `effort` on governed requests empties the control set and trips the existence clause. Subagent requests are excluded too, by the `cc_is_subagent=true` that Claude writes into each one's billing header, matched anywhere in its `.system` text. After a tool call, a subagent's follow-up turn carries no agent system prompt, so no marker, and runs at the subagent's effort. In the 2026-10-21 discriminator run kept as `…T233326-discriminator`, Claude Code 2.1.287 sent five of them, at `max`, when the subagent ignored its one-word instruction and tried tools. Counted as control, they put the subagent's level beside the session's, and the gate refused. The flag is undocumented. If Claude renamed it, those requests would rejoin the control set and the gate would refuse again rather than pass. The assertion, `gates.claude_otel.relative_effort`, reads its control set from `control_efforts`, the set gate 3 compares, so it applies the same two exclusions and its verdict does not depend on the gate having run.
 
 A gate failure is a statement about the run, not about Claude, and writes no record.
 
@@ -81,28 +81,25 @@ The fixture's own `.claude/settings.json` pin (`effortLevel: medium`) is **not**
 
 ## Discriminate evidence
 
-Both rows below come from the recorder's `--dry-run` output on actual runs, not from a design document. The two fixtures differ only in the agent's `effort:` value. The `status` and `observed` fields are excerpted from the full seven-key record each run printed; the other five keys are the manifest's own values plus the date and version.
+`samples/confirming.json` and `samples/refuting.json` come from kept workspaces of the `assertion` and `discriminator` fixture variants, both taken on Claude Code **2.1.287**. The two fixtures differ only in the agent's `effort:` value. The refuting workspace, `…T233326-discriminator`, was taken on 2026-10-21. Its `max` subagent tried tools, so it also holds five subagent follow-up requests gate 3 excludes; gate 3 refused the run when it was taken, before that exclusion existed. One string in it is redacted, so its `origin` is `edited`: the subagent's report, which described the operator's user-level instructions and connectors. The other edited samples are the confirming sample changed by hand, each change named in the sample's `note`.
 
-```
-PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/claude-agent-effort/probe.sh
-{"status":"refuted","observed":{"session_agent":"same-as-ungoverned","delegated":["max"]}}
+| Sample | Assertion |
+| --- | --- |
+| `confirming.json` | `{"session_agent":"same-as-ungoverned","delegated":["low"]}` |
+| `refuting.json` | `{"session_agent":"same-as-ungoverned","delegated":["max"]}` |
+| `edited-no-control-set.json` | `{"session_agent":"no-usable-control-set","delegated":"no-usable-control-set"}` |
+| `edited-arm-without-governed-request.json` | `{"session_agent":"same-as-ungoverned","delegated":"arm-had-no-governed-request"}` |
+| `edited-subagent-follow-up.json` | `{"session_agent":"same-as-ungoverned","delegated":["low"]}` |
 
-PROBE_DRY_RUN=1 experiments/claude-agent-effort/probe.sh
-{"status":"confirmed","observed":{"session_agent":"same-as-ungoverned","delegated":["low"]}}
-```
+The confirming sample equals `expected`. The refuting sample **differs in `delegated` and agrees in `session_agent`**. That pairing is the discrimination: it shows the assertion reads each arm independently, and that the inert arm is inert rather than merely unread.
 
-The block is captured output, so it keeps the commands of the runner that produced it. Run the same two with `PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run claude-agent-effort` and `PROBE_DRY_RUN=1 experiments/probe run claude-agent-effort`; the harness refuses to record the discriminator.
+The edited samples pin what the assertion yields where the gates or the fixture would normally decide:
 
-The two runs **differ in `delegated` and agree in `session_agent`**. That pairing is the discrimination: it shows the projection reads each arm independently, and that the inert arm is inert rather than merely unread.
+- `edited-no-control-set.json` removes every ungoverned request and empties `session_agent`. With no control level, every arm reads `"no-usable-control-set"`, so an arm that was never measured cannot confirm.
+- `edited-arm-without-governed-request.json` removes `delegated`'s governed requests while the control level stands, so that arm reads `"arm-had-no-governed-request"` rather than an empty set of efforts.
+- `edited-subagent-follow-up.json` adds an unmarked subagent request at `max` to `delegated`. The assertion excludes it from the control set, as gate 3 does, so the value stays the confirming sample's. `refuting.json` shows the same exclusion on the refuting side.
 
-The committed `discriminator` variant was also run on Claude Code 2.1.287 on 2026-10-21, and its kept workspace, `…T233326-discriminator`, re-judged on 2026-10-25. In that run the `max` subagent tried tools, so the capture also holds the subagent follow-up requests gate 3 excludes; gate 3 refused the run when it was taken, before that exclusion existed. The `status` and `observed` fields are excerpted from the record the re-judge printed:
-
-```
-experiments/probe record claude-agent-effort <workspace> --dry-run
-{"status":"refuted","observed":{"session_agent":"same-as-ungoverned","delegated":["max"]}}
-```
-
-`delegated` differed from `expected`; `session_agent` agreed with it.
+`just probe-test` re-proves every result on every run.
 
 ## What the record licenses
 
@@ -126,7 +123,7 @@ Both are stated here rather than left to be inferred.
 
 - **Managed-tier settings.** Vendor documentation does not say whether they load regardless of `--setting-sources`. On a machine with managed policy, the ungoverned level could be set by something this runner did not exclude.
 - **The project-tier `effortLevel` confound.** The fixture's `effortLevel: medium` keeps the ungoverned level stable and the record legible, but it also means the `--agent` finding cannot separate "frontmatter is dropped on this path" from "a project-tier `effortLevel` outranks frontmatter on this path." Resolving it needs an arm with no `effortLevel` set, which would trade this stability for a baseline at the model's own default — a value that is neither controlled nor drift-tracked here.
-- **A project-tier-load regression is no longer detected.** The design gated that direction with an absolute baseline check; the relational assertion removes the gate. A regression moves the ungoverned level, which the projection absorbs — harmless to the _finding_, but not caught. A reader deciding whether this record still means what they think should see that stated rather than implied.
+- **A project-tier-load regression is no longer detected.** The design gated that direction with an absolute baseline check; the relational assertion removes the gate. A regression moves the ungoverned level, which the assertion absorbs — harmless to the _finding_, but not caught. A reader deciding whether this record still means what they think should see that stated rather than implied.
 
 ## Oracle limits
 

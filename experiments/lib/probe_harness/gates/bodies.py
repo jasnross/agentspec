@@ -112,12 +112,19 @@ def governed(request: ClaudeRequest, field: MarkerField, marker: str) -> bool:
             return any(marker in s for m in request.messages for s in _content_strings(m))
 
 
+def governed_requests(
+    requests: Sequence[ClaudeRequest], marker: str, field: MarkerField = MarkerField.SYSTEM
+) -> list[ClaudeRequest]:
+    """The requests whose <field> carries <marker>, in capture order."""
+    return [r for r in requests if governed(r, field, marker)]
+
+
 def subagent(request: ClaudeRequest) -> bool:
     """Whether some `.system` string carries the subagent flag Claude writes in its billing header.
 
     A subagent's follow-up turn after a tool call carries no agent system prompt, so no
     marker, yet runs at the subagent's effort; this flag is what still identifies it. It is
-    matched anywhere in `.system`, as the effort projections' `$u` matches it.
+    matched anywhere in `.system`, as the effort assertions' control set matches it.
     """
     return any(SUBAGENT_FLAG in s for s in request.system.strings())
 

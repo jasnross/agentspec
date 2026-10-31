@@ -1,4 +1,4 @@
-<!-- next: 61 -->
+<!-- next: 62 -->
 
 - #1 Consider deriving id from path instead of requiring in frontmatter
    - Currently `id` is a required `String` in all frontmatter structs; missing it causes a parse error at load time
@@ -237,3 +237,6 @@
 - #60 **Decide whether `OpenCodeCommand.model` should be required.** `experiments/lib/probe_harness/models/opencode_debug.py` keeps `model: str | MISSING` because OpenCode 1.18.34 omits the key for a command whose frontmatter names no model, which the operator's global commands showed in `opencode-command-variant`'s unisolated captures. Now that the debug family runs isolated, a run resolves only the fixture command, which always names a model, so no committed sample shows the absence and the field-coverage test cannot catch the comment going stale.
   - Required would match every run the probe can now make; MISSING-able matches what the provider can emit, which is the models' stated rule (a field defaults to `MISSING` only where a provider is known to omit it).
   - Revisit once the unisolated captures are retired: requiring it today would make them fail to judge, and the probe-harness migration re-judges them to show its judge path changes no verdict.
+- #61 **Keep operator config out of samples that pass the leak scan.** `probe sample` keeps a modelled string whole, because an expression reads it by name, and `samples.leaks` matches only identity it can enumerate (home, username, email, instruction-file lines, skill and command names, `mcp__claude_ai_`). A subagent's prose report, returned to the main thread as a Claude tool result's text, can paraphrase the operator's setup and pass both: `claude-agent-effort/samples/refuting.json`, from the 2026-10-21 discriminator capture, described the operator's user-level instructions and connectors in prose. That one string was redacted by hand, so the sample is `origin: "edited"`.
+  - Redesign the reducer so a modelled string keeps only what an expression reads. One shape: let a definition declare which modelled strings its expressions read, and reduce every other one by line spans, as undeclared strings already are; the equality check then proves the declaration.
+  - Add an after-the-fact guard over committed samples beyond the identity scan, for instance flagging prose that refers to the operator's own configuration (a mention of the user's own instruction files, or of account connectors), so a leak a future capture carries is caught by `just probe-test` rather than by review.

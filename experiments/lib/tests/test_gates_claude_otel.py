@@ -940,3 +940,32 @@ def test_gate_tool_answered_fails_and_says_so_when_the_sink_holds_no_requests(
     with pytest.raises(GateFailure) as exc:
         claude_otel.tool_answered(arms_from_ws(ws, "a"), ws, "a", "mcp__fx__alpha")
     assert "captured 1 response and 0 request files" in failure_output(exc)
+
+
+def test_relative_effort_reads_each_arm_against_the_control_level() -> None:
+    no_effort = claude_request(system=MARKER, output_config={})
+    arms = arms_from_view(
+        {
+            "same": [marked("medium"), ungoverned("medium")],
+            "other": [marked("low"), no_effort, subagent_follow_up("max")],
+            "unmeasured": [ungoverned("medium")],
+        },
+    )
+
+    assert claude_otel.relative_effort(arms, "same", MARKER) == "same-as-ungoverned"
+    assert claude_otel.relative_effort(arms, "other", MARKER) == [None, "low"]
+    assert claude_otel.relative_effort(arms, "unmeasured", MARKER) == "arm-had-no-governed-request"
+
+
+def test_relative_effort_reads_no_arm_without_one_control_level() -> None:
+    # Checked before the arm is, so an unmeasured arm cannot read as the session's level.
+    arms = arms_from_view({"a": [marked("low")], "b": [ungoverned("medium"), ungoverned("high")]})
+
+    assert claude_otel.relative_effort(arms, "a", MARKER) == "no-usable-control-set"
+    assert claude_otel.relative_effort(arms, "b", MARKER) == "no-usable-control-set"
+
+
+def test_relative_effort_uses_the_field_it_is_given() -> None:
+    arms = arms_from_view({"a": [governed_in_messages("low"), ungoverned("medium")]})
+
+    assert claude_otel.relative_effort(arms, "a", MARKER, MarkerField.MESSAGES) == ["low"]

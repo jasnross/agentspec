@@ -5,6 +5,9 @@ body that does not fit its model has already refused the run before any gate run
 
 No gate names an effort level: the effort packages' assertion is relational, comparing
 each arm against the run's ungoverned main-thread requests.
+
+Beside the gates sit the readings assertions share with them: `control_efforts`, the set
+gate 3 compares, and `relative_effort`, which reads an arm against it.
 """
 
 from collections.abc import Sequence
@@ -13,21 +16,28 @@ from pathlib import Path
 from pydantic import MISSING
 
 from probe_harness.arms import ArmCapture
+from probe_harness.assertions import NO_GOVERNED_REQUEST, unique
 from probe_harness.gates import GateFailure
 from probe_harness.gates.bodies import (
     ClaudeArms,
     MarkerField,
     deferred_tools,
     governed,
+    governed_requests,
     listed_tools,
     subagent,
 )
-from probe_harness.json_values import to_text
+from probe_harness.json_values import JsonValue, to_text
 from probe_harness.models.claude_request import ClaudeRequest, ClaudeTool, ToolResultBlock
 from probe_harness.models.claude_response import AgentCall, ClaudeResponse, ToolUseBlock
 
 type Arms = ClaudeArms
 type _Capture = ArmCapture[ClaudeRequest, ClaudeResponse]
+
+# What `relative_effort` gives every arm when the control set is not one level, and an arm
+# whose governed requests ran at that level.
+NO_CONTROL_SET = "no-usable-control-set"
+SAME_AS_UNGOVERNED = "same-as-ungoverned"
 
 
 def marker(arms: Arms, marker: str, field: MarkerField = MarkerField.SYSTEM) -> None:
@@ -80,13 +90,39 @@ def control_efforts(arms: Arms, marker: str, field: MarkerField = MarkerField.SY
     ]
 
 
+def relative_effort(
+    arms: Arms, arm: str, marker: str, field: MarkerField = MarkerField.SYSTEM
+) -> JsonValue:
+    """The distinct efforts of the arm's governed requests, read against the control level.
+
+    `NO_CONTROL_SET` when `control_efforts` is not one level, `NO_GOVERNED_REQUEST` when the
+    arm governed nothing, `SAME_AS_UNGOVERNED` when its efforts are exactly the control
+    level, and the efforts themselves otherwise. A governed request declaring no effort
+    contributes `None`. Pass the field gate 2 and gate 3 were given.
+    """
+    control = unique(control_efforts(arms, marker, field))
+    efforts = unique(
+        [
+            None if (effort := r.output_config.effort) is MISSING else effort
+            for r in governed_requests(arms[arm].requests, marker, field)
+        ]
+    )
+    if len(control) != 1:
+        return NO_CONTROL_SET
+    if not efforts:
+        return NO_GOVERNED_REQUEST
+    if efforts == control:
+        return SAME_AS_UNGOVERNED
+    return efforts
+
+
 def deferred_mcp(arms: Arms, marker: str, arm: str, tools: Sequence[str]) -> None:
     """Gate 4: the arm's governed requests list every tool as deferred, beside `ToolSearch`.
 
     It decides whether the run measured Claude under its default tool search. It also pins
     the listing's format, one bare tool name per line, which the projections read.
     """
-    requests = _governed(arms, arm, marker)
+    requests = governed_requests(_requests(arms, arm), marker)
     deferred = {line for r in requests for line in deferred_tools(r)}
     if set(tools) <= deferred and any(
         any(t.name == "ToolSearch" for t in r.tool_list) for r in requests
@@ -117,7 +153,10 @@ def model(arms: Arms, marker: str, model: str) -> None:
     `model` parameter would move the subagent off the pinned one.
     """
     wrong = [
-        (name, r.model) for name in arms for r in _governed(arms, name, marker) if r.model != model
+        (name, r.model)
+        for name in arms
+        for r in governed_requests(_requests(arms, name), marker)
+        if r.model != model
     ]
     if not wrong:
         return
@@ -264,11 +303,6 @@ def delegation_fork(arms: Arms, ws: Path, arm: str) -> None:
 def _requests(arms: Arms, arm: str) -> tuple[ClaudeRequest, ...]:
     bodies = arms.get(arm)
     return bodies.requests if bodies is not None else ()
-
-
-def _governed(arms: Arms, arm: str, marker: str) -> list[ClaudeRequest]:
-    """The arm's requests whose system prompt carries the marker."""
-    return [r for r in _requests(arms, arm) if governed(r, MarkerField.SYSTEM, marker)]
 
 
 def _main_thread(arm: _Capture, marker: str) -> list[ClaudeRequest]:

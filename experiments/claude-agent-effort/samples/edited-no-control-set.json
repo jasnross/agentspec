@@ -1,0 +1,426 @@
+{
+  "origin": "edited",
+  "note": "confirming capture with every request whose system carries no marker removed, and session_agent emptied, so no ungoverned request declares the control effort and one arm was never measured",
+  "input": {
+    "session_agent": {
+      "requests": [],
+      "responses": [
+        {
+          "model": null,
+          "id": null,
+          "type": null,
+          "role": null,
+          "content": [
+            {
+              "type": "text",
+              "text": null
+            }
+          ],
+          "container": null,
+          "stop_reason": null,
+          "stop_sequence": null,
+          "stop_details": null,
+          "usage": null,
+          "input_transformations": null,
+          "diagnostics": null,
+          "context_management": null
+        }
+      ]
+    },
+    "delegated": {
+      "requests": [
+        {
+          "model": "claude-opus-4-8",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": null
+                },
+                {
+                  "type": "text",
+                  "text": null
+                },
+                {
+                  "type": "text",
+                  "text": null
+                }
+              ]
+            },
+            {
+              "role": "system",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded — calling them directly will fail with InputValidationError. Use ToolSearch with query \"select:<name>[,<name>...]\" to load tool schemas before calling them:\nEnterWorktree\nExitWorktree\nMonitor\nNotebookEdit\nSendMessage\nTaskStop\nWebFetch\nWebSearch"
+                },
+                {
+                  "type": "tool_addition",
+                  "tool": null
+                },
+                {
+                  "type": "tool_addition",
+                  "tool": null
+                },
+                {
+                  "type": "tool_addition",
+                  "tool": null,
+                  "cache_control": null
+                }
+              ]
+            }
+          ],
+          "system": [
+            {
+              "type": "",
+              "text": "x-anthropic-billing-header: cc_version=2.1.287.2cb; cc_entrypoint=sdk-cli; cch=00000; cc_is_subagent=true; cc_prompt_id=1bf293ce-36c5-4964-ac4f-27f2cff16e03;"
+            },
+            {
+              "type": "",
+              "text": "",
+              "cache_control": {
+                "type": ""
+              }
+            },
+            {
+              "type": "",
+              "text": "AGENTSPEC-PROBE-MARKER-7Q4XKD",
+              "cache_control": {
+                "type": ""
+              }
+            }
+          ],
+          "tools": [
+            {
+              "name": "Agent",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {
+                  "description": {
+                    "description": "",
+                    "type": ""
+                  },
+                  "prompt": {
+                    "description": "",
+                    "type": ""
+                  },
+                  "subagent_type": {
+                    "description": "",
+                    "type": ""
+                  },
+                  "model": {
+                    "description": "",
+                    "type": "",
+                    "enum": ["", "", "", ""]
+                  },
+                  "run_in_background": {
+                    "description": "",
+                    "type": ""
+                  },
+                  "isolation": {
+                    "description": "",
+                    "type": "",
+                    "enum": ["", ""]
+                  }
+                },
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "Bash",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {
+                  "command": {
+                    "description": "",
+                    "type": ""
+                  },
+                  "timeout": {
+                    "description": "",
+                    "type": ""
+                  },
+                  "description": {
+                    "description": "",
+                    "type": ""
+                  },
+                  "run_in_background": {
+                    "description": "",
+                    "type": ""
+                  },
+                  "dangerouslyDisableSandbox": {
+                    "description": "",
+                    "type": ""
+                  }
+                },
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "Edit",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {
+                  "file_path": {
+                    "description": "",
+                    "type": ""
+                  },
+                  "old_string": {
+                    "description": "",
+                    "type": ""
+                  },
+                  "new_string": {
+                    "description": "",
+                    "type": ""
+                  },
+                  "replace_all": {
+                    "description": "",
+                    "default": false,
+                    "type": ""
+                  }
+                },
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "Read",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {
+                  "file_path": {
+                    "description": "",
+                    "type": ""
+                  },
+                  "offset": {
+                    "description": "",
+                    "type": "",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "limit": {
+                    "description": "",
+                    "type": "",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "pages": {
+                    "description": "",
+                    "type": ""
+                  }
+                },
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "Skill",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {
+                  "skill": {
+                    "description": "",
+                    "type": ""
+                  },
+                  "args": {
+                    "description": "",
+                    "type": ""
+                  }
+                },
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "ToolSearch",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {
+                  "query": {
+                    "description": "",
+                    "type": ""
+                  },
+                  "max_results": {
+                    "description": "",
+                    "default": 5,
+                    "type": ""
+                  }
+                },
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "DeferredToolPlaceholder",
+              "description": null,
+              "input_schema": {
+                "type": null,
+                "properties": {}
+              },
+              "defer_loading": null
+            },
+            {
+              "name": "Write",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {
+                  "file_path": {
+                    "description": "",
+                    "type": ""
+                  },
+                  "content": {
+                    "description": "",
+                    "type": ""
+                  }
+                },
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "type": null,
+              "name": "advisor",
+              "model": null,
+              "defer_loading": null
+            }
+          ],
+          "betas": null,
+          "metadata": null,
+          "max_tokens": null,
+          "thinking": null,
+          "context_management": null,
+          "output_config": {
+            "effort": "low"
+          },
+          "thread": null,
+          "diagnostics": null,
+          "stream": null
+        }
+      ],
+      "responses": [
+        {
+          "model": null,
+          "id": null,
+          "type": null,
+          "role": null,
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": null,
+              "signature": null
+            },
+            {
+              "type": "tool_use",
+              "id": "toolu_01FkFV731dTjcKbcNuLQVysX",
+              "name": "Agent",
+              "input": {
+                "description": null,
+                "prompt": null,
+                "subagent_type": null
+              },
+              "caller": null
+            }
+          ],
+          "container": null,
+          "stop_reason": null,
+          "stop_sequence": null,
+          "stop_details": null,
+          "usage": null,
+          "input_transformations": null,
+          "diagnostics": null,
+          "context_management": null
+        },
+        {
+          "model": null,
+          "id": null,
+          "type": null,
+          "role": null,
+          "content": [
+            {
+              "type": "text",
+              "text": null
+            }
+          ],
+          "container": null,
+          "stop_reason": null,
+          "stop_sequence": null,
+          "stop_details": null,
+          "usage": null,
+          "input_transformations": null,
+          "diagnostics": null,
+          "context_management": null
+        },
+        {
+          "model": null,
+          "id": null,
+          "type": null,
+          "role": null,
+          "content": [
+            {
+              "type": "text",
+              "text": null
+            }
+          ],
+          "container": null,
+          "stop_reason": null,
+          "stop_sequence": null,
+          "stop_details": null,
+          "usage": null,
+          "input_transformations": null,
+          "diagnostics": null,
+          "context_management": null
+        },
+        {
+          "model": null,
+          "id": null,
+          "type": null,
+          "role": null,
+          "content": [
+            {
+              "type": "text",
+              "text": null
+            }
+          ],
+          "container": null,
+          "stop_reason": null,
+          "stop_sequence": null,
+          "stop_details": null,
+          "usage": null,
+          "input_transformations": null,
+          "diagnostics": null,
+          "context_management": null
+        }
+      ]
+    }
+  },
+  "results": {
+    "assertion": {
+      "session_agent": "no-usable-control-set",
+      "delegated": "no-usable-control-set"
+    }
+  }
+}
