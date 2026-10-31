@@ -1,0 +1,28 @@
+{
+  "origin": "capture",
+  "input": [
+    {
+      "conversation_id": "8b149a4d-16ce-45a6-9b4a-a8d5aa9070b2",
+      "generation_id": null,
+      "model": null,
+      "subagent_id": null,
+      "subagent_type": "arm-two-options",
+      "task": null,
+      "parent_conversation_id": null,
+      "tool_call_id": null,
+      "subagent_model": "claude-opus-5-thinking-low-fast",
+      "is_parallel_worker": null,
+      "session_id": null,
+      "hook_event_name": "subagentStart",
+      "cursor_version": "3.24.12",
+      "workspace_roots": null,
+      "user_email": null,
+      "transcript_path": null
+    }
+  ],
+  "results": {
+    "assertion": "claude-opus-5-thinking-low-fast",
+    "wait_for": true,
+    "capture_version": "3.24.12"
+  }
+}

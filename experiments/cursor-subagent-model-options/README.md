@@ -14,7 +14,7 @@ Option **ordering** needs no probe. agentspec is the sole writer of the bracket 
 experiments/probe run cursor-subagent-model-options
 ```
 
-It arranges a fresh workspace, prints the path, and blocks until the capture matches its `wait_for` filter. There is no resume path — a timeout ends the run and the next attempt is a fresh session.
+It arranges a fresh workspace, prints the path, and blocks until the definition's `wait_for` holds: `_wait_for` in `probe.py` is true once any line of the capture is a `subagentStart` whose `subagent_type` is `arm-two-options`. There is no resume path — a timeout ends the run and the next attempt is a fresh session.
 
 ## The assertion discriminates
 
@@ -30,20 +30,25 @@ Measured 2026-08-24 against **Cursor 3.17.8**.
 
 The `grok-4.6` row is why this finding is not a single observation. The separator parses on two unrelated model families, which is stronger than one arm could be on its own.
 
-On 2026-10-22, against Cursor 3.26.16, the `discriminator` fixture variant ran as a dry run. It changes one file, `.cursor/agents/arm-two-options.md`, whose `model:` becomes the bare `claude-opus-5` of the baseline row above. The `status` and `observed` fields are excerpted from the record the run printed:
-
-```
-PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run cursor-subagent-model-options
-{"status":"refuted","observed":"claude-opus-5-thinking-high"}
-```
+On 2026-10-22, against Cursor 3.26.16, the `discriminator` fixture variant ran as a dry run. It changes one file, `.cursor/agents/arm-two-options.md`, whose `model:` becomes the bare `claude-opus-5` of the baseline row above. The record the run printed had `status` `refuted` and `observed` `"claude-opus-5-thinking-high"`.
 
 The value differed from `expected`, and it reproduces the baseline row.
+
+The assertion, `_assertion` in `probe.py`, returns the `subagent_model` of the first `subagentStart` whose `subagent_type` is `arm-two-options`, and `null` when there is none or that payload carries no `subagent_model`. The committed samples are one capture per fixture variant and one prefix. `confirming.json` is an `assertion`-variant capture on Cursor 3.24.12, and it equals `expected`. `refuting.json` is a `discriminator`-variant capture on Cursor 3.26.16, which reproduces the baseline row and differs from `expected`. `before-subagent-start.json` is a capture cut with `--lines 0`, before the awaited `subagentStart`, which makes it `wait_for`'s false side; with no payload in it, the assertion and the capture version are both `null`.
+
+| Sample | Origin | `assertion` | `wait_for` | `capture_version` |
+| --- | --- | --- | --- | --- |
+| `before-subagent-start.json` | `prefix` | `null` | `false` | `null` |
+| `confirming.json` | `capture` | `"claude-opus-5-thinking-low-fast"` | `true` | `"3.24.12"` |
+| `refuting.json` | `capture` | `"claude-opus-5-thinking-high"` | `true` | `"3.26.16"` |
+
+`just probe-test` re-proves every result on every run.
 
 ### The baseline shares the probe arm's `subagent_type`
 
 Both captures are of a subagent named `arm-two-options` — on 2026-08-24 the baseline was taken first, then the same file was overwritten with its bracketed form and invoked again. The package now commits the two arms as fixture variants that share that filename: `fixtures/assertion/.cursor/agents/arm-two-options.md` carries the bracketed form, and `fixtures/discriminator/` holds the same tree with the bare `claude-opus-5` in that one file.
 
-This matters more than it looks. The projection selects on `.subagent_type`, so a baseline captured under a _different_ name yields no match and the projection returns `null`. That refutes because **nothing matched**, not because a distinct input produced a distinct value — the "misspelled jq path returns `null` forever" failure the contract's discrimination rule exists to catch. The refuting dry-run here observes `claude-opus-5-thinking-high`, a real resolved model, which is what makes it a discrimination check rather than a wiring check.
+This matters more than it looks. The assertion selects on `subagent_type`, so a baseline captured under a _different_ name yields no match and the assertion returns `null`. That refutes because **nothing matched**, not because a distinct input produced a distinct value — the "misspelled field returns `null` forever" failure the contract's discrimination rule exists to catch. The refuting dry-run here, and the refuting sample, observe `claude-opus-5-thinking-high`, a real resolved model, which is what makes it a discrimination check rather than a wiring check.
 
 ### Both values are non-default, and that is mandatory
 
@@ -61,7 +66,7 @@ The flattened `subagent_model` **hides an option whose value equals the model's 
 
 ## Why `version_source.kind` is `capture`
 
-The Cursor version comes from `cursor_version` in the payload, not from a CLI command. `cursor-agent --version` reports a **different artifact on a different versioning scheme** than the IDE that fired the hook, so a command-sourced version would record a number unrelated to the thing measured.
+The Cursor version comes from `cursor_version` in the payload, not from a CLI command: the definition's capture version, `_capture_version` in `probe.py`, reads the first `cursor_version` among the capture's payloads. `cursor-agent --version` reports a **different artifact on a different versioning scheme** than the IDE that fired the hook, so a command-sourced version would record a number unrelated to the thing measured.
 
 The visible consequence: `just probe-status` computes no drift for this package and says so. That is designed, not broken — there is nothing to compare an installed version against, because the version is a property of the recorded session rather than of the machine reading the record.
 
