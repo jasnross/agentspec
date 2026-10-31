@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "provider": "claude",
   "driver": "billed",
   "depth": "outbound-request",
@@ -9,7 +9,6 @@
     "command": "claude --version"
   },
   "assertion": {
-    "projection": "def governed: [.[] | select(.system | tostring | contains(\"AGENTSPEC-PROBE-MARKER-CCMCP4T\"))]; def shape: {direct: ([.[] | .tools[]?.name | select(startswith(\"mcp__\"))] | unique), deferred: ([.[] | .. | strings | select(contains(\"The following deferred tools are now available via ToolSearch\")) | split(\"\\n\")[] | select(startswith(\"mcp__\"))] | unique), tool_search: any(.[]; any(.tools[]?; .name == \"ToolSearch\"))}; with_entries(.value |= (governed | if length == 0 then \"arm-had-no-governed-request\" else shape end))",
     "expected": {
       "inherit": {
         "direct": [],

@@ -27,9 +27,9 @@ Each arm's prompt is `Use the Agent tool to delegate to the <agent> subagent. Do
 
 ## The oracle
 
-`CLAUDE_CODE_ENABLE_TELEMETRY=1` plus `OTEL_LOG_RAW_API_BODIES=file:<dir>` writes each untruncated request body to `<dir>/<uuid>.request.json`. The projection reads only requests whose `.system` carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-CCMCP4T` — the subagent's own requests.
+`CLAUDE_CODE_ENABLE_TELEMETRY=1` plus `OTEL_LOG_RAW_API_BODIES=file:<dir>` writes each untruncated request body to `<dir>/<uuid>.request.json`. The assertion reads only requests whose `.system` carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-CCMCP4T` — the subagent's own requests.
 
-An MCP tool can reach a request in two places, and the projection reads both:
+An MCP tool can reach a request in two places, and the assertion reads both:
 
 - **Directly**, as an entry in `tools[]`.
 - **Deferred**, named on its own line in a text block that opens "The following deferred tools are now available via ToolSearch." A spike on 2026-10-01 against Claude Code 2.1.284 found tool search puts only `ToolSearch` in `tools[]` and lists the MCP tools there instead. Reading `tools[]` alone would report every deferred grant as absent.
@@ -72,13 +72,11 @@ The four gates live in `experiments/lib/probe_harness/gates/claude_otel.py` with
 
 ## The assertion is relational across arms
 
-The six agents differ only in `tools`, so distinct observed values across arms show the projection reads each arm independently. An arm with no governed request projects to `"arm-had-no-governed-request"`; without it, an unmeasured `read` arm would project exactly to its expected value. The `discriminator` fixture variant changes one agent so that the assertion must disagree with it; see "Discriminate evidence".
+The six agents differ only in `tools`, so distinct observed values across arms show the assertion reads each arm independently. For an arm with no governed request it yields `"arm-had-no-governed-request"`; without it, an unmeasured `read` arm would yield exactly its expected value. The `discriminator` fixture variant changes one agent so that the assertion must disagree with it; see "Discriminate evidence".
 
 `expected` states agentspec's documented belief: tool search defers every granted MCP tool, a granted MCP tool always arrives with `ToolSearch`, and an allowlist without MCP entries grants no MCP tool.
 
 ## Discriminate evidence
-
-Before the first billed run, the recorder's `--dry-run` against two fabricated views printed `confirmed` for one matching `expected` and `refuted` for one where `exact` carried both fx tools.
 
 From the Sonnet dry run on 2026-10-02 against Claude Code 2.1.287 (`status` and `observed`, excerpted from the printed record):
 
@@ -92,18 +90,19 @@ From the Sonnet dry run on 2026-10-02 against Claude Code 2.1.287 (`status` and 
   "server_glob":  {"direct":["mcp__fx__alpha","mcp__fx__beta"],"deferred":[],"tool_search":false}}}
 ```
 
-`read`, `exact`, and `server` all differ, so the projection reads each arm on its own.
+`read`, `exact`, and `server` all differ, so the assertion reads each arm on its own.
 
 Both committed records carry these same values. The first (`2026-10-02T005617`) predates the MCP-connected gate; the second (`2026-10-02T012920`) was made with every gate above in place.
 
-On 2026-10-21, against Claude Code 2.1.287, the `discriminator` fixture variant ran as a dry run. It changes one file, `exact/.claude/agents/probe-mcp-exact.md`, whose `tools` gains `ToolSearch`. That is `exact_search`'s allowlist, measured above deferring `mcp__fx__alpha` behind `ToolSearch`. The `status` and `observed` fields are excerpted from the record the run printed:
+`samples/confirming.json` and `samples/refuting.json` come from kept workspaces of the `assertion` and `discriminator` fixture variants, both taken on Claude Code **2.1.287**; the refuting one, `…T233626-discriminator`, on 2026-10-21. The `discriminator` variant changes one file, `exact/.claude/agents/probe-mcp-exact.md`, whose `tools` gains `ToolSearch`. That is `exact_search`'s allowlist, measured above deferring `mcp__fx__alpha` behind `ToolSearch`. `samples/edited-arm-without-governed-request.json` is the confirming sample with `read`'s governed requests removed.
 
-```
-PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run claude-subagent-mcp-tools
-{"status":"refuted","observed":{"inherit":{"direct":[],"deferred":["mcp__fx__alpha","mcp__fx__beta"],"tool_search":true},"read":{"direct":[],"deferred":[],"tool_search":false},"exact":{"direct":[],"deferred":["mcp__fx__alpha"],"tool_search":true},"exact_search":{"direct":[],"deferred":["mcp__fx__alpha"],"tool_search":true},"server":{"direct":["mcp__fx__alpha","mcp__fx__beta"],"deferred":[],"tool_search":false},"server_glob":{"direct":["mcp__fx__alpha","mcp__fx__beta"],"deferred":[],"tool_search":false}}}
-```
+| Sample | Assertion |
+| --- | --- |
+| `confirming.json` | `{"inherit":{"direct":[],"deferred":["mcp__fx__alpha","mcp__fx__beta"],"tool_search":true},"read":{"direct":[],"deferred":[],"tool_search":false},"exact":{"direct":["mcp__fx__alpha"],"deferred":[],"tool_search":false},"exact_search":{"direct":[],"deferred":["mcp__fx__alpha"],"tool_search":true},"server":{"direct":["mcp__fx__alpha","mcp__fx__beta"],"deferred":[],"tool_search":false},"server_glob":{"direct":["mcp__fx__alpha","mcp__fx__beta"],"deferred":[],"tool_search":false}}` |
+| `edited-arm-without-governed-request.json` | `{"inherit":{"direct":[],"deferred":["mcp__fx__alpha","mcp__fx__beta"],"tool_search":true},"read":"arm-had-no-governed-request","exact":{"direct":["mcp__fx__alpha"],"deferred":[],"tool_search":false},"exact_search":{"direct":[],"deferred":["mcp__fx__alpha"],"tool_search":true},"server":{"direct":["mcp__fx__alpha","mcp__fx__beta"],"deferred":[],"tool_search":false},"server_glob":{"direct":["mcp__fx__alpha","mcp__fx__beta"],"deferred":[],"tool_search":false}}` |
+| `refuting.json` | `{"inherit":{"direct":[],"deferred":["mcp__fx__alpha","mcp__fx__beta"],"tool_search":true},"read":{"direct":[],"deferred":[],"tool_search":false},"exact":{"direct":[],"deferred":["mcp__fx__alpha"],"tool_search":true},"exact_search":{"direct":[],"deferred":["mcp__fx__alpha"],"tool_search":true},"server":{"direct":["mcp__fx__alpha","mcp__fx__beta"],"deferred":[],"tool_search":false},"server_glob":{"direct":["mcp__fx__alpha","mcp__fx__beta"],"deferred":[],"tool_search":false}}` |
 
-`exact` differed from `expected`; the other five arms agreed with it.
+The confirming sample equals `expected`, and holds both places a tool can arrive: `inherit` is deferred-only and `exact` direct-only. In the refuting sample `exact` differs from it and the other five arms agree. In the edited sample `read` yields `"arm-had-no-governed-request"` rather than the `{"direct":[],"deferred":[],"tool_search":false}` it expects, so an unmeasured arm cannot confirm. `just probe-test` re-proves every result on every run.
 
 ## What the record licenses
 
