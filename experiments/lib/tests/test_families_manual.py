@@ -21,10 +21,11 @@ from typing import Any
 
 import pytest
 from probe_harness import console, record
-from probe_harness.contract import Manifest, parse_manifest
-from probe_harness.families import manual
+from probe_harness.contract import Manifest, ManifestV2, parse_manifest
+from probe_harness.families import load_package, manual
 from probe_harness.families.base import GateFailure
 from probe_harness.families.manual import ManualProbe
+from probe_harness.source import source_map
 
 from tests.conftest import (
     CURSOR_PACKAGE_NAME,
@@ -36,15 +37,25 @@ from tests.conftest import (
 )
 
 
-def record_in_process(manifest: Manifest, ws: Path) -> int:
-    """Judge <ws> as a live run with a terminal does, then record it; 1 on a refusal."""
+def record_in_process(manifest: Manifest, ws: Path, probe: ManualProbe[Any] | None = None) -> int:
+    """Judge <ws> with <probe>, or a bare definition, as a live run with a terminal does, then
+    record it; 1 on a refusal."""
+    definition = probe if probe is not None else ManualProbe(instructions="")
+    source = source_map(manifest.path.parent) if isinstance(manifest, ManifestV2) else None
     try:
-        result = manual.judge(manifest, ws, ManualProbe(instructions=""), None, interactive=True)
-        record.write(record.compute(manifest, ws, result, dry_run=False))
+        result = manual.judge(manifest, ws, definition, None, interactive=True)
+        record.write(record.compute(manifest, ws, result, dry_run=False, source=source))
     except (GateFailure, record.RecordRefused) as e:
         console.say_refusal(e)
         return 1
     return 0
+
+
+def record_package_in_process(package: Path, ws: Path) -> int:
+    """`record_in_process` with <package>'s own definition, loaded as `probe record` loads it."""
+    definition, manifest = load_package(package)
+    assert isinstance(definition, ManualProbe)
+    return record_in_process(manifest, ws, definition)
 
 
 def put_capture_package(tmp_path: Path, manifest: str) -> tuple[Path, Path]:
@@ -310,6 +321,7 @@ def seed_workspace(ws: Path, model: str = "claude-opus-5-thinking-low") -> None:
         "hook_event_name": "subagentStart",
         "subagent_type": "arm-effort-low",
         "subagent_model": model,
+        "conversation_id": "c1",
         "cursor_version": "3.16.17",
     }
     (ws / "capture" / "payloads.jsonl").write_text(
@@ -332,14 +344,14 @@ def read_record(path: Path | None) -> dict[str, object]:
 def test_a_capture_resolves_tool_version_from_its_own_cursor_version(
     tmp_path: Path, cursor_package: Path
 ) -> None:
-    # The surviving job of the recorder's `capture`. Four of six manifests declare
-    # `version_source.kind: "capture"`, so this is the only path by which a Cursor record
-    # gets a version at all — and no CLI can supply it, since `cursor-agent --version`
-    # reports a different artifact on a different versioning scheme.
+    # Every Cursor manifest declares `version_source.kind: "capture"`, so the definition's
+    # `capture_version` is the only path by which a Cursor record gets a version at all —
+    # and no CLI can supply it, since `cursor-agent --version` reports a different artifact
+    # on a different versioning scheme.
     ws = tmp_path / "ws"
     seed_workspace(ws)
 
-    assert record_in_process(parse_manifest(cursor_package / "probe.json"), ws) == 0
+    assert record_package_in_process(cursor_package, ws) == 0
 
     record = read_record(newest_record(cursor_package))
     assert record["status"] == "confirmed"
@@ -357,7 +369,7 @@ def test_a_capture_showing_the_default_model_records_refuted_not_confirmed(
     ws = tmp_path / "ws-default"
     seed_workspace(ws, "claude-opus-5-thinking-high")
 
-    assert record_in_process(parse_manifest(cursor_package / "probe.json"), ws) == 0
+    assert record_package_in_process(cursor_package, ws) == 0
     assert read_record(newest_record(cursor_package))["status"] == "refuted"
 
 
@@ -368,7 +380,7 @@ def test_a_workspace_with_no_payloads_is_refused_and_writes_no_record(
     ws = tmp_path / "ws-empty"
     (ws / "capture").mkdir(parents=True)
 
-    assert record_in_process(parse_manifest(cursor_package / "probe.json"), ws) != 0
+    assert record_package_in_process(cursor_package, ws) != 0
     captured = capsys.readouterr()
     assert "no captured payloads" in captured.out + captured.err
     assert newest_record(cursor_package) is None
@@ -380,7 +392,7 @@ def test_a_directory_that_is_not_a_probe_workspace_is_refused(
     ws = tmp_path / "not-a-workspace"
     ws.mkdir()
 
-    assert record_in_process(parse_manifest(cursor_package / "probe.json"), ws) != 0
+    assert record_package_in_process(cursor_package, ws) != 0
     captured = capsys.readouterr()
     assert "not a probe workspace" in captured.out + captured.err
 
@@ -427,6 +439,7 @@ def test_the_blocking_path_records_without_a_second_invocation(
             "hook_event_name": "subagentStart",
             "subagent_type": "arm-effort-low",
             "subagent_model": "claude-opus-5-thinking-low",
+            "conversation_id": "c1",
             "cursor_version": "3.16.17",
         }
         with (ws / "capture" / "payloads.jsonl").open("a", encoding="utf-8") as payloads:
