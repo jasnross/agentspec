@@ -11,14 +11,18 @@ without `--billed`.
 import shutil
 from pathlib import Path
 
+from probe_harness.assertions import NO_GOVERNED_REQUEST
 from probe_harness.families.claude_otel import (
     ClaudeArm,
+    ClaudeArms,
     ClaudeOtelProbe,
     McpAbsent,
     McpConnected,
     Model,
     PluginDir,
 )
+from probe_harness.gates.bodies import governed_requests, offered
+from probe_harness.json_values import JsonValue
 
 # Each would change what is measured: whether tool search is on, whether the MCP server
 # has connected when the subagent spawns, or which model the subagent runs.
@@ -33,6 +37,7 @@ _UNSET = (
 
 _ARGS = ("--allowedTools", "Agent", "--effort", "low")
 _PLUGIN_TOOLS = ("mcp__plugin_fxp_fx__alpha", "mcp__plugin_fxp_fx__beta")
+
 
 # The subdirectory of each variant tree the plugin arms' agents are copied from, so a reachability
 # check counts it.
@@ -51,10 +56,27 @@ def _arrange_arm(fixtures: Path, arm_dir: Path, arm: ClaudeArm) -> None:
     shutil.copy(fixtures / "plugin-agents" / f"{stem}.md", agents)
 
 
+_MARKER = "AGENTSPEC-PROBE-MARKER-CCPLUG4"
+
+
+def _fx(name: str) -> bool:
+    """An `fx` tool, under the plugin's prefix or the bare server's."""
+    return name.startswith(("mcp__plugin_fxp_fx__", "mcp__fx__"))
+
+
+def _assertion(arms: ClaudeArms) -> JsonValue:
+    """The `fx` tools each arm's governed requests offer, directly or deferred."""
+    value: dict[str, JsonValue] = {}
+    for arm, capture in arms.items():
+        governed = governed_requests(capture.requests, _MARKER)
+        value[arm] = offered(governed, _fx) if governed else NO_GOVERNED_REQUEST
+    return value
+
+
 PROBE = ClaudeOtelProbe(
     model="claude-sonnet-5-5",
     budget_usd="0.50",
-    marker="AGENTSPEC-PROBE-MARKER-CCPLUG4",
+    marker=_MARKER,
     arms=(
         ClaudeArm(
             "read",
@@ -107,8 +129,9 @@ PROBE = ClaudeOtelProbe(
     ),
     gates=(Model(), McpConnected(_PLUGIN_TOOLS), McpAbsent("mcp__fx__")),
     unset_env=_UNSET,
-    # A claude.ai connector would add MCP tools the projection cannot tell from the fixture's.
+    # A claude.ai connector would add MCP tools the assertion cannot tell from the fixture's.
     set_env=(("ENABLE_CLAUDEAI_MCP_SERVERS", "false"),),
     arrange_arm=_arrange_arm,
+    assertion=_assertion,
     variants=("assertion", "discriminator"),
 )

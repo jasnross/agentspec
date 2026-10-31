@@ -35,14 +35,14 @@ Each arm's prompt is `Use the Agent tool to delegate to the <delegation name> su
 
 ## The oracle
 
-`CLAUDE_CODE_ENABLE_TELEMETRY=1` plus `OTEL_LOG_RAW_API_BODIES=file:<dir>` writes each untruncated request body to `<dir>/<uuid>.request.json`. The projection reads only requests whose `.system` carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-CCPLUG4` — the subagent's own requests.
+`CLAUDE_CODE_ENABLE_TELEMETRY=1` plus `OTEL_LOG_RAW_API_BODIES=file:<dir>` writes each untruncated request body to `<dir>/<uuid>.request.json`. The assertion reads only requests whose `.system` carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-CCPLUG4` — the subagent's own requests.
 
 Each arm's value is the sorted union of tool names in `tools[]` and names listed as deferred, on lines of a text block opening "The following deferred tools are now available via ToolSearch", kept to names starting `mcp__plugin_fxp_fx__` or `mcp__fx__`. The union makes the value the same whether or not tool search defers a tool, as long as the deferred listing keeps one bare name per line; see The gates for what pins that here. An arm with no governed request projects to `"arm-had-no-governed-request"`.
 
 ## Isolation
 
 - **`--setting-sources project`** — excludes the operator's user-tier settings. It keeps `--plugin-dir` agents loaded.
-- **`ENABLE_CLAUDEAI_MCP_SERVERS=false` in place of `--strict-mcp-config`.** On 2.1.287 `--strict-mcp-config` drops plugin-bundled servers too: measured 2026-10-03 at zero cost, the `init` event listed no MCP server and `fx` was never spawned. Without the flag, the operator's account-level claude.ai connectors would load; this variable excludes them. User-scope servers in the operator's `~/.claude.json` still load. The projection's name filter keeps their tools out of every value unless one is named `fx`, in which case its `mcp__fx__alpha` would make `project_unprefixed` falsely non-empty. The foreign-server gate below refuses such a run.
+- **`ENABLE_CLAUDEAI_MCP_SERVERS=false` in place of `--strict-mcp-config`.** On 2.1.287 `--strict-mcp-config` drops plugin-bundled servers too: measured 2026-10-03 at zero cost, the `init` event listed no MCP server and `fx` was never spawned. Without the flag, the operator's account-level claude.ai connectors would load; this variable excludes them. User-scope servers in the operator's `~/.claude.json` still load. The assertion's name filter keeps their tools out of every value unless one is named `fx`, in which case its `mcp__fx__alpha` would make `project_unprefixed` falsely non-empty. The foreign-server gate below refuses such a run.
 - **One plugin copy and one fixture tree per arm**, each holding only that arm's agent, so a delegation to the wrong name finds no agent and produces no governed request.
 - **Unset variables.** The runner unsets `ENABLE_TOOL_SEARCH`, `ANTHROPIC_BASE_URL`, and `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` (each changes whether tool search is on), `CLAUDE_CODE_MCP_STARTUP_WAIT_MS` (whether `fx` has connected when the subagent spawns), and `CLAUDE_CODE_SUBAGENT_MODEL` and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` (which model the subagent runs).
 - **The pinned model**, plus `model: inherit` in each agent, which outranks `CLAUDE_CODE_SUBAGENT_MODEL`, so the subagent runs on the session's model.
@@ -59,27 +59,20 @@ A gate failure is a statement about the run, not about Claude, and writes no rec
 - **Stamp, per arm** (`gates.stamp`). `fx_server.py` writes `<arm>/fx.stamp` when it answers `tools/list`.
 - **Marker** (`gates.claude_otel.marker`). Every arm holds a request whose `.system` carries the marker, so the arm's subagent actually ran.
 - **Model** (`gates.claude_otel.model`). Every governed request ran on the pinned model.
-- **No foreign `fx` server** (`gates.claude_otel.mcp_absent`). No main-thread request, in any arm, lists a tool starting `mcp__fx__`, directly or as deferred. Every arm's only configured server is the plugin's, so such a tool can only come from a server outside the fixture, and it would reach `project_unprefixed` through the projection's `mcp__fx__` filter as a false `refuted`.
+- **No foreign `fx` server** (`gates.claude_otel.mcp_absent`). No main-thread request, in any arm, lists a tool starting `mcp__fx__`, directly or as deferred. Every arm's only configured server is the plugin's, so such a tool can only come from a server outside the fixture, and it would reach `project_unprefixed` through the assertion's `mcp__fx__` filter as a false `refuted`.
 - **MCP connected before delegation** (`gates.claude_otel.mcp_connected`). In every arm, every main-thread request that offers `Agent` lists `mcp__plugin_fxp_fx__alpha` and `mcp__plugin_fxp_fx__beta`, directly or as deferred. The delegating request is one of them, so the plugin server's tools existed under that name before the subagent did. Without it, an empty `read` or `project_unprefixed` would read the same as "the plugin server had not connected yet".
 
-`gates.claude_otel.deferred_mcp` is not used: no arm here is unrestricted, so none has an unconditional deferred listing to pin. The cost is that nothing in this run pins the deferred listing's one-name-per-line format, which the projection reads through a prefix filter. No arm grants `ToolSearch`, and `claude-subagent-mcp-tools` measured that grants then arrive directly in `tools[]`, so the listing is not expected to carry a granted tool here; but a format change that indented or re-terminated its lines would go undetected, and would read as an absent grant.
+`gates.claude_otel.deferred_mcp` is not used: no arm here is unrestricted, so none has an unconditional deferred listing to pin. The cost is that nothing in this run pins the deferred listing's one-name-per-line format, which the assertion reads through a prefix filter. No arm grants `ToolSearch`, and `claude-subagent-mcp-tools` measured that grants then arrive directly in `tools[]`, so the listing is not expected to carry a granted tool here; but a format change that indented or re-terminated its lines would go undetected, and would read as an absent grant.
 
 If the connection gate fails, re-run the package once by hand before treating it as anything but an apparatus failure; the runner itself does not retry. A second failure the same way is worth investigating rather than recording.
 
 ## The assertion is relational across arms
 
-The six agents differ only in `tools` and location, so distinct observed values across arms show the projection reads each arm independently. The `discriminator` fixture variant changes one agent so that the assertion must disagree with it; see "Discriminate evidence".
+The six agents differ only in `tools` and location, so distinct observed values across arms show the assertion reads each arm independently. The `discriminator` fixture variant changes one agent so that the assertion must disagree with it; see "Discriminate evidence".
 
 `expected` states the design's belief: each plugin spelling grants what it names from either location, and the plain spelling grants nothing from a plugin server.
 
 ## Discriminate evidence
-
-Before the first billed run, the recorder's `--dry-run` against two fabricated views printed `confirmed` for one matching `expected` and `refuted` for one where `project_unprefixed` carried `mcp__plugin_fxp_fx__alpha`:
-
-```
-record: dry run — confirmed — observed {"read":[],"plugin_exact":["mcp__plugin_fxp_fx__alpha"],…,"project_unprefixed":[]} (no file written)
-record: dry run — refuted — observed {"read":[],"plugin_exact":["mcp__plugin_fxp_fx__alpha"],…,"project_unprefixed":["mcp__plugin_fxp_fx__alpha"]} (no file written)
-```
 
 From the `PROBE_DRY_RUN=1` run on 2026-10-03 against Claude Code 2.1.287, each arm's one governed request ran on `claude-sonnet-5-5` and listed no deferred tool. Its `tools[]`:
 
@@ -91,14 +84,14 @@ From the `PROBE_DRY_RUN=1` run on 2026-10-03 against Claude Code 2.1.287, each a
 
 Two records exist from 2026-10-03, both `confirmed` with the same `observed`. The first (`T140459`) predates the foreign-server gate; the second (`T153213`) was made with every gate above in place.
 
-On 2026-10-21, against Claude Code 2.1.287, the `discriminator` fixture variant ran as a dry run. It changes one file, `project_unprefixed/.claude/agents/probe-plug-unprefixed.md`, whose `tools` names `mcp__plugin_fxp_fx__alpha` in place of `mcp__fx__alpha`. That is `project_exact`'s allowlist, measured above as offered the plugin tool. The `status` and `observed` fields are excerpted from the record the run printed:
+`samples/confirming.json` and `samples/refuting.json` come from kept workspaces of the `assertion` and `discriminator` fixture variants, both taken on Claude Code **2.1.287**; the refuting one, `…T233916-discriminator`, on 2026-10-21. The `discriminator` variant changes one file, `project_unprefixed/.claude/agents/probe-plug-unprefixed.md`, whose `tools` names `mcp__plugin_fxp_fx__alpha` in place of `mcp__fx__alpha`. That is `project_exact`'s allowlist, measured above as offered the plugin tool.
 
-```
-PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run claude-subagent-plugin-mcp-tools
-{"status":"refuted","observed":{"read":[],"plugin_exact":["mcp__plugin_fxp_fx__alpha"],"plugin_glob":["mcp__plugin_fxp_fx__alpha","mcp__plugin_fxp_fx__beta"],"project_exact":["mcp__plugin_fxp_fx__alpha"],"project_glob":["mcp__plugin_fxp_fx__alpha","mcp__plugin_fxp_fx__beta"],"project_unprefixed":["mcp__plugin_fxp_fx__alpha"]}}
-```
+| Sample | Assertion |
+| --- | --- |
+| `confirming.json` | `{"read":[],"plugin_exact":["mcp__plugin_fxp_fx__alpha"],"plugin_glob":["mcp__plugin_fxp_fx__alpha","mcp__plugin_fxp_fx__beta"],"project_exact":["mcp__plugin_fxp_fx__alpha"],"project_glob":["mcp__plugin_fxp_fx__alpha","mcp__plugin_fxp_fx__beta"],"project_unprefixed":[]}` |
+| `refuting.json` | `{"read":[],"plugin_exact":["mcp__plugin_fxp_fx__alpha"],"plugin_glob":["mcp__plugin_fxp_fx__alpha","mcp__plugin_fxp_fx__beta"],"project_exact":["mcp__plugin_fxp_fx__alpha"],"project_glob":["mcp__plugin_fxp_fx__alpha","mcp__plugin_fxp_fx__beta"],"project_unprefixed":["mcp__plugin_fxp_fx__alpha"]}` |
 
-`project_unprefixed` differed from `expected`; the other five arms agreed with it.
+The confirming sample equals `expected`. In the refuting sample `project_unprefixed` differs from it and the other five arms agree. `just probe-test` re-proves every result on every run.
 
 ## What the record licenses
 
