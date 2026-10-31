@@ -35,7 +35,7 @@ The call is scripted because the question is what OpenCode does when the agent r
 
 ## The oracle
 
-After OpenCode runs the scripted call, it sends a follow-up request carrying the call's result as a `role: "tool"` message. The projection reads that message from the marked requests and classifies it:
+After OpenCode runs the scripted call, it sends a follow-up request carrying the call's result as a `role: "tool"` message. The assertion reads that message from the marked requests and classifies it:
 
 | Value | Tool result contains |
 | --- | --- |
@@ -48,7 +48,7 @@ The two error strings are the messages of OpenCode's `RejectedError` and `Denied
 
 **Nothing is approved during the run.** On a `permission.asked` event, `opencode run` replies `reject` and prints `permission requested: <permission> (<patterns>); auto-rejecting` (`packages/opencode/src/cli/cmd/run.ts` L801–820); that line appears in `restated`'s output. A rejection normally ends the session, though: the session processor stops on a `RejectedError` unless `experimental.continue_loop_on_deny` is `true` (`packages/opencode/src/session/processor.ts` L200–201, L647, L694). The fixture's `opencode.json` sets it, so the session sends the follow-up request that carries the result. A `DeniedError` never stops the session, so `bare` needs no such setting.
 
-Each arm's projection also carries the tools its marked requests offer. `["read"]` is non-default — OpenCode's default agent offers ten built-ins — and it shows the deny-all was in force when the read ran. Without it, `restated`'s `ask-rejected` would also be a reading of OpenCode's defaults, which ask for `external_directory` too.
+For each arm the assertion also yields the tools its marked requests offer. `["read"]` is non-default — OpenCode's default agent offers ten built-ins — and it shows the deny-all was in force when the read ran. Without it, `restated`'s `ask-rejected` would also be a reading of OpenCode's defaults, which ask for `external_directory` too.
 
 **The outside-the-project check fires in a non-git project.** `containsPath` (`packages/opencode/src/project/instance-context.ts` L18–24) skips the worktree comparison when the worktree is `/`, which is what a non-git project gets, so a file outside the arm's `project/` directory raises `external_directory`. The runner fails an arm whose workspace sits inside a git repository, where OpenCode would compare against that worktree instead.
 
@@ -73,9 +73,9 @@ A gate failure keeps the workspace and exits 1 without recording, because each d
 
 ## The assertion is relational across arms
 
-The two agents differ only in the restated rules, so distinct `external_read` values across arms show the projection reads each arm independently. The `discriminator` fixture variant changes one agent so that the assertion must disagree with it; see "The assertion discriminates".
+The two agents differ only in the restated rules, so distinct `external_read` values across arms show the assertion reads each arm independently. The `discriminator` fixture variant changes one agent so that the assertion must disagree with it; see "The assertion discriminates".
 
-An arm with no marked request projects its `tools` to `"arm-had-no-governed-request"`; an arm whose tool result matches none of the strings projects `external_read` to `{unrecognized: [...]}`.
+For an arm with no marked request the assertion yields `"arm-had-no-governed-request"` as its `tools`; for an arm whose tool result matches none of the strings it yields `{unrecognized: [...]}` as its `external_read`.
 
 ## The assertion discriminates
 
@@ -86,16 +86,15 @@ Measured 2026-10-02 against opencode **1.18.34**, from a `PROBE_DRY_RUN=1` run. 
 | `restated` | `read` | "The user rejected permission to use this specific tool call." | `ask-rejected` |
 | `bare` | `read` | "The user has specified a rule which prevents you from using this specific tool call. Here are some of the relevant rules […]" | `rule-denied` |
 
-`restated`'s `opencode run` output carried `permission requested: external_directory (<arm>/outside/*); auto-rejecting`; `bare`'s carried no such line. Against the same saved view, the recorder's `--dry-run` printed `refuted` for a copy with `restated` replaced by `bare`'s requests.
+`restated`'s `opencode run` output carried `permission requested: external_directory (<arm>/outside/*); auto-rejecting`; `bare`'s carried no such line.
 
-On 2026-10-21, against opencode **1.18.34**, the `discriminator` fixture variant ran as a dry run. It changes one file, `.opencode/agent/probe-restated.md`, which drops `external_directory: ask` and `doom_loop: ask`. Its frontmatter then equals `probe-bare.md`'s, whose arm is measured above as `rule-denied`. The `status` and `observed` fields are excerpted from the record the run printed:
+`samples/confirming.json` and `samples/refuting.json` were captured on 2026-10-31 against opencode **1.18.34**, from dry runs of the `assertion` and `discriminator` fixture variants. The `discriminator` variant changes one file, `.opencode/agent/probe-restated.md`, which drops `external_directory: ask` and `doom_loop: ask`. Its frontmatter then equals `probe-bare.md`'s, whose arm is measured above as `rule-denied`. The assertion yields:
 
-```
-PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run opencode-agent-permission-external-read
-{"status":"refuted","observed":{"restated":{"tools":["read"],"external_read":"rule-denied"},"bare":{"tools":["read"],"external_read":"rule-denied"}}}
-```
+- `confirming.json`: `{"restated":{"tools":["read"],"external_read":"ask-rejected"},"bare":{"tools":["read"],"external_read":"rule-denied"}}`, equal to `expected`.
+- `refuting.json`: `{"restated":{"tools":["read"],"external_read":"rule-denied"},"bare":{"tools":["read"],"external_read":"rule-denied"}}`. `restated` differs from `expected`, its `external_read` moving from `ask-rejected` to `rule-denied`; `bare` agrees with it.
+- `edited-unrecognized-read.json`: the confirming sample with `bare`'s tool result replaced by text no outcome class names, on which `bare`'s `external_read` yields `{"unrecognized": [...]}`.
 
-`restated` differed from `expected`, its `external_read` moving from `ask-rejected` to `rule-denied`; `bare` agreed with it.
+`just probe-test` re-proves all three results on every run.
 
 ## Limits of this oracle
 

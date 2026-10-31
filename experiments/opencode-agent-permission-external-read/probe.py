@@ -15,10 +15,43 @@ import subprocess
 from pathlib import Path
 
 from probe_harness.families.base import GateFailure, ProbeFunctions
-from probe_harness.families.opencode_fake import OpenCodeArm, OpenCodeFakeProbe, ScriptedCall
+from probe_harness.families.opencode_fake import (
+    OpenCodeArm,
+    OpenCodeArms,
+    OpenCodeFakeProbe,
+    ScriptedCall,
+)
+from probe_harness.gates.opencode import tool_results, toolset
+from probe_harness.json_values import JsonValue
 from probe_harness.workspace import require_tools
 
+_MARKER = "AGENTSPEC-PROBE-MARKER-OCEXTR6"
 _OUTSIDE_CONTENT = "AGENTSPEC-OUTSIDE-CONTENT-OCEXTR6"
+
+
+def _external_read(results: list[str]) -> JsonValue:
+    """How the arm's read outside the project ended, checked in this order."""
+    if not results:
+        return "no-tool-result"
+    if any(_OUTSIDE_CONTENT in r for r in results):
+        return "read"
+    if any("The user rejected permission" in r for r in results):
+        return "ask-rejected"
+    if any("The user has specified a rule" in r for r in results):
+        return "rule-denied"
+    unrecognized: list[JsonValue] = [*results]
+    return {"unrecognized": unrecognized}
+
+
+def _assertion(arms: OpenCodeArms) -> JsonValue:
+    """Each arm's tool set and how its read outside the project ended."""
+    return {
+        arm: {
+            "tools": toolset(arms[arm].requests, _MARKER),
+            "external_read": _external_read(tool_results(arms[arm].requests, _MARKER)),
+        }
+        for arm in ("restated", "bare")
+    }
 
 
 def _preflight() -> None:
@@ -53,13 +86,14 @@ def _arrange_arm(fixtures: Path, arm_dir: Path, arm: OpenCodeArm) -> ScriptedCal
 
 
 PROBE = OpenCodeFakeProbe(
-    marker="AGENTSPEC-PROBE-MARKER-OCEXTR6",
+    marker=_MARKER,
     arms=(
         OpenCodeArm("restated", "probe-restated"),
         OpenCodeArm("bare", "probe-bare"),
     ),
     tool_result_gate=True,
     arrange_arm=_arrange_arm,
+    assertion=_assertion,
     functions=ProbeFunctions(preflight=_preflight),
     variants=("assertion", "discriminator"),
 )
