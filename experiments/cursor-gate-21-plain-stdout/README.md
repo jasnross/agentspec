@@ -12,7 +12,7 @@
 experiments/probe run cursor-gate-21-plain-stdout
 ```
 
-The runner waits until the hook has fired before prompting. The original script named "the hook didn't fire at all" as a third failure mode; polling detects that, so the option set covers only what a person can uniquely answer.
+The runner waits until the hook has fired before prompting: the definition's `wait_for`, `_wait_for` in `probe.py`, is true once the capture holds any line at all. The original script named "the hook didn't fire at all" as a third failure mode; polling detects that, so the option set covers only what a person can uniquely answer.
 
 ## What the answer drives
 
@@ -29,6 +29,15 @@ It is also why this probe is worth re-running rather than retiring. If a re-run 
 | `couldnt-tell` | Records `inconclusive` |
 
 The two substantive options are mutually exclusive and exhaust what the probe can produce, because the third outcome — the hook never firing — is machine-detected before the prompt appears.
+
+A person answers the option set, so no sample carries an assertion result; the committed samples prove `wait_for` and the capture version only. The capture version, `_capture_version` in `probe.py`, reads the first `cursor_version` among the capture's payloads. `confirming.json` is a capture of three `sessionStart` firings on Cursor 3.19.19. `before-hook.json` is a capture cut with `--lines 0`, before the hook fired, which makes it `wait_for`'s false side, and with no payload it carries no version.
+
+| Sample             | Origin    | `wait_for` | `capture_version` |
+| ------------------ | --------- | ---------- | ----------------- |
+| `before-hook.json` | `prefix`  | `false`    | `null`            |
+| `confirming.json`  | `capture` | `true`     | `"3.19.19"`       |
+
+`just probe-test` re-proves every result on every run.
 
 ## Prior context, not a current result
 

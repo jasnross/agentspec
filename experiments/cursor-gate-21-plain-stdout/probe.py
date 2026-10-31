@@ -4,7 +4,22 @@ agent's context, the way Claude does?
 Human-judged: whether the agent knew the planted fact is a person's call.
 """
 
-from probe_harness.families.manual import ManualProbe
+from collections.abc import Sequence
+
+from probe_harness.families.manual import CaptureLine, ManualProbe, Unparsed
+from probe_harness.models.cursor_hook import CursorHookPayload, cursor_version
+
+
+def _wait_for(lines: Sequence[CaptureLine[CursorHookPayload]]) -> bool:
+    """The hook fired at least once."""
+    return len(lines) > 0
+
+
+def _capture_version(lines: Sequence[CursorHookPayload | Unparsed]) -> str | None:
+    return cursor_version(
+        line.cursor_version for line in lines if isinstance(line, CursorHookPayload)
+    )
+
 
 PROBE = ManualProbe(
     instructions="""
@@ -16,4 +31,7 @@ PROBE = ManualProbe(
 
 This script is waiting. Once the hook has fired it will ask you what happened.
 """,
+    payload=CursorHookPayload,
+    wait_for=_wait_for,
+    capture_version=_capture_version,
 )

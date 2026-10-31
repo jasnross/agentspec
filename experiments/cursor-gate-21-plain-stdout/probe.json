@@ -1,14 +1,12 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "provider": "cursor",
   "driver": "manual",
   "depth": null,
   "question": "If a Cursor sessionStart hook emits plain text to stdout and exits 0, does Cursor inject that text into the agent's context?",
   "version_source": {
-    "kind": "capture",
-    "jq": "[.[] | .cursor_version] | map(select(. != null)) | first"
+    "kind": "capture"
   },
-  "wait_for": "length > 0",
   "assertion": {
     "options": [
       {
