@@ -40,7 +40,7 @@ Each arm's prompt is `Use the Agent tool to delegate to the <agent> subagent. Do
 
 ## The oracle
 
-`CLAUDE_CODE_ENABLE_TELEMETRY=1` plus `OTEL_LOG_RAW_API_BODIES=file:<dir>` writes each untruncated request body to `<dir>/<uuid>.request.json`. The projection is the sibling package's `governed`/`offered` projection, reading only requests whose `.system` carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-CCFORK8` — the subagent's own requests.
+`CLAUDE_CODE_ENABLE_TELEMETRY=1` plus `OTEL_LOG_RAW_API_BODIES=file:<dir>` writes each untruncated request body to `<dir>/<uuid>.request.json`. The assertion is the sibling package's, reading only requests whose `.system` carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-CCFORK8` — the subagent's own requests.
 
 Each arm's value is the sorted union of tool names in `tools[]` and names listed as deferred, on lines of a text block opening "The following deferred tools are now available via ToolSearch", kept to names starting `mcp__fx__`. An arm with no governed request projects to `"arm-had-no-governed-request"`.
 
@@ -77,23 +77,16 @@ The schema check was shown to separate the two modes against real 2.1.287 captur
 
 ## Discriminate evidence
 
-Before the first billed run, the recorder's `--dry-run` (`--manifest experiments/claude-fork-subagent-mcp-tools/probe.json --view <view>`) (the form `probe record` took then) against two fabricated views printed `confirmed` for one matching `expected` and `refuted` for one where `fork_restricted` was offered both `fx` tools:
-
-```
-record: dry run — confirmed — observed {"fork_restricted":[],"fork_inherit":["mcp__fx__alpha","mcp__fx__beta"]} (no file written)
-record: dry run — refuted — observed {"fork_restricted":["mcp__fx__alpha","mcp__fx__beta"],"fork_inherit":["mcp__fx__alpha","mcp__fx__beta"]} (no file written)
-```
-
 Two records exist from 2026-10-03 against Claude Code 2.1.287, both `confirmed`. The first (`T215439`) was written under an earlier gate 10 that checked only the `Agent` call, which a fork-off run would also have passed, so it does not show fork mode was on. The second (`T221149`) was written under the schema check above, and is the record this README's conclusions rest on.
 
-On 2026-10-21, against Claude Code 2.1.287, the `discriminator` fixture variant ran as a dry run. It changes one file, `fork_inherit/.claude/agents/probe-fork-inherit.md`, which gains `tools: Read`. That is `fork_restricted`'s agent, whose record shows it was offered no MCP tool. The `status` and `observed` fields are excerpted from the record the run printed:
+`samples/confirming.json` and `samples/refuting.json` come from kept workspaces of the `assertion` and `discriminator` fixture variants, both taken on Claude Code **2.1.287**; the refuting one, `…T233745-discriminator`, on 2026-10-21. The `discriminator` variant changes one file, `fork_inherit/.claude/agents/probe-fork-inherit.md`, which gains `tools: Read`. That is `fork_restricted`'s agent, whose record shows it was offered no MCP tool.
 
-```
-PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run claude-fork-subagent-mcp-tools
-{"status":"refuted","observed":{"fork_restricted":[],"fork_inherit":[]}}
-```
+| Sample | Assertion |
+| --- | --- |
+| `confirming.json` | `{"fork_restricted":[],"fork_inherit":["mcp__fx__alpha","mcp__fx__beta"]}` |
+| `refuting.json` | `{"fork_restricted":[],"fork_inherit":[]}` |
 
-`fork_inherit` differed from `expected`; `fork_restricted` agreed with it.
+The confirming sample equals `expected`. In the refuting sample `fork_inherit` differs from it and `fork_restricted` agrees. `just probe-test` re-proves every result on every run.
 
 ## What the record licenses
 
@@ -111,5 +104,5 @@ At `outbound-request`, this is evidence about what reached the model.
 
 ## Related
 
-- `experiments/claude-background-subagent-mcp-tools/` — the same question with fork mode off, and the source of this package's fixtures and projection.
+- `experiments/claude-background-subagent-mcp-tools/` — the same question with fork mode off, and the source of this package's fixtures and assertion.
 - `experiments/claude-subagent-mcp-tools/` — the grant spellings in a subagent's `tools`.
