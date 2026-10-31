@@ -43,6 +43,8 @@ class ToolResultBlock(ProviderModel):
     # Declared because the union holding this block is discriminated on it.
     type: str
     tool_use_id: str
+    # `true` on a refused or failed call, and absent otherwise: no capture carries `false`.
+    is_error: bool | MISSING = MISSING
     content: Annotated[
         Annotated[str, tag("string")]
         | Annotated[tuple[ToolResultPart, ...], Field(strict=False), tag("list")],

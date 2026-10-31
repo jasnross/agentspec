@@ -360,6 +360,23 @@ def test_gate_control_excludes_a_subagent_s_unmarked_follow_up_rather_than_faili
     claude_otel.control(arms, MARKER)
 
 
+def test_control_efforts_is_the_set_gate_3_compares() -> None:
+    # An effort assertion reading its control level from `control_efforts` must see exactly
+    # the requests gate 3 keeps: no governed request, no subagent follow-up, and no
+    # effort-less title sidecar, with every kept effort in capture order, duplicates kept.
+    # The excluded requests run at `max`, so gate 3 passes only if it excludes them too.
+    sidecar = claude_request(system="generate a title", output_config={})
+    arms = arms_from_view(
+        {
+            "a": [marked("max"), ungoverned("medium"), subagent_follow_up("max"), sidecar],
+            "b": [echoed("medium"), ungoverned("medium")],
+        },
+    )
+
+    assert claude_otel.control_efforts(arms, MARKER) == ["medium", "medium", "medium"]
+    claude_otel.control(arms, MARKER)
+
+
 def test_gate_control_fails_when_every_unmarked_request_is_a_subagent_s(tmp_path: Path) -> None:
     # The loud direction: a Claude that flagged main-thread requests as a subagent's would
     # empty the control set, which the existence clause refuses rather than passing.

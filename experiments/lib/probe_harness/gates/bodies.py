@@ -10,7 +10,7 @@ A gate reads a model's declared fields, and searches a body's source JSON only t
 `RawJson`.
 """
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from enum import StrEnum
 from pathlib import Path
 from typing import Never
@@ -18,6 +18,7 @@ from typing import Never
 from pydantic import BaseModel, ValidationError
 
 from probe_harness.arms import ArmCapture, Arms
+from probe_harness.assertions import unique
 from probe_harness.gates import GateFailure
 from probe_harness.json_values import JsonValue
 from probe_harness.models.claude_request import ClaudeMessage, ClaudeRequest
@@ -129,6 +130,14 @@ def deferred_tools(request: ClaudeRequest) -> list[str]:
 def listed_tools(request: ClaudeRequest) -> list[str]:
     """The request's direct tool names, then its deferred-listing lines."""
     return [tool.name for tool in request.tool_list] + deferred_tools(request)
+
+
+def offered(requests: Sequence[ClaudeRequest], keep: Callable[[str], bool]) -> list[JsonValue]:
+    """The distinct tool names the requests offer, directly or deferred, kept by <keep>.
+
+    In jq's `unique` order, so an assertion yields the list a projection did.
+    """
+    return unique([name for r in requests for name in listed_tools(r) if keep(name)])
 
 
 def _content_strings(message: ClaudeMessage) -> Iterator[str]:

@@ -14,6 +14,7 @@ from probe_harness.gates.bodies import (
     claude_arms,
     governed,
     listed_tools,
+    offered,
     opencode_arms,
 )
 from probe_harness.models.claude_request import ClaudeRequest, ToolResultBlock
@@ -305,6 +306,59 @@ def test_listed_tools_names_direct_tools_then_the_deferred_listing() -> None:
         "The following deferred tools are now available via ToolSearch:",
         "mcp__fx__alpha",
     ]
+
+
+def test_offered_merges_direct_and_deferred_tools_across_requests_in_jq_order() -> None:
+    listing = (
+        "The following deferred tools are now available via ToolSearch:\n"
+        "mcp__fx__beta\nmcp__fx__alpha"
+    )
+    deferred = _request(
+        tools=[{"name": "ToolSearch"}],
+        messages=[{"role": "user", "content": [{"type": "text", "text": listing}]}],
+    )
+    direct = _request(
+        tools=[{"name": "Read"}, {"name": "mcp__fx__beta"}, {"name": "mcp__fx__gamma"}]
+    )
+
+    names = offered([direct, deferred], lambda name: name.startswith("mcp__fx__"))
+
+    assert names == ["mcp__fx__alpha", "mcp__fx__beta", "mcp__fx__gamma"]
+
+
+def test_offered_reads_a_deferred_listing_anywhere_in_the_body() -> None:
+    # jq's `.. | strings` searches the whole body, so a listing outside `messages[]` counts.
+    listing = "The following deferred tools are now available via ToolSearch:\nmcp__fx__alpha"
+    request = _request(system=[{"type": "text", "text": listing}], tools=[{"name": "Read"}])
+
+    assert offered([request], lambda name: name.startswith("mcp__")) == ["mcp__fx__alpha"]
+
+
+def test_offered_is_empty_when_keep_matches_nothing() -> None:
+    assert offered([_request()], lambda name: name.startswith("mcp__")) == []
+
+
+def test_a_tool_result_s_is_error_is_read_when_present_and_missing_otherwise() -> None:
+    def block(**extra: Any) -> ToolResultBlock:
+        message = {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "t", "content": "x", **extra}],
+        }
+        content = _request(messages=[message]).messages[0].content
+        assert not isinstance(content, str)
+        result = content[0]
+        assert isinstance(result, ToolResultBlock)
+        return result
+
+    assert block(is_error=True).is_error is True
+    assert block().is_error is MISSING
+
+
+@pytest.mark.parametrize("value", ["true", 1])
+def test_a_non_bool_is_error_is_refused(value: Any) -> None:
+    block = {"type": "tool_result", "tool_use_id": "t", "content": "x", "is_error": value}
+    refusal = _refusal({**REAL_REQUEST, "messages": [{"role": "user", "content": [block]}]})
+    assert refusal.startswith(f"arm a: {SINK_FILE}: messages.0.content.0.is_error: ")
 
 
 def test_governed_searches_a_system_nested_past_the_recursion_limit() -> None:
