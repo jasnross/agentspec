@@ -4,7 +4,7 @@
 
 **Why it matters.** It determines whether a Claude `exit 2 + reason` hook can be losslessly translated to Cursor by emitting `permission: "deny"` JSON alongside exit 2. If Cursor honors only one or the other, the shim must pick a side per event.
 
-**Driver:** `manual`. A person must drive Cursor for the probe to run. The oracle is also a person looking at a screen — no projection reaches it, ever — which the assertion states by declaring an option set rather than a projection.
+**Driver:** `manual`. A person must drive Cursor for the probe to run. The oracle is also a person looking at a screen — no function of the capture reaches it, ever — which the assertion states by declaring an option set rather than a computed value, so `probe.py` defines no `_assertion`.
 
 ## Running it
 
@@ -12,7 +12,7 @@
 experiments/probe run cursor-gate-19-output-json
 ```
 
-One blocking invocation. It generates a workspace, prints the procedure, waits until the hook actually fires, and only then presents the option set. The "hook never fired" outcome is detected by polling rather than by asking, so you answer only the question no machine can.
+One blocking invocation. It generates a workspace, prints the procedure, waits until the hook actually fires, and only then presents the option set. The definition's `wait_for`, `_wait_for` in `probe.py`, is true once the capture holds any line at all. The "hook never fired" outcome is detected by polling rather than by asking, so you answer only the question no machine can.
 
 ## The option set discriminates
 
@@ -24,6 +24,15 @@ One blocking invocation. It generates a workspace, prints the procedure, waits u
 | `neither` | Exit 2 short-circuits JSON entirely; the shim must choose exit 0 **with** deny JSON or exit 2 **without** it |
 
 Plus the mandatory `couldnt-tell`, recording `inconclusive`.
+
+A person answers the option set, so no sample carries an assertion result; the committed samples prove `wait_for` and the capture version only. The capture version, `_capture_version` in `probe.py`, reads the first `cursor_version` among the capture's payloads. `confirming.json` is a capture of two `preToolUse` firings on Cursor 3.19.19. `before-hook.json` is a capture cut with `--lines 0`, before the hook fired, which makes it `wait_for`'s false side, and with no payload it carries no version.
+
+| Sample             | Origin    | `wait_for` | `capture_version` |
+| ------------------ | --------- | ---------- | ----------------- |
+| `before-hook.json` | `prefix`  | `false`    | `null`            |
+| `confirming.json`  | `capture` | `true`     | `"3.19.19"`       |
+
+`just probe-test` re-proves every result on every run.
 
 **`agent-raw-json` was added after the first run, and how it got there is the point.** The original four options rested on an unexamined assumption: that the two markers travel by different routes, `user_message` to the UI and `agent_message` to the agent. The 2026-08-16 run against Cursor 3.16.17 produced neither of those — nothing rendered in the UI, but the agent quoted the entire JSON body back verbatim, both markers included. No option described it, so the operator selected `couldnt-tell` and the run recorded `inconclusive`.
 

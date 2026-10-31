@@ -1,0 +1,8 @@
+{
+  "origin": "prefix",
+  "input": [],
+  "results": {
+    "wait_for": false,
+    "capture_version": null
+  }
+}
