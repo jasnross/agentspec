@@ -38,9 +38,9 @@ The skill is user-invoked: `/probe-skill` in the `-p` prompt. A model-invoked sk
 
 `CLAUDE_CODE_ENABLE_TELEMETRY=1` plus `OTEL_LOG_RAW_API_BODIES=file:<dir>` writes each request body to `<dir>/<uuid>.request.json` and each response to `<dir>/<request_id>.response.json`.
 
-On 2.1.287 a request body carries the latest user turn but no earlier assistant turn, so the model's call appears only in a response and the tool result only in the request that follows. The runner therefore appends each arm's response bodies to its array in the view, after the gates have read the request-only view. A response has no `.system`, so it is never governed.
+On 2.1.287 a request body carries the latest user turn but no earlier assistant turn, so the model's call appears only in a response and the tool result only in the request that follows. The definition therefore sets `requires_responses`, which hands the assertion each arm's response bodies beside its requests. A response has no `.system`, so it is never governed.
 
-For each arm the projection collects the ids of `tool_use` blocks naming the arm's `<tool>`, then the `tool_result` blocks answering those ids, and classifies:
+For each arm the assertion, `gates.claude_otel.call_outcome`, collects the ids of `tool_use` blocks naming the arm's `<tool>`, then the `tool_result` blocks answering those ids, and classifies:
 
 - any result's text contains `AGENTSPEC-FX-REPLY-CCSKILL7` → `"called"`
 - every result has `is_error: true` and its text contains "Permission for this tool use was denied" → `"denied"`
@@ -48,7 +48,7 @@ For each arm the projection collects the ids of `tool_use` blocks naming the arm
 
 Requiring the permission text keeps any other error — a call made before `ToolSearch` loaded the tool, an MCP server error, an input-validation error — out of `"denied"`: it lands in `{unrecognized: …}` and refutes. The text is Claude Code 2.1.287's wording; a release that rewords it refutes the same way, loudly.
 
-It reads every request in the arm, not only governed ones; a title sidecar carries no `tool_result`, so it cannot contribute. Calls are found the way gate 9 finds them, from any entry's `.content[]`, and gate 9 guarantees at least one answered call, so no "no result" class is needed.
+It reads every request in the arm, not only governed ones; a title sidecar carries no `tool_result`, so it cannot contribute. Calls are found the way gate 9 finds them, from the arm's responses, and gate 9 guarantees at least one answered call, so no "no result" class is needed.
 
 ## Isolation
 
@@ -78,21 +78,6 @@ A gate failure is a statement about the run, not about Claude, and writes no rec
 
 ## Discriminate evidence
 
-Before the first billed run of the five-arm manifest, the recorder's `--dry-run` against two fabricated views printed `confirmed` for one matching `expected` and `refuted` for one where `server_glob`'s call was denied:
-
-```
-record: dry run — confirmed — observed {"none":"denied","exact":"called","server":"called","server_glob":"called","plugin_glob":"called"} (no file written)
-record: dry run — refuted — observed {"none":"denied","exact":"called","server":"called","server_glob":"denied","plugin_glob":"called"} (no file written)
-```
-
-Against the current six-arm manifest it printed `confirmed` for a matching view, and `refuted` for one where `none`'s error was a non-permission error and one where `plugin_none`'s call ran:
-
-```
-record: dry run — confirmed — observed {"none":"denied","exact":"called","server":"called","server_glob":"called","plugin_none":"denied","plugin_glob":"called"} (no file written)
-record: dry run — refuted — observed {"none":{"unrecognized":["Error: No such tool available: mcp__fx__alpha"]},"exact":"called","server":"called","server_glob":"called","plugin_none":"denied","plugin_glob":"called"} (no file written)
-record: dry run — refuted — observed {"none":"denied","exact":"called","server":"called","server_glob":"called","plugin_none":"called","plugin_glob":"called"} (no file written)
-```
-
 From the five-arm `PROBE_DRY_RUN=1` run on 2026-10-03 against Claude Code 2.1.287, every arm's model called `ToolSearch` and its `<tool>`. The `fx` call's result:
 
 | Arm | Tool result, excerpted |
@@ -102,14 +87,15 @@ From the five-arm `PROBE_DRY_RUN=1` run on 2026-10-03 against Claude Code 2.1.28
 
 Two records exist from 2026-10-03, both `confirmed`. The first (`T180814`) has five arms and a `"denied"` class that accepted any error; the second (`T181756`) has `plugin_none` and the permission-text requirement.
 
-On 2026-10-21, against Claude Code 2.1.287, the `discriminator` fixture variant ran as a dry run. It changes one file, `exact/.claude/skills/probe-skill/SKILL.md`, whose `allowed-tools` becomes `Read`. The skill then equals `none`'s, measured above as denied. The `status` and `observed` fields are excerpted from the record the run printed:
+`samples/confirming.json` and `samples/refuting.json` come from kept workspaces of the `assertion` and `discriminator` fixture variants, both taken on Claude Code **2.1.287**; the refuting one, `…T233835-discriminator`, on 2026-10-21. The `discriminator` variant changes one file, `exact/.claude/skills/probe-skill/SKILL.md`, whose `allowed-tools` becomes `Read`. The skill then equals `none`'s, measured above as denied. `samples/edited-unrecognized-call.json` is the confirming sample with `exact`'s `fx` result replaced by an MCP server error flagged `is_error: true`. It is an error that does not refuse permission, so it reads as unrecognized rather than denied, which is what requiring the permission text is for.
 
-```
-PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run claude-skill-mcp-allowed-tools
-{"status":"refuted","observed":{"none":"denied","exact":"denied","server":"called","server_glob":"called","plugin_none":"denied","plugin_glob":"called"}}
-```
+| Sample | `none` | `exact` | `server` | `server_glob` | `plugin_none` | `plugin_glob` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `confirming.json` | `"denied"` | `"called"` | `"called"` | `"called"` | `"denied"` | `"called"` |
+| `refuting.json` | `"denied"` | `"denied"` | `"called"` | `"called"` | `"denied"` | `"called"` |
+| `edited-unrecognized-call.json` | `"denied"` | `{"unrecognized":["MCP error -32603: the fx server is unavailable"]}` | `"called"` | `"called"` | `"denied"` | `"called"` |
 
-`exact` differed from `expected`; the other five arms agreed with it.
+The confirming sample equals `expected`. In the refuting sample `exact` differs from it and the other five arms agree, so the assertion reads each arm independently. `just probe-test` re-proves every result on every run.
 
 ## What the record licenses
 

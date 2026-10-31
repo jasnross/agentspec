@@ -12,12 +12,15 @@ billed model call, which is why this package declares `driver: billed` and
 
 from probe_harness.families.claude_otel import (
     ClaudeArm,
+    ClaudeArms,
     ClaudeOtelProbe,
     McpConfig,
     Model,
     PluginDir,
     ToolAnswered,
 )
+from probe_harness.gates.claude_otel import call_outcome
+from probe_harness.json_values import JsonValue
 
 # Each would change what is measured: whether tool search is on, whether the MCP server
 # has connected by the first turn, or which model a subagent would run; kept from the
@@ -45,6 +48,23 @@ _ARGS = (
 )
 _FX_ALPHA = "mcp__fx__alpha"
 _PLUGIN_ALPHA = "mcp__plugin_fxp_fx__alpha"
+# What `fx` answers a call with, so a result carrying it is a call that ran.
+_REPLY = "AGENTSPEC-FX-REPLY-CCSKILL7"
+# The tool each arm's skill calls: the user-configured server's, or the plugin's.
+_ARM_TOOLS = {
+    "none": _FX_ALPHA,
+    "exact": _FX_ALPHA,
+    "server": _FX_ALPHA,
+    "server_glob": _FX_ALPHA,
+    "plugin_none": _PLUGIN_ALPHA,
+    "plugin_glob": _PLUGIN_ALPHA,
+}
+
+
+def _assertion(arms: ClaudeArms) -> JsonValue:
+    """Whether each arm's call to its tool ran, was refused for permission, or neither."""
+    return {arm: call_outcome(arms[arm], tool, _REPLY) for arm, tool in _ARM_TOOLS.items()}
+
 
 PROBE = ClaudeOtelProbe(
     model="claude-sonnet-5-5",
@@ -58,18 +78,11 @@ PROBE = ClaudeOtelProbe(
         ClaudeArm("plugin_none", "plugin_none", "/probe-skill", _ARGS, PluginDir()),
         ClaudeArm("plugin_glob", "plugin_glob", "/probe-skill", _ARGS, PluginDir()),
     ),
-    gates=(
-        Model(),
-        ToolAnswered("none", _FX_ALPHA),
-        ToolAnswered("exact", _FX_ALPHA),
-        ToolAnswered("server", _FX_ALPHA),
-        ToolAnswered("server_glob", _FX_ALPHA),
-        ToolAnswered("plugin_none", _PLUGIN_ALPHA),
-        ToolAnswered("plugin_glob", _PLUGIN_ALPHA),
-    ),
+    gates=(Model(), *(ToolAnswered(arm, tool) for arm, tool in _ARM_TOOLS.items())),
     unset_env=_UNSET,
-    # A claude.ai connector would add MCP tools the projection cannot tell from the fixture's.
+    # A claude.ai connector would add MCP tools the assertion cannot tell from the fixture's.
     set_env=(("ENABLE_CLAUDEAI_MCP_SERVERS", "false"),),
     requires_responses=True,
+    assertion=_assertion,
     variants=("assertion", "discriminator"),
 )

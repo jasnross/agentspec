@@ -7,7 +7,8 @@ No gate names an effort level: the effort packages' assertion is relational, com
 each arm against the run's ungoverned main-thread requests.
 
 Beside the gates sit the readings assertions share with them: `control_efforts`, the set
-gate 3 compares, and `relative_effort`, which reads an arm against it.
+gate 3 compares, `relative_effort`, which reads an arm against it, and `call_outcome`, which
+classifies an arm's calls to one tool.
 """
 
 from collections.abc import Sequence
@@ -38,6 +39,9 @@ type _Capture = ArmCapture[ClaudeRequest, ClaudeResponse]
 # whose governed requests ran at that level.
 NO_CONTROL_SET = "no-usable-control-set"
 SAME_AS_UNGOVERNED = "same-as-ungoverned"
+
+# The text Claude Code answers a call with when `--permission-prompts none` refuses it.
+_PERMISSION_DENIED = "Permission for this tool use was denied"
 
 
 def marker(arms: Arms, marker: str, field: MarkerField = MarkerField.SYSTEM) -> None:
@@ -298,6 +302,32 @@ def delegation_fork(arms: Arms, ws: Path, arm: str) -> None:
         "the arm did not measure a fork-mode delegation, so its value describes "
         "nothing. No record written.",
     )
+
+
+def call_outcome(arm: _Capture, tool: str, reply: str) -> JsonValue:
+    """How the arm's calls to <tool> ended, from the results answering them.
+
+    `"called"` when some result carries <reply>, the text the fixture's server returns;
+    `"denied"` when there was a result and every one is an error refusing permission; else
+    `{"unrecognized": [...]}`, each result's text, so an outcome neither names is visible.
+    """
+    ids = {call.id for call in _tool_uses(arm) if call.name == tool}
+    results = [
+        block
+        for r in arm.requests
+        for message in r.messages
+        if message.role == "user" and not isinstance(message.content, str)
+        for block in message.content
+        if isinstance(block, ToolResultBlock) and block.tool_use_id in ids
+    ]
+    if any(reply in block.text for block in results):
+        return "called"
+    if results and all(
+        block.is_error is True and _PERMISSION_DENIED in block.text for block in results
+    ):
+        return "denied"
+    texts: list[JsonValue] = [block.text for block in results]
+    return {"unrecognized": texts}
 
 
 def _requests(arms: Arms, arm: str) -> tuple[ClaudeRequest, ...]:

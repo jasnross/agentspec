@@ -162,6 +162,31 @@ def tool_call_sink(ws: Path, arm: str, tool: str, answer: str = "answered") -> N
     (sink / "q.request.json").write_text(compact(request), encoding="utf-8")
 
 
+def call_arm(*results: dict[str, Any], tool: str = "mcp__fx__alpha") -> ClaudeArms:
+    """One arm calling <tool> with id `c1`, answered by each `tool_result` field set."""
+    response = {
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "tool_use", "id": "c1", "name": tool, "input": {}}],
+    }
+    requests = [
+        claude_request(
+            system="x",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [{"type": "tool_result", "tool_use_id": "c1", **result}],
+                }
+            ],
+        )
+        for result in results
+    ]
+    return arms_from_view({"a": requests}, {"a": [response]})
+
+
+DENIED = {"is_error": True, "content": "Permission for this tool use was denied. It requires"}
+
+
 def arms_from_view(
     view: dict[str, list[Any]], responses: dict[str, list[Any]] | None = None
 ) -> ClaudeArms:
@@ -940,6 +965,34 @@ def test_gate_tool_answered_fails_and_says_so_when_the_sink_holds_no_requests(
     with pytest.raises(GateFailure) as exc:
         claude_otel.tool_answered(arms_from_ws(ws, "a"), ws, "a", "mcp__fx__alpha")
     assert "captured 1 response and 0 request files" in failure_output(exc)
+
+
+def test_call_outcome_is_called_when_a_result_carries_the_reply() -> None:
+    arms = call_arm({"content": [{"type": "text", "text": "AGENTSPEC-FX-REPLY"}]}, DENIED)
+    assert claude_otel.call_outcome(arms["a"], "mcp__fx__alpha", "AGENTSPEC-FX-REPLY") == "called"
+
+
+def test_call_outcome_is_denied_only_when_every_result_is_an_error_refusing_permission() -> None:
+    assert claude_otel.call_outcome(call_arm(DENIED)["a"], "mcp__fx__alpha", "R") == "denied"
+    # The refusal text alone, without `is_error`, is not a refusal.
+    unflagged = {"content": DENIED["content"]}
+    assert claude_otel.call_outcome(call_arm(DENIED, unflagged)["a"], "mcp__fx__alpha", "R") == {
+        "unrecognized": [DENIED["content"], DENIED["content"]]
+    }
+
+
+def test_call_outcome_reads_only_results_answering_a_call_to_the_tool() -> None:
+    # The call is to another tool, so its denied result says nothing about this one, and an
+    # arm with no answered call is unrecognized rather than denied.
+    arms = call_arm(DENIED, tool="mcp__fx__beta")
+    assert claude_otel.call_outcome(arms["a"], "mcp__fx__alpha", "R") == {"unrecognized": []}
+
+
+def test_call_outcome_is_unrecognized_for_an_error_that_does_not_refuse_permission() -> None:
+    arms = call_arm({"is_error": True, "content": "MCP error -32603"})
+    assert claude_otel.call_outcome(arms["a"], "mcp__fx__alpha", "R") == {
+        "unrecognized": ["MCP error -32603"]
+    }
 
 
 def test_relative_effort_reads_each_arm_against_the_control_level() -> None:
