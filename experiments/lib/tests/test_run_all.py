@@ -566,10 +566,6 @@ def test_stale_passes_over_a_v2_package_whose_v2_record_is_at_the_installed_vers
 ) -> None:
     put_package("alpha", "unattended")
     put_version_stub(tree, "alpha", "1.0.0")
-    manifest = tree / "alpha" / "probe.json"
-    data = json.loads(manifest.read_text())
-    data.update(schema_version=2, assertion={"expected": 1})
-    manifest.write_text(json.dumps(data, indent=2) + "\n")
     put_record_v2(tree, "alpha", "1.0.0")
 
     result = cli("run", "--stale")

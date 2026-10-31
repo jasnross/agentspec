@@ -78,21 +78,19 @@ DEFINITION = textwrap.dedent(f"""\
         gates=(Model(),),
         unset_env=("STUB_UNSET_ME",),
         set_env=(("STUB_SET_ME", "on"),),
+        assertion=lambda arms: {{"a": len(arms["a"].requests), "b": len(arms["b"].requests)}},
     )
 """)
 
 
 MANIFEST = {
-    "schema_version": 1,
+    "schema_version": 2,
     "provider": "claude",
     "driver": "billed",
     "depth": "outbound-request",
     "question": "q",
     "version_source": {"kind": "command", "command": "claude --version"},
-    "assertion": {
-        "projection": "{a: (.a | length), b: (.b | length)}",
-        "expected": {"a": 1, "b": 1},
-    },
+    "assertion": {"expected": {"a": 1, "b": 1}},
 }
 
 
@@ -386,7 +384,7 @@ def _rich(package: Path, *, custom_min: int = 2) -> None:
         RICH_DEFINITION.replace("MIN", str(custom_min)), encoding="utf-8"
     )
     manifest = json.loads((package / "probe.json").read_text(encoding="utf-8"))
-    manifest.update(schema_version=2, assertion={"expected": {"a": 2, "b": 2}})
+    manifest.update(assertion={"expected": {"a": 2, "b": 2}})
     (package / "probe.json").write_text(json.dumps(manifest), encoding="utf-8")
 
 

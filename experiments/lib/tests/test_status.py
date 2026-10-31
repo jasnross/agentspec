@@ -72,13 +72,13 @@ def put_version_stub(tree: Path, package: str, version: str, driver: str = "unat
         tree,
         package,
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "provider": "opencode",
             "driver": driver,
             "depth": None,
             "question": "q",
             "version_source": {"kind": "command", "command": str(stub)},
-            "assertion": {"projection": ".", "expected": 1},
+            "assertion": {"expected": 1},
         },
     )
 
@@ -90,13 +90,13 @@ def put_billed_manifest(tree: Path, package: str) -> None:
         tree,
         package,
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "provider": "claude",
             "driver": "billed",
             "depth": "outbound-request",
             "question": "q",
             "version_source": {"kind": "none"},
-            "assertion": {"projection": ".", "expected": 1},
+            "assertion": {"expected": 1},
         },
     )
 
@@ -173,7 +173,7 @@ def test_a_version_source_command_absent_from_path_reports_not_installed(
         tree,
         "alpha",
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "provider": "opencode",
             "driver": "unattended",
             "depth": None,
@@ -182,7 +182,7 @@ def test_a_version_source_command_absent_from_path_reports_not_installed(
                 "kind": "command",
                 "command": "definitely-not-a-real-tool --version",
             },
-            "assertion": {"projection": ".", "expected": 1},
+            "assertion": {"expected": 1},
         },
     )
 
@@ -199,13 +199,13 @@ def test_a_capture_sourced_version_computes_no_drift(cli: Cli, tree: Path) -> No
         tree,
         "alpha",
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "provider": "cursor",
             "driver": "manual",
             "depth": None,
             "question": "q",
-            "version_source": {"kind": "capture", "jq": "[.[] | .cursor_version] | first"},
-            "assertion": {"projection": ".", "expected": 1},
+            "version_source": {"kind": "capture"},
+            "assertion": {"expected": 1},
         },
     )
 
@@ -308,13 +308,13 @@ def test_a_version_command_reading_stdin_does_not_wedge_the_report(cli: Cli, tre
         tree,
         "alpha",
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "provider": "opencode",
             "driver": "unattended",
             "depth": None,
             "question": "q",
             "version_source": {"kind": "command", "command": "cat"},
-            "assertion": {"projection": ".", "expected": 1},
+            "assertion": {"expected": 1},
         },
     )
 
@@ -559,9 +559,6 @@ def test_a_v2_record_and_a_v2_capture_manifest_are_reported_like_v1(cli: Cli, tr
 
 def test_a_v2_record_s_version_drift_is_counted(cli: Cli, tree: Path) -> None:
     put_version_stub(tree, "alpha", "2.0.0")
-    manifest = json.loads((tree / "alpha" / "probe.json").read_text())
-    manifest = {**manifest, "schema_version": 2, "assertion": {"expected": 1}}
-    write_manifest(tree, "alpha", manifest)
     put_record_v2(tree, "alpha", "2026-06-01T000000", "opencode", "confirmed", "1.0.0")
 
     result = cli("status", "--summary")

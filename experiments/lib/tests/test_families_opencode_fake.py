@@ -100,21 +100,19 @@ DEFINITION = textwrap.dedent(f"""\
         marker="{MARKER}",
         arms=(OpenCodeArm("one", "agent-one"), OpenCodeArm("two", "agent-two")),
         fx_servers=("fx",),
+        assertion=lambda arms: {{name: len(capture.requests) for name, capture in arms.items()}},
     )
 """)
 
 
 MANIFEST = {
-    "schema_version": 1,
+    "schema_version": 2,
     "provider": "opencode",
     "driver": "unattended",
     "depth": "outbound-request",
     "question": "q",
     "version_source": {"kind": "command", "command": "opencode --version"},
-    "assertion": {
-        "projection": "{one: (.one | length), two: (.two | length)}",
-        "expected": {"one": 1, "two": 1},
-    },
+    "assertion": {"expected": {"one": 1, "two": 1}},
 }
 
 
@@ -310,9 +308,8 @@ def _scripted(package: Path, *, check_min: int = 1, scripted: bool = True) -> No
         .replace("ARRANGE", "_arrange_arm" if scripted else "None")
     )
     (package / "probe.py").write_text(source, encoding="utf-8")
-    # A Python custom check needs a schema 2 manifest, whose assertion is the definition's.
     manifest = json.loads((package / "probe.json").read_text(encoding="utf-8"))
-    manifest.update(schema_version=2, assertion={"expected": {"one": 2, "two": 2}})
+    manifest.update(assertion={"expected": {"one": 2, "two": 2}})
     (package / "probe.json").write_text(json.dumps(manifest), encoding="utf-8")
 
 
@@ -400,6 +397,7 @@ VARIANT_DEFINITION = textwrap.dedent(f"""\
         fx_servers=("fx",),
         variants=("assertion", "discriminator"),
         arrange_arm=_arrange_arm,
+        assertion=lambda arms: {{name: len(capture.requests) for name, capture in arms.items()}},
     )
 """)
 

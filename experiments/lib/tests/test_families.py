@@ -48,7 +48,7 @@ def test_a_runner_exiting_zero_prints_no_kept_line(
     assert KEPT not in result.output
 
 
-def test_record_refuses_a_selection_for_a_projection_manifest(
+def test_record_refuses_a_selection_for_an_expected_manifest(
     cli: Cli, put_package: Callable[..., Path], tree: Path, tmp_path: Path
 ) -> None:
     put_package("alpha", "unattended", 0)
@@ -60,6 +60,7 @@ def test_record_refuses_a_selection_for_a_projection_manifest(
 
 
 RECORDING_PY = """\
+import json
 from pathlib import Path
 from probe_harness.families.base import CustomProbe
 
@@ -67,7 +68,8 @@ def _act(ws: Path) -> None:
     (ws / "view.json").write_text("1\\n", encoding="utf-8")
 
 PROBE = CustomProbe(required_tools=(), arrange=lambda ws, variant: None, act=_act,
-                    judge=lambda ws: ws / "view.json")
+                    judge=lambda ws: json.loads((ws / "view.json").read_text()),
+                    assertion=lambda value: value)
 """
 
 
@@ -101,6 +103,7 @@ def test_a_real_record_keeps_its_workspace_with_the_source_map(cli: Cli, tree: P
 # The version stub prints the file named by `VERSION_FILE`; Act rewrites that file, as a
 # provider updating during a run would.
 UPGRADING_PY = """\
+import json
 import os
 from pathlib import Path
 from probe_harness.families.base import CustomProbe
@@ -110,7 +113,8 @@ def _act(ws: Path) -> None:
     (ws / "view.json").write_text("1\\n", encoding="utf-8")
 
 PROBE = CustomProbe(required_tools=(), arrange=lambda ws, variant: None, act=_act,
-                    judge=lambda ws: ws / "view.json")
+                    judge=lambda ws: json.loads((ws / "view.json").read_text()),
+                    assertion=lambda value: value)
 """
 
 
@@ -172,6 +176,7 @@ def test_a_dry_run_names_the_workspace_it_keeps(cli: Cli, tree: Path) -> None:
 
 
 VARIANT_ECHO_PY = """\
+import json
 from pathlib import Path
 from probe_harness.families.base import CustomProbe
 
@@ -182,7 +187,8 @@ def _act(ws: Path) -> None:
     raise SystemExit(0)
 
 PROBE = CustomProbe(required_tools=(), arrange=_arrange, act=_act,
-                    judge=lambda ws: ws / "view.json",
+                    judge=lambda ws: json.loads((ws / "view.json").read_text()),
+                    assertion=lambda value: value,
                     variants=("assertion", "discriminator"))
 """
 
@@ -217,9 +223,7 @@ def test_a_custom_probe_s_arrange_receives_the_selected_variant(cli: Cli, tree: 
 def test_a_custom_probe_over_a_manual_manifest_is_refused_before_a_workspace_exists(
     cli: Cli, tree: Path
 ) -> None:
-    _put_custom_package(
-        tree, "alpha", VARIANT_ECHO_PY, variants=BOTH, driver="manual", wait_for="length > 0"
-    )
+    _put_custom_package(tree, "alpha", VARIANT_ECHO_PY, variants=BOTH, driver="manual")
     result = cli("run", "alpha")
     assert result.returncode == 1
     assert 'records without a capture, but its manifest declares driver "manual"' in result.stderr
@@ -233,7 +237,7 @@ def test_a_custom_probe_over_a_capture_version_source_is_refused(cli: Cli, tree:
         "alpha",
         VARIANT_ECHO_PY,
         variants=BOTH,
-        version_source={"kind": "capture", "jq": "first"},
+        version_source={"kind": "capture"},
     )
     result = cli("run", "alpha")
     assert result.returncode == 1
@@ -266,13 +270,13 @@ def test_a_custom_probe_declaring_a_variant_without_a_tree_is_refused(cli: Cli, 
 
 
 MANIFEST: dict[str, Any] = {
-    "schema_version": 1,
+    "schema_version": 2,
     "provider": "claude",
     "driver": "billed",
     "depth": None,
     "question": "q",
     "version_source": {"kind": "none"},
-    "assertion": {"projection": ".", "expected": 1},
+    "assertion": {"expected": 1},
 }
 
 
@@ -286,6 +290,7 @@ CLAUDE = textwrap.dedent("""\
         arms=ARMS,
         gates=GATES,
         variants=VARIANTS,
+        assertion=lambda arms: 1,
     )
 """)
 
@@ -347,7 +352,7 @@ def providers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         ),
         pytest.param(
             _claude(ONE_ARM),
-            {"driver": "manual", "wait_for": "true"},
+            {"driver": "manual"},
             "probe run: pkg is a ClaudeOtelProbe, which records without a capture, but its "
             'manifest declares driver "manual"',
             id="claude-over-manual",
@@ -378,6 +383,7 @@ def providers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
                     marker="M",
                     arms=(OpenCodeArm("a", "agent"),),
                     variants=("assertion", "discriminator"),
+                    assertion=lambda arms: 1,
                 )
             """),
             {"provider": "opencode", "driver": "unattended"},
@@ -390,7 +396,9 @@ def providers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
                 from probe_harness.families.opencode_fake import OpenCodeArm, OpenCodeFakeProbe
 
                 PROBE = OpenCodeFakeProbe(
-                    marker="M", arms=(OpenCodeArm("a", "x"), OpenCodeArm("a", "y"))
+                    marker="M",
+                    arms=(OpenCodeArm("a", "x"), OpenCodeArm("a", "y")),
+                    assertion=lambda arms: 1,
                 )
             """),
             {"provider": "opencode", "driver": "unattended"},
@@ -464,13 +472,34 @@ def test_record_without_jq_on_path_exits_1(
     assert completed.stderr == "probe record: missing required tool(s): jq\n"
 
 
+# A schema 1 manual manifest with no `wait_for`, and a definition carrying none of the
+# Python expressions a schema 1 manifest refuses.
+V1_MANUAL_MANIFEST: dict[str, Any] = {
+    "schema_version": 1,
+    "provider": "opencode",
+    "driver": "manual",
+    "depth": None,
+    "question": "q",
+    "version_source": {"kind": "none"},
+    "assertion": {"projection": ".", "expected": 1},
+}
+
+V1_MANUAL_PROBE_PY = """\
+from probe_harness.families.manual import ManualProbe
+
+PROBE = ManualProbe(instructions="")
+"""
+
+
 def test_record_refuses_a_manual_workspace_whose_manifest_has_no_wait_for(
-    cli: Cli, put_package: Callable[..., Path], tmp_path: Path
+    cli: Cli, tree: Path, tmp_path: Path
 ) -> None:
-    package = put_package("alpha", "manual", 0)
-    manifest = json.loads((package / "probe.json").read_text())
-    del manifest["wait_for"]
-    (package / "probe.json").write_text(json.dumps(manifest))
+    package = tree / "alpha"
+    (package / "fixtures" / "assertion").mkdir(parents=True)
+    (package / "fixtures" / "capture").mkdir()
+    (package / "fixtures" / "capture" / "dump-hook.sh").write_text("#!/bin/sh\n")
+    (package / "probe.json").write_text(json.dumps(V1_MANUAL_MANIFEST))
+    (package / "probe.py").write_text(V1_MANUAL_PROBE_PY)
     ws = tmp_path / "ws"
     (ws / "capture").mkdir(parents=True)
     (ws / "capture" / "payloads.jsonl").write_text('{"x":1}\n')

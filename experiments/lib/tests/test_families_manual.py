@@ -25,6 +25,7 @@ from probe_harness.contract import Manifest, ManifestV2, parse_manifest
 from probe_harness.families import load_package, manual
 from probe_harness.families.base import GateFailure
 from probe_harness.families.manual import ManualProbe
+from probe_harness.models.raw import ProviderModel
 from probe_harness.source import source_map
 
 from tests.conftest import (
@@ -37,13 +38,23 @@ from tests.conftest import (
 )
 
 
-def record_in_process(manifest: Manifest, ws: Path, probe: ManualProbe[Any] | None = None) -> int:
-    """Judge <ws> with <probe>, or a bare definition, as a live run with a terminal does, then
-    record it; 1 on a refusal."""
-    definition = probe if probe is not None else ManualProbe(instructions="")
+class Line(ProviderModel):
+    """A capture line that may carry a `marker`."""
+
+    marker: str | None = None
+
+
+# A definition reading any capture line, satisfied by any capture holding one, and carrying
+# no assertion.
+BARE = ManualProbe(instructions="", payload=Line, wait_for=lambda lines: len(lines) > 0)
+
+
+def record_in_process(manifest: Manifest, ws: Path, probe: ManualProbe[Any] = BARE) -> int:
+    """Judge <ws> with <probe> as a live run with a terminal does, then record it; 1 on a
+    refusal."""
     source = source_map(manifest.path.parent) if isinstance(manifest, ManifestV2) else None
     try:
-        result = manual.judge(manifest, ws, definition, None, interactive=True)
+        result = manual.judge(manifest, ws, probe, None, interactive=True)
         record.write(record.compute(manifest, ws, result, dry_run=False, source=source))
     except (GateFailure, record.RecordRefused) as e:
         console.say_refusal(e)
@@ -72,13 +83,12 @@ def test_the_manual_judge_prompts_when_the_assertion_declares_options(
 ) -> None:
     # The branch reads the assertion's shape, not the driver — the recorder gates the
     # correspondence that makes that read safe. Reaching `prompt_selection`, whose tty guard
-    # exits 2, is what proves the options path was taken rather than the projection one.
+    # exits 2, is what proves the options path was taken rather than the computed one.
     pkg, ws = put_capture_package(
         tmp_path,
         """{
-  "schema_version": 1, "provider": "cursor", "driver": "manual", "depth": null,
+  "schema_version": 2, "provider": "cursor", "driver": "manual", "depth": null,
   "question": "Which markers appeared?", "version_source": { "kind": "none" },
-  "wait_for": "length > 0",
   "assertion": {
     "options": [
       { "id": "neither", "text": "Neither marker was visible" },
@@ -99,7 +109,7 @@ def test_the_manual_judge_prompts_when_the_assertion_declares_options(
     assert "Which markers appeared?" in captured.out + captured.err
 
 
-def test_the_manual_judge_projects_when_the_assertion_declares_a_projection(
+def test_the_manual_judge_computes_when_the_assertion_declares_expected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The other half of the same branch. A `manual` manifest may still be machine-answered —
@@ -107,15 +117,21 @@ def test_the_manual_judge_projects_when_the_assertion_declares_a_projection(
     pkg, ws = put_capture_package(
         tmp_path,
         """{
-  "schema_version": 1, "provider": "cursor", "driver": "manual", "depth": null,
-  "question": "q", "version_source": { "kind": "none" }, "wait_for": "length > 0",
-  "assertion": { "projection": "[.[] | .marker] | first", "expected": "seen" }
+  "schema_version": 2, "provider": "cursor", "driver": "manual", "depth": null,
+  "question": "q", "version_source": { "kind": "none" },
+  "assertion": { "expected": "seen" }
 }
 """,
     )
     monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    first_marker = ManualProbe(
+        instructions="",
+        payload=Line,
+        wait_for=lambda lines: len(lines) > 0,
+        assertion=lambda lines: next((ln.marker for ln in lines if isinstance(ln, Line)), None),
+    )
 
-    assert record_in_process(parse_manifest(pkg / "probe.json"), ws) == 0
+    assert record_in_process(parse_manifest(pkg / "probe.json"), ws, first_marker) == 0
     records = list((pkg / "results").glob("*.json"))
     assert len(records) == 1
     assert json.loads(records[0].read_text(encoding="utf-8"))["status"] == "confirmed"
@@ -124,45 +140,72 @@ def test_the_manual_judge_projects_when_the_assertion_declares_a_projection(
 DUMP_HOOK = EXPERIMENTS_DIR / "cursor-subagent-effort" / "fixtures" / "capture" / "dump-hook.sh"
 
 
+# A manual probe satisfied by any capture, whose assertion reads the first line's `x`.
+# Filled by `str.format` with <variants>.
 MANUAL_PROBE_PY = """\
 from probe_harness.families.manual import ManualProbe
+from probe_harness.models.raw import ProviderModel
 
-PROBE = ManualProbe(instructions="Open the workspace and run the session.")
+class Line(ProviderModel):
+    x: int | None = None
+
+PROBE = ManualProbe(
+    instructions="Open the workspace and run the session.",
+    payload=Line,
+    wait_for=lambda lines: len(lines) > 0,
+    assertion=lambda lines: getattr(lines[0], "x", None),
+    variants={variants},
+)
 """
 
 
-def _put_manual(
-    tree: Path,
-    name: str,
-    *,
-    wait_for: str | None,
-    version_source: dict[str, Any] | None = None,
-) -> Path:
+def _put_manual(tree: Path, name: str, *, version_source: dict[str, Any] | None = None) -> Path:
     package = tree / name
     capture = package / "fixtures" / "capture"
     capture.mkdir(parents=True)
     shutil.copy2(DUMP_HOOK, capture / "dump-hook.sh")
     (package / "fixtures" / "assertion").mkdir()
     manifest: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "provider": "cursor",
         "driver": "manual",
         "depth": None,
         "question": "q",
         "version_source": version_source or {"kind": "none"},
-        "assertion": {"projection": ".[0].x", "expected": 1},
+        "assertion": {"expected": 1},
     }
-    if wait_for is not None:
-        manifest["wait_for"] = wait_for
     (package / "probe.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    (package / "probe.py").write_text(MANUAL_PROBE_PY, encoding="utf-8")
+    (package / "probe.py").write_text(
+        MANUAL_PROBE_PY.format(variants='("assertion",)'), encoding="utf-8"
+    )
     return package
+
+
+# A schema 1 manual manifest declaring no `wait_for`, and a definition carrying none of the
+# Python expressions a schema 1 manifest refuses.
+V1_MANUAL_MANIFEST: dict[str, Any] = {
+    "schema_version": 1,
+    "provider": "cursor",
+    "driver": "manual",
+    "depth": None,
+    "question": "q",
+    "version_source": {"kind": "none"},
+    "assertion": {"projection": ".[0].x", "expected": 1},
+}
+
+V1_MANUAL_PROBE_PY = """\
+from probe_harness.families.manual import ManualProbe
+
+PROBE = ManualProbe(instructions="Open the workspace and run the session.")
+"""
 
 
 def test_a_manual_manifest_without_wait_for_fails_before_the_workspace_is_ready(
     cli: Cli, tree: Path
 ) -> None:
-    _put_manual(tree, "manual-stub", wait_for=None)
+    package = _put_manual(tree, "manual-stub")
+    (package / "probe.json").write_text(json.dumps(V1_MANUAL_MANIFEST), encoding="utf-8")
+    (package / "probe.py").write_text(V1_MANUAL_PROBE_PY, encoding="utf-8")
 
     result = cli("run", "manual-stub")
 
@@ -173,7 +216,7 @@ def test_a_manual_manifest_without_wait_for_fails_before_the_workspace_is_ready(
 
 
 def test_a_dry_run_with_a_matching_capture_writes_no_record(tree: Path) -> None:
-    package = _put_manual(tree, "manual-stub", wait_for="length > 0")
+    package = _put_manual(tree, "manual-stub")
 
     process = subprocess.Popen(
         [str(EXPERIMENTS_DIR / "probe"), "run", "manual-stub"],
@@ -206,15 +249,11 @@ def test_a_dry_run_with_a_matching_capture_writes_no_record(tree: Path) -> None:
     assert not results.exists() or not any(results.iterdir())
 
 
-MANUAL_WITH_VARIANT_PY = """\
-from probe_harness.families.manual import ManualProbe
-
-PROBE = ManualProbe(instructions="do it", variants=("assertion", "discriminator"))
-"""
+MANUAL_WITH_VARIANT_PY = MANUAL_PROBE_PY.format(variants='("assertion", "discriminator")')
 
 
 def test_a_discriminator_dry_run_arranges_the_project_from_its_own_tree(tree: Path) -> None:
-    package = _put_manual(tree, "manual-stub", wait_for="length > 0")
+    package = _put_manual(tree, "manual-stub")
     (package / "probe.py").write_text(MANUAL_WITH_VARIANT_PY, encoding="utf-8")
     for variant in ("assertion", "discriminator"):
         (package / "fixtures" / variant).mkdir(exist_ok=True)
@@ -257,7 +296,7 @@ def test_a_discriminator_dry_run_arranges_the_project_from_its_own_tree(tree: Pa
 
 
 def test_a_variant_named_capture_is_refused_before_a_workspace_exists(cli: Cli, tree: Path) -> None:
-    package = _put_manual(tree, "manual-stub", wait_for="length > 0")
+    package = _put_manual(tree, "manual-stub")
     (package / "probe.py").write_text(
         MANUAL_WITH_VARIANT_PY.replace('"discriminator"', '"capture"'), encoding="utf-8"
     )
@@ -278,12 +317,7 @@ def test_a_command_sourced_run_records_the_tool_version_before_the_instructions(
     stub = tmp_path / "version-stub"
     stub.write_text("#!/bin/sh\nprintf '%s\\n' '4.5.6'\n", encoding="utf-8")
     stub.chmod(0o755)
-    _put_manual(
-        tree,
-        "manual-stub",
-        wait_for="length > 0",
-        version_source={"kind": "command", "command": str(stub)},
-    )
+    _put_manual(tree, "manual-stub", version_source={"kind": "command", "command": str(stub)})
     outfile = tmp_path / "probe.out"
     with outfile.open("w", encoding="utf-8") as out:
         runner = subprocess.Popen(
@@ -555,9 +589,9 @@ def test_a_capture_whose_payloads_are_not_json_is_refused_without_a_record(
     pkg, ws = put_capture_package(
         tmp_path,
         """{
-  "schema_version": 1, "provider": "cursor", "driver": "manual", "depth": null,
-  "question": "q", "version_source": { "kind": "none" }, "wait_for": "length > 0",
-  "assertion": { "projection": ".", "expected": 1 }
+  "schema_version": 2, "provider": "cursor", "driver": "manual", "depth": null,
+  "question": "q", "version_source": { "kind": "none" },
+  "assertion": { "expected": 1 }
 }
 """,
     )

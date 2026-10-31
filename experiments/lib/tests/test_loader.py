@@ -10,13 +10,13 @@ def _put_manifest(tree: Path, name: str) -> Path:
     package = tree / name
     package.mkdir()
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "provider": "opencode",
         "driver": "unattended",
         "depth": None,
         "question": "q",
         "version_source": {"kind": "none"},
-        "assertion": {"projection": ".", "expected": 1},
+        "assertion": {"expected": 1},
     }
     (package / "probe.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return package

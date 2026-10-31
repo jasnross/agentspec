@@ -46,8 +46,10 @@ RECORD_FORBIDDEN_KEYS = ["probe", "kind", "driver", "capture", "finding", "block
 
 
 # A synthetic package's `probe.py`: its Act prints and exits with the chosen code, so its
-# Judge is never reached. Filled by `str.format` with `name` and `code`.
+# Judge is never reached; the agreement check still needs an assertion before Act. Filled
+# by `str.format` with `name` and `code`.
 STUB_PROBE_PY = textwrap.dedent("""\
+    import json
     import sys
     from pathlib import Path
     from probe_harness.families.base import CustomProbe
@@ -57,7 +59,8 @@ STUB_PROBE_PY = textwrap.dedent("""\
         sys.exit({code})
 
     PROBE = CustomProbe(required_tools=(), arrange=lambda ws, variant: None, act=_act,
-                        judge=lambda ws: ws / "view.json")
+                        judge=lambda ws: json.loads((ws / "view.json").read_text()),
+                        assertion=lambda value: value)
 """)
 
 
@@ -68,12 +71,18 @@ STUB_MANUAL_PROBE_PY = textwrap.dedent("""\
     import sys
     from probe_harness.families.base import ProbeFunctions
     from probe_harness.families.manual import ManualProbe
+    from probe_harness.models.raw import ProviderModel
+
+    class _Line(ProviderModel):
+        pass
 
     def _preflight() -> None:
         print("ran {name}")
         sys.exit({code})
 
-    PROBE = ManualProbe(instructions="", functions=ProbeFunctions(preflight=_preflight))
+    PROBE = ManualProbe(instructions="", payload=_Line, wait_for=lambda lines: True,
+                        assertion=lambda lines: len(lines),
+                        functions=ProbeFunctions(preflight=_preflight))
 """)
 
 
@@ -173,17 +182,14 @@ def put_package(tree: Path) -> Callable[..., Path]:
         package = tree / name
         package.mkdir(parents=True, exist_ok=True)
         manifest = {
-            "schema_version": 1,
+            "schema_version": 2,
             "provider": "opencode",
             "driver": driver,
             "depth": None,
             "question": "q",
             "version_source": {"kind": "none"},
-            "assertion": {"projection": ".", "expected": 1},
+            "assertion": {"expected": 1},
         }
-        if driver == "manual":
-            # A schema 1 manual manifest polls with its own filter, or is refused unrun.
-            manifest["wait_for"] = "true"
         (package / "probe.json").write_text(json.dumps(manifest, indent=2) + "\n")
         stub = STUB_MANUAL_PROBE_PY if driver == "manual" else STUB_PROBE_PY
         (package / "probe.py").write_text(stub.format(name=name, code=code))
@@ -374,13 +380,13 @@ def oracle_file(tmp_path: Path, content: str) -> str:
 
 def unattended_manifest(**overrides: Any) -> dict[str, Any]:
     manifest: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "provider": "opencode",
         "driver": "unattended",
         "depth": None,
         "question": "q",
         "version_source": {"kind": "none"},
-        "assertion": {"projection": ".", "expected": 1},
+        "assertion": {"expected": 1},
     }
     manifest.update(overrides)
     return manifest

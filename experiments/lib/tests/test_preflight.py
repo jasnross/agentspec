@@ -27,6 +27,7 @@ from tests.conftest import (
 
 # A stub whose definition declares a second, non-`assertion` variant.
 VARIANT_PROBE_PY = textwrap.dedent("""\
+    import json
     import sys
     from pathlib import Path
     from probe_harness.families.base import CustomProbe
@@ -36,7 +37,8 @@ VARIANT_PROBE_PY = textwrap.dedent("""\
         sys.exit(0)
 
     PROBE = CustomProbe(required_tools=(), arrange=lambda ws, variant: None, act=_act,
-                        judge=lambda ws: ws / "view.json",
+                        judge=lambda ws: json.loads((ws / "view.json").read_text()),
+                        assertion=lambda value: value,
                         variants=("assertion", "discriminator"))
 """)
 
@@ -45,20 +47,19 @@ def _put_custom(
     tree: Path,
     name: str,
     *,
-    projection: str = ".",
     probe_py: str = "",
     version_source: dict[str, Any] | None = None,
 ) -> Path:
     package = tree / name
     package.mkdir()
     manifest: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "provider": "opencode",
         "driver": "unattended",
         "depth": None,
         "question": "q",
         "version_source": version_source or {"kind": "none"},
-        "assertion": {"projection": projection, "expected": 1},
+        "assertion": {"expected": 1},
     }
     (package / "probe.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     source = probe_py or STUB_PROBE_PY
@@ -66,8 +67,37 @@ def _put_custom(
     return package
 
 
+# A schema 1 manifest whose projection does not compile, and a definition carrying none of
+# the Python expressions a schema 1 manifest refuses.
+V1_NON_COMPILING_MANIFEST: dict[str, Any] = {
+    "schema_version": 1,
+    "provider": "opencode",
+    "driver": "unattended",
+    "depth": None,
+    "question": "q",
+    "version_source": {"kind": "none"},
+    "assertion": {"projection": ".[", "expected": 1},
+}
+
+V1_STUB_PROBE_PY = textwrap.dedent("""\
+    import sys
+    from pathlib import Path
+    from probe_harness.families.base import CustomProbe
+
+    def _act(ws: Path) -> None:
+        print("ran stub")
+        sys.exit(0)
+
+    PROBE = CustomProbe(required_tools=(), arrange=lambda ws, variant: None, act=_act,
+                        judge=lambda ws: ws / "view.json")
+""")
+
+
 def test_a_non_compiling_projection_exits_1_before_any_workspace(cli: Cli, tree: Path) -> None:
-    _put_custom(tree, "stub", projection=".[")
+    package = tree / "stub"
+    package.mkdir()
+    (package / "probe.json").write_text(json.dumps(V1_NON_COMPILING_MANIFEST), encoding="utf-8")
+    (package / "probe.py").write_text(V1_STUB_PROBE_PY, encoding="utf-8")
 
     result = cli("run", "stub")
 
