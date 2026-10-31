@@ -36,7 +36,7 @@ Every arm also connects `fx`, a local MCP stdio server (`experiments/lib/stubs/f
 
 That is what makes this `outbound-request` evidence. `opencode debug agent` stops at the resolved agent config, and `TODO.md` #14 shows OpenCode's resolved tool keys and the keys it honors diverge, so a resolved map is weak evidence about what the model is offered.
 
-The projection reads only requests whose `role: "system"` message carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-OCPERM5`. OpenCode also sends a title-generation request per run, with its own system prompt and `tools: []`; the marker keeps it out.
+The assertion reads only requests whose `role: "system"` message carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-OCPERM5`. OpenCode also sends a title-generation request per run, with its own system prompt and `tools: []`; the marker keeps it out.
 
 ## Isolation
 
@@ -55,17 +55,17 @@ A gate failure keeps the workspace and exits 1 without recording, because each d
 
 - **Marker.** Every arm holds at least one request carrying the marker in a system message. OpenCode warns rather than fails on an unknown `--agent` and runs its default agent instead, whose requests carry no marker.
 - **Stamp, per arm.** `fx_server.py` writes `<arm>/fx.stamp` when it answers `tools/list`. Without it, an arm's tool list says nothing about MCP tools — an empty `reversed` would read as "deny-all hid `fx_alpha`" when `fx_alpha` never existed.
-- **Baseline tool listing.** `baseline`'s marked requests list both `fx_alpha` and `fx_beta`. The stamp proves the server connected; this proves its tools reach a request when no `permission` map filters them.
+- **Baseline tool listing.** The custom check `baseline_offers_fx` requires `baseline`'s marked requests to list both `fx_alpha` and `fx_beta`. The stamp proves the server connected; this proves its tools reach a request when no `permission` map filters them.
 
-`baseline` is not in the projection, because its built-in tool set varies by OpenCode version. It is the gate above instead, and it is what every expected value is non-default against.
+`baseline` is not in the assertion, because its built-in tool set varies by OpenCode version. It is the gate above instead, and it is what every expected value is non-default against.
 
 ## The assertion is relational across arms
 
-The five agents differ only in `permission`, so distinct observed values across arms show the projection reads each arm independently. The `discriminator` fixture variant changes one agent so that the assertion must disagree with it; see "The assertion discriminates".
+The five agents differ only in `permission`, so distinct observed values across arms show the assertion reads each arm independently. The `discriminator` fixture variant changes one agent so that the assertion must disagree with it; see "The assertion discriminates".
 
 `reversed` is what tests key order. Its map holds the same keys as `mcp_one`'s with `fx_alpha` moved ahead of the deny-all. If OpenCode's frontmatter path reordered keys before resolving them — sorting them, say, which puts `*` first — `reversed` would resolve exactly like `mcp_one` and offer `fx_alpha`. Expecting no tools is therefore what shows the authored order reaches the last-match-wins resolution intact.
 
-An arm with no marked request projects to `"arm-had-no-governed-request"`, so an unmeasured `reversed` can never confirm `[]`. An arm whose marked requests disagree projects to `{inconsistent: [...]}`.
+For an arm with no marked request the assertion yields `"arm-had-no-governed-request"`, so an unmeasured `reversed` can never confirm `[]`. For an arm whose marked requests disagree it yields `{inconsistent: [...]}`.
 
 ## The assertion discriminates
 
@@ -79,16 +79,17 @@ Measured 2026-10-02 against opencode **1.18.34**, from a `PROBE_DRY_RUN=1` run. 
 | `mcp_one` | `fx_alpha` |
 | `reversed` | none |
 
-Every measured arm differs from `baseline`. Against the same saved view, the recorder's `--dry-run` printed `refuted` for a copy with `edit_only` replaced by `baseline`'s requests, which projects `edit_only` to the baseline list.
+Every measured arm differs from `baseline`.
 
-On 2026-10-21, against opencode **1.18.34**, the `discriminator` fixture variant ran as a dry run. It changes one file, `.opencode/agent/probe-reversed.md`, whose `"*": deny` moves ahead of `fx_alpha: allow`. That is `mcp_one`'s map, measured above offering `fx_alpha` alone. The `status` and `observed` fields are excerpted from the record the run printed:
+`samples/confirming.json` and `samples/refuting.json` were captured on 2026-10-31 against opencode **1.18.34**, from dry runs of the `assertion` and `discriminator` fixture variants. The `discriminator` variant changes one file, `.opencode/agent/probe-reversed.md`, whose `"*": deny` moves ahead of `fx_alpha: allow`. That is `mcp_one`'s map, measured above offering `fx_alpha` alone.
 
-```
-PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run opencode-agent-permission-deny-all
-{"status":"refuted","observed":{"read_edit_bash":["bash","edit","read","write"],"edit_only":["edit","write"],"mcp_one":["fx_alpha"],"reversed":["fx_alpha"]}}
-```
+| Sample | Assertion | `baseline_offers_fx` |
+| --- | --- | --- |
+| `confirming.json` | `{"read_edit_bash":["bash","edit","read","write"],"edit_only":["edit","write"],"mcp_one":["fx_alpha"],"reversed":[]}` | `true` |
+| `refuting.json` | `{"read_edit_bash":["bash","edit","read","write"],"edit_only":["edit","write"],"mcp_one":["fx_alpha"],"reversed":["fx_alpha"]}` | `true` |
+| `edited-baseline-without-fx.json` | `{"read_edit_bash":["bash","edit","read","write"],"edit_only":["edit","write"],"mcp_one":["fx_alpha"],"reversed":[]}` | `false` |
 
-`reversed` differed from `expected`; the other three arms agreed with it.
+The confirming sample's assertion equals `expected`. In the refuting sample `reversed` differs from it; the other three arms agree with it. `samples/edited-baseline-without-fx.json` is the confirming sample with `fx_alpha` removed from every `baseline` request, so `baseline_offers_fx` is `false` on it and `true` on the other two. `just probe-test` re-proves these results on every run.
 
 ## Limits of this oracle
 
