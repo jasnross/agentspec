@@ -39,20 +39,10 @@ def fixture_marker(path: Path) -> str:
     return ""
 
 
-MARKER_SKILL = fixture_marker(
-    EXPERIMENTS_DIR
-    / "claude-skill-effort/fixtures/assertion/project/.claude/skills/probe-effort/SKILL.md"
-)
-
-
 MARKER_MCP_PATH = (
     EXPERIMENTS_DIR / "claude-subagent-mcp-tools/fixtures/assertion/inherit/.claude/agents/"
     "probe-mcp-inherit.md"
 )
-
-
-# The billing-header block Claude writes into a subagent's request, flagging it as one.
-SUBAGENT_SYSTEM = [{"type": "text", "text": "x-anthropic-billing-header: cc_is_subagent=true;"}]
 
 
 def project(manifest_path: Path, view: Path) -> tuple[JsonValue, bool]:
@@ -65,109 +55,6 @@ def project(manifest_path: Path, view: Path) -> tuple[JsonValue, bool]:
     assert len(values) <= 1, f"the projection yielded several values: {values}"
     observed = values[0] if values else None
     return observed, json_values.equal(observed, manifest.assertion.expected)
-
-
-def test_the_committed_skill_manifest_s_projection_does_not_confirm_an_unmeasured_arm(
-    tmp_path: Path,
-) -> None:
-    # The skill package's manifest, under its own governed field (`claude-agent-effort`'s
-    # samples pin the same shape for that package). Here too the projection must not lean on
-    # the gates to keep an unmeasured arm from confirming.
-    #
-    # Which branch of `rel` does the work here is worth stating, because it is not the one
-    # the shape suggests: the pass value `. == $u` is only reachable once
-    # `($u | length) != 1` has been ruled out, so a single-element `$u` can never equal an
-    # empty arm. The **control-set** branch is what makes an unmeasured arm unconfirmable;
-    # `arm-had-no-governed-request` is legibility, and the next test is what pins it.
-    manifest = EXPERIMENTS_DIR / "claude-skill-effort/probe.json"
-    if not manifest.is_file():
-        pytest.skip("claude-skill-effort is not present")
-    # Guarded, not assumed: a moved fixture would leave the marker empty, the fabricated
-    # view unmarked, and this test passing for the wrong reason.
-    assert MARKER_SKILL
-
-    governed = {
-        "messages": [{"role": "user", "content": MARKER_SKILL}],
-        "output_config": {"effort": "low"},
-    }
-    view = write_view(
-        tmp_path / "degenerate-skill.json",
-        {"inline": [{"system": "plain"}], "slash_entry": [governed], "fork": [governed]},
-    )
-
-    _, confirmed = project(manifest, view)
-    assert not confirmed
-
-
-def test_the_committed_skill_manifest_names_an_arm_that_captured_no_governed_request(
-    tmp_path: Path,
-) -> None:
-    # The case the test above cannot reach: a control set that *is* single-valued, so `rel`
-    # gets past its first branch, with one arm holding nothing governed. Deleting
-    # `arm-had-no-governed-request` from the projection renders that arm as a bare `[]`
-    # instead — still not confirmed, but no longer saying why. A reader iterating a
-    # candidate expression against a saved view is the audience for the difference.
-    manifest = EXPERIMENTS_DIR / "claude-skill-effort/probe.json"
-    if not manifest.is_file():
-        pytest.skip("claude-skill-effort is not present")
-    assert MARKER_SKILL
-
-    governed = {
-        "messages": [{"role": "user", "content": MARKER_SKILL}],
-        "output_config": {"effort": "low"},
-    }
-    view = write_view(
-        tmp_path / "unmeasured-arm.json",
-        {
-            "inline": [
-                {
-                    "messages": [{"role": "user", "content": "plain"}],
-                    "output_config": {"effort": "medium"},
-                }
-            ],
-            "slash_entry": [governed],
-            "fork": [governed],
-        },
-    )
-
-    observed, confirmed = project(manifest, view)
-    assert not confirmed
-    assert "arm-had-no-governed-request" in compact(observed)
-
-
-def test_the_committed_skill_manifest_s_control_set_excludes_a_subagent_s_follow_up(
-    tmp_path: Path,
-) -> None:
-    # `claude-agent-effort`'s samples pin the same exclusion for that package. The skill's
-    # marker sits in `.messages`, but the billing header sits in `.system` whichever field
-    # governs, so the clause is the same.
-    manifest = EXPERIMENTS_DIR / "claude-skill-effort/probe.json"
-    if not manifest.is_file():
-        pytest.skip("claude-skill-effort is not present")
-    assert MARKER_SKILL
-
-    governed = {
-        "messages": [{"role": "user", "content": MARKER_SKILL}],
-        "output_config": {"effort": "low"},
-    }
-    subagent = {"system": SUBAGENT_SYSTEM, "output_config": {"effort": "max"}}
-    view = write_view(
-        tmp_path / "subagent-skill.json",
-        {
-            "inline": [
-                {
-                    "messages": [{"role": "user", "content": MARKER_SKILL}],
-                    "output_config": {"effort": "medium"},
-                },
-                {"system": "plain", "output_config": {"effort": "medium"}},
-            ],
-            "slash_entry": [governed],
-            "fork": [governed, subagent],
-        },
-    )
-
-    _, confirmed = project(manifest, view)
-    assert confirmed
 
 
 def test_the_committed_mcp_manifest_s_projection_reads_both_direct_and_deferred_tools(

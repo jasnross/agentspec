@@ -65,15 +65,15 @@ An agent file **becomes the system prompt** of the request it governs, so that p
 | `slash_entry` | `messages[0]`, as a text block |
 | `fork` | the forked subagent's `messages[0]`, as a text block |
 
-So this package passes `.messages` to both gates and selects on `.messages` in both directions of the projection. The gates take the field as a parameter for this reason — see `experiments/lib/probe_harness/gates/claude_otel.py`. Widening the shared default to "`.system` or `.messages`" would reintroduce the echo `claude-agent-effort` measured and excluded, and inlining a second copy of the gates here would put the safety-critical part of a billed apparatus in two files that can drift.
+So this package passes `.messages` to both gates and the assertion selects on `.messages` in both directions. The gates take the field as a parameter for this reason — see `experiments/lib/probe_harness/gates/claude_otel.py`. Widening the shared default to "`.system` or `.messages`" would reintroduce the echo `claude-agent-effort` measured and excluded, and inlining a second copy of the gates here would put the safety-critical part of a billed apparatus in two files that can drift.
 
 The `inline` row is itself the mechanism behind that arm's finding: a model-invoked skill does not get a request of its own. Its body is injected into the ongoing main-thread conversation as a tool result, on a request whose effort was already settled — so there is no request for `effort:` to govern.
 
 **The echo hazard is reduced here but not eliminated.** `claude-agent-effort` narrowed to `.system` because a subagent's reply carried the marker back to the main thread. This package's `fork` arm has the same shape, and its main-thread requests were measured carrying no marker — but that holds only because the skill body instructs a one-word reply. A future fixture whose skill made Claude quote its own body back would drag an ungoverned level into the `fork` arm's value. The one-word reply is load-bearing, not cosmetic.
 
-`unique` rather than a positional selector, in all three arms: the sink names files by UUID, so glob order is not write order, and `| last` would name an arbitrary element while silently discarding disagreement among the rest. **`unique` earns its keep most in the `fork` arm**, which returns to a main thread still at the ungoverned level and is therefore the arm most likely to hold marked requests at two levels — a two-element array that `unique` surfaces and a positional selector would hide. All three arms are spelled identically, including the ones where nothing could go wrong, so a reviewer who has checked one has checked them all.
+Each arm's value is the distinct efforts of its governed requests rather than one positional element: the sink names files by UUID, so glob order is not write order, and taking the last would name an arbitrary element while silently discarding disagreement among the rest. **Keeping every distinct level earns its keep most in the `fork` arm**, which returns to a main thread still at the ungoverned level and is therefore the arm most likely to hold marked requests at two levels — a two-element array a positional selector would hide. One function, `gates.claude_otel.relative_effort`, reads all three arms, including the ones where nothing could go wrong, so a reviewer who has checked one has checked them all.
 
-`rel` is self-guarding: it renders `no-usable-control-set` when the ungoverned set is not exactly one level, and `arm-had-no-governed-request` when an arm has none. The runner's gates block both shapes, and so does `probe record`, which judges through the same gates; the projection guards them anyway, so its verdict never depends on the gates having run.
+The assertion is self-guarding: it yields `no-usable-control-set` when the ungoverned set is not exactly one level, and `arm-had-no-governed-request` when an arm has none. The runner's gates block both shapes, and so does `probe record`, which judges through the same gates; the assertion guards them anyway, so its verdict never depends on the gates having run.
 
 ## The three gates
 
@@ -81,7 +81,7 @@ Every gate asserts on a positive signal in the captured bodies. None of them nam
 
 1. **Every arm captured at least one `*.request.json`.** An empty sink means the arm never ran.
 2. **Every arm holds at least one request the fixture governs** (marker in `.messages`). Without it, "the fixture never engaged" and "the fixture engaged and Claude discarded its effort" are indistinguishable — which would make the most decision-relevant finding the least trustworthy one. **Gate 2 is what makes the `inline` arm assertable**, and it earned that keep during authoring: the first discriminate run failed this gate against the inherited `.system` definition, which is how the `.messages` finding above was discovered rather than silently mis-measured.
-3. **At least one ungoverned request declares `output_config.effort`, and they all agree on one level.** The filter is an explicit exclusion of requests carrying no `effort` key: Claude emits an intermittent title-generation sidecar whose `output_config` holds a `format` object and no `effort`, and a control stated over all unmarked requests would fail on it every time it appeared. Written as an exclusion, the other direction stays loud — a Claude that stopped populating `effort` on governed requests empties the control set and trips the existence clause. Subagent requests are excluded too, by the `cc_is_subagent=true` that Claude writes into each one's billing header, matched anywhere in its `.system` text: a subagent's follow-up turn after a tool call carries no agent system prompt and runs at the subagent's effort. `claude-agent-effort` measured them and states the rationale. In the discriminator run the `fork` arm's only subagent request carried the skill body in `.messages` and was governed, so the exclusion has not yet removed a request from this package's control set. It is shared with the gate, and applied in `$u` too, so the two keep one definition.
+3. **At least one ungoverned request declares `output_config.effort`, and they all agree on one level.** The filter is an explicit exclusion of requests carrying no `effort` key: Claude emits an intermittent title-generation sidecar whose `output_config` holds a `format` object and no `effort`, and a control stated over all unmarked requests would fail on it every time it appeared. Written as an exclusion, the other direction stays loud — a Claude that stopped populating `effort` on governed requests empties the control set and trips the existence clause. Subagent requests are excluded too, by the `cc_is_subagent=true` that Claude writes into each one's billing header, matched anywhere in its `.system` text: a subagent's follow-up turn after a tool call carries no agent system prompt and runs at the subagent's effort. `claude-agent-effort` measured them and states the rationale. In the discriminator run the `fork` arm's only subagent request carried the skill body in `.messages` and was governed, so the exclusion has not yet removed a request from this package's control set. The assertion reads its control set from `gates.claude_otel.control_efforts`, the set this gate compares, so the two keep one definition.
 
 A gate failure is a statement about the run, not about Claude, and writes no record.
 
@@ -102,19 +102,25 @@ Each fixture's own `.claude/settings.json` pin (`effortLevel: medium`) is **not*
 
 ## Discriminate evidence
 
-Both rows below come from the recorder's `--dry-run` output on actual runs, not from a design document. The two fixture pairs differ only in the skill's `effort:` value. The `status` and `observed` fields are excerpted from the full seven-key record each run printed; the other five keys are the manifest's own values plus the date and version.
+`samples/confirming.json` and `samples/refuting.json` come from kept workspaces of the `assertion` and `discriminator` fixture variants, both taken on Claude Code **2.1.287**; the refuting one, `…T233548-discriminator`, on 2026-10-21. The two fixture pairs differ only in the skill's `effort:` value. The edited samples are the confirming sample with one condition changed by hand, each named in the sample's `note`.
 
-```
-PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/claude-skill-effort/probe.sh
-{"status":"refuted","observed":{"inline":"same-as-ungoverned","slash_entry":["max"],"fork":["max"]}}
+| Sample | Assertion |
+| --- | --- |
+| `confirming.json` | `{"inline":"same-as-ungoverned","slash_entry":["low"],"fork":["low"]}` |
+| `refuting.json` | `{"inline":"same-as-ungoverned","slash_entry":["max"],"fork":["max"]}` |
+| `edited-no-control-set.json` | `{"inline":"no-usable-control-set","slash_entry":"no-usable-control-set","fork":"no-usable-control-set"}` |
+| `edited-arm-without-governed-request.json` | `{"inline":"arm-had-no-governed-request","slash_entry":["low"],"fork":["low"]}` |
+| `edited-subagent-follow-up.json` | `{"inline":"same-as-ungoverned","slash_entry":["low"],"fork":["low"]}` |
 
-PROBE_DRY_RUN=1 experiments/claude-skill-effort/probe.sh
-{"status":"confirmed","observed":{"inline":"same-as-ungoverned","slash_entry":["low"],"fork":["low"]}}
-```
+The confirming sample equals `expected`. The refuting sample **differs in `slash_entry` and `fork` while agreeing in `inline`**. That pairing is the discrimination: it shows the assertion reads each arm independently, and that the inert arm is inert rather than merely unread.
 
-The block is captured output, so it keeps the commands of the runner that produced it. Run the same two with `PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run claude-skill-effort` and `PROBE_DRY_RUN=1 experiments/probe run claude-skill-effort`; the harness refuses to record the discriminator.
+The edited samples pin what the assertion yields where the gates would normally decide:
 
-The two runs **differ in `slash_entry` and `fork` while agreeing in `inline`**. That pairing is the discrimination: it shows the projection reads each arm independently, and that the inert arm is inert rather than merely unread.
+- `edited-no-control-set.json` removes every ungoverned request. With no control level, every arm reads `"no-usable-control-set"`, so no arm can confirm.
+- `edited-arm-without-governed-request.json` removes `inline`'s governed requests while the control level stands, so that arm reads `"arm-had-no-governed-request"` rather than an empty set of efforts.
+- `edited-subagent-follow-up.json` adds an unmarked subagent request at `max` to `fork`, the shape `claude-agent-effort` measured. The assertion excludes it from the control set, as gate 3 does, so the value stays the confirming sample's. No real capture of this package holds one.
+
+`just probe-test` re-proves every result on every run.
 
 ## What the record licenses
 
