@@ -34,7 +34,7 @@ Each arm's prompt is `Use the Agent tool to delegate to the <agent> subagent. Do
 
 Each arm's list is the sorted union of tool names in `tools[]` and names listed as deferred, on lines of a text block opening "The following deferred tools are now available via ToolSearch", kept to the three resource tool names, across every governed request in the arm. A tool that appears in any of them counts as offered, even if an earlier request lacked it. The union makes the value the same whether or not tool search defers a tool.
 
-`read`, `exact`, and `server_glob` yield that list. `inherit` and `explicit` yield `"none-or-all"` when the list is empty or exactly the three tools, and to the list itself otherwise; see the assertion section for why. An arm with no governed request yields `"arm-had-no-governed-request"`.
+`read`, `exact`, and `server_glob` yield that list. `inherit` and `explicit` yield `"none-or-all"` when the list is empty or exactly the three tools, and the list itself otherwise; see the assertion section for why. An arm with no governed request yields `"arm-had-no-governed-request"`.
 
 ## Isolation
 
@@ -80,10 +80,11 @@ Live runs also discriminated: `T154945` holds all three tools in `inherit` and `
 | Sample | Assertion |
 | --- | --- |
 | `confirming.json` | `{"inherit":"none-or-all","read":[],"exact":[],"server_glob":[],"explicit":"none-or-all"}` |
+| `edited-all-resource-tools.json` | `{"inherit":"none-or-all","read":[],"exact":[],"server_glob":[],"explicit":"none-or-all"}` |
 | `edited-partial-resource-tools.json` | `{"inherit":["ListMcpResourcesTool"],"read":[],"exact":[],"server_glob":[],"explicit":"none-or-all"}` |
 | `refuting.json` | `{"inherit":"none-or-all","read":["ListMcpResourcesTool"],"exact":[],"server_glob":[],"explicit":"none-or-all"}` |
 
-The confirming sample equals `expected`. In the refuting sample `read` differs from it and the other four arms agree. `samples/edited-partial-resource-tools.json` is the confirming sample with `ListMcpResourcesTool` added to `inherit`'s governed requests: one tool of three is neither none nor all, so `inherit` yields the list rather than `"none-or-all"`. `just probe-test` re-proves every result on every run. This discriminator is a perturbation rather than a finding. Claude sends a subagent's body verbatim in `.system`, line breaks included, so the run shows the assertion reads `read`'s governed requests and matches deferred-listing lines one per line. It does not show Claude offering the resource tools to a subagent, which no fixture makes reliable: the run table below has `inherit` offered them in one run of nine.
+The confirming sample equals `expected`. In the refuting sample `read` differs from it and the other four arms agree. `samples/edited-partial-resource-tools.json` is the confirming sample with `ListMcpResourcesTool` added to `inherit`'s governed requests: one tool of three is neither none nor all, so `inherit` yields the list rather than `"none-or-all"`. `samples/edited-all-resource-tools.json` gives `explicit`'s governed requests all three, the outcome `T154945` recorded, which yields `"none-or-all"` as the empty set does. `just probe-test` re-proves every result on every run. This discriminator is a perturbation rather than a finding. Claude sends a subagent's body verbatim in `.system`, line breaks included, so the run shows the assertion reads `read`'s governed requests and matches deferred-listing lines one per line. It does not show Claude offering the resource tools to a subagent, which no fixture makes reliable: the run table below has `inherit` offered them in one run of nine.
 
 ## The nine runs
 

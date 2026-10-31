@@ -37,7 +37,7 @@ Each arm's prompt is `Use the Agent tool with run_in_background set to <mode> to
 
 `CLAUDE_CODE_ENABLE_TELEMETRY=1` plus `OTEL_LOG_RAW_API_BODIES=file:<dir>` writes each untruncated request body to `<dir>/<uuid>.request.json`. The assertion reads only requests whose `.system` carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-CCBG6` — the subagent's own requests.
 
-Each arm's value is the sorted union of tool names in `tools[]` and names listed as deferred, on lines of a text block opening "The following deferred tools are now available via ToolSearch", kept to names starting `mcp__fx__`. The union makes the value the same whether or not tool search defers a tool. An arm with no governed request projects to `"arm-had-no-governed-request"`.
+Each arm's value is the sorted union of tool names in `tools[]` and names listed as deferred, on lines of a text block opening "The following deferred tools are now available via ToolSearch", kept to names starting `mcp__fx__`. The union makes the value the same whether or not tool search defers a tool. For an arm with no governed request the assertion yields `"arm-had-no-governed-request"`.
 
 In `-p`, a session that starts a background subagent stays open until it completes, so the background arms' subagent requests reach the sink.
 

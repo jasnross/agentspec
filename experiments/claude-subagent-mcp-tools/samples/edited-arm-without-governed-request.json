@@ -1,6 +1,6 @@
 {
   "origin": "edited",
-  "note": "confirming capture with the read arm's governed requests removed, so that arm holds only the main thread's ungoverned requests",
+  "note": "confirming capture with the read arm's governed requests removed, so that arm holds only requests without the marker: the main thread's and the subagent's unmarked follow-up",
   "input": {
     "inherit": {
       "requests": [

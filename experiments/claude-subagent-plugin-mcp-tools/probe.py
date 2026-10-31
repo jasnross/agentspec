@@ -37,7 +37,7 @@ _UNSET = (
 
 _ARGS = ("--allowedTools", "Agent", "--effort", "low")
 _PLUGIN_TOOLS = ("mcp__plugin_fxp_fx__alpha", "mcp__plugin_fxp_fx__beta")
-
+_MARKER = "AGENTSPEC-PROBE-MARKER-CCPLUG4"
 
 # The subdirectory of each variant tree the plugin arms' agents are copied from, so a reachability
 # check counts it.
@@ -54,9 +54,6 @@ def _arrange_arm(fixtures: Path, arm_dir: Path, arm: ClaudeArm) -> None:
     agents = arm_dir / "fxp" / "agents"
     agents.mkdir(parents=True, exist_ok=True)
     shutil.copy(fixtures / "plugin-agents" / f"{stem}.md", agents)
-
-
-_MARKER = "AGENTSPEC-PROBE-MARKER-CCPLUG4"
 
 
 def _fx(name: str) -> bool:

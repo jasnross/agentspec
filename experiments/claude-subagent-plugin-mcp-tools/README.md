@@ -37,7 +37,7 @@ Each arm's prompt is `Use the Agent tool to delegate to the <delegation name> su
 
 `CLAUDE_CODE_ENABLE_TELEMETRY=1` plus `OTEL_LOG_RAW_API_BODIES=file:<dir>` writes each untruncated request body to `<dir>/<uuid>.request.json`. The assertion reads only requests whose `.system` carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-CCPLUG4` — the subagent's own requests.
 
-Each arm's value is the sorted union of tool names in `tools[]` and names listed as deferred, on lines of a text block opening "The following deferred tools are now available via ToolSearch", kept to names starting `mcp__plugin_fxp_fx__` or `mcp__fx__`. The union makes the value the same whether or not tool search defers a tool, as long as the deferred listing keeps one bare name per line; see The gates for what pins that here. An arm with no governed request projects to `"arm-had-no-governed-request"`.
+Each arm's value is the sorted union of tool names in `tools[]` and names listed as deferred, on lines of a text block opening "The following deferred tools are now available via ToolSearch", kept to names starting `mcp__plugin_fxp_fx__` or `mcp__fx__`. The union makes the value the same whether or not tool search defers a tool, as long as the deferred listing keeps one bare name per line; see The gates for what pins that here. For an arm with no governed request the assertion yields `"arm-had-no-governed-request"`.
 
 ## Isolation
 

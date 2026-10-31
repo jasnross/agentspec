@@ -263,12 +263,6 @@ def record_wellformed() -> Callable[[Path], None]:
 MARKER = "AGENTSPEC-PROBE-MARKER-TEST"
 
 
-def write_view(path: Path, arms: dict[str, list[Any]]) -> Path:
-    """An arm-keyed view: each arm maps to its array of request bodies."""
-    path.write_text(json.dumps(arms, indent=2) + "\n", encoding="utf-8")
-    return path
-
-
 def claude_request(**fields: Any) -> dict[str, Any]:
     """A Claude request body carrying every field the request model requires, overridden by
     <fields>.
