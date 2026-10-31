@@ -31,7 +31,7 @@ Every arm connects two local MCP stdio servers, both running `experiments/lib/st
 
 `experiments/lib/stubs/fake_provider.py`, shared by every fake-provider probe, is an OpenAI-compatible chat endpoint on `127.0.0.1`. The project's `opencode.json` declares it as a provider through `@ai-sdk/openai-compatible`, which is built into the OpenCode binary, and the fake writes every request body it receives to the arm's `sink/` directory. The tool list read from those bodies — `tools[].function.name` — is the set OpenCode actually offered the model.
 
-The projection reads only requests whose `role: "system"` message carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-OCGLOB2`, and keeps the full sorted tool list, so a built-in the glob unexpectedly let through would show. OpenCode also sends a title-generation request per run, with its own system prompt and `tools: []`; the marker keeps it out.
+The assertion reads only requests whose `role: "system"` message carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-OCGLOB2`, and yields the full sorted tool list, so a built-in the glob unexpectedly let through would show. OpenCode also sends a title-generation request per run, with its own system prompt and `tools: []`; the marker keeps it out.
 
 ## Isolation
 
@@ -50,24 +50,25 @@ A gate failure keeps the workspace and exits 1 without recording, because each d
 
 - **Marker.** Every arm holds at least one request carrying the marker in a system message. OpenCode warns rather than fails on an unknown `--agent` and runs its default agent instead, whose requests carry no marker.
 - **Two stamps, per arm.** Each server writes its own stamp (`fx.stamp`, `fx_extra.stamp`) when it answers `tools/list`. Without both, a `server_glob` lacking `fx_extra_*` would read as "the glob stopped at the server boundary" when `fx_extra` never connected.
-- **Baseline tool listing.** `baseline`'s marked requests list all four of `fx_alpha`, `fx_beta`, `fx_extra_alpha`, and `fx_extra_beta`. The stamps prove both servers connected; this proves their tools reach a request, under the names the projection expects, when no map filters them.
+- **Baseline tool listing.** The custom check `baseline_offers_all` requires `baseline`'s marked requests to list all four of `fx_alpha`, `fx_beta`, `fx_extra_alpha`, and `fx_extra_beta`. The stamps prove both servers connected; this proves their tools reach a request, under the names the assertion expects, when no map filters them.
 
-`baseline` is not in the projection, because its built-in tool set varies by OpenCode version. It is the gate above instead, and it is what the expected value is non-default against.
+`baseline` is not in the assertion, because its built-in tool set varies by OpenCode version. It is the gate above instead, and it is what the expected value is non-default against.
 
 ## The assertion
 
-An arm with no marked request projects to `"arm-had-no-governed-request"`, and one whose marked requests disagree projects to `{inconsistent: [...]}`. `expected` states the over-match OpenCode's source predicts: all four tools, and no built-in. The `discriminator` fixture variant changes one agent so that the assertion must disagree with it; see "Discriminate evidence".
+For an arm with no marked request the assertion yields `"arm-had-no-governed-request"`, and for one whose marked requests disagree it yields `{inconsistent: [...]}`. `expected` states the over-match OpenCode's source predicts: all four tools, and no built-in. The `discriminator` fixture variant changes one agent so that the assertion must disagree with it; see "Discriminate evidence".
 
 ## Discriminate evidence
 
-Before the first run, the recorder's `--dry-run` against fabricated views printed `confirmed` for one matching `expected`, and `refuted` for one where `server_glob` carried only `fx`'s tools, one where it carried no tool, and one where a built-in leaked through beside the four:
+`samples/confirming.json` and `samples/refuting.json` were captured on 2026-10-31 against opencode **1.18.34**, from dry runs of the `assertion` and `discriminator` fixture variants. The `discriminator` variant changes one file, `.opencode/agent/probe-server-glob.md`, whose `fx_*: allow` becomes `fx_alpha: allow`. `experiments/opencode-agent-permission-deny-all/`'s `mcp_one` arm measured that map offering `fx_alpha` alone. That arm connects only `fx`, but a key without `*` matches one tool name exactly (see "Why it matters"), so it cannot reach `fx_extra`'s tools either.
 
-```
-record: dry run — confirmed — observed {"server_glob":["fx_alpha","fx_beta","fx_extra_alpha","fx_extra_beta"]} (no file written)
-record: dry run — refuted — observed {"server_glob":["fx_alpha","fx_beta"]} (no file written)
-record: dry run — refuted — observed {"server_glob":[]} (no file written)
-record: dry run — refuted — observed {"server_glob":["fx_alpha","fx_beta","fx_extra_alpha","fx_extra_beta","read"]} (no file written)
-```
+| Sample | Assertion | `baseline_offers_all` |
+| --- | --- | --- |
+| `confirming.json` | `{"server_glob":["fx_alpha","fx_beta","fx_extra_alpha","fx_extra_beta"]}` | `true` |
+| `refuting.json` | `{"server_glob":["fx_alpha"]}` | `true` |
+| `edited-baseline-without-fx.json` | `{"server_glob":["fx_alpha","fx_beta","fx_extra_alpha","fx_extra_beta"]}` | `false` |
+
+The confirming sample's assertion equals `expected`; in the refuting sample `server_glob`, the only cell, differs from it. `samples/edited-baseline-without-fx.json` is the confirming sample with `fx_alpha` removed from every `baseline` request, so `baseline_offers_all` is `false` on it and `true` on the other two. `just probe-test` re-proves these results on every run.
 
 From the `PROBE_DRY_RUN=1` run on 2026-10-03 against opencode **1.18.34**, each arm sent two requests, the agent's and the title generator's. The marked ones carried:
 
@@ -75,15 +76,6 @@ From the `PROBE_DRY_RUN=1` run on 2026-10-03 against opencode **1.18.34**, each 
 | --- | --- |
 | `baseline` | `bash`, `edit`, `fx_alpha`, `fx_beta`, `fx_extra_alpha`, `fx_extra_beta`, `glob`, `grep`, `read`, `skill`, `task`, `todowrite`, `webfetch`, `write` |
 | `server_glob` | `fx_alpha`, `fx_beta`, `fx_extra_alpha`, `fx_extra_beta` |
-
-On 2026-10-21, against opencode **1.18.34**, the `discriminator` fixture variant ran as a dry run. It changes one file, `.opencode/agent/probe-server-glob.md`, whose `fx_*: allow` becomes `fx_alpha: allow`. `experiments/opencode-agent-permission-deny-all/`'s `mcp_one` arm measured that map offering `fx_alpha` alone. That arm connects only `fx`, but a key without `*` matches one tool name exactly (see "Why it matters"), so it cannot reach `fx_extra`'s tools either. The `status` and `observed` fields are excerpted from the record the run printed:
-
-```
-PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run opencode-agent-mcp-server-glob
-{"status":"refuted","observed":{"server_glob":["fx_alpha"]}}
-```
-
-`server_glob`, the only cell, differed from `expected`.
 
 ## What the record licenses
 

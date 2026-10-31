@@ -55,6 +55,21 @@ def _tools(*names: str) -> list[dict[str, Any]]:
     return [{"type": "function", "function": {"name": name}} for name in names]
 
 
+def test_governed_tool_names_are_every_name_some_governed_request_offers() -> None:
+    requests = _arm(
+        {
+            "a": [
+                {"messages": [_system(MARKER)], "tools": _tools("read", "fx_alpha")},
+                {"messages": [_system(MARKER)], "tools": _tools("fx_beta")},
+                {"messages": [_system("title")], "tools": _tools("unmarked")},
+            ]
+        },
+        "a",
+    )
+
+    assert gates.governed_tool_names(requests, MARKER) == {"read", "fx_alpha", "fx_beta"}
+
+
 def test_toolset_is_the_sorted_names_every_governed_request_offers() -> None:
     requests = _arm(
         {

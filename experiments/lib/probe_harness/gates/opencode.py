@@ -13,6 +13,7 @@ __all__ = [
     "GOVERNED_JQ",
     "governed",
     "governed_requests",
+    "governed_tool_names",
     "stamp",
     "tool_result",
     "tool_results",
@@ -64,6 +65,11 @@ def governed_requests(requests: Sequence[OpenCodeRequest], marker: str) -> list[
     return [
         r for r in requests if any(m.role == "system" and marker in m.content for m in r.messages)
     ]
+
+
+def governed_tool_names(requests: Sequence[OpenCodeRequest], marker: str) -> set[str]:
+    """Every tool name some governed request offers."""
+    return {name for r in governed_requests(requests, marker) for name in r.tool_names}
 
 
 def toolset(
