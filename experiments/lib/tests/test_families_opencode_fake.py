@@ -272,13 +272,19 @@ def test_the_provider_runs_in_the_arm_project_with_a_matching_pwd(
 SCRIPTED = """\
 from pathlib import Path
 
-from probe_harness.families.base import JqCustomCheck
-from probe_harness.families.opencode_fake import OpenCodeArm, OpenCodeFakeProbe, ScriptedCall
-from probe_harness.gates.opencode import GOVERNED_JQ
+from probe_harness.families.base import CustomCheck
+from probe_harness.families.opencode_fake import (
+    OpenCodeArm, OpenCodeArms, OpenCodeFakeProbe, ScriptedCall,
+)
+from probe_harness.gates.opencode import governed_requests
 
 
 def _arrange_arm(fixtures: Path, arm_dir: Path, arm: OpenCodeArm) -> ScriptedCall | None:
     return ScriptedCall("listing", '{"b": 2}') if arm.name == "two" else None
+
+
+def _governed_one(arms: OpenCodeArms) -> bool:
+    return len(governed_requests(arms["one"].requests, "MARKER_VALUE")) >= CHECK_MIN
 
 
 PROBE = OpenCodeFakeProbe(
@@ -289,13 +295,8 @@ PROBE = OpenCodeFakeProbe(
     ),
     fx_servers=("fx",),
     tool_result_gate=True,
-    custom_checks=(
-        JqCustomCheck(
-            "governed_one",
-            expression=f"[.one[] | select(any({GOVERNED_JQ}))] | length >= CHECK_MIN",
-            failure=("the custom check refused.",),
-        ),
-    ),
+    custom_checks=(CustomCheck("governed_one", _governed_one, ("the custom check refused.",)),),
+    assertion=lambda arms: {name: len(capture.requests) for name, capture in arms.items()},
     arrange_arm=ARRANGE,
 )
 """
@@ -309,8 +310,9 @@ def _scripted(package: Path, *, check_min: int = 1, scripted: bool = True) -> No
         .replace("ARRANGE", "_arrange_arm" if scripted else "None")
     )
     (package / "probe.py").write_text(source, encoding="utf-8")
+    # A Python custom check needs a schema 2 manifest, whose assertion is the definition's.
     manifest = json.loads((package / "probe.json").read_text(encoding="utf-8"))
-    manifest["assertion"]["expected"] = {"one": 2, "two": 2}
+    manifest.update(schema_version=2, assertion={"expected": {"one": 2, "two": 2}})
     (package / "probe.json").write_text(json.dumps(manifest), encoding="utf-8")
 
 

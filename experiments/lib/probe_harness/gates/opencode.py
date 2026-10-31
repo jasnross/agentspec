@@ -10,7 +10,6 @@ from probe_harness.models.opencode_request import OpenCodeRequest
 
 __all__ = [
     "APPARATUS_FAILURE",
-    "GOVERNED_JQ",
     "governed",
     "governed_requests",
     "governed_tool_names",
@@ -19,11 +18,6 @@ __all__ = [
     "tool_results",
     "toolset",
 ]
-
-
-# The `any(…)` arguments selecting a governed request (the marker in a system message), for a
-# schema 1 custom check. `$m` is the marker; `governed_requests` is the same in Python.
-GOVERNED_JQ = '.messages[]?; .role == "system" and (.content | tostring | contains($m))'
 
 
 def governed(requests: Sequence[OpenCodeRequest], arm: str, marker: str, stderr: Path) -> None:

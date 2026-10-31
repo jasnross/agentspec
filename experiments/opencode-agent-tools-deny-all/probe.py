@@ -8,32 +8,50 @@ every request body to disk. That dump is the oracle, so the measurement is at
 `opencode debug agent`.
 """
 
-from probe_harness.families.base import JqCustomCheck
-from probe_harness.families.opencode_fake import OpenCodeArm, OpenCodeFakeProbe
-from probe_harness.gates.opencode import APPARATUS_FAILURE, GOVERNED_JQ
+from probe_harness.families.base import CustomCheck
+from probe_harness.families.opencode_fake import OpenCodeArm, OpenCodeArms, OpenCodeFakeProbe
+from probe_harness.gates.opencode import APPARATUS_FAILURE, governed_tool_names, toolset
+from probe_harness.json_values import JsonValue
+
+_MARKER = "AGENTSPEC-PROBE-MARKER-OCDENY7"
+
+
+def _assertion(arms: OpenCodeArms) -> JsonValue:
+    """Each measured arm's tool set: one sorted list when its governed requests agree."""
+    return {
+        arm: toolset(arms[arm].requests, _MARKER)
+        for arm in (
+            "allow_one",
+            "reversed",
+        )
+    }
+
+
+def _baseline_offers_fx(arms: OpenCodeArms) -> bool:
+    offered = governed_tool_names(arms["baseline"].requests, _MARKER)
+    return offered.issuperset(("fx_alpha", "fx_beta"))
+
 
 # The stamp proves the server connected; this proves its tools reach a request when nothing
 # filters them.
-_BASELINE_OFFERS_FX = JqCustomCheck(
+_BASELINE_OFFERS_FX = CustomCheck(
     "baseline_offers_fx",
-    expression=(
-        f"[.baseline[] | select(any({GOVERNED_JQ})) | .tools[]?.function.name] as $n"
-        ' | ($n | index("fx_alpha")) and ($n | index("fx_beta"))'
-    ),
-    failure=(
+    _baseline_offers_fx,
+    (
         "arm baseline: the fx server connected but fx_alpha and fx_beta never reached the request.",
         APPARATUS_FAILURE,
     ),
 )
 
 PROBE = OpenCodeFakeProbe(
-    marker="AGENTSPEC-PROBE-MARKER-OCDENY7",
+    marker=_MARKER,
     arms=(
         OpenCodeArm("baseline", "probe-baseline"),
         OpenCodeArm("allow_one", "probe-allow-one"),
         OpenCodeArm("reversed", "probe-reversed"),
     ),
     fx_servers=("fx",),
+    assertion=_assertion,
     custom_checks=(_BASELINE_OFFERS_FX,),
     variants=("assertion", "discriminator"),
 )

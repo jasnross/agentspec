@@ -34,7 +34,7 @@ Every arm also connects `fx`, a local MCP stdio server (`experiments/lib/stubs/f
 
 That is what makes this `outbound-request` evidence. `opencode debug agent` stops at the resolved agent config, and `TODO.md` #14 shows OpenCode's resolved tool map and the keys it honors diverge, so a resolved map is weak evidence about what the model is offered.
 
-The projection reads only requests whose `role: "system"` message carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-OCDENY7`. OpenCode also sends a title-generation request per run, with its own system prompt and `tools: []`; the marker keeps it out.
+The assertion reads only requests whose `role: "system"` message carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-OCDENY7`. OpenCode also sends a title-generation request per run, with its own system prompt and `tools: []`; the marker keeps it out.
 
 ## Isolation
 
@@ -53,15 +53,15 @@ A gate failure keeps the workspace and exits 1 without recording, because each d
 
 - **Marker.** Every arm holds at least one request carrying the marker in a system message. OpenCode warns rather than fails on an unknown `--agent` and runs its default agent instead, whose requests carry no marker.
 - **Stamp, per arm.** `fx_server.py` writes `<arm>/fx.stamp` when it answers `tools/list`. Without it, an arm's tool list says nothing about MCP tools — an empty `reversed` would read as "deny-all hid `fx_alpha`" when `fx_alpha` never existed.
-- **Baseline tool listing.** `baseline`'s marked requests list both `fx_alpha` and `fx_beta`. The stamp proves the server connected; this proves its tools reach a request when no `tools` map filters them.
+- **Baseline tool listing.** The custom check `baseline_offers_fx` requires `baseline`'s marked requests to list both `fx_alpha` and `fx_beta`. The stamp proves the server connected; this proves its tools reach a request when no `tools` map filters them.
 
-`baseline` is not in the projection, because its built-in tool set varies by OpenCode version. It is the gate above instead.
+`baseline` is not in the assertion, because its built-in tool set varies by OpenCode version. It is the gate above instead.
 
 ## The assertion is relational across arms
 
-The three agents differ only in `tools`, so distinct observed values across arms show the projection reads each arm independently. The `discriminator` fixture variant changes one agent so that the assertion must disagree with it; see "The assertion discriminates".
+The three agents differ only in `tools`, so distinct observed values across arms show the assertion reads each arm independently. The `discriminator` fixture variant changes one agent so that the assertion must disagree with it; see "The assertion discriminates".
 
-An arm with no marked request projects to `"arm-had-no-governed-request"`, so an unmeasured `reversed` can never confirm `[]`. An arm whose marked requests disagree projects to `{inconsistent: [...]}`.
+For an arm with no marked request the assertion yields `"arm-had-no-governed-request"`, so an unmeasured `reversed` can never confirm `[]`. For an arm whose marked requests disagree it yields `{inconsistent: [...]}`.
 
 ## The assertion discriminates
 
@@ -73,19 +73,15 @@ Measured 2026-10-02 against opencode **1.18.34**, from a `PROBE_DRY_RUN=1` run. 
 | `allow_one` | `fx_alpha` |
 | `reversed` | none |
 
-Against the same saved view, the recorder's `--dry-run` printed `refuted` for two altered copies:
+`samples/confirming.json` and `samples/refuting.json` were captured on 2026-10-31 against opencode **1.18.34**, from dry runs of the `assertion` and `discriminator` fixture variants. The `discriminator` variant changes one file, `.opencode/agent/probe-reversed.md`, whose `"*": false` moves ahead of `fx_alpha: true`. That is `allow_one`'s map, measured above offering `fx_alpha` alone.
 
-- `allow_one` replaced by `baseline`'s requests, which projects `allow_one` to the baseline list.
-- `reversed` set to `[]`, which projects `reversed` to `"arm-had-no-governed-request"`.
+| Sample | Assertion | `baseline_offers_fx` |
+| --- | --- | --- |
+| `confirming.json` | `{"allow_one":["fx_alpha"],"reversed":[]}` | `true` |
+| `refuting.json` | `{"allow_one":["fx_alpha"],"reversed":["fx_alpha"]}` | `true` |
+| `edited-baseline-without-fx.json` | `{"allow_one":["fx_alpha"],"reversed":[]}` | `false` |
 
-On 2026-10-21, against opencode **1.18.34**, the `discriminator` fixture variant ran as a dry run. It changes one file, `.opencode/agent/probe-reversed.md`, whose `"*": false` moves ahead of `fx_alpha: true`. That is `allow_one`'s map, measured above offering `fx_alpha` alone. The `status` and `observed` fields are excerpted from the record the run printed:
-
-```
-PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run opencode-agent-tools-deny-all
-{"status":"refuted","observed":{"allow_one":["fx_alpha"],"reversed":["fx_alpha"]}}
-```
-
-`reversed` differed from `expected`; `allow_one` agreed with it.
+The confirming sample's assertion equals `expected`. In the refuting sample `reversed` differs from it; `allow_one` agrees with it. `samples/edited-baseline-without-fx.json` is the confirming sample with `fx_alpha` removed from every `baseline` request, so `baseline_offers_fx` is `false` on it and `true` on the other two. `just probe-test` re-proves these results on every run.
 
 ## Limits of this oracle
 
