@@ -1,0 +1,29 @@
+{
+  "origin": "edited",
+  "note": "confirming capture with every UserPromptSubmit removed, so no prompt marks where the resume begins and every line after the first counts",
+  "input": [
+    {
+      "session_id": null,
+      "transcript_path": null,
+      "cwd": null,
+      "hook_event_name": "SessionStart",
+      "source": "startup",
+      "model": null
+    },
+    {
+      "session_id": null,
+      "transcript_path": null,
+      "cwd": null,
+      "hook_event_name": "SessionStart",
+      "source": "resume",
+      "seconds_since_last_response": null,
+      "context_tokens": null,
+      "prompt_cache_likely_expired": null,
+      "estimated_cache_write_usd": null
+    }
+  ],
+  "results": {
+    "assertion": ["resume"],
+    "wait_for": true
+  }
+}
