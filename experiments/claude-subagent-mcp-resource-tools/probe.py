@@ -9,6 +9,7 @@ this package declares `driver: billed` and `just probe-run` withholds it
 without `--billed`.
 """
 
+from probe_harness.assertions import NO_GOVERNED_REQUEST
 from probe_harness.families.base import GateFailure, ProbeFunctions
 from probe_harness.families.claude_otel import (
     ClaudeArm,
@@ -20,6 +21,8 @@ from probe_harness.families.claude_otel import (
     Model,
 )
 from probe_harness.gates import claude_otel
+from probe_harness.gates.bodies import governed_requests, offered
+from probe_harness.json_values import JsonValue
 
 # Each would change what is measured: whether tool search is on, whether the MCP server
 # has connected when the subagent spawns, or which model the subagent runs.
@@ -36,6 +39,33 @@ _ARGS = ("--allowedTools", "Agent", "--effort", "low")
 _FX_TOOLS = ("mcp__fx__alpha", "mcp__fx__beta")
 _MARKER = "AGENTSPEC-PROBE-MARKER-CCRES5"
 _RESOURCE_TOOLS = ("ListMcpResourcesTool", "ReadMcpResourceTool", "ReadMcpResourceDirTool")
+# The arms offered all three resource tools in one run and none in the others, so either
+# outcome confirms; see the README's assertion section.
+_UNSTABLE_ARMS = ("inherit", "explicit")
+
+
+def _resource_tool(name: str) -> bool:
+    return name in _RESOURCE_TOOLS
+
+
+def _assertion(arms: ClaudeArms) -> JsonValue:
+    """The resource tools each arm's governed requests offer, directly or deferred.
+
+    An unstable arm offered none or all three reads `"none-or-all"`, so a partial set, a
+    renamed tool or a fourth one still refutes.
+    """
+    value: dict[str, JsonValue] = {}
+    for arm, capture in arms.items():
+        governed = governed_requests(capture.requests, _MARKER)
+        if not governed:
+            value[arm] = NO_GOVERNED_REQUEST
+            continue
+        tools = offered(governed, _resource_tool)
+        if arm in _UNSTABLE_ARMS and (not tools or set(tools) == set(_RESOURCE_TOOLS)):
+            value[arm] = "none-or-all"
+        else:
+            value[arm] = tools
+    return value
 
 
 def _judge(arms: ClaudeArms) -> None:
@@ -103,6 +133,7 @@ PROBE = ClaudeOtelProbe(
     ),
     gates=(Model(), DeferredMcp("inherit", _FX_TOOLS), McpConnected(_FX_TOOLS)),
     unset_env=_UNSET,
+    assertion=_assertion,
     functions=ProbeFunctions(judge=_judge),
     variants=("assertion", "discriminator"),
 )

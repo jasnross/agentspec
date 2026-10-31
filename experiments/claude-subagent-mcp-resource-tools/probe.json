@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "provider": "claude",
   "driver": "billed",
   "depth": "outbound-request",
@@ -9,7 +9,6 @@
     "command": "claude --version"
   },
   "assertion": {
-    "projection": "def governed: [.[] | select(.system | tostring | contains(\"AGENTSPEC-PROBE-MARKER-CCRES5\"))]; def offered: [(.[] | .tools[]?.name), (.[] | .. | strings | select(contains(\"The following deferred tools are now available via ToolSearch\")) | split(\"\\n\")[])] | map(select(. == \"ListMcpResourcesTool\" or . == \"ReadMcpResourceTool\" or . == \"ReadMcpResourceDirTool\")) | unique; def unstable: if . == [] or . == [\"ListMcpResourcesTool\", \"ReadMcpResourceDirTool\", \"ReadMcpResourceTool\"] then \"none-or-all\" else . end; with_entries(.key as $k | .value |= (governed | if length == 0 then \"arm-had-no-governed-request\" else offered | if $k == \"inherit\" or $k == \"explicit\" then unstable else . end end))",
     "expected": {
       "inherit": "none-or-all",
       "read": [],

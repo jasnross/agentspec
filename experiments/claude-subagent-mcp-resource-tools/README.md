@@ -30,11 +30,11 @@ Each arm's prompt is `Use the Agent tool to delegate to the <agent> subagent. Do
 
 ## The oracle
 
-`CLAUDE_CODE_ENABLE_TELEMETRY=1` plus `OTEL_LOG_RAW_API_BODIES=file:<dir>` writes each untruncated request body to `<dir>/<uuid>.request.json`. The projection reads only requests whose `.system` carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-CCRES5` — the subagent's own requests.
+`CLAUDE_CODE_ENABLE_TELEMETRY=1` plus `OTEL_LOG_RAW_API_BODIES=file:<dir>` writes each untruncated request body to `<dir>/<uuid>.request.json`. The assertion reads only requests whose `.system` carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-CCRES5` — the subagent's own requests.
 
 Each arm's list is the sorted union of tool names in `tools[]` and names listed as deferred, on lines of a text block opening "The following deferred tools are now available via ToolSearch", kept to the three resource tool names, across every governed request in the arm. A tool that appears in any of them counts as offered, even if an earlier request lacked it. The union makes the value the same whether or not tool search defers a tool.
 
-`read`, `exact`, and `server_glob` project to that list. `inherit` and `explicit` project to `"none-or-all"` when the list is empty or exactly the three tools, and to the list itself otherwise; see the assertion section for why. An arm with no governed request projects to `"arm-had-no-governed-request"`.
+`read`, `exact`, and `server_glob` yield that list. `inherit` and `explicit` yield `"none-or-all"` when the list is empty or exactly the three tools, and to the list itself otherwise; see the assertion section for why. An arm with no governed request yields `"arm-had-no-governed-request"`.
 
 ## Isolation
 
@@ -56,8 +56,8 @@ A gate failure is a statement about the run, not about Claude, and writes no rec
 - **Stamp, per arm** (`gates.stamp`). `fx_server.py` writes `<arm>/fx.stamp` when it answers `tools/list`.
 - **Marker** (`gates.claude_otel.marker`). Every arm holds a request whose `.system` carries the marker, so the arm's subagent actually ran.
 - **Model** (`gates.claude_otel.model`). Every governed request ran on the pinned model.
-- **Deferred listing on `inherit`** (`gates.claude_otel.deferred_mcp`). The `inherit` arm's governed requests list `mcp__fx__alpha` and `mcp__fx__beta` as deferred and carry `ToolSearch`, so the run is under default tool search. This also pins the deferred listing's one-name-per-line format the projection reads.
-- **MCP connected before delegation, twice** (`gates.claude_otel.mcp_connected`). In every arm, every main-thread request that offers `Agent` lists `mcp__fx__alpha` and `mcp__fx__beta`, and — in a second call — `ListMcpResourcesTool`, `ReadMcpResourceTool`, and `ReadMcpResourceDirTool`, directly or as deferred. The second call reads the same places with the same exact names as the projection, so an empty value cannot mean "not in the session", "renamed", or "the filter is misspelled". If it fails, the definition's judge step adds that a rename or a Claude Code that stopped offering the tools is the likelier cause than a late connection.
+- **Deferred listing on `inherit`** (`gates.claude_otel.deferred_mcp`). The `inherit` arm's governed requests list `mcp__fx__alpha` and `mcp__fx__beta` as deferred and carry `ToolSearch`, so the run is under default tool search. This also pins the deferred listing's one-name-per-line format the assertion reads.
+- **MCP connected before delegation, twice** (`gates.claude_otel.mcp_connected`). In every arm, every main-thread request that offers `Agent` lists `mcp__fx__alpha` and `mcp__fx__beta`, and — in a second call — `ListMcpResourcesTool`, `ReadMcpResourceTool`, and `ReadMcpResourceDirTool`, directly or as deferred. The second call reads the same places with the same exact names as the assertion, so an empty value cannot mean "not in the session", "renamed", or "the filter is misspelled". If it fails, the definition's judge step adds that a rename or a Claude Code that stopped offering the tools is the likelier cause than a late connection.
 
 Every run keeps its workspace and prints its path. That matters most for the rare run in which `inherit` or `explicit` was offered a resource tool — the record's `observed` value shows it — because that run's requests are the only evidence of why it differed.
 
@@ -73,32 +73,17 @@ The `discriminator` fixture variant changes one agent so that the assertion must
 
 ## Discriminate evidence
 
-Against the four-arm manifest, before the first billed run, the recorder's `--dry-run` printed `confirmed` for a fabricated view matching the then-current `expected` and `refuted` for one where `server_glob` carried all three:
-
-```
-record: dry run — confirmed — observed {"inherit":["ListMcpResourcesTool","ReadMcpResourceDirTool","ReadMcpResourceTool"],"read":[],"exact":[],"server_glob":[]} (no file written)
-record: dry run — refuted — observed {"inherit":["ListMcpResourcesTool","ReadMcpResourceDirTool","ReadMcpResourceTool"],"read":[],"exact":[],"server_glob":["ListMcpResourcesTool","ReadMcpResourceDirTool","ReadMcpResourceTool"]} (no file written)
-```
-
-Against the current manifest it printed `confirmed` for a view with `explicit` holding all three and for one with `explicit` empty, and `refuted` for one where `server_glob` held all three and for one where `inherit` and `read` each held only `ListMcpResourcesTool`:
-
-```
-record: dry run — confirmed — observed {"inherit":"none-or-all","read":[],"exact":[],"server_glob":[],"explicit":"none-or-all"} (no file written)
-record: dry run — confirmed — observed {"inherit":"none-or-all","read":[],"exact":[],"server_glob":[],"explicit":"none-or-all"} (no file written)
-record: dry run — refuted — observed {"inherit":"none-or-all","read":[],"exact":[],"server_glob":["ListMcpResourcesTool","ReadMcpResourceDirTool","ReadMcpResourceTool"],"explicit":"none-or-all"} (no file written)
-record: dry run — refuted — observed {"inherit":["ListMcpResourcesTool"],"read":["ListMcpResourcesTool"],"exact":[],"server_glob":[],"explicit":"none-or-all"} (no file written)
-```
-
 Live runs also discriminated: `T154945` holds all three tools in `inherit` and `explicit` beside empty restricted arms.
 
-On 2026-10-21, against Claude Code 2.1.287, the `discriminator` fixture variant ran as a dry run. It changes one file, `read/.claude/agents/probe-res-read.md`, whose body gains a deferred-listing line pair naming `ListMcpResourcesTool` before the marker. The `status` and `observed` fields are excerpted from the record the run printed:
+`samples/confirming.json` and `samples/refuting.json` come from kept workspaces of the `assertion` and `discriminator` fixture variants, both taken on Claude Code **2.1.287**; the refuting one, `…T233759-discriminator`, on 2026-10-21. The `discriminator` variant changes one file, `read/.claude/agents/probe-res-read.md`, whose body gains a deferred-listing line pair naming `ListMcpResourcesTool` before the marker.
 
-```
-PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run claude-subagent-mcp-resource-tools
-{"status":"refuted","observed":{"inherit":"none-or-all","read":["ListMcpResourcesTool"],"exact":[],"server_glob":[],"explicit":"none-or-all"}}
-```
+| Sample | Assertion |
+| --- | --- |
+| `confirming.json` | `{"inherit":"none-or-all","read":[],"exact":[],"server_glob":[],"explicit":"none-or-all"}` |
+| `edited-partial-resource-tools.json` | `{"inherit":["ListMcpResourcesTool"],"read":[],"exact":[],"server_glob":[],"explicit":"none-or-all"}` |
+| `refuting.json` | `{"inherit":"none-or-all","read":["ListMcpResourcesTool"],"exact":[],"server_glob":[],"explicit":"none-or-all"}` |
 
-`read` differed from `expected`; the other four arms agreed with it. This discriminator is a perturbation rather than a finding. Claude sends a subagent's body verbatim in `.system`, line breaks included, so the run shows the projection reads `read`'s governed requests and matches deferred-listing lines one per line. It does not show Claude offering the resource tools to a subagent, which no fixture makes reliable: the run table below has `inherit` offered them in one run of nine.
+The confirming sample equals `expected`. In the refuting sample `read` differs from it and the other four arms agree. `samples/edited-partial-resource-tools.json` is the confirming sample with `ListMcpResourcesTool` added to `inherit`'s governed requests: one tool of three is neither none nor all, so `inherit` yields the list rather than `"none-or-all"`. `just probe-test` re-proves every result on every run. This discriminator is a perturbation rather than a finding. Claude sends a subagent's body verbatim in `.system`, line breaks included, so the run shows the assertion reads `read`'s governed requests and matches deferred-listing lines one per line. It does not show Claude offering the resource tools to a subagent, which no fixture makes reliable: the run table below has `inherit` offered them in one run of nine.
 
 ## The nine runs
 
@@ -130,7 +115,7 @@ At `outbound-request`, this is evidence about what reached the model.
 
 - **Old belief.** A subagent with no `tools` field inherits every session tool, the three resource tools included; `inherit` expected all three. When the `explicit` arm was added, a subagent naming the three was expected to receive them.
 - **Measured.** `T153722` recorded `inherit` empty (`refuted`). `T154945` recorded `inherit` and `explicit` holding all three, under an `expected` that by then held `inherit` empty and `explicit` full (`refuted` on `inherit`). `T160044` confirmed an all-empty `expected`. The run table has the dry runs around them.
-- **Acted on.** No adapter or capability accessor encoded the old belief. `expected` holds `[]` for the restricted arms and `"none-or-all"` for `inherit` and `explicit`, and `T161344` confirmed it. The projection's two-outcome cells and the kept-workspace rule were added so a future flip neither raises a false alarm nor loses its evidence.
+- **Acted on.** No adapter or capability accessor encoded the old belief. `expected` holds `[]` for the restricted arms and `"none-or-all"` for `inherit` and `explicit`, and `T161344` confirmed it. The assertion's two-outcome cells and the kept-workspace rule were added so a future flip neither raises a false alarm nor loses its evidence.
 - **Not determined.** Why one run in nine differed.
 
 ## Oracle limits
