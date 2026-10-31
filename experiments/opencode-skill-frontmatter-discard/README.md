@@ -14,7 +14,7 @@ This is the harness's first negative finding — the first probe whose **confirm
 experiments/probe run opencode-skill-frontmatter-discard
 ```
 
-It materializes `fixtures/assertion/` into a fresh workspace, runs the oracle from inside it, and hands the raw output to the recorder, which writes a record under `results/`.
+It materializes `fixtures/assertion/` into a fresh workspace's `project/` directory and runs the oracle from inside it, isolated: OpenCode gets its own home and XDG directories under the workspace, and its external skill scan is off, so it resolves only its built-in skill and the fixture's. The definition's assertion in `probe.py` reads the fixture skill's resolved key set and `description`, and the recorder writes a record under `results/`.
 
 The discriminator arm runs the same way, as a dry run only; the harness refuses to record it:
 
@@ -24,54 +24,54 @@ PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run opencode-skill
 
 ## The assertion discriminates
 
-Measured 2026-08-24 against opencode **1.18.21**.
+The samples under `samples/`, captured 2026-10-31 against opencode 1.18.34, give the first two rows, and `just probe-test` re-proves them on every run. The corroboration row was measured 2026-08-24 against opencode 1.18.21.
 
 The assertion is a conjunction and both halves are load-bearing. The **key set** carries the discard finding; the **description** proves the frontmatter under test was actually read.
 
-| Arm | Frontmatter | `{keys, description}` |
+| Sample or arm | Frontmatter | Assertion |
 | --- | --- | --- |
-| `fixtures/assertion/` | `model` + `variant` + `tools` present | `{"keys":["content","description","location","name"],"description":"agentspec skill-frontmatter discard probe"}` |
-| `fixtures/discriminator/` | none of the three present | `{"keys":["content","description","location","name"],"description":"discriminator arm - no dropped fields present"}` |
+| `confirming`, from `fixtures/assertion/` | `model` + `variant` + `tools` present | `{"keys":["content","description","location","name"],"description":"agentspec skill-frontmatter discard probe"}` |
+| `refuting`, from `fixtures/discriminator/` | none of the three present | `{"keys":["content","description","location","name"],"description":"discriminator arm - no dropped fields present"}` |
 | corroboration (fixture removed) — the **agent** surface | same three fields | `{"model":{"providerID":"anthropic","modelID":"claude-sonnet-4-5"},"variant":"high","tools":{…,"bash":false,…}}` |
 
 ### Why `keys` alone is not the assertion
 
-A projection of the key set alone **cannot discriminate, and would record a false `confirmed`.** Every resolved skill returns the identical four-key set — the fixture, OpenCode's built-ins, and the operator's global skills alike. Against the assertion arm's 29 resolved skills:
+An assertion on the key set alone **cannot discriminate, and would record a false `confirmed`.** Every resolved skill returns the identical four-key set — the fixture, OpenCode's built-in skill, and, at authoring time before the run was isolated, the operator's global skills alike. Over the confirming sample's two resolved skills:
 
 ```console
-$ jq -c '[.[] | keys] | unique' view.json
+$ jq -c '[.input[] | keys] | unique' samples/confirming.json
 [["content","description","location","name"]]
 ```
 
-One entry, for every skill OpenCode can resolve. A `keys`-only projection is therefore constant across every possible input and would pass whether or not the fixture was ever read.
+One entry, for every skill OpenCode can resolve. A `keys`-only assertion is therefore constant across every possible input and would pass whether or not the fixture was ever read.
 
 Adding `slash: true` — the one further field OpenCode's skill schema declares beyond `name` and `description` — does not change it either. A throwaway fixture carrying `slash: true` resolved to `{"keys":["content","description","location","name"],"description":"slash trial"}`, so `slash` is not a way to make the key set track its input.
 
 That trial arm is **not committed**: it is a one-off observation against opencode 1.18.21 on 2026-08-24, recorded here so a reader knows the alternative was tried rather than assumed. Reproducing it is a two-line fixture and one `opencode debug skill --pure`.
 
-The `description` half is what makes the projection track the file under test, and the discriminator arm is what shows it: same oracle, same projection, distinct value.
+The `description` half is what makes the assertion track the file under test, and the discriminator arm is what shows it: same oracle, same assertion, distinct value.
 
 ### Why the agent arm is evidence rather than the discriminator
 
 The corroboration arm carries the **same three fields** on the **agent** surface, where OpenCode reads them into its resolved view. That is what establishes the assertion arm's absent keys are a discard rather than a malformed fixture — the fields are well-formed and read somewhere.
 
-It is deliberately **not** the machine-checked discriminator. `opencode debug agent` emits a single object rather than a list, so this package's skill projection errors on it and the recorder hard-fails instead of reporting `refuted`. A hard failure is not a refutation, and the contract's discrimination rule wants a distinct value. The discriminator skill arm supplies that; the agent arm supplies this README's evidence.
+It is deliberately **not** the machine-checked discriminator. `opencode debug agent` emits a single object rather than a list, so it fails this package's skill-list model and the run is refused instead of reporting `refuted`. A hard failure is not a refutation, and the contract's discrimination rule wants a distinct value. The discriminator skill arm supplies that; the agent arm supplies this README's evidence.
 
-The corroboration observation stands in the table above, measured against opencode 1.18.21. Its fixture was removed: no oracle this package runs can read it, since `opencode debug skill` does not resolve agents and `opencode debug agent` output fails this package's projection. Kept as a runnable fixture variant, it could only ever fail.
+The corroboration observation stands in the table above, measured against opencode 1.18.21. Its fixture was removed: no oracle this package runs can read it, since `opencode debug skill` does not resolve agents and `opencode debug agent` output fails this package's model. Kept as a runnable fixture variant, it could only ever fail.
 
 ## Limits of this oracle
 
 **`resolved-config`, not `outbound-request`.** This proves OpenCode did not surface the three fields in its resolved skill record. It does not prove no later stage would have used them — only that nothing downstream can read them from here.
 
-**The oracle enumerates the operator's global skills, not only the workspace's.** `--pure` excludes external plugins; it does not exclude global config. The projection therefore selects by `name`, and the fixture name `agentspec-probe-discard` is distinctive enough that a collision is implausible. The authoring run confirmed exactly one match against 29 resolved skills; that count is machine-specific, and what transfers is the single-match requirement rather than the total.
+**The oracle enumerates every skill OpenCode can find, not only the workspace's.** `--pure` excludes external plugins; it does not exclude global config or the external skill scan. The run is isolated and turns that scan off, because OpenCode walks up from the project directory for `.claude/skills`, and a workspace under the operator's home reaches `~/.claude/skills` that way. It therefore resolves OpenCode's one built-in skill and the fixture; before isolation, the authoring run resolved 29. The assertion still selects by `name`, and the fixture name `agentspec-probe-discard` is distinctive enough that a collision is implausible.
 
-**`location` is deliberately absent from the projection.** It resolves to an absolute path inside the run's workspace, so no fixed `expected` could match it. It is still present in the asserted key set, which is where it carries its weight.
+**`location` is deliberately absent from the assertion.** It resolves to an absolute path inside the run's workspace, so no fixed `expected` could match it. It is still present in the asserted key set, which is where it carries its weight.
 
-**The oracle is enumerating, not name-addressed, so a missing fixture would refute rather than fail.** `opencode debug skill --pure` lists every resolvable skill; it does not take a name. A workspace where the fixture never resolved therefore exits 0 with a valid view of all the _other_ skills, the projection yields `null`, and the recorder compares `null` against `expected` and writes `refuted` — the contract's strong "the provider changed" signal, raised by an apparatus failure, into an append-only directory. The definition guards this with a judge function asserting the fixture resolved exactly once, which refuses the run before anything is recorded when it did not. The sibling `opencode-agent-variant` needs no such guard because `opencode debug agent <name>` is name-addressed and exits nonzero on a missing agent.
+**The oracle is enumerating, not name-addressed, so a missing fixture would refute rather than fail.** `opencode debug skill --pure` lists every resolvable skill; it does not take a name. A workspace where the fixture never resolved therefore exits 0 with a valid view of all the _other_ skills, the assertion yields `null`, and the recorder compares `null` against `expected` and writes `refuted` — the contract's strong "the provider changed" signal, raised by an apparatus failure, into an append-only directory. The definition guards this with a judge function asserting the fixture resolved exactly once, which refuses the run before anything is recorded when it did not. The sibling `opencode-agent-variant` needs no such guard because `opencode debug agent <name>` is name-addressed and exits nonzero on a missing agent.
 
 This is not hypothetical drift: skills are discovered under both `.opencode/skill/` and `.opencode/skills/`, and which of those OpenCode honors is itself unmeasured (`TODO.md` #16). A change there is exactly what the judge function catches.
 
-**`opencode debug` truncates its stdout at exactly 65536 bytes when stdout is a pipe.** `opencode debug skill --pure` emits roughly 338 KB, well over that cliff, at which point `jq` reports `Unfinished string at EOF`. The debug family redirects the oracle to a file rather than a pipe for this reason; a pipe would silently hand the recorder a half-written JSON document.
+**`opencode debug` truncates its stdout at exactly 65536 bytes when stdout is a pipe.** Unisolated, `opencode debug skill --pure` emitted roughly 338 KB, well over that cliff. Isolated, it emits about 18 KB, but the debug family still redirects the oracle to a file rather than a pipe, so no output size can silently hand the judge a half-written JSON document.
 
 ## Related
 
