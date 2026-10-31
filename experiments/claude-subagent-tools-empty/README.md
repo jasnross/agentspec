@@ -24,13 +24,13 @@ Each arm's prompt is `Use the Agent tool to delegate to the <agent> subagent. Do
 
 ## The oracle
 
-`CLAUDE_CODE_ENABLE_TELEMETRY=1` plus `OTEL_LOG_RAW_API_BODIES=file:<dir>` writes each untruncated request body to `<dir>/<uuid>.request.json`. The projection reads only requests whose `.system` carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-CCEMPTY8` — the subagent's own requests.
+`CLAUDE_CODE_ENABLE_TELEMETRY=1` plus `OTEL_LOG_RAW_API_BODIES=file:<dir>` writes each untruncated request body to `<dir>/<uuid>.request.json`. The assertion reads only requests whose `.system` carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-CCEMPTY8` — the subagent's own requests.
 
-A tool can reach a request in two places, and the projection reads both. It reads `tools[]` directly, and it reads whether the request carries the text block that opens "The following deferred tools are now available via ToolSearch", which under tool search names tools the model can load without their being in `tools[]` (see `experiments/claude-subagent-mcp-tools/`). `no-tools` therefore requires both an empty `tools[]` and no deferred listing.
+A tool can reach a request in two places, and the assertion reads both. It reads `tools[]` directly, and it reads whether the request carries the text block that opens "The following deferred tools are now available via ToolSearch", which under tool search names tools the model can load without their being in `tools[]` (see `experiments/claude-subagent-mcp-tools/`). `no-tools` therefore requires both an empty `tools[]` and no deferred listing.
 
-## Why the projection compares arms
+## Why the assertion compares arms
 
-The projection classifies `empty` against `inherit` rather than against a list of tool names:
+The assertion classifies `empty` against `inherit` rather than against a list of tool names:
 
 | Value | Meaning |
 | --- | --- |
@@ -60,10 +60,10 @@ A gate failure is a statement about the run, not about Claude, and writes no rec
 
 - **Marker** (`gates.claude_otel.marker`). Every arm holds a request whose `.system` carries the marker, so the arm's subagent actually ran.
 - **Model** (`gates.claude_otel.model`). Every governed request ran on the pinned model.
-- **Inherit** (a custom check in `probe.py`). `inherit`'s governed requests carry `Read` in `tools[]`. That shows an unrestricted subagent gets built-ins in this run, so a `no-tools` value for `empty` can only mean the empty list restricted it — not that every subagent here was offered nothing.
-- **Read restricts** (a custom check in `probe.py`). `read`'s governed requests carry `Read` in `tools[]`, and offer fewer distinct tools than `inherit`'s. That shows a non-empty `tools` field restricted the subagent in this run, so a `same-as-inherit` value for `empty` would mean Claude reads the empty list as unrestricted — not that the run ignored every agent's `tools` field.
+- **Inherit** (the custom check `inherit_gets_builtins` in `probe.py`). `inherit`'s governed requests carry `Read` in `tools[]`. That shows an unrestricted subagent gets built-ins in this run, so a `no-tools` value for `empty` can only mean the empty list restricted it — not that every subagent here was offered nothing.
+- **Read restricts** (the custom check `listed_tools_restrict` in `probe.py`). `read`'s governed requests carry `Read` in `tools[]`, and offer fewer distinct tools than `inherit`'s. That shows a non-empty `tools` field restricted the subagent in this run, so a `same-as-inherit` value for `empty` would mean Claude reads the empty list as unrestricted — not that the run ignored every agent's `tools` field.
 
-The two custom checks are the controls for the two values the projection can take: `inherit` for `no-tools`, `read` for `same-as-inherit`.
+The two custom checks are the controls for the two values the assertion can take: `inherit` for `no-tools`, `read` for `same-as-inherit`.
 
 ## The assertion discriminates
 
@@ -75,18 +75,20 @@ From the Sonnet dry run on 2026-10-02 against Claude Code 2.1.287, the governed 
 | `empty` | none | none |
 | `read` | `Read`, `advisor` | none |
 
-The dry run printed `confirmed`, observing `{"empty": "no-tools"}`. Against the same saved view, the recorder's `--dry-run` printed `refuted`, observing `{"empty": "same-as-inherit"}`, for a copy with `empty` replaced by `inherit`'s requests. The `discriminator` fixture variant now produces that value from a real run, below.
+The dry run printed `confirmed`, observing `{"empty": "no-tools"}`.
 
 `read` received `advisor` beside the one tool it listed, while `empty` received nothing at all. Where `advisor` comes from is not measured here; the read-restricts gate compares tool counts rather than requiring `Read` alone for that reason.
 
-On 2026-10-21, against Claude Code 2.1.287, the `discriminator` fixture variant ran as a dry run. It changes one file, `empty/.claude/agents/probe-tools-empty.md`, which drops `tools: []`. That leaves the agent with no `tools` key, as `inherit`'s agent has. The `status` and `observed` fields are excerpted from the record the run printed:
+`samples/confirming.json` and `samples/refuting.json` come from kept workspaces of the `assertion` and `discriminator` fixture variants, both taken on Claude Code **2.1.287**; the refuting one, `…T233136-discriminator`, on 2026-10-21. The `discriminator` variant changes one file, `empty/.claude/agents/probe-tools-empty.md`, which drops `tools: []`. That leaves the agent with no `tools` key, as `inherit`'s agent has. The two edited samples are the confirming sample with one control broken by hand: `edited-inherit-without-read.json` removes `Read` from `inherit`'s governed requests, and `edited-read-as-many-as-inherit.json` gives `read`'s governed requests `inherit`'s tools.
 
-```
-PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run claude-subagent-tools-empty
-{"status":"refuted","observed":{"empty":"same-as-inherit"}}
-```
+| Sample | Assertion | `inherit_gets_builtins` | `listed_tools_restrict` |
+| --- | --- | --- | --- |
+| `confirming.json` | `{"empty":"no-tools"}` | `true` | `true` |
+| `edited-inherit-without-read.json` | `{"empty":"no-tools"}` | `false` | `true` |
+| `edited-read-as-many-as-inherit.json` | `{"empty":"no-tools"}` | `true` | `false` |
+| `refuting.json` | `{"empty":"same-as-inherit"}` | `true` | `true` |
 
-`empty`, the only cell, differed from `expected`.
+The confirming sample equals `expected`, and in the refuting sample `empty`, the only cell, differs from it. Each custom check is `false` on its edited sample and `true` on the rest. `just probe-test` re-proves every result on every run.
 
 ## Oracle limits
 
