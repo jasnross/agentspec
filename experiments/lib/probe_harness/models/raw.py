@@ -40,7 +40,7 @@ class RawJson:
     """A JSON value that can be searched but never read by key.
 
     Also a pydantic field type, for a value a gate searches without reading any part of it
-    by name: a request's `system`, a message's `content`, a tool's `properties`.
+    by name: a Claude request's `system`, or a tool's `properties`.
     """
 
     def __init__(self, value: JsonValue) -> None:

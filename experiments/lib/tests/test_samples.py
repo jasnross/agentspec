@@ -465,7 +465,8 @@ def test_a_fake_opencode_sample_keeps_the_marker_its_assertion_searches(
         "one": {
             "requests": [
                 {"messages": [{"role": "system", "content": f"you are {MARK}"}], "x": None},
-                {"messages": [{"role": "system", "content": ""}]},
+                # `content` is a declared string, which a sample keeps whole.
+                {"messages": [{"role": "system", "content": "make a title"}]},
             ]
         }
     }

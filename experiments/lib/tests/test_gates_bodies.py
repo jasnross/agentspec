@@ -314,13 +314,18 @@ def test_governed_searches_a_system_nested_past_the_recursion_limit() -> None:
     assert governed(_request(system=nested), MarkerField.SYSTEM, "AGENTSPEC-PROBE-MARKER-X")
 
 
-def test_an_opencode_message_may_carry_null_content() -> None:
+def test_an_opencode_message_with_null_content_is_refused() -> None:
+    # Every message in every OpenCode capture carries string content, so a null is a shape no
+    # provider has shown.
     values = SinkValues(
         requests=[SinkEntry(SINK_FILE, {"messages": [{"role": "assistant", "content": None}]})],
         responses=[],
     )
-    (request,) = opencode_arms({"a": values})["a"].requests
-    assert list(request.messages[0].content.strings()) == []
+    with pytest.raises(GateFailure) as exc:
+        opencode_arms({"a": values})
+    assert exc.value.lines[0] == (
+        f"arm a: {SINK_FILE}: messages.0.content: Input should be a valid string"
+    )
 
 
 def test_the_claude_judge_refuses_a_body_that_does_not_fit(tmp_path: Path) -> None:
