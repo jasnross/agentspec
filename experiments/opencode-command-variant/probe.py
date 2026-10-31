@@ -5,10 +5,24 @@ Fully script-driven: no human step, no network, no credentials.
 
 from probe_harness.families.base import GateFailure, ProbeFunctions
 from probe_harness.families.opencode_debug import OpenCodeDebugProbe
+from probe_harness.families.opencode_env import OpenCodeIsolation
+from probe_harness.json_values import JsonValue
 from probe_harness.models.opencode_debug import OpenCodeConfig
 from pydantic import MISSING
 
 _FIXTURE_COMMAND = "agentspec-probe-variant"
+
+
+def _assertion(config: OpenCodeConfig) -> JsonValue:
+    """The fixture command's resolved model and variant; `None` for either it lacks."""
+    commands = {} if config.command is MISSING else config.command
+    command = commands.get(_FIXTURE_COMMAND)
+    if command is None:
+        return {"model": None, "variant": None}
+    return {
+        "model": None if command.model is MISSING else command.model,
+        "variant": None if command.variant is MISSING else command.variant,
+    }
 
 
 def _judge(config: OpenCodeConfig) -> None:
@@ -16,7 +30,7 @@ def _judge(config: OpenCodeConfig) -> None:
 
     This oracle resolves the whole config rather than addressing one command by name, so a
     fixture it never discovered is not an error: the run exits 0 with a valid view, the
-    projection yields `{"model":null,"variant":null}`, and the recorder writes `refuted`,
+    assertion yields `{"model":null,"variant":null}`, and the recorder writes `refuted`,
     the strong "the provider changed" signal, permanently. The discriminator fixture
     refutes on a *present* command resolving `variant` to `null`, which is a different
     observation.
@@ -38,5 +52,7 @@ PROBE = OpenCodeDebugProbe(
     argv=("config", "--pure"),
     output=OpenCodeConfig,
     variants=("assertion", "discriminator"),
+    isolation=OpenCodeIsolation(),
+    assertion=_assertion,
     functions=ProbeFunctions(judge=_judge),
 )

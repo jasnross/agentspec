@@ -12,7 +12,7 @@
 experiments/probe run opencode-command-variant
 ```
 
-It materializes `fixtures/assertion/` into a fresh workspace, runs the oracle from inside it, and hands the raw output to the recorder, which writes a record under `results/`.
+It materializes `fixtures/assertion/` into a fresh workspace's `project/` directory and runs the oracle from inside it, isolated: OpenCode gets its own home and XDG directories under the workspace, and its external skill scan is off, so the fixture command is the only command it resolves. The definition's assertion in `probe.py` reads the fixture command's `model` and `variant`, and the recorder writes a record under `results/`.
 
 The discriminator arm runs the same way, as a dry run only; the harness refuses to record it:
 
@@ -22,16 +22,16 @@ PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run opencode-comma
 
 ## The assertion discriminates
 
-Measured 2026-08-24 against opencode **1.18.21**. The two arms differ only in the presence of the `variant:` line and project to distinct values:
+The two arms differ only in the presence of the `variant:` line. The samples under `samples/`, captured 2026-10-31 against opencode 1.18.34, show them yielding distinct values, and `just probe-test` re-proves it on every run:
 
-| Arm | Frontmatter | `{model, variant}` |
-| --- | --- | --- |
-| `fixtures/assertion/` | `model: anthropic/claude-sonnet-4-5` + `variant: high` | `{"model":"anthropic/claude-sonnet-4-5","variant":"high"}` |
-| `fixtures/discriminator/` | `model:` alone | `{"model":"anthropic/claude-sonnet-4-5","variant":null}` |
+| Sample | Arm | Frontmatter | Assertion |
+| --- | --- | --- | --- |
+| `confirming` | `fixtures/assertion/` | `model: anthropic/claude-sonnet-4-5` + `variant: high` | `{"model":"anthropic/claude-sonnet-4-5","variant":"high"}` |
+| `refuting` | `fixtures/discriminator/` | `model:` alone | `{"model":"anthropic/claude-sonnet-4-5","variant":null}` |
 
 `variant: high` is a non-default value — OpenCode's default is `null`, which is exactly what the discriminator arm shows — so a match is positive proof rather than a possible reading of the default.
 
-The command's resolved name is its filename stem, which is why the projection keys on `agentspec-probe-variant` rather than on anything in the frontmatter.
+The command's resolved name is its filename stem, which is why the assertion looks up `agentspec-probe-variant` rather than anything in the frontmatter.
 
 ## The surface divergence is the finding
 
@@ -39,20 +39,20 @@ The same `variant:` key that OpenCode reads here is **parsed and discarded on th
 
 Neither package depends on the other and each stands alone; read together they are a measured instance of the standing argument for counting surfaces rather than providers. A rendering confirmed on one surface says nothing about another, even within one provider, even for the same key name.
 
-### A projection copied between packages will not compare equal
+### An assertion copied between packages will not compare equal
 
-`opencode debug config` resolves a command's `model` to the **bare string** `"anthropic/claude-sonnet-4-5"`. `opencode debug agent` resolves an agent's `model` to the **parsed object** `{"providerID":"anthropic","modelID":"claude-sonnet-4-5"}` — see `experiments/opencode-agent-variant/probe.json`.
+`opencode debug config` resolves a command's `model` to the **bare string** `"anthropic/claude-sonnet-4-5"`. `opencode debug agent` resolves an agent's `model` to the **parsed object** `{"providerID":"anthropic","modelID":"claude-sonnet-4-5"}` — see `experiments/opencode-agent-variant/samples/confirming.json`.
 
-That is a real provider finding, not a transcription slip in either manifest. Because the recorder compares structurally, a projection lifted from one package into the other refutes on the `model` half while the `variant` half agrees, and the diagnostic points at the value rather than at the copy.
+That is a real provider finding, not a transcription slip in either package. Because the recorder compares structurally, an assertion lifted from one package into the other refutes on the `model` half while the `variant` half agrees, and the diagnostic points at the value rather than at the copy.
 
 ## Limits of this oracle
 
 **`resolved-config`, not `outbound-request`.** This proves OpenCode surfaced the key in its resolved config. It does not prove the variant survives request build — OpenCode collapses an unrecognized variant at request-build time, well after this oracle has printed it. Reaching that hop needs a different oracle.
 
-**The oracle enumerates the operator's global commands, not only the workspace's.** `--pure` excludes external plugins; it does not exclude global config. The authoring run resolved 29 commands, 28 of them the operator's — so that count is machine-specific and a clean checkout will see a different one. What transfers is that the fixture must be the single match. The projection therefore keys on a name distinctive enough that a collision is implausible.
+**The oracle resolves every command OpenCode can find, not only the workspace's.** `--pure` excludes external plugins; it does not exclude global config. The run is isolated, so OpenCode finds no global config of the operator's, and the fixture is the only command it resolves; before isolation, the authoring run resolved 29 commands, 28 of them the operator's. The assertion still looks the fixture up by a name distinctive enough that a collision is implausible.
 
-**The oracle resolves the whole config rather than addressing one command, so a missing fixture would refute rather than fail.** `.command["agentspec-probe-variant"]` on a workspace where the fixture never resolved is `null`, the projection yields `{"model":null,"variant":null}`, and the recorder writes `refuted` — the contract's strong "the provider changed" signal, raised by an apparatus failure, into an append-only directory. The definition guards this with a judge function asserting the command resolved, which refuses the run before anything is recorded when it did not.
+**The oracle resolves the whole config rather than addressing one command, so a missing fixture would refute rather than fail.** On a workspace where the fixture never resolved, the assertion yields `{"model":null,"variant":null}`, and the recorder writes `refuted` — the contract's strong "the provider changed" signal, raised by an apparatus failure, into an append-only directory. The definition guards this with a judge function asserting the command resolved, which refuses the run before anything is recorded when it did not.
 
 Note that this failure is distinct from the discriminator arm's, which refutes on a **present** command whose `variant` resolved to `null`. Both are `refuted`; only one is a measurement.
 
-**`opencode debug` truncates its stdout at exactly 65536 bytes when stdout is a pipe.** `opencode debug config --pure` emits roughly 458 KB, so it is far over that cliff; the same command piped returns exactly 65536 bytes and `jq` reports `Unfinished string at EOF`. The debug family redirects the oracle to a file rather than a pipe for this reason.
+**`opencode debug` truncates its stdout at exactly 65536 bytes when stdout is a pipe.** Unisolated, `opencode debug config --pure` emitted roughly 458 KB, far over that cliff, and the same command piped returned exactly 65536 bytes, which no JSON parser accepts. Isolated, it emits about 400 bytes, but the debug family still redirects the oracle to a file rather than a pipe, so no output size can cut the document short.

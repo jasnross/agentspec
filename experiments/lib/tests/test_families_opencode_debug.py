@@ -371,4 +371,13 @@ def test_record_dry_run_judges_a_kept_debug_workspace(
     refused = cli("record", "opencode-command-variant", bad, "--dry-run")
     assert refused.returncode == 1
     assert "probe record: the fixture command did not resolve." in refused.stderr
+
+    unread = tmp_path / "unread"
+    shutil.copytree(ws, unread)
+    (unread / "view.json").write_text(
+        json.dumps({"command": {"x": {"model": 3}}}), encoding="utf-8"
+    )
+    rejected = cli("record", "opencode-command-variant", unread, "--dry-run")
+    assert rejected.returncode == 1
+    assert f"probe record: {unread / 'view.json'}: command.x.model: " in rejected.stderr
     assert not (package / "results").exists()

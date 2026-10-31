@@ -1,4 +1,4 @@
-<!-- next: 60 -->
+<!-- next: 61 -->
 
 - #1 Consider deriving id from path instead of requiring in frontmatter
    - Currently `id` is a required `String` in all frontmatter structs; missing it causes a parse error at load time
@@ -234,3 +234,6 @@
   - `lib/tests/test_repo_fixture_reachability.py` counts a custom probe's whole variant tree as reachable even if its arrange never reads it.
   - No committed `CustomProbe` exists. Revisit when the first one is written. Likely shape: pass the variant's fixture directory to `arrange`, as the Claude and fake-OpenCode `arrange_arm` hooks receive it.
 - #59 **Decide the cadence for upgrading `experiments/uv.lock`.** The probe harness's locked environment has no stated rule for when its dependencies are upgraded, or which commit type an upgrade takes (a harness-only change is never `feat`/`fix`). pydantic is bounded below 3 in `experiments/pyproject.toml`, so a minor upgrade can still change validation behaviour the harness's formats rely on (`contract.py` documents four strictness rules measured against one pydantic version).
+- #60 **Decide whether `OpenCodeCommand.model` should be required.** `experiments/lib/probe_harness/models/opencode_debug.py` keeps `model: str | MISSING` because OpenCode 1.18.34 omits the key for a command whose frontmatter names no model, which the operator's global commands showed in `opencode-command-variant`'s unisolated captures. Now that the debug family runs isolated, a run resolves only the fixture command, which always names a model, so no committed sample shows the absence and the field-coverage test cannot catch the comment going stale.
+  - Required would match every run the probe can now make; MISSING-able matches what the provider can emit, which is the models' stated rule (a field defaults to `MISSING` only where a provider is known to omit it).
+  - Revisit once the unisolated captures are retired: requiring it today would make them fail to judge, and the probe-harness migration re-judges them to show its judge path changes no verdict.

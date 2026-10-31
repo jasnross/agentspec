@@ -26,7 +26,10 @@ class OpenCodeAgent(ProviderModel):
 
 
 class OpenCodeCommand(ProviderModel):
-    # A command that names no model omits the key, as an operator's global commands do.
+    # Absent for a command whose frontmatter names no model: OpenCode 1.18.34 omitted it
+    # for each of the operator's global commands in `opencode-command-variant`'s
+    # unisolated captures. An isolated run resolves only the fixture command, which names
+    # one, so no committed sample shows the absence.
     model: str | MISSING = MISSING
     # Absent when the command resolves no variant, as `opencode-command-variant`'s
     # discriminator fixture command does.

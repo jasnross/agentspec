@@ -1,0 +1,23 @@
+{
+  "origin": "capture",
+  "input": {
+    "$schema": null,
+    "agent": null,
+    "mode": null,
+    "plugin": null,
+    "command": {
+      "agentspec-probe-variant": {
+        "description": null,
+        "model": "anthropic/claude-sonnet-4-5",
+        "template": null
+      }
+    },
+    "username": null
+  },
+  "results": {
+    "assertion": {
+      "model": "anthropic/claude-sonnet-4-5",
+      "variant": null
+    }
+  }
+}
