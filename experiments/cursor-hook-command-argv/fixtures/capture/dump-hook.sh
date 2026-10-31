@@ -6,8 +6,8 @@
 # the provider sent it, with nothing added." Argv is what this probe measures,
 # and no other channel carries it — the provider's payload says nothing about
 # how the `command` string became a process. The payload itself stays untouched
-# under the `payload` key, which is why the manifest's `version_source` reads
-# `.payload.cursor_version` rather than the top-level field.
+# under the `payload` key, which is why the definition's capture version reads
+# `payload.cursor_version` rather than the top-level field.
 #
 # This runs inside a live provider session, so its contract is absolute: always
 # print `{}` and always exit 0. The trap enforces that on every path. A failed
@@ -32,11 +32,10 @@ payload=$(head -c 1048576)
 # expression. `fromjson?` handles an empty or unparsable read; `select(type ==
 # "object")` handles a payload that parses as valid *non-object* JSON — a bare
 # array or scalar — which `fromjson?` alone would pass through verbatim. That
-# second case matters because `version_source` reads `.payload.cursor_version`,
-# and indexing an array with a string makes the whole `jq -s` over
-# payloads.jsonl throw. `record.sh` swallows that with `2>/dev/null || true`,
-# so one such line would silently cost the recorded version for the entire
-# capture.
+# second case matters because the probe's envelope model accepts `payload` only
+# as a Cursor payload object or the `{unparsed: …}` stand-in: a bare array or
+# scalar there would make the judge refuse the whole capture, costing the live
+# session for one malformed line.
 #
 # What is genuinely dropped is the source's outer empty-read guard: an empty
 # read now appends a line rather than nothing. Diagnose a bad run by reading

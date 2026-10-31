@@ -3,13 +3,66 @@ argv? Cursor documents neither the interpreter that reads the string nor any
 escaping rules for it, so agentspec composes commands containing spaces and a
 leading `VAR=value` assignment on an unverified assumption.
 
-Machine-judged: the answer is counted from the capture by a projection, so a
+Machine-judged: the answer is counted from the capture by the assertion, so a
 person drives Cursor but no person interprets the result.
 """
 
+from collections.abc import Sequence
+
 from probe_harness.families.base import GateFailure, ProbeFunctions
-from probe_harness.families.manual import ManualProbe
+from probe_harness.families.manual import CaptureLine, ManualProbe, Unparsed
+from probe_harness.json_values import JsonValue
+from probe_harness.models.cursor_hook import CursorArgvEnvelope, CursorHookPayload, cursor_version
 from probe_harness.workspace import workspace_root
+
+
+def _controls(lines: Sequence[object]) -> bool:
+    """Both controls, the hook entries passing no arguments, fired."""
+    return sum(1 for line in lines if isinstance(line, CursorArgvEnvelope) and line.argc == 0) >= 2
+
+
+def _wait_for(lines: Sequence[CaptureLine[CursorArgvEnvelope]]) -> bool:
+    return _controls(lines)
+
+
+def _assertion(lines: Sequence[CursorArgvEnvelope | Unparsed]) -> JsonValue:
+    """Whether each case's command reached the hook with the argv, argv0 or environment it
+    spells; a case whose hook never fired reads `false`."""
+    # The last invocation of each case, as the jq this replaced kept it.
+    cases = {
+        line.case: line
+        for line in lines
+        if isinstance(line, CursorArgvEnvelope) and line.case is not None
+    }
+
+    def argv(case: str, *expected: str) -> bool:
+        return case in cases and cases[case].argv == expected
+
+    split = cases.get("split")
+    var = cases["var"].argv[1] if "var" in cases and len(cases["var"].argv) > 1 else ""
+    return {
+        "controls": _controls(lines),
+        "argv0": split is not None and split.argv0.endswith("dump-hook.sh"),
+        "split": argv("split", "split", "alpha", "beta"),
+        "dquote": argv("dquote", "dquote", "two words"),
+        "squote": argv("squote", "squote", "two words"),
+        "var": var != "$HOME" and var.startswith("/"),
+        "subst": argv("subst", "subst", "SUBSTITUTED"),
+        "meta": argv("meta", "meta", "a;b|c&d"),
+        "utf8": argv("utf8", "utf8", "café-日本-ñ"),
+        "envprefix": "envprefix" in cases and cases["envprefix"].probe_env == "probe-value",
+        "envprefix_control": split is not None and split.probe_env == "",
+        "anchor": argv("anchor", "anchor", "/tmp/user-script.sh", "my-hook-id", "arg with spaces"),
+    }
+
+
+def _capture_version(lines: Sequence[CursorArgvEnvelope | Unparsed]) -> str | None:
+    return cursor_version(
+        line.payload.cursor_version
+        for line in lines
+        if isinstance(line, CursorArgvEnvelope) and isinstance(line.payload, CursorHookPayload)
+    )
+
 
 # Whitespace, quotes, and every character a shell acts on.
 _SHELL_SIGNIFICANT = frozenset(" \t\n'\"$`;&|()<>*?!\\")
@@ -50,4 +103,8 @@ This script is waiting and will record the result automatically.
 """,
     functions=ProbeFunctions(preflight=_preflight),
     variants=("assertion", "discriminator"),
+    payload=CursorArgvEnvelope,
+    wait_for=_wait_for,
+    assertion=_assertion,
+    capture_version=_capture_version,
 )

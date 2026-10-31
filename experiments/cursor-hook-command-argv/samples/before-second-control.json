@@ -1,0 +1,248 @@
+{
+  "origin": "prefix",
+  "input": [
+    {
+      "case": "var",
+      "argv0": "/tmp/probe-cursor-hook-command-argv.q0U5GJ/capture/dump-hook.sh",
+      "argc": 2,
+      "argv": ["var", "/home/probe"],
+      "probe_env": "",
+      "payload": {
+        "conversation_id": "da8f14b6-e7e4-428e-a020-18c10702cdb7",
+        "generation_id": null,
+        "model": null,
+        "model_id": null,
+        "model_params": null,
+        "is_background_agent": null,
+        "composer_mode": null,
+        "session_id": null,
+        "hook_event_name": "sessionStart",
+        "cursor_version": "3.24.12",
+        "workspace_roots": null,
+        "user_email": null,
+        "transcript_path": null
+      }
+    },
+    {
+      "case": null,
+      "argv0": "/tmp/probe-cursor-hook-command-argv.q0U5GJ/capture/dump-hook.sh",
+      "argc": 0,
+      "argv": [],
+      "probe_env": "",
+      "payload": {
+        "conversation_id": "da8f14b6-e7e4-428e-a020-18c10702cdb7",
+        "generation_id": null,
+        "model": null,
+        "model_id": null,
+        "model_params": null,
+        "is_background_agent": null,
+        "composer_mode": null,
+        "session_id": null,
+        "hook_event_name": "sessionStart",
+        "cursor_version": "3.24.12",
+        "workspace_roots": null,
+        "user_email": null,
+        "transcript_path": null
+      }
+    },
+    {
+      "case": "meta",
+      "argv0": "/tmp/probe-cursor-hook-command-argv.q0U5GJ/capture/dump-hook.sh",
+      "argc": 2,
+      "argv": ["meta", "a;b|c&d"],
+      "probe_env": "",
+      "payload": {
+        "conversation_id": "da8f14b6-e7e4-428e-a020-18c10702cdb7",
+        "generation_id": null,
+        "model": null,
+        "model_id": null,
+        "model_params": null,
+        "is_background_agent": null,
+        "composer_mode": null,
+        "session_id": null,
+        "hook_event_name": "sessionStart",
+        "cursor_version": "3.24.12",
+        "workspace_roots": null,
+        "user_email": null,
+        "transcript_path": null
+      }
+    },
+    {
+      "case": "anchor",
+      "argv0": "/tmp/probe-cursor-hook-command-argv.q0U5GJ/capture/dump-hook.sh",
+      "argc": 4,
+      "argv": [
+        "anchor",
+        "/tmp/user-script.sh",
+        "my-hook-id",
+        "arg with spaces"
+      ],
+      "probe_env": "",
+      "payload": {
+        "conversation_id": "da8f14b6-e7e4-428e-a020-18c10702cdb7",
+        "generation_id": null,
+        "model": null,
+        "model_id": null,
+        "model_params": null,
+        "is_background_agent": null,
+        "composer_mode": null,
+        "session_id": null,
+        "hook_event_name": "sessionStart",
+        "cursor_version": "3.24.12",
+        "workspace_roots": null,
+        "user_email": null,
+        "transcript_path": null
+      }
+    },
+    {
+      "case": "split",
+      "argv0": "/tmp/probe-cursor-hook-command-argv.q0U5GJ/capture/dump-hook.sh",
+      "argc": 3,
+      "argv": ["split", "alpha", "beta"],
+      "probe_env": "",
+      "payload": {
+        "conversation_id": "da8f14b6-e7e4-428e-a020-18c10702cdb7",
+        "generation_id": null,
+        "model": null,
+        "model_id": null,
+        "model_params": null,
+        "is_background_agent": null,
+        "composer_mode": null,
+        "session_id": null,
+        "hook_event_name": "sessionStart",
+        "cursor_version": "3.24.12",
+        "workspace_roots": null,
+        "user_email": null,
+        "transcript_path": null
+      }
+    },
+    {
+      "case": "squote",
+      "argv0": "/tmp/probe-cursor-hook-command-argv.q0U5GJ/capture/dump-hook.sh",
+      "argc": 2,
+      "argv": ["squote", "two words"],
+      "probe_env": "",
+      "payload": {
+        "conversation_id": "da8f14b6-e7e4-428e-a020-18c10702cdb7",
+        "generation_id": null,
+        "model": null,
+        "model_id": null,
+        "model_params": null,
+        "is_background_agent": null,
+        "composer_mode": null,
+        "session_id": null,
+        "hook_event_name": "sessionStart",
+        "cursor_version": "3.24.12",
+        "workspace_roots": null,
+        "user_email": null,
+        "transcript_path": null
+      }
+    },
+    {
+      "case": "subst",
+      "argv0": "/tmp/probe-cursor-hook-command-argv.q0U5GJ/capture/dump-hook.sh",
+      "argc": 2,
+      "argv": ["subst", "SUBSTITUTED"],
+      "probe_env": "",
+      "payload": {
+        "conversation_id": "da8f14b6-e7e4-428e-a020-18c10702cdb7",
+        "generation_id": null,
+        "model": null,
+        "model_id": null,
+        "model_params": null,
+        "is_background_agent": null,
+        "composer_mode": null,
+        "session_id": null,
+        "hook_event_name": "sessionStart",
+        "cursor_version": "3.24.12",
+        "workspace_roots": null,
+        "user_email": null,
+        "transcript_path": null
+      }
+    },
+    {
+      "case": "envprefix",
+      "argv0": "/tmp/probe-cursor-hook-command-argv.q0U5GJ/capture/dump-hook.sh",
+      "argc": 1,
+      "argv": ["envprefix"],
+      "probe_env": "probe-value",
+      "payload": {
+        "conversation_id": "da8f14b6-e7e4-428e-a020-18c10702cdb7",
+        "generation_id": null,
+        "model": null,
+        "model_id": null,
+        "model_params": null,
+        "is_background_agent": null,
+        "composer_mode": null,
+        "session_id": null,
+        "hook_event_name": "sessionStart",
+        "cursor_version": "3.24.12",
+        "workspace_roots": null,
+        "user_email": null,
+        "transcript_path": null
+      }
+    },
+    {
+      "case": "dquote",
+      "argv0": "/tmp/probe-cursor-hook-command-argv.q0U5GJ/capture/dump-hook.sh",
+      "argc": 2,
+      "argv": ["dquote", "two words"],
+      "probe_env": "",
+      "payload": {
+        "conversation_id": "da8f14b6-e7e4-428e-a020-18c10702cdb7",
+        "generation_id": null,
+        "model": null,
+        "model_id": null,
+        "model_params": null,
+        "is_background_agent": null,
+        "composer_mode": null,
+        "session_id": null,
+        "hook_event_name": "sessionStart",
+        "cursor_version": "3.24.12",
+        "workspace_roots": null,
+        "user_email": null,
+        "transcript_path": null
+      }
+    },
+    {
+      "case": "utf8",
+      "argv0": "/tmp/probe-cursor-hook-command-argv.q0U5GJ/capture/dump-hook.sh",
+      "argc": 2,
+      "argv": ["utf8", "café-日本-ñ"],
+      "probe_env": "",
+      "payload": {
+        "conversation_id": "da8f14b6-e7e4-428e-a020-18c10702cdb7",
+        "generation_id": null,
+        "model": null,
+        "model_id": null,
+        "model_params": null,
+        "is_background_agent": null,
+        "composer_mode": null,
+        "session_id": null,
+        "hook_event_name": "sessionStart",
+        "cursor_version": "3.24.12",
+        "workspace_roots": null,
+        "user_email": null,
+        "transcript_path": null
+      }
+    }
+  ],
+  "results": {
+    "assertion": {
+      "controls": false,
+      "argv0": true,
+      "split": true,
+      "dquote": true,
+      "squote": true,
+      "var": true,
+      "subst": true,
+      "meta": true,
+      "utf8": true,
+      "envprefix": true,
+      "envprefix_control": true,
+      "anchor": true
+    },
+    "wait_for": false,
+    "capture_version": "3.24.12"
+  }
+}

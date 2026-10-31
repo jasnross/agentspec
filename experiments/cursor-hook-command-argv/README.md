@@ -6,7 +6,7 @@
 
 Cursor's documentation defines `command` as "a shell string, an absolute path, or a relative path" and names no interpreter, no `args` field, and no escaping rules. Claude Code, by contrast, documents `sh -c` for shell form and an exec-form `args` array that bypasses quoting entirely — so agentspec has a grounded basis on Claude and none on Cursor. The `args` feature this de-risks is tracked separately in `$THOUGHTS_DIR/ideas/2026-08-31-agentspec-hook-entry-args.md`.
 
-**Driver:** `manual`. A person must drive Cursor for the probe to run. The answer is counted from the capture by a projection, so no person interprets it.
+**Driver:** `manual`. A person must drive Cursor for the probe to run. The answer is counted from the capture by the assertion, `_assertion` in `probe.py`, so no person interprets it.
 
 ## Running it
 
@@ -22,6 +22,8 @@ One session exercises the whole matrix. `.cursor/hooks.json` registers eleven `s
 
 ## The assertion, key by key
 
+The assertion reads each case from the last line naming it, so a case that fired twice is judged on its second firing. Every key but `controls` therefore describes one line per case.
+
 ```json
 "expected": {
   "controls": true, "argv0": true, "split": true, "dquote": true, "squote": true,
@@ -30,21 +32,21 @@ One session exercises the whole matrix. `.cursor/hooks.json` registers eleven `s
 }
 ```
 
-- **`controls`** — at least two entries reached the capture script with zero arguments. These are the two bare-executable-path registrations that bracket the nine test cases in the array; see "the controls" below. The threshold is `>= 2` rather than exactly 2 deliberately: `wait_for` releases at two, so a third zero-arg firing landing between the release and the slurp — a second window, a re-fire, or the entry-ordering non-determinism conceded under "Oracle limits" — would otherwise record `refuted` for an apparatus reason while every substantive key read `true`. `refuted` is the loud signal, and spending it on that would be a false alarm.
-- **`argv0`** — `$0` ends in `dump-hook.sh`. This is the most direct discriminator between execution models: `sh -c "script args"` sets `$0` to the script path, while some wrappers set it to `sh` and a direct exec may set it otherwise.
+- **`controls`** — at least two entries reached the capture script with zero arguments. These are the two bare-executable-path registrations that bracket the nine test cases in the array; see "the controls" below. The threshold is `>= 2` rather than exactly 2 deliberately: `wait_for` releases at two, so a third zero-arg firing landing between the release and the recorder's read of the capture — a second window, a re-fire, or the entry-ordering non-determinism conceded under "Oracle limits" — would otherwise record `refuted` for an apparatus reason while every substantive key read `true`. `refuted` is the loud signal, and spending it on that would be a false alarm.
+- **`argv0`** — the `split` case's `$0` ends in `dump-hook.sh`. This is the most direct discriminator between execution models: `sh -c "script args"` sets `$0` to the script path, while some wrappers set it to `sh` and a direct exec may set it otherwise.
 - **`split`** — `{{CAPTURE_SCRIPT}} split alpha beta` arrived as three positionals. Whitespace was split on at all.
 - **`dquote`** / **`squote`** — `"two words"` and `'two words'` each arrived as one positional with the quotes removed. Quotes were both honored and stripped.
-- **`var`** — `$HOME` was expanded: `argv[1]` is not the literal `"$HOME"` and starts with `/`. Read a `false` here as weaker than the others: it holds both when no expansion occurred _and_ when a shell expanded an unset or empty `HOME`, which drops the positional entirely and leaves `argc == 1`. `subst` covers expansion independently, so a `var: false` beside a `subst: true` is an apparatus artifact rather than a finding.
+- **`var`** — `$HOME` was expanded: `argv[1]` is not the literal `"$HOME"` and starts with `/`. A `var` line with no `argv[1]` reads as the empty string, so `false`. Read a `false` here as weaker than the others: it holds both when no expansion occurred _and_ when a shell expanded an unset or empty `HOME`, which drops the positional entirely and leaves `argc == 1`. `subst` covers expansion independently, so a `var: false` beside a `subst: true` is an apparatus artifact rather than a finding.
 - **`subst`** — `$(echo SUBSTITUTED)` was executed and replaced by its output.
 - **`meta`** — `'a;b|c&d'` arrived as one literal positional. Metacharacters inside quotes were not acted on.
 - **`utf8`** — `'café-日本-ñ'` arrived byte-intact.
 - **`envprefix`** — a leading `AGENTSPEC_PROBE_ENV=probe-value` was honored as an environment assignment, so the hook process saw it in its environment. This is the key that tests shipped `hook_command_anchor` behavior.
-- **`envprefix_control`** — the `split` case, which carries no assignment prefix, saw `AGENTSPEC_PROBE_ENV` _unset_. Without this, `envprefix` would read `true` if the variable merely happened to be exported in the environment Cursor inherited, independently of whether Cursor honored the prefix at all. Since `envprefix` is the one key testing shipped behavior, a false confirm there is the most expensive thing this projection could produce, and the control costs nothing — the `split` case is already in every capture where `envprefix` could be read.
+- **`envprefix_control`** — the `split` case, which carries no assignment prefix, saw `AGENTSPEC_PROBE_ENV` _unset_. Without this, `envprefix` would read `true` if the variable merely happened to be exported in the environment Cursor inherited, independently of whether Cursor honored the prefix at all. Since `envprefix` is the one key testing shipped behavior, a false confirm there is the most expensive thing this assertion could produce, and the control costs nothing — the `split` case is already in every capture where `envprefix` could be read.
 - **`anchor`** — the shape agentspec actually emits, with a quoted argument containing spaces, arrived as four correct positionals.
 
-**Why every key is a boolean rather than raw argv.** Three cases have machine-specific correct answers — `$HOME` expands to the operator's home directory, `$0` is a temp workspace path, and the capture script's own path varies per run. A projection emitting raw argv would need an `expected` that differs per operator, which no committed manifest can carry. Each case therefore asserts the _property_ instead.
+**Why every key is a boolean rather than raw argv.** Three cases have machine-specific correct answers — `$HOME` expands to the operator's home directory, `$0` is a temp workspace path, and the capture script's own path varies per run. An assertion returning raw argv would need an `expected` that differs per operator, which no committed manifest can carry. Each case therefore asserts the _property_ instead.
 
-This also satisfies the contract's rule against asserting on absence. A case that never fired projects `false`, because the reduce leaves its key absent and `null.argv` compares unequal. So `true` is positive proof that the case fired **and** produced the expected argv — never a reading of silence.
+This also satisfies the contract's rule against asserting on absence. A case that never fired reads `false`, because every key but `controls` first requires its case's line to be in the capture. So `true` is positive proof that the case fired **and** produced the expected argv — never a reading of silence.
 
 **`expected` predicts `sh -c` semantics.** That is the prediction the evidence supported when the manifest was authored — lefthook runs `sh -c`, and Claude Code documents `sh -c` for shell form — and it is the prediction agentspec's shipped `env_assignment` already depends on. A refutation would have been the finding, not a failure.
 
@@ -60,7 +62,7 @@ Two of the eleven entries are controls, registered first and last, reaching the 
 
 A control must run under _every_ execution model the probe might discover. If Cursor executes the `command` string directly as a path rather than handing it to a shell, then a string with appended arguments resolves to no executable and produces no payload — so a `wait_for` keyed on any test case would poll to its full timeout on a live session and record nothing. A bare executable path is valid under both models, so it always fires.
 
-`wait_for` requires two payloads with `argc == 0`. The design intent was that the array brackets every test case between the two controls, so seeing both would mean every case in between had had its chance to fire — making silence from a middle case evidence about Cursor rather than a race against the poller. **The first live run refuted that**: Cursor does not fire `sessionStart` entries in array order, so the bracket bounds nothing. See "Oracle limits" for the observed ordering and what it costs. The controls still do their primary job — they guarantee that _something_ fires under either execution model, which is what keeps a non-shell result from being an indistinguishable timeout.
+The definition's `wait_for`, `_wait_for` in `probe.py`, requires at least two lines with `argc == 0`, the same count the `controls` key reads. The design intent was that the array brackets every test case between the two controls, so seeing both would mean every case in between had had its chance to fire — making silence from a middle case evidence about Cursor rather than a race against the poller. **The first live run refuted that**: Cursor does not fire `sessionStart` entries in array order, so the bracket bounds nothing. See "Oracle limits" for the observed ordering and what it costs. The controls still do their primary job — they guarantee that _something_ fires under either execution model, which is what keeps a non-shell result from being an indistinguishable timeout.
 
 **The second control is an exec shim, not a duplicate entry.** Two byte-identical `hooks.json` entries are a dedup hazard: if Cursor collapses them, `wait_for` can never reach two and a good live session polls to full timeout. The second control therefore points at `control-b.sh`, a two-line script whose entire body is `exec "{{CAPTURE_SCRIPT}}"`. The two config entries are textually distinct, so nothing can collapse them, while both remain bare executable paths that survive a non-shell model.
 
@@ -76,24 +78,30 @@ Validated against three synthetic captures, each a workspace directory holding a
 | B — no shell involved; the two controls only | `{"controls":true,"argv0":false,"split":false,"dquote":false,"squote":false,"var":false,"subst":false,"meta":false,"utf8":false,"envprefix":false,"envprefix_control":false,"anchor":false}` |
 | C — naive whitespace splitting, no quote removal, no expansion | `{"controls":true,"argv0":true,"split":true,"dquote":false,"squote":false,"var":false,"subst":false,"meta":false,"utf8":false,"envprefix":false,"envprefix_control":true,"anchor":false}` |
 
-Three distinct values for three distinct inputs. Capture C is the one that matters most: it separates "a shell parsed this" from "something split on whitespace," which a `split`-only matrix could not distinguish. Capture C also models the splitter consistently — with no assignment handling, `AGENTSPEC_PROBE_ENV=probe-value` becomes the command word, which is not an executable, so that case produces **no line at all** and the projection still reads `false`.
+Three distinct values for three distinct inputs. Capture C is the one that matters most: it separates "a shell parsed this" from "something split on whitespace," which a `split`-only matrix could not distinguish. Capture C also models the splitter consistently — with no assignment handling, `AGENTSPEC_PROBE_ENV=probe-value` becomes the command word, which is not an executable, so that case produces **no line at all** and the assertion still reads `false`.
 
-On 2026-10-22, against Cursor 3.26.16, the `discriminator` fixture variant ran as a dry run. It changes one file, `.cursor/hooks.json`, whose `envprefix` entry drops its `AGENTSPEC_PROBE_ENV=probe-value ` prefix. Without the prefix the hook sees no `AGENTSPEC_PROBE_ENV`, which `envprefix_control` already checks on the `split` entry. The `status` and `observed` fields are excerpted from the record the run printed:
+On 2026-10-22, against Cursor 3.26.16, the `discriminator` fixture variant ran as a dry run. It changes one file, `.cursor/hooks.json`, whose `envprefix` entry drops its `AGENTSPEC_PROBE_ENV=probe-value ` prefix. Without the prefix the hook sees no `AGENTSPEC_PROBE_ENV`, which `envprefix_control` already checks on the `split` entry. The record the run printed had `status` `refuted`, and its `observed` value is the refuting sample's assertion below. `envprefix` differed from `expected`; the assertion's other eleven keys agreed with it.
 
-```
-PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run cursor-hook-command-argv
-{"status":"refuted","observed":{"controls":true,"argv0":true,"split":true,"dquote":true,"squote":true,"var":true,"subst":true,"meta":true,"utf8":true,"envprefix":false,"envprefix_control":true,"anchor":true}}
-```
+The committed samples are one capture per fixture variant and one prefix. `confirming.json` is an `assertion`-variant capture on Cursor 3.24.12, and it equals `expected`. `refuting.json` is a `discriminator`-variant capture on Cursor 3.26.16, and it differs from `expected` in `envprefix` alone. `before-second-control.json` is the confirming capture cut with `--lines 10`, after every case but before the second control, which makes it `wait_for`'s false side; `controls` is `false` there for the same reason.
 
-`envprefix` differed from `expected`; the projection's other eleven keys agreed with it.
+| Sample | Origin | `assertion` | `wait_for` | `capture_version` |
+| --- | --- | --- | --- | --- |
+| `before-second-control.json` | `prefix` | `{"controls":false,"argv0":true,"split":true,"dquote":true,"squote":true,"var":true,"subst":true,"meta":true,"utf8":true,"envprefix":true,"envprefix_control":true,"anchor":true}` | `false` | `"3.24.12"` |
+| `confirming.json` | `capture` | `{"controls":true,"argv0":true,"split":true,"dquote":true,"squote":true,"var":true,"subst":true,"meta":true,"utf8":true,"envprefix":true,"envprefix_control":true,"anchor":true}` | `true` | `"3.24.12"` |
+| `edited-unparsed-payload.json` | `edited` | `{"controls":true,"argv0":true,"split":true,"dquote":true,"squote":true,"var":true,"subst":true,"meta":true,"utf8":true,"envprefix":true,"envprefix_control":true,"anchor":true}` | `true` | `"3.24.12"` |
+| `refuting.json` | `capture` | `{"controls":true,"argv0":true,"split":true,"dquote":true,"squote":true,"var":true,"subst":true,"meta":true,"utf8":true,"envprefix":false,"envprefix_control":true,"anchor":true}` | `true` | `"3.26.16"` |
+
+`edited-unparsed-payload.json` is the confirming sample with its first line's `payload` replaced by the `{unparsed: ""}` stand-in the hook writes for an empty stdin: every key still reads as confirmed, and the capture version comes from the next line.
+
+`just probe-test` re-proves every result on every run.
 
 ## Three deliberate deviations
 
 - **The capture records argv alongside the payload.** The contract's authoring step 3 asks a capture hook to append "the payload as the provider sent it, with nothing added." Argv is what this probe measures and no other channel carries it, so each line wraps the untouched payload under a `payload` key and adds `case`, `argv0`, `argc`, `argv`, and `probe_env` beside it.
-- **`version_source` therefore reads `.payload.cursor_version`,** not the top-level field the other Cursor packages use.
-- **The source script's outer empty-read guard is dropped.** An empty read now appends `{"case": null, …, "payload": {"unparsed": ""}}` where the source appended nothing, so the recorder's non-empty-capture check can pass on a capture no hook delivered a payload to. Diagnose a bad run by reading `argc` and `payload`, not the line count.
+- **The capture version is therefore read from `payload.cursor_version`,** not the top-level field the other Cursor packages use.
+- **The source script's outer empty-read guard is dropped.** An empty read now appends `{"case": null, …, "payload": {"unparsed": ""}}` where the source appended nothing, so the recorder's non-empty-capture check can pass on a capture no hook delivered a payload to. That line's `payload` is the `{unparsed: …}` stand-in, which the envelope model, `CursorArgvEnvelope`, accepts beside a Cursor payload: the line still counts for its argv, and contributes no Cursor version. Diagnose a bad run by reading `argc` and `payload`, not the line count.
 
-  What is **not** dropped is the source's `select(type == "object")` filter, which the payload expression carries across as `((($raw | fromjson?) | select(type == "object")) // {unparsed: $raw})`. An earlier draft used a bare `fromjson? // {unparsed: $raw}`, on the reasoning that the _line_ stays an object either way — true, but not the property that matters once the payload is nested. A payload that parses as valid non-object JSON (a bare array or scalar) passes `fromjson?` and lands under `.payload` verbatim, and then `version_source`'s `.payload.cursor_version` throws on it. Because the recorder evaluates that expression as `jq -s` over the whole file and treats a jq error as an empty version, a single such line would cost the recorded version for the **entire** capture, writing `tool_version: null` and a `…-unknown.json` filename with no diagnostic anywhere.
+  What is **not** dropped is the source's `select(type == "object")` filter, which the payload expression carries across as `((($raw | fromjson?) | select(type == "object")) // {unparsed: $raw})`. An earlier draft used a bare `fromjson? // {unparsed: $raw}`, on the reasoning that the _line_ stays an object either way — true, but not the property that matters once the payload is nested. A payload that parses as valid non-object JSON (a bare array or scalar) passes `fromjson?` and lands under `payload` verbatim, where every reader of the line expects an object. With the filter, `payload` is always an object: Cursor's payload, or the `{unparsed: …}` fallback, the two shapes `CursorArgvEnvelope` accepts. A non-object value would fail the envelope model, and the judge would refuse the whole capture, naming the line, so one malformed payload would cost the live session.
 
 ## Oracle limits
 
@@ -112,4 +120,4 @@ PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run cursor-hook-co
 
 ## Version source
 
-`version_source.kind: "capture"`, reading `.payload.cursor_version` — the nested path this package's line shape requires. `just probe-status` therefore computes no version drift for this package, as for every other Cursor one.
+`version_source.kind: "capture"`. The definition's capture version, `_capture_version` in `probe.py`, reads the first `payload.cursor_version` among the capture's envelopes — the nested path this package's line shape requires. `just probe-status` therefore computes no version drift for this package, as for every other Cursor one.
