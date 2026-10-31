@@ -11,8 +11,17 @@ import pytest
 from probe_harness import samples
 from probe_harness.contract import SampleOrigin, parse_sample_file
 from probe_harness.families import load_package
+from probe_harness.gates.bodies import DEFERRED_LISTING, SUBAGENT_FLAG
 from probe_harness.models.raw import ProviderModel, RawJson
-from probe_harness.samples import Identity, SampleRefused, anonymize, leaks, reduce
+from probe_harness.samples import (
+    Identity,
+    Needle,
+    SampleRefused,
+    Span,
+    anonymize,
+    leaks,
+    reduce,
+)
 
 from tests.conftest import Cli
 
@@ -35,7 +44,7 @@ def test_reduce_keeps_declared_keys_and_needle_strings_and_nulls_the_rest() -> N
     }
     model = _Body.model_validate(source)
 
-    reduced = reduce(model, (MARK,), IDENTITY)
+    reduced = reduce(model, (Needle(MARK, Span.LINE),), IDENTITY)
 
     assert reduced == {
         "name": "kept whole",
@@ -45,6 +54,86 @@ def test_reduce_keeps_declared_keys_and_needle_strings_and_nulls_the_rest() -> N
     }
     assert isinstance(reduced, dict)
     assert _Body.model_validate(reduced).raw.keys() == model.raw.keys()
+
+
+def test_reduce_keeps_only_the_listing_paragraph_without_connectors() -> None:
+    text = "\n".join(
+        [
+            "Working directory: /Users/tester/x",
+            "",
+            DEFERRED_LISTING,
+            "ToolSearch",
+            "mcp__fx__alpha",
+            "mcp__claude_ai_Docs__guide",
+            "",
+            "The following skills are available:",
+            "- code-review: review code",
+        ]
+    )
+    model = _Body.model_validate({"name": "n", "body": {"text": text}})
+
+    reduced = reduce(model, samples.SEARCH_STRINGS, IDENTITY)
+
+    assert reduced == {
+        "name": "n",
+        "body": {"text": "\n".join([DEFERRED_LISTING, "ToolSearch", "mcp__fx__alpha"])},
+    }
+
+
+def test_reduce_keeps_each_needle_line_once_in_order() -> None:
+    text = "\n".join(
+        [
+            "preamble",
+            DEFERRED_LISTING,
+            "ToolSearch",
+            f"marked {MARK}",
+            "",
+            "other paragraph",
+            f"header {SUBAGENT_FLAG}; more",
+            "trailing",
+        ]
+    )
+    needles = (Needle(MARK, Span.LINE), *samples.SEARCH_STRINGS)
+    model = _Body.model_validate({"name": "n", "body": [text]})
+
+    reduced = reduce(model, needles, IDENTITY)
+
+    assert reduced == {
+        "name": "n",
+        "body": [
+            "\n".join(
+                [DEFERRED_LISTING, "ToolSearch", f"marked {MARK}", f"header {SUBAGENT_FLAG}; more"]
+            )
+        ],
+    }
+
+
+def test_reduce_keeps_a_listing_running_to_the_end_of_its_string() -> None:
+    text = "\n".join(["preamble", "", DEFERRED_LISTING, "ToolSearch", "mcp__fx__alpha"])
+    model = _Body.model_validate({"name": "n", "body": [text]})
+
+    reduced = reduce(model, samples.SEARCH_STRINGS, IDENTITY)
+
+    assert reduced == {
+        "name": "n",
+        "body": ["\n".join([DEFERRED_LISTING, "ToolSearch", "mcp__fx__alpha"])],
+    }
+
+
+def test_reduce_keeps_a_needle_on_the_last_line() -> None:
+    text = "\n".join(["first", "", DEFERRED_LISTING])
+    model = _Body.model_validate({"name": "n", "body": [text, f"x\n{MARK}"]})
+
+    reduced = reduce(model, (Needle(MARK, Span.LINE), *samples.SEARCH_STRINGS), IDENTITY)
+
+    assert reduced == {"name": "n", "body": [DEFERRED_LISTING, MARK]}
+
+
+def test_reduce_keeps_a_declared_string_whole() -> None:
+    name = f"first line\n{MARK}\nthird line"
+    model = _Body.model_validate({"name": name, "body": {}})
+
+    assert reduce(model, (Needle(MARK, Span.LINE),), IDENTITY) == {"name": name, "body": {}}
 
 
 @pytest.mark.parametrize(
@@ -73,6 +162,7 @@ def test_leaks_finds_each_pattern() -> None:
             "c": "-private-var-folders-zz",
             "d": "mail me: x.y@example.com",
             "e": 'name "Tess" quoted',
+            "f": "mcp__claude_ai_Docs__guide",
         }
     )
     found = leaks(text, IDENTITY)
@@ -81,6 +171,7 @@ def test_leaks_finds_each_pattern() -> None:
     assert "path: var-folders" in found
     assert "email: x.y@example.com" in found
     assert "identity: Tess" in found
+    assert "connector: mcp__claude_ai_" in found
 
 
 def test_identity_current_reads_instruction_lines_and_skill_names_from_home(

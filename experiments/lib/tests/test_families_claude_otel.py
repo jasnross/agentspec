@@ -15,6 +15,9 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from probe_harness import samples
+from probe_harness.families import load_package
+from probe_harness.gates.bodies import DEFERRED_LISTING
 
 from tests.conftest import (
     Cli,
@@ -241,6 +244,50 @@ def test_record_dry_run_judges_a_kept_claude_workspace(
     refused = cli("record", "claude-family", copy, "--dry-run")
     assert refused.returncode == 1
     assert "probe record: arm a: the fx server never answered tools/list" in refused.stderr
+
+
+def test_a_claude_sample_keeps_only_the_listing_paragraph(
+    cli: Cli, package: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Claude Code sends the deferred-tools listing in one text block with its environment
+    # details and its skill listing, which names the operator's own skills.
+    listing = [DEFERRED_LISTING, "ToolSearch", "mcp__fx__alpha"]
+    block = "\n".join(
+        [
+            "Working directory: /tmp/project",
+            "",
+            *listing,
+            "mcp__claude_ai_Docs__guide",
+            "",
+            "The following skills are available:",
+            "- my-own-skill: does the operator's own thing",
+        ]
+    )
+    source = _source(tmp_path)
+    request = claude_request(
+        system=f"agent body {MARKER}",
+        model=MODEL,
+        output_config={"effort": "low"},
+        messages=[{"role": "user", "content": [{"type": "text", "text": block}]}],
+    )
+    (source / "a" / "sink" / "0000.request.json").write_text(json.dumps(request), encoding="utf-8")
+    run = cli("run", "claude-family", env=_env(source, tmp_path / "env.jsonl", PROBE_DRY_RUN="1"))
+    assert run.returncode == 0, run.stderr
+    (ws,) = workspaces("claude-family")
+    home = tmp_path / "home"
+    (home / ".claude" / "skills" / "my-own-skill").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    definition, manifest = load_package(package)
+
+    path = samples.write_sample(
+        definition, manifest, ws, "confirming", identity=samples.Identity.current()
+    )
+
+    sample = json.loads(path.read_text(encoding="utf-8"))
+    (reduced,) = sample["input"]["a"]["requests"]
+    assert reduced["messages"][0]["content"][0]["text"] == "\n".join(listing)
 
 
 def test_the_templated_server_runs_the_shared_stub_under_this_interpreter(

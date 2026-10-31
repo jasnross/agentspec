@@ -3,7 +3,7 @@
 A sample is `<package>/samples/<name>.json`, holding an input in the family's sample
 format and the result each expression the definition carries yields on it. `probe sample`
 writes one from a kept workspace: it parses the workspace through the family, reduces the
-input to what the models declare plus the strings a search reads, anonymizes what is left,
+input to what the models declare plus the lines a search reads, anonymizes what is left,
 and writes the sample only when every expression yields on the reduced input what it yields
 on the full capture, and the leak scan finds nothing. While a package's manifest is schema
 1, its results come from the manifest's jq; once it is schema 2, the same samples prove the
@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, assert_never
 
@@ -54,9 +55,39 @@ from probe_harness.gates import GateFailure, bodies
 from probe_harness.json_values import JsonValue
 from probe_harness.models.raw import ProviderModel, RawJson, sample_source
 
-# Strings a gate or an expression searches a body for, besides a definition's marker. A
-# string carrying one survives reduction whole, so the search finds it in a sample too.
-SEARCH_STRINGS: tuple[str, ...] = (bodies.DEFERRED_LISTING, bodies.SUBAGENT_FLAG)
+
+class Span(StrEnum):
+    """The lines a search reads around the line carrying its search string."""
+
+    # That line alone.
+    LINE = "line"
+    # That line and each following line up to, not including, the first empty one.
+    PARAGRAPH = "paragraph"
+
+
+@dataclass(frozen=True)
+class Needle:
+    """A search string, and the span of lines a sample keeps around each line carrying it."""
+
+    text: str
+    span: Span
+
+
+# Searches a gate or an expression makes of a body, besides a definition's marker. The
+# deferred-tools listing names its tools on the lines after its header, so its whole
+# paragraph survives reduction. A search reading more of the listing's string than that
+# may yield differently on a sample than on the capture, which `write_sample`'s equality
+# check refuses, so a written sample proves no expression's result depended on a dropped
+# line.
+SEARCH_STRINGS: tuple[Needle, ...] = (
+    Needle(bodies.DEFERRED_LISTING, Span.PARAGRAPH),
+    Needle(bodies.SUBAGENT_FLAG, Span.LINE),
+)
+
+# Names of the operator's claude.ai connector tools, which are account configuration rather
+# than anything a fixture arranged. Reduction drops a kept line starting with it, and the
+# leak scan refuses a sample still carrying it.
+CONNECTOR_PREFIX = "mcp__claude_ai_"
 
 SAMPLES_DIR = "samples"
 
@@ -167,23 +198,29 @@ def leaks(text: str, identity: Identity) -> list[str]:
         for pattern in _LEAK_PATTERNS:
             if pattern in haystack:
                 hits[f"path: {pattern}"] = None
+        if CONNECTOR_PREFIX in haystack:
+            hits[f"connector: {CONNECTOR_PREFIX}"] = None
         for email in _EMAIL.findall(haystack):
             hits[f"email: {email}"] = None
     return list(hits)
 
 
-def needles(definition: ProbeDefinition) -> tuple[str, ...]:
-    """The strings a sample keeps whole wherever they appear."""
+def needles(definition: ProbeDefinition) -> tuple[Needle, ...]:
+    """Each search a sample of <definition> must still answer: the search string, and the
+    lines a sample keeps around each line carrying it. The definition's marker is a line."""
     marker = _marker(definition)
-    return SEARCH_STRINGS if marker is None else (marker, *SEARCH_STRINGS)
+    return SEARCH_STRINGS if marker is None else (Needle(marker, Span.LINE), *SEARCH_STRINGS)
 
 
-def reduce(value: object, needles: Sequence[str], identity: Identity) -> JsonValue:
+def reduce(value: object, needles: Sequence[Needle], identity: Identity) -> JsonValue:
     """<value>, a parsed input or any part of one, as the JSON a sample keeps.
 
     A model keeps every key it was parsed from, so `raw.keys()` is unchanged: a declared
     key that was set keeps its reduced value, and any other keeps its value only when a
-    string in it carries a needle, and is `null` otherwise. A string kept is anonymized.
+    string in it carries a needle, and is `null` otherwise. A declared string is kept whole,
+    since an expression reads it by name. A string kept under an undeclared key or in a
+    `RawJson` value keeps only the lines its needles' spans cover, less any line starting
+    with a claude.ai connector tool name. A string kept is anonymized.
     """
     match value:
         case ProviderModel():
@@ -529,21 +566,42 @@ def _source_of(value: object) -> JsonValue:
     raise TypeError(f"a {type(value).__name__} has no source")
 
 
-def _carries(value: JsonValue, needles: Sequence[str]) -> bool:
-    return any(needle in s for s in RawJson(value).strings() for needle in needles)
+def _carries(value: JsonValue, needles: Sequence[Needle]) -> bool:
+    return any(needle.text in s for s in RawJson(value).strings() for needle in needles)
 
 
-def _scrub(value: JsonValue, needles: Sequence[str], identity: Identity) -> JsonValue:
-    """<value>'s shape, with every string not carrying a needle blanked, and the rest anonymized."""
+def _scrub(value: JsonValue, needles: Sequence[Needle], identity: Identity) -> JsonValue:
+    """<value>'s shape, with every string not carrying a needle blanked, and the rest cut to
+    the lines its needles' spans cover and anonymized."""
     match value:
         case dict():
             return {key: _scrub(item, needles, identity) for key, item in value.items()}
         case list():
             return [_scrub(item, needles, identity) for item in value]
         case str():
-            return anonymize(value, identity) if any(n in value for n in needles) else ""
+            if not any(needle.text in value for needle in needles):
+                return ""
+            return anonymize(_kept_lines(value, needles), identity)
         case _:
             return value
+
+
+def _kept_lines(text: str, needles: Sequence[Needle]) -> str:
+    """The lines of <text> its needles' spans cover, in order and each once, less any line
+    starting with a claude.ai connector tool name."""
+    lines = text.split("\n")
+    kept: set[int] = set()
+    for i, line in enumerate(lines):
+        for needle in needles:
+            if needle.text not in line:
+                continue
+            kept.add(i)
+            if needle.span is Span.PARAGRAPH:
+                end = i + 1
+                while end < len(lines) and lines[end] != "":
+                    kept.add(end)
+                    end += 1
+    return "\n".join(lines[i] for i in sorted(kept) if not lines[i].startswith(CONNECTOR_PREFIX))
 
 
 def _git_config(key: str) -> str | None:
