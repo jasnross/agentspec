@@ -1,0 +1,80 @@
+{
+  "origin": "edited",
+  "note": "synthetic session-start-after-resume capture with an {unparsed: ...} line, the hook's stand-in for a payload that was not JSON, ahead of the first line, which must keep its position",
+  "input": [
+    {
+      "unparsed": "not json"
+    },
+    {
+      "conversation_id": "e8ed806a-de39-413c-b479-b4d88fca5c50",
+      "generation_id": null,
+      "model": null,
+      "model_id": null,
+      "model_params": null,
+      "is_background_agent": null,
+      "composer_mode": null,
+      "session_id": null,
+      "hook_event_name": "sessionStart",
+      "cursor_version": "3.24.12",
+      "workspace_roots": null,
+      "user_email": null,
+      "transcript_path": null
+    },
+    {
+      "conversation_id": "e8ed806a-de39-413c-b479-b4d88fca5c50",
+      "generation_id": null,
+      "model": null,
+      "model_id": null,
+      "model_params": null,
+      "composer_mode": null,
+      "prompt": null,
+      "attachments": null,
+      "session_id": null,
+      "hook_event_name": "beforeSubmitPrompt",
+      "cursor_version": "3.24.12",
+      "workspace_roots": null,
+      "user_email": null,
+      "transcript_path": null
+    },
+    {
+      "conversation_id": "e8ed806a-de39-413c-b479-b4d88fca5c50",
+      "generation_id": null,
+      "model": null,
+      "model_id": null,
+      "model_params": null,
+      "is_background_agent": null,
+      "composer_mode": null,
+      "session_id": null,
+      "hook_event_name": "sessionStart",
+      "cursor_version": "3.24.12",
+      "workspace_roots": null,
+      "user_email": null,
+      "transcript_path": null
+    },
+    {
+      "conversation_id": "e8ed806a-de39-413c-b479-b4d88fca5c50",
+      "generation_id": null,
+      "model": null,
+      "model_id": null,
+      "model_params": null,
+      "composer_mode": null,
+      "prompt": null,
+      "attachments": null,
+      "session_id": null,
+      "hook_event_name": "beforeSubmitPrompt",
+      "cursor_version": "3.24.12",
+      "workspace_roots": null,
+      "user_email": null,
+      "transcript_path": null
+    }
+  ],
+  "results": {
+    "assertion": {
+      "resumed": true,
+      "fired": true,
+      "after_resume": 1
+    },
+    "wait_for": true,
+    "capture_version": "3.24.12"
+  }
+}

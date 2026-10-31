@@ -4,7 +4,7 @@
 
 **Why it matters.** It drives shipped adapter behavior — see `CursorAdapter::session_start_fires_on_resume` in `src/adapters/cursor.rs` and `compile_specs`'s parity gate in `src/compile.rs`. Cursor's answer differs from Claude's, which is why the two providers need separate handling and why this is a separate package from `claude-session-start`.
 
-**Driver:** `manual`. A person must drive Cursor for the probe to run. The answer is counted from the capture by a projection, so no person interprets it.
+**Driver:** `manual`. A person must drive Cursor for the probe to run. The answer is counted from the capture by the assertion, `_assertion` in `probe.py`, so no person interprets it.
 
 ## Running it
 
@@ -24,9 +24,11 @@ experiments/probe run cursor-session-start
 "expected": { "resumed": true, "fired": true, "after_resume": 0 }
 ```
 
-- **`resumed`** — both `beforeSubmitPrompt` payloads carry the same `conversation_id`. This is the machine check that the operator actually resumed rather than starting a second conversation.
+- **`resumed`** — at least two `beforeSubmitPrompt` payloads, all carrying one `conversation_id`. This is the machine check that the operator actually resumed rather than starting a second conversation.
 - **`fired`** — `sessionStart` fired at least once _for that conversation_. The positive signal: the event demonstrably works here.
 - **`after_resume`** — `sessionStart` fired zero times for that conversation after the first prompt. The finding itself.
+
+"That conversation" is the prompts' conversation, or the lexically first of them when the prompts disagree, which is the case `resumed` already reports as `false`. With no prompt there is no conversation to count for, so `fired` is `false` and `after_resume` is `0`. A line the capture hook could not parse as JSON, its `{"unparsed": …}` fallback, still holds its position in the capture, so it can shift the after-the-first-prompt window but is never counted.
 
 Every part was added because a run without it produced a misleading verdict.
 
@@ -36,7 +38,7 @@ Every part was added because a run without it produced a misleading verdict.
 
 **Why both `fired` and `after_resume` are scoped to that conversation.** Cursor may open a conversation of its own on relaunch, firing a legitimate `sessionStart` for a different id. Counting unscoped would read that as the resume firing and record a false `refuted`.
 
-**`wait_for` blocks recording until the procedure is genuinely complete:** two prompts, sharing one `conversation_id`, with a `sessionStart` seen for it. A procedure slip therefore makes the runner keep polling rather than manufacture a verdict — which is the right failure, because a false `refuted` against `CursorAdapter::session_start_fires_on_resume` costs a real investigation.
+**`wait_for` blocks recording until the procedure is genuinely complete.** The definition's `wait_for`, `_wait_for` in `probe.py`, is true once at least two prompts all share one `conversation_id` and a `sessionStart` has been seen for it. A procedure slip therefore makes the runner keep polling rather than manufacture a verdict — which is the right failure, because a false `refuted` against `CursorAdapter::session_start_fires_on_resume` costs a real investigation.
 
 If the runner times out, inspect the capture before assuming anything: differing `conversation_id`s on the two prompts mean the resume did not happen. The run itself is over — the workspace is kept for that inspection, but finishing it means re-running the probe.
 
@@ -50,17 +52,30 @@ The finding is shipped and load-bearing. It is stated under [`docs/hooks-canonic
 
 Validated against three synthetic captures:
 
-| Capture | Projection |
+| Capture | `after_resume` |
 | --- | --- |
 | `sessionStart`, prompt, prompt — the finding holds | `0` |
 | `sessionStart`, `sessionStart`, prompt, prompt — an extra conversation before the first prompt | `0` |
 | `sessionStart`, prompt, `sessionStart`, prompt — the resume **did** fire | `1` |
 
-Distinct values for distinct inputs, and the contaminating case projects the same as the clean one — which is the property the window was added for.
+Distinct values for distinct inputs, and the contaminating case counts the same as the clean one — which is the property the window was added for.
 
 The counting form matters for a second reason: a probe asserting "no second firing" against a provider that _did_ fire sees `1`, an observable value, rather than a silence indistinguishable from a broken hook. That is what keeps this from being an assertion on absence of error.
 
-The package has no discriminator variant. `wait_for` releases only once `resumed` and `fired` already hold, and `after_resume` counts `sessionStart` events that Cursor does not emit on resume, so no fixture can make Cursor produce a capture the assertion refutes. A refuting capture would need its order imposed by the apparatus, such as a delayed hook write, rather than by Cursor. The refuting side therefore rests on the synthetic captures in the table above.
+The package has no discriminator variant. `wait_for` releases only once `resumed` and `fired` already hold, and `after_resume` counts `sessionStart` events that Cursor does not emit on resume, so no fixture can make Cursor produce a capture the assertion refutes. A refuting capture would need its order imposed by the apparatus, such as a delayed hook write, rather than by Cursor. The refuting side therefore rests on synthetic captures: those in the table above, and the committed edited sample below.
+
+`confirming.json` is a capture of the procedure: `sessionStart`, then two prompts in one conversation. `before-resume.json` is that capture cut with `--lines 2`, before the second prompt `wait_for` waits for, which makes it `wait_for`'s false side. `edited-session-start-after-resume.json` is the confirming capture with a `sessionStart` for the same conversation inserted after the first prompt. It is synthetic, as its `note` records, because no fixture makes Cursor fire `sessionStart` on resume, and it is the package's only refuting sample.
+
+| Sample | Origin | `assertion` | `wait_for` | `capture_version` |
+| --- | --- | --- | --- | --- |
+| `before-resume.json` | `prefix` | `{"resumed":false,"fired":true,"after_resume":0}` | `false` | `"3.24.12"` |
+| `confirming.json` | `capture` | `{"resumed":true,"fired":true,"after_resume":0}` | `true` | `"3.24.12"` |
+| `edited-session-start-after-resume.json` | `edited` | `{"resumed":true,"fired":true,"after_resume":1}` | `true` | `"3.24.12"` |
+| `edited-unparsed-line.json` | `edited` | `{"resumed":true,"fired":true,"after_resume":1}` | `true` | `"3.24.12"` |
+
+`edited-unparsed-line.json` is the synthetic sample with an `{"unparsed": …}` line ahead of it, which must keep its position for the `sessionStart` right after the first prompt to be counted.
+
+The confirming sample equals `expected`, and the edited sample differs from it in `after_resume` alone. `just probe-test` re-proves every result on every run.
 
 ## The assumption that used to be here
 
@@ -74,4 +89,4 @@ What remains unverifiable is narrower: that the operator _quit_ Cursor between t
 
 ## Version source
 
-`version_source.kind: "capture"`. Cursor's version arrives in the payload as `cursor_version`, the field agentspec itself trusts for host detection (`detect_provider` in `src/hooks_canonical.rs`). `just probe-status` therefore computes no version drift for this package.
+`version_source.kind: "capture"`. The definition's capture version, `_capture_version` in `probe.py`, reads the first `cursor_version` among the capture's payloads, and is `null` for a capture with none. Cursor's version arrives in the payload as `cursor_version`, the field agentspec itself trusts for host detection (`detect_provider` in `src/hooks_canonical.rs`). `just probe-status` therefore computes no version drift for this package.
