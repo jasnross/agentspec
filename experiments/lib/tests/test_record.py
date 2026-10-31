@@ -458,6 +458,53 @@ def test_a_fresh_capture_records_successfully_and_stores_nothing_about_the_captu
     assert "capture" not in the_record(pkg)
 
 
+V2_CAPTURE_PROBE_PY = """\
+from probe_harness.families.manual import ManualProbe
+from probe_harness.models.cursor_hook import CursorHookPayload, cursor_version
+
+PROBE = ManualProbe(
+    instructions="",
+    payload=CursorHookPayload,
+    wait_for=lambda lines: len(lines) > 0,
+    assertion=lambda lines: "high",
+    capture_version=lambda lines: cursor_version(
+        line.cursor_version for line in lines if isinstance(line, CursorHookPayload)
+    ),
+)
+"""
+
+
+def test_a_schema_2_capture_source_records_the_version_capture_version_returns(
+    cli: Cli, tmp_path: Path, pkg: Path, manifest: Path
+) -> None:
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "provider": "cursor",
+                "driver": "manual",
+                "depth": None,
+                "question": "q",
+                "version_source": {"kind": "capture"},
+                "assertion": {"expected": "high"},
+            }
+        )
+        + "\n"
+    )
+    (pkg / "probe.py").write_text(V2_CAPTURE_PROBE_PY)
+    ws = tmp_path / "ws"
+    (ws / "capture").mkdir(parents=True)
+    line = {"hook_event_name": "sessionStart", "conversation_id": "c", "cursor_version": "3.16.17"}
+    (ws / "capture" / "payloads.jsonl").write_text(json.dumps(line) + "\n")
+    stamp_run(ws)
+    write_source(ws, source_map(pkg))
+
+    result = cli("record", "pkg", ws)
+    assert result.returncode == 0, result.output
+    assert the_record(pkg)["status"] == "confirmed"
+    assert the_record(pkg)["tool_version"] == "3.16.17"
+
+
 def test_the_emitted_record_parses_and_carries_the_full_key_set(
     cli: Cli,
     pkg: Path,
