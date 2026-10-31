@@ -14,7 +14,7 @@ This package measures whether `context` is **harmless**, never whether it is **h
 experiments/probe run cursor-subagent-bracket-tolerance
 ```
 
-It arranges a fresh workspace, prints the path, and blocks until the capture matches its `wait_for` filter. There is no resume path — a timeout ends the run and the next attempt is a fresh session.
+It arranges a fresh workspace, prints the path, and blocks until the definition's `wait_for` holds: `_wait_for` in `probe.py` is true once any line of the capture is a `subagentStart` whose `subagent_type` is `arm-bracket-tolerance`. There is no resume path — a timeout ends the run and the next attempt is a fresh session.
 
 ## The assertion discriminates
 
@@ -25,33 +25,33 @@ Measured 2026-08-27 against **Cursor 3.17.19**.
 | baseline, no brackets | `claude-opus-5` | `claude-opus-5-thinking-high` | the model's own default |
 | **the probe arm** | `claude-opus-5[effort=low,context=300k]` | `claude-opus-5-thinking-low` | **the bracket parsed, and `effort` survived beside `context`** |
 
-Both arms were re-evaluated against the committed manifest with the recorder's `--dry-run`, so the expression validated is the expression the manifest carries:
+Both arms were judged with the recorder's `--dry-run`: the bracketed arm `confirmed`, observing `"claude-opus-5-thinking-low"`, and the baseline `refuted`, observing `"claude-opus-5-thinking-high"`.
 
-```text
-bracketed → confirmed — observed "claude-opus-5-thinking-low"
-baseline  → refuted   — observed "claude-opus-5-thinking-high"
-```
+The assertion, `_assertion` in `probe.py`, returns the `subagent_model` of the first `subagentStart` whose `subagent_type` is `arm-bracket-tolerance`, and `null` when there is none or that payload carries no `subagent_model`. The refuting arm observes a **real resolved model**, not `null`. That distinction is the whole point of the check: `null` would mean the assertion matched nothing, which is a wiring bug wearing a refutation's clothes.
 
-The refuting arm observes a **real resolved model**, not `null`. That distinction is the whole point of the check: `null` would mean the projection matched nothing, which is a wiring bug wearing a refutation's clothes.
-
-On 2026-10-22, against Cursor 3.26.16, the `discriminator` fixture variant ran as a dry run. It changes one file, `.cursor/agents/arm-bracket-tolerance.md`, whose `model:` becomes the bare `claude-opus-5` of the baseline row above. The `status` and `observed` fields are excerpted from the record the run printed:
-
-```
-PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run cursor-subagent-bracket-tolerance
-{"status":"refuted","observed":"claude-opus-5-thinking-high"}
-```
+On 2026-10-22, against Cursor 3.26.16, the `discriminator` fixture variant ran as a dry run. It changes one file, `.cursor/agents/arm-bracket-tolerance.md`, whose `model:` becomes the bare `claude-opus-5` of the baseline row above. The record the run printed had `status` `refuted` and `observed` `"claude-opus-5-thinking-high"`.
 
 The value differed from `expected`, and it reproduces the baseline row.
 
+The committed samples are one capture per fixture variant and one prefix. `confirming.json` is an `assertion`-variant capture on Cursor 3.24.12, and it equals `expected`. `refuting.json` is a `discriminator`-variant capture on Cursor 3.26.16, which reproduces the baseline row and differs from `expected`. `before-subagent-start.json` is a capture cut with `--lines 0`, before the awaited `subagentStart`, which makes it `wait_for`'s false side; with no payload in it, the assertion and the capture version are both `null`.
+
+| Sample | Origin | `assertion` | `wait_for` | `capture_version` |
+| --- | --- | --- | --- | --- |
+| `before-subagent-start.json` | `prefix` | `null` | `false` | `null` |
+| `confirming.json` | `capture` | `"claude-opus-5-thinking-low"` | `true` | `"3.24.12"` |
+| `refuting.json` | `capture` | `"claude-opus-5-thinking-high"` | `true` | `"3.26.16"` |
+
+`just probe-test` re-proves every result on every run.
+
 ### The baseline shares the probe arm's `subagent_type`
 
-Both captures are of a subagent named `arm-bracket-tolerance`. The projection selects on `.subagent_type`, so a baseline captured under a _different_ name yields no match and the projection returns `null`. That would refute because **nothing matched**, not because a distinct input produced a distinct value — the "misspelled jq path returns `null` forever" failure the contract's discrimination rule exists to catch.
+Both captures are of a subagent named `arm-bracket-tolerance`. The assertion selects on `subagent_type`, so a baseline captured under a _different_ name yields no match and the assertion returns `null`. That would refute because **nothing matched**, not because a distinct input produced a distinct value — the "misspelled field returns `null` forever" failure the contract's discrimination rule exists to catch.
 
 ### The two arms ran in separate workspaces
 
 The recorded runs captured the bracketed arm. The 2026-08-27 baseline in the table above was taken in a **second workspace**, arranged by hand from the same fixtures with the bare model substituted, and evaluated only with the recorder's `--dry-run`. That baseline is now committed as `fixtures/discriminator/`: the `fixtures/assertion/` tree with the bare model in `arm-bracket-tolerance.md`, so each variant's run arranges its own workspace.
 
-Two workspaces rather than one file, because the projection ends in `| first`: a baseline appended to the recorded capture would leave `first` returning the bracketed value, and the refutation check would pass while measuring nothing. The baseline must also stay off the recording path — a baseline arm is _supposed_ to refute, and a recorded `refuted` would be a permanent false finding in an append-only directory. The `PROBE_FIXTURE` gate enforces that: a run selecting `discriminator` exits before arranging anything unless `PROBE_DRY_RUN=1` is set.
+Two workspaces rather than one file, because the assertion reads only the first matching `subagentStart`: a baseline appended to the recorded capture would leave the assertion returning the bracketed value, and the refutation check would pass while measuring nothing. The baseline must also stay off the recording path — a baseline arm is _supposed_ to refute, and a recorded `refuted` would be a permanent false finding in an append-only directory. The `PROBE_FIXTURE` gate enforces that: a run selecting `discriminator` exits before arranging anything unless `PROBE_DRY_RUN=1` is set.
 
 ### `effort=low` is non-default, and that is mandatory
 
@@ -70,7 +70,7 @@ Two workspaces rather than one file, because the projection ends in `| first`: a
 
 ## Why `version_source.kind` is `capture`
 
-The Cursor version comes from `cursor_version` in the payload, not from a CLI command. `cursor-agent --version` reports a **different artifact on a different versioning scheme** than the IDE that fired the hook, so a command-sourced version would record a number unrelated to the thing measured.
+The Cursor version comes from `cursor_version` in the payload, not from a CLI command: the definition's capture version, `_capture_version` in `probe.py`, reads the first `cursor_version` among the capture's payloads. `cursor-agent --version` reports a **different artifact on a different versioning scheme** than the IDE that fired the hook, so a command-sourced version would record a number unrelated to the thing measured.
 
 The visible consequence: `just probe-status` computes no drift for this package and says so. That is designed, not broken — there is nothing to compare an installed version against, because the version is a property of the recorded session rather than of the machine reading the record.
 
