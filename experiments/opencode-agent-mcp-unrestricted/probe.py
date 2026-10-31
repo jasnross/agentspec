@@ -9,14 +9,28 @@ every request body to disk. That dump is the oracle, so the measurement is at
 `opencode debug agent`.
 """
 
-from probe_harness.families.opencode_fake import OpenCodeArm, OpenCodeFakeProbe
+from probe_harness.families.opencode_fake import OpenCodeArm, OpenCodeArms, OpenCodeFakeProbe
+from probe_harness.gates.opencode import toolset
+from probe_harness.json_values import JsonValue
+
+_MARKER = "AGENTSPEC-PROBE-MARKER-OCMCPU1"
+
+
+def _assertion(arms: OpenCodeArms) -> JsonValue:
+    """Each arm's fx tool set: one sorted list when its governed requests agree."""
+    return {
+        arm: toolset(arms[arm].requests, _MARKER, keep=lambda name: name.startswith("fx_"))
+        for arm in ("no_map", "deny_all")
+    }
+
 
 PROBE = OpenCodeFakeProbe(
-    marker="AGENTSPEC-PROBE-MARKER-OCMCPU1",
+    marker=_MARKER,
     arms=(
         OpenCodeArm("no_map", "probe-no-map"),
         OpenCodeArm("deny_all", "probe-deny-all"),
     ),
     fx_servers=("fx",),
+    assertion=_assertion,
     variants=("assertion", "discriminator"),
 )

@@ -33,7 +33,7 @@ Every arm also connects `fx`, a local MCP stdio server (`experiments/lib/stubs/f
 
 `experiments/lib/stubs/fake_provider.py`, shared by every fake-provider probe, is an OpenAI-compatible chat endpoint on `127.0.0.1`. The project's `opencode.json` declares it as a provider through `@ai-sdk/openai-compatible`, which is built into the OpenCode binary, and the fake writes every request body it receives to the arm's `sink/` directory. The tool names read from those bodies — `tools[].function.name` — are what OpenCode actually offered the model.
 
-The projection reads only requests whose `role: "system"` message carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-OCMCPU1`, and keeps only the names that start with `fx_`. OpenCode also sends a title-generation request per run, with its own system prompt and `tools: []`; the marker keeps it out. Built-in tools are left out of the value because their set varies by OpenCode version, and the question is about the server's tools.
+The assertion reads only requests whose `role: "system"` message carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-OCMCPU1`, and keeps only the names that start with `fx_`. OpenCode also sends a title-generation request per run, with its own system prompt and `tools: []`; the marker keeps it out. Built-in tools are left out of the value because their set varies by OpenCode version, and the question is about the server's tools.
 
 ## Isolation
 
@@ -57,23 +57,20 @@ There is no baseline tool-listing gate, unlike the deny-all package. `no_map` is
 
 ## The assertion is relational across arms
 
-The two agents differ only in `permission`, so distinct observed values across the arms show the projection reads each arm independently. An arm with no marked request projects to `"arm-had-no-governed-request"`, so an unmeasured `deny_all` can never confirm `[]`. An arm whose marked requests disagree projects to `{inconsistent: [...]}`, so one request carrying both `fx` tools cannot speak for another that carried neither. The `discriminator` fixture variant changes one agent so that the assertion must disagree with it; see "Discriminate evidence".
+The two agents differ only in `permission`, so distinct observed values across the arms show the assertion reads each arm independently. For an arm with no marked request it yields `"arm-had-no-governed-request"`, so an unmeasured `deny_all` can never confirm `[]`. For an arm whose marked requests disagree it yields `{inconsistent: [...]}`, so one request carrying both `fx` tools cannot speak for another that carried neither. The `discriminator` fixture variant changes one agent so that the assertion must disagree with it; see "Discriminate evidence".
 
 `expected` states the design's belief: no map offers both `fx` tools, and the deny-all offers neither.
 
 ## Discriminate evidence
 
-Before the first run, the recorder's `--dry-run` against fabricated views printed `confirmed` for one matching `expected`, and `refuted` for one where `deny_all` carried `["fx_alpha", "fx_beta"]`, one where `no_map` carried only `fx_alpha`, one where `deny_all` held only an unmarked request, and one where `no_map`'s two marked requests disagreed:
+`samples/confirming.json` and `samples/refuting.json` were captured on 2026-10-31 against opencode **1.18.34**, from dry runs of the `assertion` and `discriminator` fixture variants. The `discriminator` variant changes one file, `.opencode/agent/probe-deny-all.md`, which gains `fx_alpha: allow` after `"*": deny`. `experiments/opencode-agent-permission-deny-all/`'s `mcp_one` arm measured that map offering `fx_alpha` alone. The assertion yields:
 
-```
-record: dry run — confirmed — observed {"no_map":["fx_alpha","fx_beta"],"deny_all":[]} (no file written)
-record: dry run — refuted — observed {"no_map":["fx_alpha","fx_beta"],"deny_all":["fx_alpha","fx_beta"]} (no file written)
-record: dry run — refuted — observed {"no_map":["fx_alpha"],"deny_all":[]} (no file written)
-record: dry run — refuted — observed {"no_map":["fx_alpha","fx_beta"],"deny_all":"arm-had-no-governed-request"} (no file written)
-record: dry run — refuted — observed {"no_map":{"inconsistent":[[],["fx_alpha","fx_beta"]]},"deny_all":[]} (no file written)
-```
+- `confirming.json`: `{"no_map":["fx_alpha","fx_beta"],"deny_all":[]}`, equal to `expected`.
+- `refuting.json`: `{"no_map":["fx_alpha","fx_beta"],"deny_all":["fx_alpha"]}`. `deny_all` differs from `expected`; `no_map` agrees with it.
 
-Two records exist from 2026-10-03, both `confirmed` with the same `observed`. The first (`T124612`) was made under a projection that merged the `fx_` names across an arm's marked requests; the second (`T130943`) under the current one, which flags disagreeing requests.
+`just probe-test` re-proves both results on every run.
+
+Two records exist from 2026-10-03, both `confirmed` with the same `observed`. The first (`T124612`) was made under a projection that merged the `fx_` names across an arm's marked requests; the second (`T130943`) under one that flags disagreeing requests, as the assertion does.
 
 From the `PROBE_DRY_RUN=1` run on 2026-10-03 against opencode **1.18.34**, each arm sent two requests, the agent's and the title generator's. The marked ones carried:
 
@@ -81,15 +78,6 @@ From the `PROBE_DRY_RUN=1` run on 2026-10-03 against opencode **1.18.34**, each 
 | --- | --- |
 | `no_map` | `bash`, `edit`, `fx_alpha`, `fx_beta`, `glob`, `grep`, `read`, `skill`, `task`, `todowrite`, `webfetch`, `write` |
 | `deny_all` | none |
-
-On 2026-10-21, against opencode **1.18.34**, the `discriminator` fixture variant ran as a dry run. It changes one file, `.opencode/agent/probe-deny-all.md`, which gains `fx_alpha: allow` after `"*": deny`. `experiments/opencode-agent-permission-deny-all/`'s `mcp_one` arm measured that map offering `fx_alpha` alone. The `status` and `observed` fields are excerpted from the record the run printed:
-
-```
-PROBE_FIXTURE=discriminator PROBE_DRY_RUN=1 experiments/probe run opencode-agent-mcp-unrestricted
-{"status":"refuted","observed":{"no_map":["fx_alpha","fx_beta"],"deny_all":["fx_alpha"]}}
-```
-
-`deny_all` differed from `expected`; `no_map` agreed with it.
 
 ## What the record licenses
 
