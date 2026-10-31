@@ -67,6 +67,7 @@ Two things are read from the marked requests, those whose `role: "system"` messa
 - Not covered: OpenCode's system-managed config directory and macOS managed preferences, which an administrator rather than the operator controls.
 - `OPENCODE_CONFIG`, `OPENCODE_CONFIG_DIR`, `OPENCODE_CONFIG_CONTENT`, and `OPENCODE_PERMISSION` are cleared, since each would inject config or permission rules from the operator's shell. `OPENCODE_DISABLE_PROJECT_CONFIG` is cleared as well: set, it would discard the fixture's own agents.
 - `OPENCODE_DISABLE_AUTOUPDATE=1` and `OPENCODE_DISABLE_MODELS_FETCH=1`, so the run touches no network.
+- `OPENCODE_DISABLE_EXTERNAL_SKILLS=1`. OpenCode walks up from the project directory for `.claude/skills` and `.agents/skills`, and a workspace under the operator's home reaches `~/.claude/skills` that way, which the `HOME` redirect does not stop.
 - No `--auto`: the non-interactive runner rejects every permission ask, so nothing is approved during the run.
 - The fake binds loopback only, and runs one arm at a time.
 - The fake, the MCP server, and the request dumps sit outside each arm's `project/` directory. The project's `opencode.json` still names the server's path and the fake's port, as it must for OpenCode to reach them; the model is a fake that searches nothing, so naming the paths cannot change what is measured.

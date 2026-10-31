@@ -100,3 +100,4 @@ def test_an_isolated_oracle_sees_no_operator_config_and_its_own_directories(
         assert seen[f"XDG_{kind.upper()}_HOME"] == str(ws / "xdg" / kind)
     assert seen["OPENCODE_DISABLE_AUTOUPDATE"] == "1"
     assert seen["OPENCODE_DISABLE_MODELS_FETCH"] == "1"
+    assert seen["OPENCODE_DISABLE_EXTERNAL_SKILLS"] == "1"

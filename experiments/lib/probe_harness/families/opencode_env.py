@@ -6,6 +6,13 @@ directory, located from the home directory rather than from any `XDG_*` variable
 redirect blocks the four config variables cleared here, each of which would inject config
 (or tool rules directly) from the operator's shell, nor `OPENCODE_DISABLE_PROJECT_CONFIG`,
 which would discard the fixture's own config and fail the run with no obvious cause.
+
+Neither redirect stops OpenCode's external skill scan, which walks up from the project
+directory for `.claude/skills` and `.agents/skills`. A workspace under the operator's home
+reaches `~/.claude/skills` that way, so the scan is switched off: every skill a probe
+arranges sits in the project's `.opencode/`, outside the scan. Not blocked: OpenCode's
+skills documentation says the same walk reads an `.opencode/` directory above the project
+too, so an operator's `~/.opencode/skills/` would reach a workspace under their home.
 """
 
 import os
@@ -55,6 +62,7 @@ class OpenCodeIsolation:
             env[f"XDG_{kind.upper()}_HOME"] = str(layout.xdg(kind))
         env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
         env["OPENCODE_DISABLE_MODELS_FETCH"] = "1"
+        env["OPENCODE_DISABLE_EXTERNAL_SKILLS"] = "1"
         return env
 
 

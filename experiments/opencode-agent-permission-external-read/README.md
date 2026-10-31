@@ -59,6 +59,7 @@ Each arm's projection also carries the tools its marked requests offer. `["read"
 - Not covered: OpenCode's system-managed config directory and macOS managed preferences, which an administrator rather than the operator controls. Neither is set on a typical development machine.
 - `OPENCODE_CONFIG`, `OPENCODE_CONFIG_DIR`, `OPENCODE_CONFIG_CONTENT`, and `OPENCODE_PERMISSION` are cleared. The `XDG_*` and `HOME` redirects do not block them, and each would inject config, or permission rules directly, from the operator's shell. `OPENCODE_DISABLE_PROJECT_CONFIG` is cleared as well: set, it would discard the fixture's own agents and fail every arm at the marker gate with no obvious cause.
 - `OPENCODE_DISABLE_AUTOUPDATE=1` and `OPENCODE_DISABLE_MODELS_FETCH=1`, so the run touches no network.
+- `OPENCODE_DISABLE_EXTERNAL_SKILLS=1`. OpenCode walks up from the project directory for `.claude/skills` and `.agents/skills`, and a workspace under the operator's home reaches `~/.claude/skills` that way, which the `HOME` redirect does not stop.
 - The fake binds loopback only, and runs one arm at a time. No MCP server is connected.
 - The fake and the request dumps sit outside each arm's `project/` directory. The project's `opencode.json` still names the fake's port, as it must for OpenCode to reach it; the model is a fake that searches nothing, so naming it cannot change what is measured.
 
