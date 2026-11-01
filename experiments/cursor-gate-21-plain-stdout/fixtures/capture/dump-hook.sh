@@ -21,16 +21,16 @@ if [ -n "$payload" ]; then
 	# Two invariants in one filter. `-c` compacts to a single line, and
 	# `select(type == "object")` keeps every line an *object*: a scalar or array
 	# payload yields no output, so the fallback below wraps it instead. Without
-	# that guard a stray scalar lands verbatim, and every later `jq -s` filter
-	# indexing a field errors on it — which `probe_capture_matches` reads as "no
-	# match", polling to the full timeout on a capture that already arrived.
+	# that guard a stray scalar lands verbatim, and the payload model rejects it,
+	# so the judge refuses a capture that otherwise arrived.
 	# shellcheck disable=SC2016 # the jq program is correctly single-quoted
 	if ! line=$(printf '%s' "$payload" | "$JQ" -c 'select(type == "object")' 2>/dev/null) ||
 		[ -z "$line" ]; then
 		# Reached by an unparsable payload and by a non-object one alike; both
 		# arrive as `{unparsed: …}` so the object invariant holds either way.
 		# `-c` is load-bearing here too: jq -n pretty-prints by default, and a
-		# multi-line value would break the slurp for every later reader.
+		# multi-line value would land as lines that are not JSON, each one refused
+		# as unrecognized.
 		# shellcheck disable=SC2016 # the jq program is correctly single-quoted; $raw is a jq variable
 		line=$("$JQ" -nc --arg raw "$payload" \
 			'{unparsed: $raw}' 2>/dev/null) || line=""

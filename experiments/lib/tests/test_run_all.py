@@ -292,9 +292,6 @@ def test_the_loop_runs_each_package_under_its_own_interpreter_from_any_directory
     # No `python3` on PATH: a child started through the script's shebang would not run.
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    jq = shutil.which("jq")
-    assert jq is not None
-    (bin_dir / "jq").symlink_to(jq)
     # Preflight requires git, which computes the run's source map.
     git = shutil.which("git")
     assert git is not None
@@ -561,7 +558,7 @@ def test_an_empty_tree_exits_0(cli: Cli, tree: Path) -> None:
     assert "0 ran" in result.output
 
 
-def test_stale_passes_over_a_v2_package_whose_v2_record_is_at_the_installed_version(
+def test_stale_passes_over_a_package_whose_v2_record_is_at_the_installed_version(
     cli: Cli, tree: Path, put_package: PutPackage
 ) -> None:
     put_package("alpha", "unattended")

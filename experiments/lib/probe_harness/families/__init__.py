@@ -6,20 +6,17 @@ existing family writes only what is specific to it; a probe fitting no family wr
 """
 
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, assert_never
 
-from probe_harness import console, jq_cli, record
+from probe_harness import console, record
 from probe_harness.contract import (
     CaptureSource,
-    CaptureSourceV1,
     Driver,
     ExpectedAssertion,
     Manifest,
-    ManifestV1,
-    ManifestV2,
     OptionsAssertion,
 )
 from probe_harness.families import claude_otel, manual, opencode_debug, opencode_fake
@@ -27,12 +24,9 @@ from probe_harness.families.base import (
     CustomCheck,
     CustomProbe,
     GateFailure,
-    JqCustomCheck,
     JudgeResult,
-    Projected,
     RunOptions,
     UsageError,
-    kept_for_inspection,
     kept_on_failure,
     observe,
     record_result,
@@ -137,19 +131,15 @@ def record_package(
         # `PROBE_DRY_RUN=1` means "write nothing" here as it does for `probe run`.
         dry_run = dry_run or dry_run_from_environment()
         definition: ProbeDefinition = load_definition(package, DEFINITION_TYPES)
-        # `check_manifest` runs jq without checking that it exists.
-        require_tools("jq")
         manifest = check_manifest(package)
         refusal = _definition_refusal(name, definition, manifest)
         if refusal is not None:
             raise PreflightError(1, refusal)
-        # A v2 record names the code that judged it. Computed before judging, and for a real
+        # A record names the code that judged it. Computed before judging, and for a real
         # recording checked against `HEAD` then, and against the files again before writing.
-        source = None
-        if isinstance(manifest, ManifestV2):
-            require_tools("git")
-            source = source_map(package)
-        gate = clean_tree_refusal(source, package) if source is not None and not dry_run else None
+        require_tools("git")
+        source: Mapping[str, str] = source_map(package)
+        gate = clean_tree_refusal(source, package) if not dry_run else None
         if gate is not None:
             raise PreflightError(1, *gate)
     except SourceMapError as e:
@@ -185,10 +175,10 @@ def record_package(
                 DISAGREEING_FIXTURE,
             )
             return 1
-    # A v2 record without `arranged` claims the judging code arranged the workspace, so a
-    # real one needs the map the arranging run wrote to know whether that is so.
-    arranged = read_source(ws) if source is not None else None
-    if source is not None and arranged is None and not dry_run:
+    # A record without `arranged` claims the judging code arranged the workspace, so a real
+    # one needs the map the arranging run wrote to know whether that is so.
+    arranged = read_source(ws)
+    if arranged is None and not dry_run:
         console.say(
             f"{ws / 'source.json'} is missing or is not a source map, so a record could not "
             "say which code arranged the workspace; it can only be judged with --dry-run"
@@ -198,19 +188,19 @@ def record_package(
     try:
         match definition:
             case ManualProbe():
-                # A dry run is the re-judging loop an author repeats while editing a
-                # projection, so it takes the selection as an argument instead of asking
+                # A dry run is the re-judging loop an author repeats while editing an
+                # assertion, so it takes the selection as an argument instead of asking
                 # every time.
                 interactive = not dry_run and sys.stdin.isatty()
                 result = manual.judge(manifest, ws, definition, selection, interactive=interactive)
             case OpenCodeDebugProbe():
-                result = opencode_debug.judge(ws, definition, manifest)
+                result = opencode_debug.judge(ws, definition)
             case OpenCodeFakeProbe():
-                result = opencode_fake.judge(ws, definition, manifest)
+                result = opencode_fake.judge(ws, definition)
             case ClaudeOtelProbe():
-                result = claude_otel.judge(ws, definition, manifest)
+                result = claude_otel.judge(ws, definition)
             case CustomProbe():
-                result = _judge_custom(manifest, ws, definition)
+                result = _judge_custom(ws, definition)
             case _:
                 assert_never(definition)
         computed = record.compute(
@@ -221,7 +211,7 @@ def record_package(
             source=source,
             arranged=arranged if arranged is not None and arranged != source else None,
         )
-        if source is not None and not dry_run:
+        if not dry_run:
             changed = source_changed(source, package)
             if changed is not None:
                 raise changed
@@ -231,11 +221,6 @@ def record_package(
         return 2
     except (GateFailure, record.RecordRefused) as e:
         return refused(e, ws)
-    except jq_cli.JqError as e:
-        # An unexpected jq failure while judging: its own diagnostic, not a traceback.
-        console.verbatim(e.stderr.splitlines())
-        kept_for_inspection(ws)
-        return 1
     return 0
 
 
@@ -247,29 +232,18 @@ def _run_custom(manifest: Manifest, name: str, options: RunOptions, probe: Custo
             probe.arrange(ws, options.variant)
             record_tool_version(manifest, ws)
             probe.act(ws)
-            result = _judge_custom(manifest, ws, probe)
+            result = _judge_custom(ws, probe)
         except GateFailure as e:
             return refused(e, ws)
         return record_result(manifest, ws, result, options)
 
 
-def _judge_custom(manifest: Manifest, ws: Path, probe: CustomProbe[Any]) -> JudgeResult:
-    """A custom probe's judge: its own, the definition's judge function, then the outcome.
-
-    A v1 manifest's projection runs over the view the probe's judge returned; a v2 one's
-    assertion runs over whatever it returned.
-    """
+def _judge_custom(ws: Path, probe: CustomProbe[Any]) -> JudgeResult:
+    """A custom probe's judge: its own, the definition's judge function, then the outcome."""
     value = probe.judge(ws)
     if probe.functions.judge is not None:
         probe.functions.judge(value)
-    if isinstance(manifest, ManifestV1):
-        if not isinstance(value, Path):
-            raise GateFailure(
-                f"{manifest.path.parent.name}'s judge returned a {type(value).__name__}, but "
-                "a schema 1 manifest projects over the view path it returns"
-            )
-        return JudgeResult(Projected(value))
-    # The agreement check guarantees an assertion for a v2 manifest declaring `expected`.
+    # The agreement check guarantees an assertion for a manifest declaring `expected`.
     assert probe.assertion is not None
     return JudgeResult(observe(probe.assertion, value))
 
@@ -330,12 +304,11 @@ class Expressions:
     """The Python expressions a definition carries, whatever its family."""
 
     assertion: Callable[..., Any] | None
-    custom_checks: tuple[CustomCheck[Any] | JqCustomCheck, ...] = ()
+    custom_checks: tuple[CustomCheck[Any], ...] = ()
     capture_version: Callable[..., Any] | None = None
-    # Whether the family polls a capture, and so takes a `wait_for` and a `payload`.
+    # Whether the family polls a capture, and so takes a `wait_for`.
     manual: bool = False
     wait_for: Callable[..., Any] | None = None
-    payload: type | None = None
 
 
 def expressions(definition: ProbeDefinition) -> Expressions:
@@ -346,7 +319,6 @@ def expressions(definition: ProbeDefinition) -> Expressions:
                 capture_version=definition.capture_version,
                 manual=True,
                 wait_for=definition.wait_for,
-                payload=definition.payload,
             )
         case OpenCodeDebugProbe() | OpenCodeFakeProbe() | ClaudeOtelProbe():
             return Expressions(definition.assertion, definition.custom_checks)
@@ -394,66 +366,30 @@ def _definition_refusal(name: str, definition: ProbeDefinition, manifest: Manife
 
 
 def _agreement(name: str, definition: ProbeDefinition, manifest: Manifest) -> str | None:
-    """Whether the manifest's version and the definition's expressions agree.
+    """Whether the manifest and the definition's expressions agree.
 
-    A schema 1 manifest is judged by its own jq, so a Python expression beside it would be
-    code that never runs; a schema 2 one by the definition's Python, so a jq check beside it
-    would be. A manifest declaring `expected` needs an assertion to compare with it, and an
-    option set, which a person answers, refuses one. A schema 2 manual probe polls with its
-    definition's `wait_for` over lines its `payload` parses, and a schema 2 `capture`
-    version source is read by its `capture_version`.
+    A manifest declaring `expected` needs an assertion to compare with it, and an option
+    set, which a person answers, refuses one. A `capture` version source is read by the
+    definition's `capture_version`, which only that source may declare. Custom check names
+    are non-empty and unique, since a sample keys each check's result by its name.
     """
     found = expressions(definition)
     family = _family(definition)
-    python_checks = [c for c in found.custom_checks if isinstance(c, CustomCheck)]
-    jq_checks = [c for c in found.custom_checks if isinstance(c, JqCustomCheck)]
     names = [c.name for c in found.custom_checks]
     if "" in names:
         return f"{name}'s definition declares a custom check with an empty name"
     duplicates = sorted({n for n in names if names.count(n) > 1})
     if duplicates:
         return f"{name}'s definition declares custom check {duplicates[0]} more than once"
-    if isinstance(manifest, ManifestV1):
-        carried = [
-            label
-            for label, present in (
-                ("an assertion", found.assertion is not None),
-                ("a wait_for", found.wait_for is not None),
-                ("a capture_version", found.capture_version is not None),
-                ("a Python custom check", bool(python_checks)),
-            )
-            if present
-        ]
-        if carried:
-            return (
-                f"{name}'s definition carries {carried[0]}, but its manifest is schema 1, "
-                "whose jq decides the record"
-            )
-        if found.manual and manifest.wait_for is None:
-            # A missing filter would poll a literal that never matches, burning the whole
-            # timeout of a live session for no reason.
-            return "manifest declares no wait_for filter"
-        return None
-    if jq_checks:
-        return (
-            f"{name}'s manifest is schema 2, but its definition carries the jq custom check "
-            f"{jq_checks[0].name}, which only a schema 1 view can run"
-        )
     if isinstance(manifest.assertion, ExpectedAssertion) and found.assertion is None:
         return (
-            f"{name}'s manifest is schema 2 and declares expected, but {family} definition "
-            "carries no assertion to compare with it"
+            f"{name}'s manifest declares expected, but {family} definition carries no "
+            "assertion to compare with it"
         )
     if isinstance(manifest.assertion, OptionsAssertion) and found.assertion is not None:
         return (
             f"{name}'s manifest declares options, which a person answers, but its definition "
             "carries an assertion"
-        )
-    if found.manual and (found.payload is None or found.wait_for is None):
-        missing = "payload" if found.payload is None else "wait_for"
-        return (
-            f"{name}'s manifest is schema 2, but its definition carries no {missing} to "
-            "read the capture with"
         )
     capture = isinstance(manifest.version_source, CaptureSource)
     if capture and found.manual and found.capture_version is None:
@@ -501,7 +437,7 @@ def _needs_capture(name: str, definition: ProbeDefinition, manifest: Manifest) -
             f"{name} is {_family(definition)}, which records without a capture, but its "
             'manifest declares driver "manual"'
         )
-    if isinstance(manifest.version_source, CaptureSourceV1 | CaptureSource):
+    if isinstance(manifest.version_source, CaptureSource):
         return (
             f"{name} is {_family(definition)}, which records without a capture, but its "
             "manifest declares a capture version source"
@@ -564,8 +500,7 @@ def _family_tools(definition: ProbeDefinition) -> tuple[str, ...]:
         case ClaudeOtelProbe():
             return claude_otel.FAMILY_TOOLS
         case CustomProbe():
-            # The recorder runs jq whatever the definition itself needs.
-            return tuple(dict.fromkeys(("jq", *definition.required_tools)))
+            return definition.required_tools
         case _:
             assert_never(definition)
 

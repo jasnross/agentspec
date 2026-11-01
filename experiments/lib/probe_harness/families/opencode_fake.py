@@ -22,7 +22,6 @@ from probe_harness.contract import Manifest
 from probe_harness.families.base import (
     CustomCheck,
     GateFailure,
-    JqCustomCheck,
     JudgeResult,
     ProbeFunctions,
     RunOptions,
@@ -34,8 +33,6 @@ from probe_harness.families.base import (
     record_tool_version,
     refused,
     run_checks,
-    run_jq_checks,
-    split_checks,
 )
 from probe_harness.families.opencode_env import OpenCodeIsolation
 from probe_harness.gates import bodies
@@ -46,7 +43,7 @@ from probe_harness.models.raw import sample_source
 from probe_harness.source import write_source
 from probe_harness.workspace import create_workspace, template_file
 
-FAMILY_TOOLS = ("jq", "opencode")
+FAMILY_TOOLS = ("opencode",)
 
 STUBS_DIR = Path(__file__).resolve().parents[2] / "stubs"
 FAKE_PROVIDER = STUBS_DIR / "fake_provider.py"
@@ -85,9 +82,9 @@ class OpenCodeFakeProbe:
     # `<KEY>_STAMP`, and a stamp gate.
     fx_servers: tuple[str, ...] = ()
     tool_result_gate: bool = False
-    # Required by a schema 2 manifest declaring `expected`, and refused by a schema 1 one.
+    # Required by a manifest declaring `expected`, and refused by an option set.
     assertion: Callable[[OpenCodeArms], JsonValue] | None = None
-    custom_checks: tuple[CustomCheck[OpenCodeArms] | JqCustomCheck, ...] = ()
+    custom_checks: tuple[CustomCheck[OpenCodeArms], ...] = ()
     variants: tuple[str, ...] = ("assertion",)
     arrange_arm: ArmArrange | None = None
     functions: ProbeFunctions[OpenCodeArms] = field(default_factory=ProbeFunctions)
@@ -102,7 +99,7 @@ def run(manifest: Manifest, name: str, options: RunOptions, probe: OpenCodeFakeP
             record_tool_version(manifest, ws)
             for arm in probe.arms:
                 _run_arm(package / "fixtures" / options.variant, ws, arm, probe)
-            result = judge(ws, probe, manifest)
+            result = judge(ws, probe)
         except GateFailure as e:
             return refused(e, ws)
         return record_result(manifest, ws, result, options)
@@ -123,13 +120,13 @@ def parse_sample(document: JsonValue, label: str, probe: OpenCodeFakeProbe) -> O
 
 
 def view(arms: OpenCodeArms) -> dict[str, list[JsonValue]]:
-    """The schema 1 view: each arm's request bodies."""
+    """The inspection view written to `view.json`: each arm's request bodies."""
     return {
         name: [sample_source(body) for body in capture.requests] for name, capture in arms.items()
     }
 
 
-def judge(ws: Path, probe: OpenCodeFakeProbe, manifest: Manifest) -> JudgeResult:
+def judge(ws: Path, probe: OpenCodeFakeProbe) -> JudgeResult:
     """Judge a workspace from the sinks and stamps its arms left."""
     arms = parse(ws, probe)
     view_path = ws / "view.json"
@@ -142,15 +139,13 @@ def judge(ws: Path, probe: OpenCodeFakeProbe, manifest: Manifest) -> JudgeResult
     if probe.tool_result_gate:
         for name, capture in arms.items():
             gates.tool_result(capture.requests, name, probe.marker, ws / name / "stderr")
-    python_checks, jq_checks = split_checks(probe.custom_checks)
-    run_jq_checks(jq_checks, view_path, probe.marker)
-    run_checks(python_checks, arms)
+    run_checks(probe.custom_checks, arms)
     if probe.functions.judge is not None:
         probe.functions.judge(arms)
     # Printed before recording: a dry or failed record keeps the workspace, and this view is
-    # what a candidate projection is iterated against.
+    # kept so an author can inspect what the expressions read.
     console.say(f"the assembled view is at {view_path}")
-    return decide(manifest, probe.assertion, arms, view_path)
+    return decide(probe.assertion, arms)
 
 
 def _run_arm(fixtures: Path, ws: Path, arm: OpenCodeArm, probe: OpenCodeFakeProbe) -> None:

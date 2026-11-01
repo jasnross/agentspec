@@ -2,14 +2,13 @@
 
 A manifest is hand-authored, and the failures it can express are exactly the ones the
 harness exists to prevent: an absent `expected` compares `null == null` and records a
-vacuous `confirmed`. `parse_manifest` validates the whole document against the manifest
-version its `schema_version` names before anything reads a value out of it, so every
-subcommand refuses the same manifest the same way, before any workspace exists. The
-refusal lists every invalid field by path; the rules relating fields to each other (an
-option set needs a manual driver, option ids are unique) run once every field is valid, and
-name no single path.
-A record is read back through `RecordV1` or `RecordV2`, the same declarations its writer
-serializes.
+vacuous `confirmed`. `parse_manifest` validates the whole document as the one manifest
+version before anything reads a value out of it, so every subcommand refuses the same
+manifest the same way, before any workspace exists. The refusal lists every invalid field
+by path; the rules relating fields to each other (an option set needs a manual driver,
+option ids are unique) run once every field is valid, and name no single path.
+A record is read back through `RecordV2`, the declaration its writer serializes, or
+`RecordV1`, the shape of committed schema 1 records, which nothing writes.
 
 Every harness format derives from `HarnessModel`: unknown keys are refused, and validation
 is strict, because `true == 1` in Python and a document must not pass on that. Four rules
@@ -128,11 +127,6 @@ class CommandSource(HarnessModel):
         return tuple(self.command.split())
 
 
-class CaptureSourceV1(HarnessModel):
-    kind: Literal["capture"]
-    jq: NonEmpty
-
-
 class CaptureSource(HarnessModel):
     """The capture names its own version, read by the definition's `capture_version`."""
 
@@ -148,7 +142,7 @@ def _version_kind(value: Any) -> str | None:
     if isinstance(value, dict):
         kind = value.get("kind", "none")
         return kind if kind in ("command", "capture", "none") else None
-    if isinstance(value, CommandSource | CaptureSourceV1 | CaptureSource | NoSource):
+    if isinstance(value, CommandSource | CaptureSource | NoSource):
         return value.kind
     return None
 
@@ -158,13 +152,6 @@ _VERSION_SOURCE_DISCRIMINATOR = Discriminator(
     custom_error_type="version_source",
     custom_error_message="must be an object whose kind is command, capture, or none",
 )
-
-type VersionSourceV1 = Annotated[
-    Annotated[CommandSource, Tag("command")]
-    | Annotated[CaptureSourceV1, Tag("capture")]
-    | Annotated[NoSource, Tag("none")],
-    _VERSION_SOURCE_DISCRIMINATOR,
-]
 
 type VersionSource = Annotated[
     Annotated[CommandSource, Tag("command")]
@@ -179,11 +166,6 @@ class Option(HarnessModel):
     text: str
     # Any other declared status would fix the verdict in advance.
     status: Literal["inconclusive"] | MISSING = MISSING
-
-
-class ProjectionAssertionV1(HarnessModel):
-    projection: NonEmpty
-    expected: JsonValue
 
 
 class ExpectedAssertion(HarnessModel):
@@ -206,22 +188,8 @@ class OptionsAssertion(HarnessModel):
         return options
 
 
-def _assertion_shape_v1(value: Any) -> str | None:
-    """The tag of a v1 assertion: whichever one of `projection` and `options` it declares."""
-    if isinstance(value, dict):
-        projection, options = "projection" in value, "options" in value
-        if projection != options:
-            return "projection" if projection else "options"
-        return None
-    if isinstance(value, ProjectionAssertionV1):
-        return "projection"
-    if isinstance(value, OptionsAssertion):
-        return "options"
-    return None
-
-
 def _assertion_shape(value: Any) -> str | None:
-    """The tag of a v2 assertion: `options` when it declares them, else `expected`.
+    """The tag of an assertion: `options` when it declares them, else `expected`.
 
     A stray `projection` is therefore refused at its own path, as an unknown key of the
     `expected` shape.
@@ -234,16 +202,6 @@ def _assertion_shape(value: Any) -> str | None:
         return "options"
     return None
 
-
-type AssertionV1 = Annotated[
-    Annotated[ProjectionAssertionV1, Tag("projection")]
-    | Annotated[OptionsAssertion, Tag("options")],
-    Discriminator(
-        _assertion_shape_v1,
-        custom_error_type="assertion_shape",
-        custom_error_message="must be an object declaring exactly one of projection or options",
-    ),
-]
 
 type Assertion = Annotated[
     Annotated[ExpectedAssertion, Tag("expected")] | Annotated[OptionsAssertion, Tag("options")],
@@ -259,9 +217,10 @@ type Assertion = Annotated[
 # names the path an author wrote.
 _TAGGED_FIELDS = frozenset({"assertion", "version_source"})
 
-# The tags of the union `parse_manifest` and `parse_record` validate against, which pydantic
+# The tags of the unions `parse_manifest` and `parse_record` validate against, which pydantic
 # puts first in every error's location.
-_SCHEMA_VERSIONS = {1: "1", 2: "2"}
+_MANIFEST_VERSIONS = {2: "2"}
+_RECORD_VERSIONS = {1: "1", 2: "2"}
 
 
 def _options_cohere(assertion: object, driver: Driver) -> None:
@@ -277,13 +236,20 @@ def _options_cohere(assertion: object, driver: Driver) -> None:
         seen.add(option.id)
 
 
-class _ManifestFields(HarnessModel):
-    """What every manifest version declares."""
+class Manifest(HarnessModel):
+    """A manifest: every expression it is judged by is Python on the package's definition.
+
+    It carries none itself, so a `projection`, `wait_for` or capture `jq` key is refused by
+    its path, as every unknown key is.
+    """
 
     provider: Annotated[Provider, Field(strict=False)]
     driver: Annotated[Driver, Field(strict=False)]
     depth: Annotated[Depth | None, Field(strict=False)]
     question: NonEmpty
+    schema_version: SchemaV2
+    version_source: VersionSource = NoSource()
+    assertion: Assertion
     _path: Path = PrivateAttr()
 
     @property
@@ -291,35 +257,10 @@ class _ManifestFields(HarnessModel):
         """The manifest's path, as `parse_manifest` was given it."""
         return self._path
 
-
-class ManifestV1(_ManifestFields):
-    """A v1 manifest: its projection, `wait_for` and capture version are jq."""
-
-    schema_version: SchemaV1
-    version_source: VersionSourceV1 = NoSource()
-    wait_for: NonEmpty | None = None
-    assertion: AssertionV1
-
     @model_validator(mode="after")
     def _cohere(self) -> Self:
         _options_cohere(self.assertion, self.driver)
         return self
-
-
-class ManifestV2(_ManifestFields):
-    """A v2 manifest: every expression it is judged by is Python on the package's definition."""
-
-    schema_version: SchemaV2
-    version_source: VersionSource = NoSource()
-    assertion: Assertion
-
-    @model_validator(mode="after")
-    def _cohere(self) -> Self:
-        _options_cohere(self.assertion, self.driver)
-        return self
-
-
-type Manifest = ManifestV1 | ManifestV2
 
 
 class RecordAssertionV1(HarnessModel):
@@ -425,34 +366,36 @@ def parse_sample_file(path: Path) -> Sample:
     return Sample.model_validate(json_values.loads(path.read_text(encoding="utf-8")))
 
 
-def _schema_version(value: Any) -> str | None:
-    """The tag of a manifest or record: its `schema_version`, when that is exactly 1 or 2."""
+def _schema_version(value: Any, versions: dict[int, str]) -> str | None:
+    """The tag of a document: its `schema_version`, when that is exactly one of <versions>."""
     if isinstance(value, dict):
         version = value.get("schema_version")
         # `type(...) is int`: `True` and `1.0` both equal 1.
-        return _SCHEMA_VERSIONS.get(version) if type(version) is int else None
-    if isinstance(value, ManifestV1 | ManifestV2 | RecordV1 | RecordV2):
-        return _SCHEMA_VERSIONS[value.schema_version]
+        return versions.get(version) if type(version) is int else None
+    if isinstance(value, Manifest | RecordV1 | RecordV2):
+        return versions.get(value.schema_version)
     return None
 
 
-_SCHEMA_VERSION_DISCRIMINATOR = Discriminator(
-    _schema_version,
-    custom_error_type="schema_version",
-    custom_error_message="schema_version must be 1 or 2",
-)
-
-_MANIFEST: TypeAdapter[ManifestV1 | ManifestV2] = TypeAdapter(
+_MANIFEST: TypeAdapter[Manifest] = TypeAdapter(
     Annotated[
-        Annotated[ManifestV1, Tag("1")] | Annotated[ManifestV2, Tag("2")],
-        _SCHEMA_VERSION_DISCRIMINATOR,
+        Annotated[Manifest, Tag("2")],
+        Discriminator(
+            lambda value: _schema_version(value, _MANIFEST_VERSIONS),
+            custom_error_type="schema_version",
+            custom_error_message="schema_version must be 2",
+        ),
     ]
 )
 
 _RECORD: TypeAdapter[RecordV1 | RecordV2] = TypeAdapter(
     Annotated[
         Annotated[RecordV1, Tag("1")] | Annotated[RecordV2, Tag("2")],
-        _SCHEMA_VERSION_DISCRIMINATOR,
+        Discriminator(
+            lambda value: _schema_version(value, _RECORD_VERSIONS),
+            custom_error_type="schema_version",
+            custom_error_message="schema_version must be 1 or 2",
+        ),
     ]
 )
 
@@ -507,7 +450,7 @@ def parse_record(path: Path) -> Record | None:
 def _error_line(error: ErrorDetails) -> str:
     loc = list(error["loc"])
     # Every error inside a valid version is located under that version's tag first.
-    if loc and loc[0] in _SCHEMA_VERSIONS.values():
+    if loc and loc[0] in {*_MANIFEST_VERSIONS.values(), *_RECORD_VERSIONS.values()}:
         del loc[0]
     if len(loc) > 1 and loc[0] in _TAGGED_FIELDS:
         del loc[1]

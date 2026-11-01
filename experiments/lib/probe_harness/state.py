@@ -16,7 +16,6 @@ from pathlib import Path
 
 from probe_harness.contract import (
     CaptureSource,
-    CaptureSourceV1,
     CommandSource,
     ManifestError,
     NoSource,
@@ -90,7 +89,7 @@ def resolve_installed_version(manifest_path: Path) -> InstalledVersion:
             if not resolved:
                 return InstalledVersion("version command produced nothing", False)
             return InstalledVersion(resolved, True)
-        case CaptureSourceV1() | CaptureSource():
+        case CaptureSource():
             # Knowable only by running the probe, so a caller running none cannot compare.
             return InstalledVersion("from capture", False)
         case NoSource():

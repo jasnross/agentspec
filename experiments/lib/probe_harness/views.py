@@ -1,4 +1,5 @@
-"""Every view a projection reads, built by the harness from what a run left on disk.
+"""Every inspection view the harness writes into a workspace, built from what a run left on
+disk.
 
 An arm view is a JSON object mapping each arm to the list of its request bodies, with the
 response bodies appended when a definition asks. A capture view is the list of the
@@ -77,5 +78,5 @@ def _read_values(paths: list[Path]) -> list[SinkEntry]:
 
 def _write(out: Path, value: JsonValue) -> None:
     # ASCII-escaped: a body may carry an escaped lone surrogate (a string cut between the
-    # halves of an emoji), which has no UTF-8 encoding. Escaped, it reaches jq as written.
+    # halves of an emoji), which has no UTF-8 encoding. Escaped, it stays readable by any JSON tool.
     out.write_text(json.dumps(value, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")

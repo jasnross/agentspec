@@ -1,4 +1,4 @@
-"""The views a projection reads, built in `views.py` from what a run left on disk."""
+"""The inspection views `views.py` builds from what a run left on disk."""
 
 import json
 from pathlib import Path
@@ -61,7 +61,7 @@ def test_the_view_maps_each_arm_to_its_parsed_bodies(tmp_path: Path) -> None:
         },
     )
 
-    # Parsed bodies, not strings — the projection indexes into them.
+    # Parsed bodies, not strings, so a reader can index into them.
     assert json.loads(out.read_text(encoding="utf-8")) == {
         "a": [{"n": 1}, {"n": 2}],
         "b": [{"n": 3}],

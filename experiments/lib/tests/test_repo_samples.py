@@ -15,8 +15,6 @@ import pytest
 from probe_harness import json_values
 from probe_harness.contract import (
     ExpectedAssertion,
-    ManifestV2,
-    ProjectionAssertionV1,
     Sample,
     parse_sample_file,
 )
@@ -49,18 +47,18 @@ def _loaded(package: Path) -> tuple[ProbeDefinition, Any, list[tuple[Path, Sampl
 
 @pytest.mark.parametrize("package", SAMPLED, ids=lambda p: p.name)
 def test_each_sample_declares_exactly_the_definition_s_expressions(package: Path) -> None:
-    definition, manifest, samples = _loaded(package)
-    want = expression_names(definition, manifest)
+    definition, _, samples = _loaded(package)
+    want = expression_names(definition)
     for path, sample in samples:
         assert set(sample.results.model_fields_set) == want, path.name
 
 
 @pytest.mark.parametrize("package", SAMPLED, ids=lambda p: p.name)
 def test_each_declared_result_is_reproduced_by_the_current_evaluator(package: Path) -> None:
-    definition, manifest, samples = _loaded(package)
+    definition, _, samples = _loaded(package)
     for path, sample in samples:
         value = parse_sample(definition, sample.input, str(path))
-        produced = evaluate(definition, manifest, value, sample.input).model_dump(mode="json")
+        produced = evaluate(definition, value).model_dump(mode="json")
         declared = sample.results.model_dump(mode="json")
         assert produced.keys() == declared.keys(), path.name
         for key in declared:
@@ -74,10 +72,8 @@ def test_each_declared_result_is_reproduced_by_the_current_evaluator(package: Pa
 def test_every_expression_takes_both_outcomes_across_the_package_s_samples(package: Path) -> None:
     definition, manifest, samples = _loaded(package)
     results = [sample.results.model_dump(mode="json") for _, sample in samples]
-    names = expression_names(definition, manifest)
-    if "assertion" in names and isinstance(
-        manifest.assertion, ProjectionAssertionV1 | ExpectedAssertion
-    ):
+    names = expression_names(definition)
+    if "assertion" in names and isinstance(manifest.assertion, ExpectedAssertion):
         expected = manifest.assertion.expected
         outcomes = {json_values.equal(r["assertion"], expected) for r in results}
         assert outcomes == {True, False}, (
@@ -96,13 +92,10 @@ def test_every_expression_takes_both_outcomes_across_the_package_s_samples(packa
 
 
 @pytest.mark.parametrize("package", list(_packages()), ids=lambda p: p.name)
-def test_every_schema_2_package_has_samples(package: Path) -> None:
-    manifest = package / "probe.json"
-    if not manifest.is_file():
+def test_every_package_has_samples(package: Path) -> None:
+    if not (package / "probe.json").is_file():
         pytest.skip("no manifest")
-    _, parsed = load_package(package)
-    if isinstance(parsed, ManifestV2):
-        assert sample_paths(package), f"{package.name} is schema 2 but has no samples/"
+    assert sample_paths(package), f"{package.name} has no samples/"
 
 
 @pytest.mark.parametrize("path", SAMPLE_FILES, ids=lambda p: f"{p.parent.parent.name}/{p.name}")

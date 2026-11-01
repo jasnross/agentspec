@@ -142,7 +142,7 @@ def listed_tools(request: ClaudeRequest) -> list[str]:
 def offered(requests: Sequence[ClaudeRequest], keep: Callable[[str], bool]) -> list[JsonValue]:
     """The distinct tool names the requests offer, directly or deferred, kept by <keep>.
 
-    In jq's `unique` order, so an assertion yields the list a projection did.
+    In jq's `unique` order, the order committed records were written in.
     """
     return unique([name for r in requests for name in listed_tools(r) if keep(name)])
 

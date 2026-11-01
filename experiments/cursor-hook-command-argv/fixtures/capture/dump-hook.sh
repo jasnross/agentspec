@@ -11,7 +11,7 @@
 #
 # This runs inside a live provider session, so its contract is absolute: always
 # print `{}` and always exit 0. The trap enforces that on every path. A failed
-# capture is caught downstream, where `record.sh` refuses an empty capture
+# capture is caught downstream, where the manual judge refuses an empty capture
 # rather than recording it.
 set -uo pipefail
 trap 'printf "{}\n"; exit 0' EXIT
@@ -68,9 +68,8 @@ line=$("$JQ" -nc \
 # governs pipes, not regular files, and this line now carries argv *plus* the
 # payload, bounded only by the 1 MiB `head -c` above. Cursor's sessionStart
 # payloads are small, so the interleave risk is low but not established. An
-# interleaved append yields a payloads.jsonl that `jq -s` rejects, which
-# `probe_capture_matches` reads as "no match" — polling to the full timeout on
-# a capture that already arrived.
+# interleaved append yields a payloads.jsonl line that is not JSON, which the
+# poll reports as it lands and the judge refuses, keeping the workspace.
 #
 # The braces matter: a failing redirect is diagnosed by the shell before printf
 # runs, so `printf ... 2>/dev/null` would not suppress it.

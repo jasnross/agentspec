@@ -21,7 +21,7 @@ from typing import Any
 
 import pytest
 from probe_harness import console, record
-from probe_harness.contract import Manifest, ManifestV2, parse_manifest
+from probe_harness.contract import Manifest, parse_manifest
 from probe_harness.families import load_package, manual
 from probe_harness.families.base import GateFailure
 from probe_harness.families.manual import ManualProbe
@@ -52,7 +52,7 @@ BARE = ManualProbe(instructions="", payload=Line, wait_for=lambda lines: len(lin
 def record_in_process(manifest: Manifest, ws: Path, probe: ManualProbe[Any] = BARE) -> int:
     """Judge <ws> with <probe> as a live run with a terminal does, then record it; 1 on a
     refusal."""
-    source = source_map(manifest.path.parent) if isinstance(manifest, ManifestV2) else None
+    source = source_map(manifest.path.parent)
     try:
         result = manual.judge(manifest, ws, probe, None, interactive=True)
         record.write(record.compute(manifest, ws, result, dry_run=False, source=source))
@@ -179,40 +179,6 @@ def _put_manual(tree: Path, name: str, *, version_source: dict[str, Any] | None 
         MANUAL_PROBE_PY.format(variants='("assertion",)'), encoding="utf-8"
     )
     return package
-
-
-# A schema 1 manual manifest declaring no `wait_for`, and a definition carrying none of the
-# Python expressions a schema 1 manifest refuses.
-V1_MANUAL_MANIFEST: dict[str, Any] = {
-    "schema_version": 1,
-    "provider": "cursor",
-    "driver": "manual",
-    "depth": None,
-    "question": "q",
-    "version_source": {"kind": "none"},
-    "assertion": {"projection": ".[0].x", "expected": 1},
-}
-
-V1_MANUAL_PROBE_PY = """\
-from probe_harness.families.manual import ManualProbe
-
-PROBE = ManualProbe(instructions="Open the workspace and run the session.")
-"""
-
-
-def test_a_manual_manifest_without_wait_for_fails_before_the_workspace_is_ready(
-    cli: Cli, tree: Path
-) -> None:
-    package = _put_manual(tree, "manual-stub")
-    (package / "probe.json").write_text(json.dumps(V1_MANUAL_MANIFEST), encoding="utf-8")
-    (package / "probe.py").write_text(V1_MANUAL_PROBE_PY, encoding="utf-8")
-
-    result = cli("run", "manual-stub")
-
-    assert result.returncode == 1, result.output
-    assert "manifest declares no wait_for filter" in result.output
-    assert "Workspace ready" not in result.output
-    assert workspaces("manual-stub") == []
 
 
 def test_a_dry_run_with_a_matching_capture_writes_no_record(tree: Path) -> None:
@@ -583,6 +549,13 @@ def _wait_for_project(outfile: Path) -> Path | None:
     return None
 
 
+def test_a_manual_definition_requires_payload_and_wait_for() -> None:
+    with pytest.raises(TypeError):
+        ManualProbe(instructions="", payload=Line)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        ManualProbe(instructions="", wait_for=lambda lines: True)  # type: ignore[call-arg]
+
+
 def test_a_capture_whose_payloads_are_not_json_is_refused_without_a_record(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -604,7 +577,7 @@ def test_a_capture_whose_payloads_are_not_json_is_refused_without_a_record(
     assert not (pkg / "results").exists()
 
 
-V2_MANUAL_PROBE_PY = """\
+LIVE_PROBE_PY = """\
 from pydantic import MISSING
 from probe_harness.families.manual import ManualProbe
 from probe_harness.models.raw import ProviderModel
@@ -631,7 +604,7 @@ PROBE = ManualProbe(
 """
 
 
-def _put_v2_manual(tree: Path, name: str, expected: int) -> Path:
+def _put_live(tree: Path, name: str, expected: int) -> Path:
     package = tree / name
     capture = package / "fixtures" / "capture"
     capture.mkdir(parents=True)
@@ -647,7 +620,7 @@ def _put_v2_manual(tree: Path, name: str, expected: int) -> Path:
         "assertion": {"expected": expected},
     }
     (package / "probe.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    (package / "probe.py").write_text(V2_MANUAL_PROBE_PY.format(event_type="str"), encoding="utf-8")
+    (package / "probe.py").write_text(LIVE_PROBE_PY.format(event_type="str"), encoding="utf-8")
     return package
 
 
@@ -679,11 +652,11 @@ def _live_run(name: str, outfile: Path, steps: list[tuple[float, str]]) -> tuple
 def test_unrecognized_lines_and_a_raising_wait_for_are_reported_once_while_polling(
     tree: Path, tmp_path: Path
 ) -> None:
-    _put_v2_manual(tree, "v2-manual", expected=4)
+    _put_live(tree, "live-manual", expected=4)
     outfile = tmp_path / "probe.out"
 
     code, ws = _live_run(
-        "v2-manual",
+        "live-manual",
         outfile,
         [
             (0, '{"hook_event_name":"start"}'),
@@ -704,17 +677,17 @@ def test_unrecognized_lines_and_a_raising_wait_for_are_reported_once_while_polli
     assert output.count(raised) == 1
     assert "probe run: the capture holds 2 line(s) the payload model does not recognize:" in output
     assert f"the workspace has been kept for inspection: {ws}" in output
-    assert not (tree / "v2-manual" / "results").exists()
+    assert not (tree / "live-manual" / "results").exists()
 
 
 def test_a_capture_refused_for_a_model_gap_records_once_the_model_is_fixed(
     cli: Cli, tree: Path, tmp_path: Path
 ) -> None:
-    package = _put_v2_manual(tree, "v2-manual", expected=3)
+    package = _put_live(tree, "live-manual", expected=3)
     outfile = tmp_path / "probe.out"
 
     code, ws = _live_run(
-        "v2-manual",
+        "live-manual",
         outfile,
         [
             (0, '{"hook_event_name":"start"}'),
@@ -728,8 +701,8 @@ def test_a_capture_refused_for_a_model_gap_records_once_the_model_is_fixed(
     assert not (package / "results").exists()
 
     (package / "probe.py").write_text(
-        V2_MANUAL_PROBE_PY.format(event_type="str | MISSING = MISSING"), encoding="utf-8"
+        LIVE_PROBE_PY.format(event_type="str | MISSING = MISSING"), encoding="utf-8"
     )
-    recorded = cli("record", "v2-manual", ws)
+    recorded = cli("record", "live-manual", ws)
     assert recorded.returncode == 0, recorded.output
     assert "probe record: confirmed — observed 3" in recorded.stderr

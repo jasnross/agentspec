@@ -12,13 +12,13 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from probe_harness import console, jq_cli, json_values, record
+from probe_harness import console, json_values, record
 from probe_harness.arms import ArmCapture, Arms
-from probe_harness.contract import CommandSource, Manifest, ManifestV2
+from probe_harness.contract import CommandSource, Manifest
 from probe_harness.gates import GateFailure
 from probe_harness.json_values import JsonValue
 from probe_harness.preflight import RunOptions
-from probe_harness.record import JudgeResult, Observed, Projected, Selected
+from probe_harness.record import JudgeResult, Observed, Selected
 from probe_harness.source import SourceMapError, source_map
 
 __all__ = [
@@ -27,11 +27,9 @@ __all__ = [
     "CustomCheck",
     "CustomProbe",
     "GateFailure",
-    "JqCustomCheck",
     "JudgeResult",
     "Observed",
     "ProbeFunctions",
-    "Projected",
     "RunOptions",
     "Selected",
     "UsageError",
@@ -47,10 +45,8 @@ __all__ = [
     "record_tool_version",
     "refused",
     "run_checks",
-    "run_jq_checks",
     "run_wait_for",
     "source_changed",
-    "split_checks",
     "workspace_kept",
 ]
 
@@ -76,19 +72,6 @@ class CustomCheck[V]:
 
 
 @dataclass(frozen=True)
-class JqCustomCheck:
-    """The schema 1 form of a custom check: a jq expression over the view, run with `-e`.
-
-    Evaluated with `--arg m <marker>` when the definition declares a marker. <name> is the
-    name its `CustomCheck` replacement takes.
-    """
-
-    name: str
-    expression: str
-    failure: tuple[str, ...]
-
-
-@dataclass(frozen=True)
 class ProbeFunctions[V]:
     """A definition's own steps, for needs only one probe of a family has."""
 
@@ -106,23 +89,18 @@ class CustomProbe[V]:
     # Receives the workspace and the selected fixture variant.
     arrange: Callable[[Path, str], None]
     act: Callable[[Path], None]
-    # Reads the workspace into what the assertion receives. Under a v1 manifest it must
-    # return the path of the view the manifest's projection runs over.
+    # Reads the workspace into what the assertion receives.
     judge: Callable[[Path], V]
-    # Required by a v2 manifest declaring `expected`, and refused by a v1 one.
+    # Required by a manifest declaring `expected`, and refused by an option set.
     assertion: Callable[[V], JsonValue] | None = None
     variants: tuple[str, ...] = ("assertion",)
     functions: ProbeFunctions[V] = field(default_factory=ProbeFunctions)
 
 
-def decide[V](
-    manifest: Manifest, assertion: Callable[[V], JsonValue] | None, value: V, view: Path
-) -> JudgeResult:
-    """The outcome of a family whose answer is computed: jq over <view> for a schema 1
-    manifest, or the definition's assertion over <value> for a schema 2 one."""
-    if not isinstance(manifest, ManifestV2):
-        return JudgeResult(Projected(view))
-    # The agreement check guarantees an assertion for a v2 manifest declaring `expected`.
+def decide[V](assertion: Callable[[V], JsonValue] | None, value: V) -> JudgeResult:
+    """The outcome of a family whose answer is computed: the definition's assertion over
+    <value>."""
+    # The agreement check guarantees an assertion for a manifest declaring `expected`.
     assert assertion is not None
     return JudgeResult(observe(assertion, value))
 
@@ -143,14 +121,6 @@ def observe[V](assertion: Callable[[V], JsonValue], value: V) -> Observed:
             "the assertion did not yield a JSON value: it is cyclic or nested too deeply"
         ) from None
     return Observed(observed)
-
-
-def run_jq_checks(checks: Sequence[JqCustomCheck], view: Path, marker: str | None) -> None:
-    """Refuse at the first schema 1 check whose expression does not hold over <view>."""
-    args = {"m": marker} if marker is not None else {}
-    for check in checks:
-        if not jq_cli.test(check.expression, view, args=args):
-            raise GateFailure(*check.failure)
 
 
 def run_checks[V](checks: Sequence[CustomCheck[V]], value: V) -> None:
@@ -176,15 +146,6 @@ def run_wait_for[L](wait_for: Callable[[Sequence[L]], bool], lines: Sequence[L])
     if type(result) is not bool:
         raise GateFailure(f"the wait_for yielded a {type(result).__name__}, not a bool")
     return result
-
-
-def split_checks[V](
-    checks: Sequence[CustomCheck[V] | JqCustomCheck],
-) -> tuple[list[CustomCheck[V]], list[JqCustomCheck]]:
-    """A definition's checks, split into the Python ones and the schema 1 jq ones."""
-    python = [c for c in checks if isinstance(c, CustomCheck)]
-    jq = [c for c in checks if isinstance(c, JqCustomCheck)]
-    return python, jq
 
 
 def source_changed(source: Mapping[str, str], package: Path) -> record.RecordRefused | None:
@@ -265,8 +226,7 @@ def refused(failure: console.Refusal, ws: Path) -> int:
 def kept_on_failure(ws: Path) -> Iterator[None]:
     """Print the kept-workspace line when a run fails in any way after <ws> exists.
 
-    A nonzero `SystemExit` and every other exception still propagate after the line. An
-    unexpected jq failure becomes jq's own diagnostic and exit 1 rather than a traceback.
+    A nonzero `SystemExit` and every other exception still propagate after the line.
     """
     try:
         yield
@@ -274,10 +234,6 @@ def kept_on_failure(ws: Path) -> Iterator[None]:
         if e.code not in (None, 0):
             kept_for_inspection(ws)
         raise
-    except jq_cli.JqError as e:
-        console.verbatim(e.stderr.splitlines())
-        kept_for_inspection(ws)
-        raise SystemExit(1) from None
     except BaseException:
         kept_for_inspection(ws)
         raise
@@ -286,14 +242,14 @@ def kept_on_failure(ws: Path) -> Iterator[None]:
 def record_result(manifest: Manifest, ws: Path, result: JudgeResult, options: RunOptions) -> int:
     """Record the judged result; a dry run prints it instead. The workspace is kept.
 
-    A v2 record carries the source map preflight computed, which a real run computes again
+    The record carries the source map preflight computed, which a real run computes again
     before writing: an edit made while the run was under way would otherwise be recorded
     as code that never ran.
     """
-    source = options.source if isinstance(manifest, ManifestV2) else None
+    source = options.source
     try:
         computed = record.compute(manifest, ws, result, dry_run=options.dry_run, source=source)
-        if source is not None and not options.dry_run:
+        if not options.dry_run:
             changed = source_changed(source, manifest.path.parent)
             if changed is not None:
                 raise changed

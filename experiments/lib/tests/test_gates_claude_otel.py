@@ -292,7 +292,7 @@ def test_gate_control_does_not_admit_a_request_governed_by_one_of_its_messages(
 ) -> None:
     # A request is governed as a whole, whichever of its messages carries the marker. Judged
     # once per message, the messages lacking it would admit a *governed* request to the
-    # control set — putting the arm's own level into the control the projection compares
+    # control set — putting the arm's own level into the control the assertion compares
     # it against. Gate 2 passes throughout, so the contamination would be silent.
     #
     # Here the two requests disagree, so a control set that admitted the governed `low`

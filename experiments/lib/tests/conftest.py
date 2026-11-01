@@ -302,7 +302,7 @@ def direct_request(*tools: str, marker: str = MARKER) -> dict[str, Any]:
 
 
 def compact(value: Any) -> str:
-    """`jq -c` text for <value>."""
+    """<value> as one line of compact JSON, as a provider writes a sink body."""
     return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
 
 

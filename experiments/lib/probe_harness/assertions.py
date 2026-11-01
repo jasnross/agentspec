@@ -1,8 +1,9 @@
 """What an assertion needs to reproduce jq's view of JSON in Python.
 
 jq orders every JSON value totally, and `sort`, `unique` and `keys` all lean on that order.
-A Python assertion replacing a jq projection must order values the same way, or it yields
-the same elements in a different order and compares unequal to a record written by jq.
+The committed `expected` values and sample results were written in jq's order, so a Python
+assertion must order values the same way, or it yields the same elements in a different
+order and compares unequal to them.
 """
 
 import re

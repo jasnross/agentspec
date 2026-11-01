@@ -5,6 +5,6 @@ TODO.md
 # A probe run must be the last thing that touches its own record.
 experiments/*/results/
 
-# This agent body carries a deferred-tools listing whose line breaks Claude reproduces in `.system` and the projection splits on;
+# This agent body carries a deferred-tools listing whose line breaks Claude reproduces in `.system` and the assertion splits on;
 # reflowing it into one paragraph would change the capture the fixture is committed to produce.
 experiments/claude-subagent-mcp-resource-tools/fixtures/discriminator/read/.claude/agents/probe-res-read.md

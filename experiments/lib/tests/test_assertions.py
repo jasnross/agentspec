@@ -1,10 +1,10 @@
 """`assertions.py` orders JSON values exactly as jq does, checked against jq itself."""
 
 import json
-from pathlib import Path
+import subprocess
 
 import pytest
-from probe_harness import jq_cli, json_values
+from probe_harness import json_values
 from probe_harness.assertions import NO_GOVERNED_REQUEST, consistent, sorted_values, unique
 from probe_harness.json_values import JsonValue
 
@@ -37,26 +37,31 @@ VALUES: list[JsonValue] = [
 ]
 
 
-def _jq(expr: str, values: list[JsonValue], tmp_path: Path) -> JsonValue:
-    path = tmp_path / "values.json"
-    path.write_text(json.dumps(values), encoding="utf-8")
-    return json_values.loads(jq_cli.evaluate(expr, path, compact=True))
+def _jq(program: str, value: JsonValue) -> JsonValue:
+    """jq's `-c <program>` over <value>: the reference these orderings are checked against."""
+    completed = subprocess.run(
+        ["jq", "-c", program],
+        input=json.dumps(value),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    )
+    return json_values.loads(completed.stdout)
 
 
-def test_sorted_values_is_jq_s_sort(tmp_path: Path) -> None:
-    assert sorted_values(VALUES) == _jq("sort", VALUES, tmp_path)
+def test_sorted_values_is_jq_s_sort() -> None:
+    assert sorted_values(VALUES) == _jq("sort", VALUES)
 
 
-def test_unique_is_jq_s_unique(tmp_path: Path) -> None:
-    assert unique(VALUES) == _jq("unique", VALUES, tmp_path)
+def test_unique_is_jq_s_unique() -> None:
+    assert unique(VALUES) == _jq("unique", VALUES)
 
 
-def test_object_keys_sort_as_jq_s_keys(tmp_path: Path) -> None:
+def test_object_keys_sort_as_jq_s_keys() -> None:
     keys = ["b", "a", "é", "Z", "😀", "￿", "aa"]
-    document = {k: 1 for k in keys}
-    path = tmp_path / "doc.json"
-    path.write_text(json.dumps(document), encoding="utf-8")
-    assert sorted(document) == json_values.loads(jq_cli.evaluate("keys", path, compact=True))
+    document: dict[str, JsonValue] = {k: 1 for k in keys}
+    assert sorted(document) == _jq("keys", document)
 
 
 @pytest.mark.parametrize(

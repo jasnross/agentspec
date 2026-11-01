@@ -20,22 +20,16 @@ from pathlib import Path
 
 from pydantic import MISSING, ValidationError
 
-from probe_harness import console, contract, jq_cli, json_values
+from probe_harness import console, json_values
 from probe_harness.contract import (
     CaptureSource,
-    CaptureSourceV1,
     CommandSource,
     Driver,
     ExpectedAssertion,
     Manifest,
-    ManifestV1,
-    ManifestV2,
     NoSource,
     OptionsAssertion,
-    ProjectionAssertionV1,
-    RecordAssertionV1,
     RecordAssertionV2,
-    RecordV1,
     RecordV2,
     Status,
 )
@@ -46,15 +40,8 @@ VERSION_COMMAND_TIMEOUT_SECONDS = 10
 
 
 @dataclass(frozen=True)
-class Projected:
-    """A v1 manifest's outcome: the manifest's jq projection runs over <view>."""
-
-    view: Path
-
-
-@dataclass(frozen=True)
 class Observed:
-    """A v2 manifest's outcome: the definition's assertion already ran and yielded <value>."""
+    """A computed outcome: the definition's assertion already ran and yielded <value>."""
 
     value: JsonValue
 
@@ -66,7 +53,7 @@ class Selected:
     option: str
 
 
-type Outcome = Projected | Observed | Selected
+type Outcome = Observed | Selected
 
 
 @dataclass(frozen=True)
@@ -74,8 +61,8 @@ class JudgeResult:
     """What Judge hands to Record."""
 
     outcome: Outcome
-    # A v2 `capture` version source's value, computed by the definition's
-    # `capture_version`; None for every other source.
+    # A `capture` version source's value, computed by the definition's `capture_version`;
+    # None for every other source.
     captured_version: str | None = None
 
 
@@ -86,7 +73,7 @@ class ComputedRecord:
     manifest: Manifest
     # `%Y-%m-%dT%H%M%S` from one UTC clock read; the record's `date` is the part before `T`.
     stamp: str
-    record: contract.Record
+    record: RecordV2
 
     @property
     def status(self) -> Status:
@@ -120,21 +107,19 @@ def compute(
     result: JudgeResult,
     *,
     dry_run: bool,
-    source: Mapping[str, str] | None = None,
+    source: Mapping[str, str],
     arranged: Mapping[str, str] | None = None,
 ) -> ComputedRecord:
     """Compare a judged workspace's result and return the record; raise `RecordRefused`.
 
-    A v2 manifest's record carries <source>, which it requires, and <arranged> when given.
-    Writes nothing. Prints only the dry-run warning for a workspace with no recorded tool
-    version. Assumes jq is installed for a v1 manifest, which every caller has checked.
+    The record carries <source>, and <arranged> when given. Writes nothing. Prints only the
+    dry-run warning for a workspace with no recorded tool version.
     """
-    # Each outcome pairs with one assertion shape; a mismatch is a wiring error, since a
-    # projection over an options manifest resolves to `null` and records a false `refuted`.
+    # Each outcome pairs with one assertion shape; a mismatch is a wiring error, since an
+    # `Observed` value compared against an option set's `expected` would record a false
+    # `refuted`.
     match manifest.assertion, result.outcome:
-        case (ProjectionAssertionV1(), Projected()) | (ExpectedAssertion(), Observed()):
-            pass
-        case (OptionsAssertion(), Selected()):
+        case (ExpectedAssertion(), Observed()) | (OptionsAssertion(), Selected()):
             pass
         case _:
             raise AssertionError(
@@ -156,8 +141,6 @@ def compute(
     match result.outcome:
         case Selected(option=option):
             observed, option_status = _select(manifest, option)
-        case Projected(view=view):
-            observed = project(manifest, view)
         case Observed(value=value):
             observed = value
 
@@ -177,34 +160,20 @@ def compute(
     # predecessor.
     stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H%M%S")
     version = tool_version or None
-    document: contract.Record
     try:
-        match manifest:
-            case ManifestV1():
-                document = RecordV1(
-                    schema_version=1,
-                    provider=manifest.provider,
-                    status=status,
-                    depth=manifest.depth,
-                    date=stamp.split("T", 1)[0],
-                    tool_version=version,
-                    assertion=_assertion_v1(manifest, observed),
-                )
-            case ManifestV2():
-                assert source is not None, "a v2 record carries the source map that judged it"
-                document = RecordV2(
-                    schema_version=2,
-                    provider=manifest.provider,
-                    status=status,
-                    depth=manifest.depth,
-                    date=stamp.split("T", 1)[0],
-                    tool_version=version,
-                    source=dict(source),
-                    arranged=MISSING if arranged is None else dict(arranged),
-                    assertion=_assertion_v2(manifest, observed),
-                )
+        document = RecordV2(
+            schema_version=2,
+            provider=manifest.provider,
+            status=status,
+            depth=manifest.depth,
+            date=stamp.split("T", 1)[0],
+            tool_version=version,
+            source=dict(source),
+            arranged=MISSING if arranged is None else dict(arranged),
+            assertion=_assertion(manifest, observed),
+        )
     except ValidationError as e:
-        # pydantic refuses a JSON value nested past about 255 levels, which a projection can
+        # pydantic refuses a JSON value nested past about 255 levels, which an assertion can
         # still yield. Its location would repeat once per level, so only the messages show.
         raise RecordRefused(
             "the observed value cannot be written as a record",
@@ -240,15 +209,7 @@ def report(record: ComputedRecord, written: Path | None) -> None:
     console.say(f"{record.status} — observed {_compact(record.observed)}")
 
 
-def _assertion_v1(manifest: ManifestV1, observed: JsonValue) -> RecordAssertionV1:
-    match manifest.assertion:
-        case ProjectionAssertionV1(projection=projection, expected=expected):
-            return RecordAssertionV1(projection=projection, expected=expected, observed=observed)
-        case OptionsAssertion(options=options, expected=expected):
-            return RecordAssertionV1(options=options, expected=expected, observed=observed)
-
-
-def _assertion_v2(manifest: ManifestV2, observed: JsonValue) -> RecordAssertionV2:
+def _assertion(manifest: Manifest, observed: JsonValue) -> RecordAssertionV2:
     match manifest.assertion:
         case ExpectedAssertion(expected=expected):
             return RecordAssertionV2(expected=expected, observed=observed)
@@ -263,29 +224,6 @@ def _select(manifest: Manifest, selection: str) -> tuple[str, str]:
     if option is None:
         raise RecordRefused(f'selection "{selection}" is not one of the manifest\'s option ids')
     return selection, "" if option.status is MISSING else option.status
-
-
-def project(manifest: Manifest, view: Path) -> JsonValue:
-    """The projection's single value over <view>; `null` when it yields none."""
-    assert isinstance(manifest.assertion, ProjectionAssertionV1)
-    projection = manifest.assertion.projection
-    try:
-        output = jq_cli.evaluate(projection, view, compact=True)
-    except jq_cli.JqError as e:
-        raise RecordRefused(
-            f"projection failed: {projection}", detail=tuple(e.stderr.splitlines())
-        ) from None
-    try:
-        values = json_values.load_stream(output)
-    except ValueError as e:
-        raise RecordRefused(f"projection failed: {projection}", detail=(str(e),)) from None
-    # A projection emitting more than one value cannot be compared structurally against
-    # a single `expected`.
-    if len(values) > 1:
-        raise RecordRefused(
-            f"projection must yield exactly one JSON value, but yielded several: {projection}"
-        )
-    return values[0] if values else None
 
 
 def _tool_version(manifest: Manifest, ws: Path, result: JudgeResult, *, dry_run: bool) -> str:
@@ -305,24 +243,12 @@ def _tool_version(manifest: Manifest, ws: Path, result: JudgeResult, *, dry_run:
                     f"no recorded tool version in {ws}",
                     "re-run the probe; a later judge never runs the version command.",
                 )
-        case CaptureSourceV1(jq=expr):
-            version = capture_version_v1(expr, ws / "capture" / "payloads.jsonl")
         case CaptureSource():
             # The judge computed it with the definition's `capture_version`.
             version = result.captured_version or ""
         case NoSource():
             version = ""
-    return "" if version == "null" else version
-
-
-def capture_version_v1(expr: str, payloads: Path) -> str:
-    """A schema 1 capture version expression's raw output over <payloads>, slurped as every
-    declared capture expression is array-shaped; `null` when it yields no version."""
-    try:
-        out = jq_cli.evaluate(expr, payloads, slurp=True, raw=True)
-    except jq_cli.JqError as e:
-        out = e.stdout
-    return out.rstrip("\n")
+    return version
 
 
 def run_version_command(argv: tuple[str, ...], *, timeout: float | None) -> str:

@@ -2,7 +2,7 @@
 
 Fully script-driven: no human step, no network, no credentials. The oracle's raw output
 goes to `view.json` unprojected, and is validated against the definition's `output` model:
-a schema 1 manifest's projection reads the file, and a schema 2 assertion the model.
+the definition's assertion reads the model.
 
 Workspace layout: the variant's fixture tree copied to `<ws>/` (or to `<ws>/project/`
 under an isolated layout), plus `<ws>/view.json` and `<ws>/oracle.stderr`.
@@ -40,7 +40,7 @@ from probe_harness.models.raw import ProviderModel, field_path
 from probe_harness.source import write_source
 from probe_harness.workspace import create_workspace
 
-FAMILY_TOOLS = ("jq", "opencode")
+FAMILY_TOOLS = ("opencode",)
 
 
 @dataclass(frozen=True)
@@ -51,7 +51,7 @@ class OpenCodeDebugProbe[D: ProviderModel | RootModel[Any]]:
     output: type[D]
     variants: tuple[str, ...] = ("assertion",)
     isolation: OpenCodeIsolation | None = None
-    # Required by a schema 2 manifest declaring `expected`, and refused by a schema 1 one.
+    # Required by a manifest declaring `expected`, and refused by an option set.
     assertion: Callable[[D], JsonValue] | None = None
     custom_checks: tuple[CustomCheck[D], ...] = ()
     functions: ProbeFunctions[D] = field(default_factory=ProbeFunctions)
@@ -66,7 +66,7 @@ def run[D: ProviderModel | RootModel[Any]](
         write_source(ws, options.source)
         try:
             _arrange_and_act(manifest, package, ws, options.variant, probe)
-            result = judge(ws, probe, manifest)
+            result = judge(ws, probe)
         except GateFailure as e:
             return refused(e, ws)
         return record_result(manifest, ws, result, options)
@@ -80,14 +80,14 @@ def parse[D: ProviderModel | RootModel[Any]](ws: Path, probe: OpenCodeDebugProbe
             "the oracle produced no output; its stderr follows:",
             detail=file_lines(ws / "oracle.stderr"),
         )
-    # Named here rather than left to the recorder, which would report "projection failed"
-    # and send the reader after an expression that is correct.
+    # Refused here, where the file that is not JSON is known, rather than leaving the reader
+    # to suspect an expression that is correct.
     try:
         document = json_values.loads(view.read_text(encoding="utf-8"))
     except ValueError:
         document = None
-    # A resolved config or listing is an object or an array; a bare `null` would project
-    # to nulls and record a false `refuted`.
+    # A resolved config or listing is an object or an array; a bare `null` would read as
+    # nulls and record a false `refuted`.
     if not isinstance(document, dict | list):
         raise GateFailure(
             f"the oracle wrote a document that is not valid JSON — {view.stat().st_size} bytes at "
@@ -103,9 +103,7 @@ def parse_sample[D: ProviderModel | RootModel[Any]](
     return _validated(probe, document, label)
 
 
-def judge[D: ProviderModel | RootModel[Any]](
-    ws: Path, probe: OpenCodeDebugProbe[D], manifest: Manifest
-) -> JudgeResult:
+def judge[D: ProviderModel | RootModel[Any]](ws: Path, probe: OpenCodeDebugProbe[D]) -> JudgeResult:
     """Judge a workspace from the files the oracle left: its output and its stderr."""
     value = parse(ws, probe)
     run_checks(probe.custom_checks, value)
@@ -113,9 +111,9 @@ def judge[D: ProviderModel | RootModel[Any]](
         probe.functions.judge(value)
     view = ws / "view.json"
     # Printed before recording: a dry or failed record keeps the workspace, and this view is
-    # what a candidate projection is iterated against.
+    # kept so an author can inspect what the expressions read.
     console.say(f"the assembled view is at {view}")
-    return decide(manifest, probe.assertion, value, view)
+    return decide(probe.assertion, value)
 
 
 def _validated[D: ProviderModel | RootModel[Any]](

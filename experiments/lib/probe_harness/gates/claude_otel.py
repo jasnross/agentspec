@@ -124,7 +124,7 @@ def deferred_mcp(arms: Arms, marker: str, arm: str, tools: Sequence[str]) -> Non
     """Gate 4: the arm's governed requests list every tool as deferred, beside `ToolSearch`.
 
     It decides whether the run measured Claude under its default tool search. It also pins
-    the listing's format, one bare tool name per line, which the projections read.
+    the listing's format, one bare tool name per line, which the assertions read.
     """
     requests = governed_requests(_requests(arms, arm), marker)
     deferred = {line for r in requests for line in deferred_tools(r)}
@@ -218,7 +218,7 @@ def mcp_absent(arms: Arms, marker: str, prefix: str) -> None:
         f"a main-thread request listed a tool starting with {prefix}:",
         *(f"  arm {name}: {n}" for name, names in found.items() for n in names),
         "a server outside the fixture shares that name, likely a user-scope server in "
-        "~/.claude.json, so the projection cannot tell its tools from the fixture's. "
+        "~/.claude.json, so the assertion cannot tell its tools from the fixture's. "
         "No record written.",
     )
 

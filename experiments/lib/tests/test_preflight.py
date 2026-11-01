@@ -2,7 +2,6 @@
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 import textwrap
@@ -65,46 +64,6 @@ def _put_custom(
     source = probe_py or STUB_PROBE_PY
     (package / "probe.py").write_text(source.format(name=name, code=0), encoding="utf-8")
     return package
-
-
-# A schema 1 manifest whose projection does not compile, and a definition carrying none of
-# the Python expressions a schema 1 manifest refuses.
-V1_NON_COMPILING_MANIFEST: dict[str, Any] = {
-    "schema_version": 1,
-    "provider": "opencode",
-    "driver": "unattended",
-    "depth": None,
-    "question": "q",
-    "version_source": {"kind": "none"},
-    "assertion": {"projection": ".[", "expected": 1},
-}
-
-V1_STUB_PROBE_PY = textwrap.dedent("""\
-    import sys
-    from pathlib import Path
-    from probe_harness.families.base import CustomProbe
-
-    def _act(ws: Path) -> None:
-        print("ran stub")
-        sys.exit(0)
-
-    PROBE = CustomProbe(required_tools=(), arrange=lambda ws, variant: None, act=_act,
-                        judge=lambda ws: ws / "view.json")
-""")
-
-
-def test_a_non_compiling_projection_exits_1_before_any_workspace(cli: Cli, tree: Path) -> None:
-    package = tree / "stub"
-    package.mkdir()
-    (package / "probe.json").write_text(json.dumps(V1_NON_COMPILING_MANIFEST), encoding="utf-8")
-    (package / "probe.py").write_text(V1_STUB_PROBE_PY, encoding="utf-8")
-
-    result = cli("run", "stub")
-
-    assert result.returncode == 1, result.output
-    assert "projection does not compile" in result.output
-    assert "ran stub" not in result.output
-    assert workspaces("stub") == []
 
 
 def test_probe_dry_run_outside_0_and_1_exits_2(cli: Cli, tree: Path) -> None:
@@ -190,9 +149,6 @@ def test_a_missing_git_is_refused_before_a_workspace(tree: Path, tmp_path: Path)
     _put_custom(tree, "stub")
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    jq = shutil.which("jq")
-    assert jq is not None
-    (bin_dir / "jq").symlink_to(jq)
 
     completed = subprocess.run(
         [sys.executable, str(EXPERIMENTS_DIR / "probe"), "run", "stub"],

@@ -13,15 +13,11 @@ from pathlib import Path
 
 from probe_harness import json_values
 from probe_harness.contract import (
-    Driver,
     Manifest,
-    ManifestV1,
     OptionsAssertion,
     parse_manifest,
     parse_record,
 )
-from probe_harness.families.manual import ManualProbe
-from probe_harness.loader import load_definition
 
 from tests.conftest import (
     EXPERIMENTS_DIR,
@@ -71,26 +67,12 @@ def test_every_options_manifest_s_expected_names_one_of_its_own_option_ids() -> 
     # A typo here would make the probe permanently unpassable, and it would only surface
     # during a live session, the most expensive place to find it.
     #
-    # Scoped by assertion shape on purpose: a projection manifest's `expected` is an
+    # Scoped by assertion shape on purpose: an `expected`-only manifest's `expected` is an
     # arbitrary JSON value with no `options` to name.
     for path, assertion in _options_manifests():
         assert any(json_values.equal(o.id, assertion.expected) for o in assertion.options), (
             f"options manifest expected names no existing option id: {path}"
         )
-
-
-def test_every_manual_package_has_a_wait_for() -> None:
-    # The runner polls against it; without one the run burns its full timeout. A schema 1
-    # package's sits in its manifest, and a schema 2 package's on its definition.
-    for path in _manifests():
-        manifest = parse_manifest(path)
-        if manifest.driver != Driver.MANUAL:
-            continue
-        if isinstance(manifest, ManifestV1):
-            assert manifest.wait_for is not None, f"manual manifest declares no wait_for: {path}"
-        else:
-            definition = load_definition(path.parent, (ManualProbe,))
-            assert definition.wait_for is not None, f"manual definition has no wait_for: {path}"
 
 
 def test_every_probe_package_is_a_measurement() -> None:

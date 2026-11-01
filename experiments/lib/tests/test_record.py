@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 from probe_harness import contract, json_values, record
 from probe_harness.json_values import JsonValue
-from probe_harness.record import JudgeResult, Observed, Outcome, Projected, Selected
+from probe_harness.record import JudgeResult, Observed, Outcome, Selected
 from probe_harness.source import read_source, source_map, write_source
 
 from tests.conftest import (
@@ -111,58 +111,6 @@ ASSERTION_FIRST_VARIANT = (
     "lambda lines: next((line.variant for line in lines if isinstance(line, Line)), None)"
 )
 
-# A schema 1 projection manifest, and the schema 1-shaped definitions beside one: no
-# assertion, `wait_for` or capture version, each of which a schema 1 manifest refuses.
-V1_SCRIPT_MANIFEST: dict[str, Any] = {
-    "schema_version": 1,
-    "provider": "opencode",
-    "driver": "unattended",
-    "depth": "resolved-config",
-    "question": "Test manifest.",
-    "version_source": {"kind": "none"},
-    "assertion": {
-        "projection": "{model, variant}",
-        "expected": {"model": "m", "variant": "high"},
-    },
-}
-
-V1_UNATTENDED_MANIFEST: dict[str, Any] = {
-    "schema_version": 1,
-    "provider": "opencode",
-    "driver": "unattended",
-    "depth": None,
-    "question": "q",
-    "version_source": {"kind": "none"},
-    "assertion": {"projection": ".", "expected": 1},
-}
-
-V1_MANUAL_PROJECTION_MANIFEST: dict[str, Any] = {
-    "schema_version": 1,
-    "provider": "cursor",
-    "driver": "manual",
-    "depth": None,
-    "question": "q",
-    "version_source": {"kind": "none"},
-    "assertion": {"projection": "[.[] | .variant] | first", "expected": "high"},
-}
-
-V1_VIEW_PROBE_PY = """\
-from pathlib import Path
-from probe_harness.families.base import CustomProbe
-
-PROBE = CustomProbe(required_tools=(), arrange=lambda ws, variant: None, act=lambda ws: None,
-                    judge=lambda ws: ws / "view.json")
-"""
-
-V1_MANUAL_PROBE_PY = """\
-from probe_harness.families.manual import ManualProbe
-
-PROBE = ManualProbe(instructions="")
-"""
-
-# The schema 1 filter every capture here satisfies.
-V1_WAIT_FOR = "length > 0"
-
 # The source map an in-process record carries; any map of blob ids will do.
 SOURCE = {"experiments/x/probe.json": "0" * 40}
 
@@ -216,19 +164,6 @@ def write_manifest(path: Path, manifest: dict[str, Any]) -> None:
     (path.parent / "probe.py").write_text(probe_py)
 
 
-def write_v1_manifest(path: Path, manifest: dict[str, Any]) -> None:
-    """Write schema 1 <manifest> beside a schema 1-shaped definition of its family.
-
-    A `manual` manifest also gets, unless it declares one, the `wait_for` every capture here
-    satisfies.
-    """
-    manual = manifest.get("driver") == "manual"
-    if manual:
-        manifest = {"wait_for": V1_WAIT_FOR, **manifest}
-    path.write_text(json.dumps(manifest, indent=2) + "\n")
-    (path.parent / "probe.py").write_text(V1_MANUAL_PROBE_PY if manual else V1_VIEW_PROBE_PY)
-
-
 def write_view_text(path: Path, text: str) -> None:
     path.write_text(text + "\n")
 
@@ -248,7 +183,7 @@ def record_arranged(cli: Cli, pkg: Path, ws: Path, *args: str, **options: Any) -
     """`probe record <pkg> <ws> <args…>`, over a workspace carrying the source map a run
     arranging <pkg> as it now stands would have written.
 
-    A real record of a schema 2 package refuses a workspace without one before judging.
+    A real record refuses a workspace without one before judging.
     """
     write_source(
         ws if ws.is_absolute() else (options.get("cwd") or Path.cwd()) / ws, source_map(pkg)
@@ -274,29 +209,6 @@ def first_record_file(pkg: Path) -> Path:
 def dry_run(cli: Cli, *args: str | os.PathLike[str]) -> Result:
     """`probe record <args…> --dry-run`: stdout is the would-be record, stderr the diagnostic."""
     return cli("record", *args, "--dry-run")
-
-
-def test_a_matching_observed_value_records_confirmed(
-    cli: Cli, pkg: Path, manifest: Path, view: Path
-) -> None:
-    write_v1_manifest(manifest, V1_SCRIPT_MANIFEST)
-    write_view_text(view, '{"model":"m","variant":"high"}')
-
-    result = cli("record", "pkg", view.parent)
-    assert result.returncode == 0
-    assert the_record(pkg)["status"] == "confirmed"
-
-
-def test_a_mismatching_observed_value_records_refuted(
-    cli: Cli, pkg: Path, manifest: Path, view: Path
-) -> None:
-    write_v1_manifest(manifest, V1_SCRIPT_MANIFEST)
-    write_view_text(view, '{"model":"m","variant":"low"}')
-
-    result = cli("record", "pkg", view.parent)
-    assert result.returncode == 0
-    assert the_record(pkg)["status"] == "refuted"
-    assert the_record(pkg)["assertion"]["observed"]["variant"] == "low"
 
 
 def test_comparison_is_structural_so_key_order_does_not_matter(
@@ -556,35 +468,7 @@ def test_a_capture_with_no_payloads_is_refused(
     assert not (pkg / "results").is_dir()
 
 
-def test_a_fresh_capture_records_successfully_and_stores_nothing_about_the_capture(
-    cli: Cli, tmp_path: Path, pkg: Path, manifest: Path
-) -> None:
-    write_v1_manifest(
-        manifest,
-        {
-            "schema_version": 1,
-            "provider": "cursor",
-            "driver": "manual",
-            "depth": None,
-            "question": "q",
-            "version_source": {
-                "kind": "capture",
-                "jq": "[.[] | .cursor_version] | map(select(. != null)) | first",
-            },
-            "assertion": {"projection": "[.[] | .variant] | first", "expected": "high"},
-        },
-    )
-    ws = fresh_capture(tmp_path)
-
-    result = cli("record", "pkg", ws)
-    assert result.returncode == 0
-    assert the_record(pkg)["status"] == "confirmed"
-    # The version came out of the capture, slurped.
-    assert the_record(pkg)["tool_version"] == "3.16.17"
-    assert "capture" not in the_record(pkg)
-
-
-V2_CAPTURE_PROBE_PY = """\
+CAPTURE_PROBE_PY = """\
 from probe_harness.families.manual import ManualProbe
 from probe_harness.models.cursor_hook import CursorHookPayload, cursor_version
 
@@ -600,7 +484,7 @@ PROBE = ManualProbe(
 """
 
 
-def test_a_schema_2_capture_source_records_the_version_capture_version_returns(
+def test_a_capture_source_records_the_version_capture_version_returns(
     cli: Cli, tmp_path: Path, pkg: Path, manifest: Path
 ) -> None:
     manifest.write_text(
@@ -617,7 +501,7 @@ def test_a_schema_2_capture_source_records_the_version_capture_version_returns(
         )
         + "\n"
     )
-    (pkg / "probe.py").write_text(V2_CAPTURE_PROBE_PY)
+    (pkg / "probe.py").write_text(CAPTURE_PROBE_PY)
     ws = tmp_path / "ws"
     (ws / "capture").mkdir(parents=True)
     line = {"hook_event_name": "sessionStart", "conversation_id": "c", "cursor_version": "3.16.17"}
@@ -629,22 +513,6 @@ def test_a_schema_2_capture_source_records_the_version_capture_version_returns(
     assert result.returncode == 0, result.output
     assert the_record(pkg)["status"] == "confirmed"
     assert the_record(pkg)["tool_version"] == "3.16.17"
-
-
-def test_the_emitted_record_parses_and_carries_the_full_key_set(
-    cli: Cli,
-    pkg: Path,
-    manifest: Path,
-    view: Path,
-    record_wellformed: RecordWellformed,
-) -> None:
-    write_v1_manifest(manifest, V1_SCRIPT_MANIFEST)
-    write_view_text(view, '{"model":"m","variant":"high"}')
-
-    result = cli("record", "pkg", view.parent)
-    assert result.returncode == 0
-
-    record_wellformed(first_record_file(pkg))
 
 
 def test_date_is_stamped_in_utc(cli: Cli, pkg: Path, manifest: Path, view: Path) -> None:
@@ -733,32 +601,6 @@ def test_a_manifest_declaring_no_expected_value_is_refused(
     assert not (pkg / "results").is_dir()
 
 
-def test_a_manifest_declaring_both_projection_and_options_is_refused(
-    cli: Cli, manifest: Path, view: Path
-) -> None:
-    write_v1_manifest(
-        manifest,
-        {
-            "schema_version": 1,
-            "provider": "cursor",
-            "driver": "manual",
-            "depth": None,
-            "question": "q",
-            "version_source": {"kind": "none"},
-            "assertion": {
-                "projection": ".",
-                "options": [{"id": "a", "text": "a"}],
-                "expected": "a",
-            },
-        },
-    )
-    write_view_text(view, "{}")
-
-    result = cli("record", "pkg", view.parent)
-    assert result.returncode != 0
-    assert "exactly one of projection or options" in result.output
-
-
 def test_a_manifest_declaring_options_under_any_other_driver_is_refused(
     cli: Cli, tmp_path: Path, pkg: Path, manifest: Path
 ) -> None:
@@ -796,28 +638,6 @@ def test_a_manifest_declaring_options_under_any_other_driver_is_refused(
         assert result.returncode != 0, driver
         assert "requires a manual driver" in result.output, driver
         assert not (pkg / "results").is_dir(), driver
-
-
-def test_a_manifest_declaring_neither_projection_nor_options_is_refused(
-    cli: Cli, manifest: Path, view: Path
-) -> None:
-    write_v1_manifest(
-        manifest,
-        {
-            "schema_version": 1,
-            "provider": "cursor",
-            "driver": "unattended",
-            "depth": None,
-            "question": "q",
-            "version_source": {"kind": "none"},
-            "assertion": {"expected": "a"},
-        },
-    )
-    write_view_text(view, "{}")
-
-    result = cli("record", "pkg", view.parent)
-    assert result.returncode != 0
-    assert "exactly one of projection or options" in result.output
 
 
 def test_an_options_manifest_recorded_without_a_selection_is_a_usage_error(
@@ -887,7 +707,7 @@ def test_a_manifest_with_an_unknown_schema_version_is_refused(
 
     result = cli("record", "pkg", view.parent)
     assert result.returncode != 0
-    assert "probe record:   schema_version must be 1 or 2\n" in result.output
+    assert "probe record:   schema_version must be 2\n" in result.output
 
 
 def test_a_manifest_with_an_unknown_driver_is_refused(
@@ -913,28 +733,6 @@ def test_a_manifest_with_an_unknown_driver_is_refused(
     assert result.returncode != 0
     assert "  driver: Input should be 'unattended', 'billed' or 'manual'" in result.output
     assert not (pkg / "results").is_dir()
-
-
-def test_a_projection_yielding_several_values_is_refused_with_a_clear_diagnostic(
-    cli: Cli, manifest: Path, view: Path
-) -> None:
-    write_v1_manifest(
-        manifest,
-        {
-            "schema_version": 1,
-            "provider": "opencode",
-            "driver": "unattended",
-            "depth": None,
-            "question": "q",
-            "version_source": {"kind": "none"},
-            "assertion": {"projection": ".[]", "expected": 1},
-        },
-    )
-    write_view_text(view, "[1,2,3]")
-
-    result = cli("record", "pkg", view.parent)
-    assert result.returncode != 0
-    assert "exactly one JSON value" in result.output
 
 
 def test_a_duplicated_option_id_is_refused(cli: Cli, tmp_path: Path, manifest: Path) -> None:
@@ -1087,12 +885,6 @@ def _parsed(tmp_path: Path, document: dict[str, Any]) -> contract.Manifest:
     return contract.parse_manifest(path)
 
 
-def _view_file(tmp_path: Path, text: str) -> Path:
-    path = tmp_path / "view.json"
-    path.write_text(text + "\n", encoding="utf-8")
-    return path
-
-
 def _compute(
     manifest: contract.Manifest,
     ws: Path,
@@ -1105,12 +897,6 @@ def _compute(
     having observed <value>."""
     outcome: Outcome = Selected(selection) if selection is not None else Observed(value)
     return record.compute(manifest, ws, JudgeResult(outcome), dry_run=dry_run, source=SOURCE)
-
-
-def _compute_v1(manifest: contract.Manifest, ws: Path, view: str) -> record.ComputedRecord:
-    """`record.compute` over <ws>, judged as a schema 1 projection over the view text <view>."""
-    outcome = Projected(_view_file(ws, view))
-    return record.compute(manifest, ws, JudgeResult(outcome), dry_run=False)
 
 
 def test_compute_confirms_a_matching_observed_value(tmp_path: Path) -> None:
@@ -1133,17 +919,6 @@ def test_compute_takes_an_inconclusive_option_s_status(tmp_path: Path) -> None:
     computed = _compute(manifest, fresh_capture(tmp_path), selection="couldnt-tell")
     assert computed.status == contract.Status.INCONCLUSIVE
     assert computed.observed == "couldnt-tell"
-
-
-def test_compute_refuses_a_projection_yielding_several_values(tmp_path: Path) -> None:
-    manifest = _parsed(
-        tmp_path, {**V1_UNATTENDED_MANIFEST, "assertion": {"projection": ".[]", "expected": 1}}
-    )
-    with pytest.raises(record.RecordRefused) as exc:
-        _compute_v1(manifest, tmp_path, "[1, 2]")
-    assert exc.value.lines == (
-        "projection must yield exactly one JSON value, but yielded several: .[]",
-    )
 
 
 def test_compute_writes_no_file_and_prints_nothing(
@@ -1183,48 +958,6 @@ def test_an_expected_true_refutes_an_observed_1(tmp_path: Path) -> None:
     manifest = _parsed(tmp_path, unattended_manifest(assertion={"expected": True}))
     computed = _compute(manifest, tmp_path, value=1)
     assert computed.status == contract.Status.REFUTED
-
-
-def test_a_projection_yielding_no_value_observes_null(tmp_path: Path) -> None:
-    manifest = _parsed(
-        tmp_path, {**V1_UNATTENDED_MANIFEST, "assertion": {"projection": "empty", "expected": None}}
-    )
-    computed = _compute_v1(manifest, tmp_path, "1")
-    assert computed.observed is None
-    assert computed.status == contract.Status.CONFIRMED
-
-
-def test_a_projection_record_s_document_is_the_seven_keys_in_order(tmp_path: Path) -> None:
-    manifest = _parsed(
-        tmp_path,
-        {
-            **V1_UNATTENDED_MANIFEST,
-            "depth": "resolved-config",
-            "assertion": {"projection": ".x", "expected": {"n": 1, "s": "é"}},
-        },
-    )
-    computed = _compute_v1(manifest, tmp_path, '{"x": {"s": "é", "n": 1}}')
-    assert computed.text() == (
-        "{\n"
-        '  "schema_version": 1,\n'
-        '  "provider": "opencode",\n'
-        '  "status": "confirmed",\n'
-        '  "depth": "resolved-config",\n'
-        f'  "date": "{computed.record.date}",\n'
-        '  "tool_version": null,\n'
-        '  "assertion": {\n'
-        '    "projection": ".x",\n'
-        '    "expected": {\n'
-        '      "n": 1,\n'
-        '      "s": "é"\n'
-        "    },\n"
-        '    "observed": {\n'
-        '      "s": "é",\n'
-        '      "n": 1\n'
-        "    }\n"
-        "  }\n"
-        "}"
-    )
 
 
 def test_an_observed_value_too_deep_for_the_record_model_is_refused(tmp_path: Path) -> None:
@@ -1338,21 +1071,6 @@ def test_a_workspace_its_gates_refuse_is_never_recorded(
     assert not (pkg / "results").is_dir()
 
 
-def test_a_manual_workspace_whose_wait_for_does_not_hold_is_refused(
-    cli: Cli, tmp_path: Path, pkg: Path, manifest: Path
-) -> None:
-    write_v1_manifest(manifest, {**V1_MANUAL_PROJECTION_MANIFEST, "wait_for": "any(.[]; .never)"})
-    ws = fresh_capture(tmp_path)
-
-    result = cli("record", "pkg", ws)
-    assert result.returncode == 1
-    assert (
-        "probe record: the capture does not satisfy the manifest's wait_for: any(.[]; .never)\n"
-        in result.stderr
-    )
-    assert not (pkg / "results").is_dir()
-
-
 def test_a_command_source_without_tool_version_is_refused_on_a_real_record(
     cli: Cli, pkg: Path, manifest: Path, view: Path
 ) -> None:
@@ -1449,9 +1167,9 @@ def test_probe_dry_run_makes_probe_record_write_nothing(
     assert "probe record: PROBE_DRY_RUN must be 0 or 1 (got: yes)\n" in malformed.stderr
 
 
-# A v2 custom probe: its judge parses the view, and its assertion is <assertion>, a lambda
+# A custom probe: its judge parses the view, and its assertion is <assertion>, a lambda
 # over the parsed view.
-V2_PROBE_PY = """\
+ASSERTION_PROBE_PY = """\
 import json
 from pathlib import Path
 from probe_harness.families.base import CustomProbe
@@ -1466,17 +1184,17 @@ PROBE = CustomProbe(required_tools=(), arrange=lambda ws, variant: None, act=lam
 PICK_MODEL_AND_VARIANT = 'lambda view: {"model": view["model"], "variant": view["variant"]}'
 
 
-def write_v2(pkg: Path, ws: Path, assertion: str | None = PICK_MODEL_AND_VARIANT) -> None:
-    """A v2 package, and in <ws> the source map a run arranging it would have written."""
+def write_package(pkg: Path, ws: Path, assertion: str | None = PICK_MODEL_AND_VARIANT) -> None:
+    """A package, and in <ws> the source map a run arranging it would have written."""
     (pkg / "probe.json").write_text(json.dumps(SCRIPT_MANIFEST, indent=2) + "\n")
-    (pkg / "probe.py").write_text(V2_PROBE_PY.format(assertion=assertion))
+    (pkg / "probe.py").write_text(ASSERTION_PROBE_PY.format(assertion=assertion))
     write_source(ws, source_map(pkg))
 
 
-def test_a_v2_assertion_equal_to_expected_records_confirmed(
+def test_an_assertion_equal_to_expected_records_confirmed(
     cli: Cli, pkg: Path, view: Path, record_wellformed: RecordWellformed
 ) -> None:
-    write_v2(pkg, view.parent)
+    write_package(pkg, view.parent)
     write_view_text(view, '{"model":"m","variant":"high","extra":1}')
 
     result = cli("record", "pkg", view.parent)
@@ -1494,18 +1212,18 @@ def test_a_v2_assertion_equal_to_expected_records_confirmed(
     record_wellformed(first_record_file(pkg))
 
 
-def test_a_v2_assertion_differing_from_expected_records_refuted(
+def test_an_assertion_differing_from_expected_records_refuted(
     cli: Cli, pkg: Path, view: Path
 ) -> None:
-    write_v2(pkg, view.parent)
+    write_package(pkg, view.parent)
     write_view_text(view, '{"model":"m","variant":"low"}')
 
     assert cli("record", "pkg", view.parent).returncode == 0
     assert the_record(pkg)["status"] == "refuted"
 
 
-def test_a_v2_assertion_yielding_no_json_value_is_refused(cli: Cli, pkg: Path, view: Path) -> None:
-    write_v2(pkg, view.parent, assertion="lambda view: (view['model'], view['variant'])")
+def test_an_assertion_yielding_no_json_value_is_refused(cli: Cli, pkg: Path, view: Path) -> None:
+    write_package(pkg, view.parent, assertion="lambda view: (view['model'], view['variant'])")
     write_view_text(view, '{"model":"m","variant":"high"}')
 
     result = cli("record", "pkg", view.parent)
@@ -1519,10 +1237,10 @@ def test_a_v2_assertion_yielding_no_json_value_is_refused(cli: Cli, pkg: Path, v
     assert not (pkg / "results").is_dir()
 
 
-def test_a_v2_assertion_that_raises_is_refused_with_its_traceback(
+def test_an_assertion_that_raises_is_refused_with_its_traceback(
     cli: Cli, pkg: Path, view: Path
 ) -> None:
-    write_v2(pkg, view.parent, assertion="lambda view: view['absent']")
+    write_package(pkg, view.parent, assertion="lambda view: view['absent']")
     write_view_text(view, '{"model":"m","variant":"high"}')
 
     result = cli("record", "pkg", view.parent)
@@ -1535,10 +1253,10 @@ def test_a_v2_assertion_that_raises_is_refused_with_its_traceback(
     assert not (pkg / "results").is_dir()
 
 
-def test_a_v2_dry_run_prints_the_record_a_real_run_would_write(
+def test_a_dry_run_prints_the_record_a_real_run_would_write(
     cli: Cli, pkg: Path, view: Path
 ) -> None:
-    write_v2(pkg, view.parent)
+    write_package(pkg, view.parent)
     write_view_text(view, '{"model":"m","variant":"high"}')
 
     result = dry_run(cli, "pkg", view.parent)
@@ -1559,50 +1277,18 @@ def test_a_v2_dry_run_prints_the_record_a_real_run_would_write(
     assert not (pkg / "results").is_dir()
 
 
-def test_a_v2_manifest_whose_definition_has_no_assertion_is_refused(
+def test_a_manifest_whose_definition_has_no_assertion_is_refused(
     cli: Cli, pkg: Path, view: Path
 ) -> None:
-    write_v2(pkg, view.parent, assertion=None)
+    write_package(pkg, view.parent, assertion=None)
     write_view_text(view, "{}")
 
     result = cli("record", "pkg", view.parent)
 
     assert result.returncode == 1
     assert (
-        "probe record: pkg's manifest is schema 2 and declares expected, but a CustomProbe "
-        "definition carries no assertion to compare with it\n" in result.stderr
-    )
-
-
-def test_a_v1_manifest_whose_definition_carries_an_assertion_is_refused(
-    cli: Cli, pkg: Path, manifest: Path, view: Path
-) -> None:
-    write_v2(pkg, view.parent)
-    manifest.write_text(json.dumps(V1_SCRIPT_MANIFEST, indent=2) + "\n")
-    write_view_text(view, "{}")
-
-    result = cli("record", "pkg", view.parent)
-
-    assert result.returncode == 1
-    assert (
-        "probe record: pkg's definition carries an assertion, but its manifest is schema 1, "
-        "whose jq decides the record\n" in result.stderr
-    )
-
-
-def test_a_v1_custom_probe_whose_judge_returns_no_path_is_refused(
-    cli: Cli, pkg: Path, manifest: Path, view: Path
-) -> None:
-    write_v2(pkg, view.parent, assertion=None)
-    manifest.write_text(json.dumps(V1_SCRIPT_MANIFEST, indent=2) + "\n")
-    write_view_text(view, "{}")
-
-    result = cli("record", "pkg", view.parent)
-
-    assert result.returncode == 1
-    assert (
-        "probe record: pkg's judge returned a dict, but a schema 1 manifest projects over "
-        "the view path it returns\n" in result.stderr
+        "probe record: pkg's manifest declares expected, but a CustomProbe definition carries "
+        "no assertion to compare with it\n" in result.stderr
     )
 
 
@@ -1635,12 +1321,12 @@ def test_compute_writes_a_v2_record_carrying_its_source_and_arranged(tmp_path: P
     assert list(document)[-3:] == ["source", "arranged", "assertion"]
 
 
-def test_a_v2_assertion_yielding_a_str_enum_member_is_refused_not_refuted(
+def test_an_assertion_yielding_a_str_enum_member_is_refused_not_refuted(
     cli: Cli, pkg: Path, view: Path
 ) -> None:
     # A `StrEnum` member compares unequal to the plain string its record would show, so
     # accepting one would write `"observed": "high"` beside `"status": "refuted"`.
-    write_v2(
+    write_package(
         pkg,
         view.parent,
         assertion="lambda view: __import__('probe_harness.contract').contract.Status.CONFIRMED",
@@ -1655,10 +1341,10 @@ def test_a_v2_assertion_yielding_a_str_enum_member_is_refused_not_refuted(
 
 
 @pytest.mark.parametrize("content", [None, "[]", '{"experiments/pkg/probe.py": "nope"}'], ids=repr)
-def test_a_real_v2_record_needs_the_workspace_s_source_map(
+def test_a_real_record_needs_the_workspace_s_source_map(
     cli: Cli, pkg: Path, view: Path, content: str | None
 ) -> None:
-    write_v2(pkg, view.parent)
+    write_package(pkg, view.parent)
     write_view_text(view, '{"model":"m","variant":"high"}')
     source_json = view.parent / "source.json"
     if content is None:

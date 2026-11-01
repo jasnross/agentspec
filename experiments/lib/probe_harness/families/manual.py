@@ -30,14 +30,8 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from probe_harness import console, jq_cli, json_values, views
-from probe_harness.contract import (
-    CaptureSource,
-    Manifest,
-    ManifestV1,
-    ManifestV2,
-    OptionsAssertion,
-)
+from probe_harness import console, json_values, views
+from probe_harness.contract import CaptureSource, Manifest, OptionsAssertion
 from probe_harness.families.base import (
     GateFailure,
     JudgeResult,
@@ -63,6 +57,9 @@ from probe_harness.workspace import (
     wait_for_capture,
 )
 
+# The capture hook runs jq inside the provider, and `_materialize` templates its absolute path
+# into `dump-hook.sh`, so a missing jq must refuse before the workspace exists: found later,
+# it would cost the capture of a live session.
 FAMILY_TOOLS = ("jq",)
 
 # The directory under `fixtures/` holding the capture apparatus every variant shares.
@@ -102,28 +99,22 @@ type CaptureLine[P] = P | Unparsed | Unrecognized
 @dataclass(frozen=True)
 class ManualProbe[P: ProviderModel = ProviderModel]:
     instructions: str
-    variants: tuple[str, ...] = ("assertion",)
-    # The model one capture line is parsed against. Required, with `wait_for`, by a schema 2
-    # manifest; a schema 1 package may declare it so `probe sample` can reduce its capture.
-    payload: type[P] | None = None
+    # The model one capture line is parsed against.
+    payload: type[P]
     # Whether the capture holds what the probe waits for; polled, then checked by the judge.
-    wait_for: Callable[[Sequence[CaptureLine[P]]], bool] | None = None
-    # Required by a schema 2 manifest declaring `expected`, and refused by a schema 1 one.
+    wait_for: Callable[[Sequence[CaptureLine[P]]], bool]
+    variants: tuple[str, ...] = ("assertion",)
+    # Required by a manifest declaring `expected`, and refused by an option set.
     assertion: Callable[[Sequence[P | Unparsed]], JsonValue] | None = None
-    # The tool version a schema 2 `capture` version source reads; None for no version.
+    # The tool version a `capture` version source reads; None for no version. Required by a
+    # capture version source, and refused by any other.
     capture_version: Callable[[Sequence[P | Unparsed]], str | None] | None = None
     functions: ProbeFunctions[tuple[CaptureLine[P], ...]] = field(default_factory=ProbeFunctions)
 
 
-def parse_lines[P: ProviderModel](
-    text: str, payload: type[P] | None
-) -> tuple[CaptureLine[Any], ...]:
-    """Each non-blank line of <text>, parsed on its own.
-
-    With no <payload> a JSON line stays a `RawJson`: a schema 1 package's jq reads the
-    capture, and only its being JSON is checked.
-    """
-    lines: list[CaptureLine[Any]] = []
+def parse_lines[P: ProviderModel](text: str, payload: type[P]) -> tuple[CaptureLine[P], ...]:
+    """Each non-blank line of <text>, parsed on its own."""
+    lines: list[CaptureLine[P]] = []
     for number, line in enumerate(text.split("\n"), start=1):
         if not line.strip():
             continue
@@ -138,9 +129,6 @@ def parse_lines[P: ProviderModel](
             and isinstance(value["unparsed"], str)
         ):
             lines.append(Unparsed(value["unparsed"]))
-            continue
-        if payload is None:
-            lines.append(RawJson(value))
             continue
         try:
             lines.append(payload.model_validate(value))
@@ -214,7 +202,7 @@ def run(manifest: Manifest, name: str, options: RunOptions, probe: ManualProbe[A
             file=sys.stderr,
         )
 
-        if not wait_for_capture(ws, _poll(manifest, ws, probe), options.timeout):
+        if not wait_for_capture(ws, _poll(ws, probe), options.timeout):
             # The workspace is never deleted: discarding one an operator spent a live session
             # on is the single unrecoverable mistake a runner could make, and reading the
             # capture is how they tell a hook that never fired from a procedure that went
@@ -262,22 +250,11 @@ def judge(
     payloads = ws / "capture" / "payloads.jsonl"
     view = ws / "view.json"
     views.write_capture_view(payloads, view)
-    if isinstance(manifest, ManifestV1):
-        if manifest.wait_for is None:
-            raise GateFailure("manifest declares no wait_for filter")
-        if not jq_cli.test(manifest.wait_for, payloads, slurp=True):
-            raise GateFailure(
-                f"the capture does not satisfy the manifest's wait_for: {manifest.wait_for}",
-                f"the provider did not produce the payload this probe waits for; see {payloads}.",
-            )
-    else:
-        # The agreement check guarantees a `wait_for` on a v2 manual definition.
-        assert probe.wait_for is not None
-        if not run_wait_for(probe.wait_for, lines):
-            raise GateFailure(
-                "the capture does not satisfy the definition's wait_for",
-                f"the provider did not produce the payload this probe waits for; see {payloads}.",
-            )
+    if not run_wait_for(probe.wait_for, lines):
+        raise GateFailure(
+            "the capture does not satisfy the definition's wait_for",
+            f"the provider did not produce the payload this probe waits for; see {payloads}.",
+        )
     if probe.functions.judge is not None:
         probe.functions.judge(lines)
 
@@ -292,7 +269,7 @@ def judge(
             # only the question no machine can.
             selection = prompt_selection(manifest.assertion.options, manifest.question)
         return JudgeResult(Selected(selection), captured_version)
-    result = decide(manifest, probe.assertion, recognized(lines), view)
+    result = decide(probe.assertion, recognized(lines))
     return JudgeResult(result.outcome, captured_version)
 
 
@@ -354,25 +331,13 @@ def _parses(path: Path) -> bool:
     return True
 
 
-def capture_matches(payloads: Path, filter_expr: str) -> bool:
-    """Whether a schema 1 `wait_for` holds over the slurped capture so far."""
-    try:
-        if payloads.stat().st_size == 0:
-            return False
-    except OSError:
-        return False
-    return jq_cli.test(filter_expr, payloads, slurp=True)
-
-
 def _captured_version(
     manifest: Manifest, probe: ManualProbe[Any], lines: Sequence[CaptureLine[Any]]
 ) -> str | None:
-    """A schema 2 capture version source's value; None for every other source."""
-    if not (
-        isinstance(manifest, ManifestV2) and isinstance(manifest.version_source, CaptureSource)
-    ):
+    """A capture version source's value; None for every other source."""
+    if not isinstance(manifest.version_source, CaptureSource):
         return None
-    # The agreement check guarantees a `capture_version` for a v2 capture source.
+    # The agreement check guarantees a `capture_version` for a capture source.
     assert probe.capture_version is not None
     version = call("capture_version", probe.capture_version, recognized(lines))
     if version is not None and type(version) is not str:
@@ -382,19 +347,14 @@ def _captured_version(
     return version
 
 
-def _poll(manifest: Manifest, ws: Path, probe: ManualProbe[Any]) -> Callable[[], bool]:
-    """The poll's test: the schema 1 jq, or the definition's `wait_for` over parsed lines.
+def _poll(ws: Path, probe: ManualProbe[Any]) -> Callable[[], bool]:
+    """The poll's test: the definition's `wait_for` over the capture's parsed lines.
 
-    The schema 2 test reports each newly unrecognized line once, and a `wait_for` that
-    raises once per distinct message, and counts either as "not yet": the operator may
-    still be mid-session, and only the judge refuses.
+    It reports each newly unrecognized line once, and a `wait_for` that raises once per
+    distinct message, and counts either as "not yet": the operator may still be
+    mid-session, and only the judge refuses.
     """
     payloads = ws / "capture" / "payloads.jsonl"
-    if isinstance(manifest, ManifestV1):
-        wait_for = manifest.wait_for
-        assert wait_for is not None, "the agreement check requires a v1 manual wait_for"
-        return lambda: capture_matches(payloads, wait_for)
-    assert probe.wait_for is not None, "the agreement check requires a v2 manual wait_for"
     wait = probe.wait_for
     reported_lines: set[int] = set()
     reported_errors: set[str] = set()

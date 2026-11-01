@@ -8,7 +8,6 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from probe_harness import jq_cli
 from probe_harness.json_values import load_stream
 from probe_harness.workspace import template_file
 
@@ -60,7 +59,7 @@ def test_the_capture_hook_appends_one_json_line_and_echoes(
     assert load_stream(result.stdout) == [{}]
     values = load_stream(payloads.read_text(encoding="utf-8"))
     assert values == [{"hook_event_name": "subagentStart"}]
-    # One line, one JSON value — what every later slurping reader depends on.
+    # One line, one JSON value: the harness parses the capture one line at a time.
     assert line_count(payloads) == 1
 
 
@@ -83,8 +82,8 @@ def test_the_capture_hook_still_echoes_and_exits_0_when_jq_is_missing(
 def test_the_capture_hook_echoes_and_writes_nothing_on_an_empty_payload(
     tmp_path: Path, cursor_package: Path
 ) -> None:
-    # An empty read must not append a blank line: that would pass the recorder's non-empty
-    # check and then break the slurp for every later reader.
+    # An empty read must not append a blank line: that would pass the judge's non-empty
+    # check while carrying no payload.
     ws = tmp_path / "hookws-empty"
     payloads = ws / "capture" / "payloads.jsonl"
     hook = install_hook(cursor_package, ws, jq=system_jq(), payloads=payloads)
@@ -98,8 +97,9 @@ def test_the_capture_hook_echoes_and_writes_nothing_on_an_empty_payload(
 def test_an_unparsable_payload_is_still_appended_as_one_line(
     tmp_path: Path, cursor_package: Path
 ) -> None:
-    # payloads.jsonl is one JSON value per line. A pretty-printed fallback would break the
-    # slurp for every later reader, including the recorder.
+    # payloads.jsonl is one JSON value per line, which the harness parses line by line. A
+    # pretty-printed fallback would land as lines that are not JSON, each one refused as
+    # unrecognized.
     ws = tmp_path / "hookws-unparsable"
     payloads = ws / "capture" / "payloads.jsonl"
     hook = install_hook(cursor_package, ws, jq=system_jq(), payloads=payloads)
@@ -108,16 +108,17 @@ def test_an_unparsable_payload_is_still_appended_as_one_line(
     assert result.returncode == 0
 
     assert line_count(payloads) == 1
-    assert jq_cli.test('length == 1 and (.[0].unparsed | type == "string")', payloads, slurp=True)
+    (value,) = load_stream(payloads.read_text(encoding="utf-8"))
+    assert isinstance(value, dict)
+    assert isinstance(value["unparsed"], str)
 
 
 def test_a_scalar_payload_is_wrapped_rather_than_appended_verbatim(
     tmp_path: Path, cursor_package: Path
 ) -> None:
     # Every line of payloads.jsonl must be an object. A bare scalar would be valid JSON and
-    # land verbatim, and then every later slurping filter indexing a field errors on it —
-    # which the capture poll reads as "no match", so the runner polls to the full timeout on
-    # a capture that already arrived.
+    # land verbatim, and the payload model would reject it, so the judge would refuse a
+    # capture that otherwise arrived.
     ws = tmp_path / "hookws-scalar"
     payloads = ws / "capture" / "payloads.jsonl"
     hook = install_hook(cursor_package, ws, jq=system_jq(), payloads=payloads)
@@ -126,9 +127,11 @@ def test_a_scalar_payload_is_wrapped_rather_than_appended_verbatim(
     assert result.returncode == 0
 
     assert line_count(payloads) == 1
-    assert jq_cli.test('length == 1 and (.[0] | type == "object")', payloads, slurp=True)
-    # A filter indexing a field must not error on it.
-    assert jq_cli.test('any(.[]; .hook_event_name == "nope") | not', payloads, slurp=True)
+    values = load_stream(payloads.read_text(encoding="utf-8"))
+    assert len(values) == 1
+    assert isinstance(values[0], dict)
+    # A field read by name finds no value it was not given.
+    assert not any(isinstance(v, dict) and v.get("hook_event_name") == "nope" for v in values)
 
 
 def test_the_capture_hook_echoes_when_its_payloads_path_is_unwritable(

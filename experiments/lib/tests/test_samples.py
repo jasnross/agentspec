@@ -227,11 +227,11 @@ DEBUG_PROBE_PY = textwrap.dedent("""\
 """)
 
 
-def _debug_package(tree: Path, *, schema: int = 2, assertion: str = "lambda d: d.variant") -> Path:
+def _debug_package(tree: Path, *, assertion: str = "lambda d: d.variant") -> Path:
     package = tree / "debug-pkg"
     (package / "fixtures" / "assertion").mkdir(parents=True)
     manifest: dict[str, Any] = {
-        "schema_version": schema,
+        "schema_version": 2,
         "provider": "opencode",
         "driver": "unattended",
         "depth": "resolved-config",
@@ -239,9 +239,6 @@ def _debug_package(tree: Path, *, schema: int = 2, assertion: str = "lambda d: d
         "version_source": {"kind": "none"},
         "assertion": {"expected": "high"},
     }
-    if schema == 1:
-        manifest["assertion"] = {"projection": ".variant", "expected": "high"}
-        assertion = "None"
     (package / "probe.json").write_text(json.dumps(manifest), encoding="utf-8")
     (package / "probe.py").write_text(DEBUG_PROBE_PY.format(assertion=assertion))
     return package
@@ -301,39 +298,6 @@ def test_write_sample_refuses_a_leak(tree: Path, tmp_path: Path) -> None:
         samples.write_sample(definition, manifest, ws, "confirming", identity=IDENTITY)
     assert "  identity: Tess" in exc.value.lines
     assert not (package / "samples").exists()
-
-
-def test_a_v1_package_s_results_come_from_its_jq(tree: Path, tmp_path: Path) -> None:
-    package = _debug_package(tree, schema=1)
-    ws = _debug_ws(tmp_path, {"variant": "low"})
-    definition, manifest = load_package(package)
-
-    path = samples.write_sample(definition, manifest, ws, "refuting", identity=IDENTITY)
-
-    assert parse_sample_file(path).results.model_dump(mode="json") == {"assertion": "low"}
-
-
-def test_regenerate_rewrites_only_results(tree: Path, tmp_path: Path) -> None:
-    package = _debug_package(tree, schema=1)
-    definition, manifest = load_package(package)
-    samples.write_sample(
-        definition,
-        manifest,
-        _debug_ws(tmp_path, {"variant": "high"}),
-        "edited-x",
-        identity=IDENTITY,
-    )
-    path = package / "samples" / "edited-x.json"
-    document = json.loads(path.read_text())
-    document.update(origin="edited", note="variant changed by hand")
-    document["input"]["variant"] = "low"
-    path.write_text(json.dumps(document), encoding="utf-8")
-
-    changes = samples.regenerate(definition, manifest)
-
-    assert changes == ["edited-x.json: assertion: high → low"]
-    rewritten = json.loads(path.read_text())
-    assert rewritten == {**document, "results": {"assertion": "low"}}
 
 
 MANUAL_PROBE_PY = textwrap.dedent("""\
@@ -520,7 +484,7 @@ EDITED: dict[str, Any] = {
 }
 
 
-def test_regenerate_rewrites_a_schema_2_package_s_results(tree: Path) -> None:
+def test_regenerate_rewrites_a_package_s_results(tree: Path) -> None:
     package = _debug_package(tree)
     path = _put_sample(package, "edited-x", EDITED)
     # Already right, and indented as no rewrite would leave it.
@@ -594,8 +558,8 @@ def test_a_sample_name_must_be_a_plain_slug(tree: Path, tmp_path: Path, name: st
 
 
 def test_a_lone_surrogate_survives_sampling_ascii_escaped(tree: Path, tmp_path: Path) -> None:
-    # A body cut between the halves of an emoji carries an escaped lone surrogate. (jq
-    # refuses one, so a schema 1 package's judge and sample both fail on it alike.)
+    # A body cut between the halves of an emoji carries an escaped lone surrogate, which
+    # has no UTF-8 encoding.
     package = _debug_package(tree)
     ws = tmp_path / "ws"
     ws.mkdir()
@@ -612,7 +576,7 @@ def test_a_poll_counts_a_line_cut_inside_a_character_as_not_yet(tree: Path, tmp_
     from probe_harness.families import manual
 
     package = _manual_package(tree)
-    definition, manifest = load_package(package)
+    definition, _ = load_package(package)
     ws = _capture(tmp_path)
     payloads = ws / "capture" / "payloads.jsonl"
     # A hook mid-write: no newline yet, and the bytes end inside a character.
@@ -620,4 +584,4 @@ def test_a_poll_counts_a_line_cut_inside_a_character_as_not_yet(tree: Path, tmp_
         f.write('{"hook_event_name":"stop","x":"—'.encode()[:-1])
     assert isinstance(definition, manual.ManualProbe)
 
-    assert manual._poll(manifest, ws, definition)() is False
+    assert manual._poll(ws, definition)() is False

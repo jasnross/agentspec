@@ -2,7 +2,7 @@
 
 `cli.main` names the subcommand once with `set_command`, and every refusal, warning and
 progress line goes out through `say` as `<command>: <line>`. Output the harness did not
-write — a provider's stderr, jq's diagnostics — goes out through `verbatim`, unprefixed.
+write — a provider's stderr — goes out through `verbatim`, unprefixed.
 """
 
 import sys

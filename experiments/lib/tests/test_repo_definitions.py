@@ -148,7 +148,7 @@ def test_every_definition_declares_assertion_first(package: Path) -> None:
 @pytest.mark.parametrize("package", _packages(), ids=lambda p: p.name)
 def test_every_marker_is_letters_digits_and_hyphens(package: Path) -> None:
     # The gates find a marker in a request's string values. For such a marker that agrees
-    # with finding it in the field's JSON text, which is what custom checks' jq does.
+    # with finding it in the field's JSON text, which is what `RawJson.contains` does.
     definition = load_definition(package, DEFINITION_TYPES)
     if isinstance(definition, ClaudeOtelProbe | OpenCodeFakeProbe):
         assert re.fullmatch(r"[A-Za-z0-9-]+", definition.marker), definition.marker

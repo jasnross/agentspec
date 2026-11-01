@@ -5,9 +5,8 @@ format and the result each expression the definition carries yields on it. `prob
 writes one from a kept workspace: it parses the workspace through the family, reduces the
 input to what the models declare plus the lines a search reads, anonymizes what is left,
 and writes the sample only when every expression yields on the reduced input what it yields
-on the full capture, and the leak scan finds nothing. While a package's manifest is schema
-1, its results come from the manifest's jq; once it is schema 2, the same samples prove the
-Python reproduces them.
+on the full capture, and the leak scan finds nothing. The samples prove the definition's
+expressions, and `--regenerate` rewrites their results from the definition.
 """
 
 import contextlib
@@ -15,7 +14,6 @@ import getpass
 import json
 import re
 import subprocess
-import tempfile
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -24,12 +22,9 @@ from typing import Any, assert_never
 
 from pydantic import RootModel
 
-from probe_harness import jq_cli, json_values, record
+from probe_harness import json_values
 from probe_harness.contract import (
-    CaptureSourceV1,
     Manifest,
-    ManifestV1,
-    ProjectionAssertionV1,
     Sample,
     SampleOrigin,
     SampleResults,
@@ -37,7 +32,6 @@ from probe_harness.contract import (
 )
 from probe_harness.families import ProbeDefinition, expressions, parse_sample, parse_workspace
 from probe_harness.families.base import (
-    CustomCheck,
     CustomProbe,
     call,
     holds,
@@ -45,12 +39,10 @@ from probe_harness.families.base import (
     run_wait_for,
 )
 from probe_harness.families.claude_otel import ClaudeOtelProbe, expression_input
-from probe_harness.families.claude_otel import view as claude_view
 from probe_harness.families.manual import ManualProbe, Unparsed, Unrecognized, recognized
 from probe_harness.families.manual import line_document as manual_line_document
 from probe_harness.families.opencode_debug import OpenCodeDebugProbe
 from probe_harness.families.opencode_fake import OpenCodeFakeProbe
-from probe_harness.families.opencode_fake import view as opencode_view
 from probe_harness.gates import GateFailure, bodies
 from probe_harness.json_values import JsonValue
 from probe_harness.models.raw import ProviderModel, RawJson, sample_source
@@ -281,45 +273,24 @@ def document(
             assert_never(definition)
 
 
-def full_document(definition: ProbeDefinition, value: Any) -> JsonValue:
-    """<value> in the family's sample format, unreduced."""
-    return document(definition, value, _source_of)
-
-
-def expression_names(definition: ProbeDefinition, manifest: Manifest) -> set[str]:
+def expression_names(definition: ProbeDefinition) -> set[str]:
     """The result keys a sample of <definition> declares."""
     found = expressions(definition)
     names: set[str] = set()
-    if isinstance(manifest, ManifestV1):
-        if isinstance(manifest.assertion, ProjectionAssertionV1):
-            names.add("assertion")
-        if manifest.wait_for is not None:
-            names.add("wait_for")
-        if isinstance(manifest.version_source, CaptureSourceV1):
-            names.add("capture_version")
-    else:
-        if found.assertion is not None:
-            names.add("assertion")
-        if found.wait_for is not None:
-            names.add("wait_for")
-        if found.capture_version is not None:
-            names.add("capture_version")
+    if found.assertion is not None:
+        names.add("assertion")
+    if found.wait_for is not None:
+        names.add("wait_for")
+    if found.capture_version is not None:
+        names.add("capture_version")
     if found.custom_checks:
         names.add("custom_checks")
     return names
 
 
-def evaluate(
-    definition: ProbeDefinition, manifest: Manifest, value: Any, sample_document: JsonValue
-) -> SampleResults:
-    """What each expression the definition carries yields over a parsed input.
-
-    A schema 1 manifest's expressions are its jq, run over the schema 1 view built from
-    <sample_document>, <value>'s sample form. A schema 2 one's are the definition's Python,
-    run over <value> as the judge hands it to them.
-    """
-    if isinstance(manifest, ManifestV1):
-        return _evaluate_v1(definition, manifest, sample_document)
+def evaluate(definition: ProbeDefinition, value: Any) -> SampleResults:
+    """What each expression the definition carries yields over a parsed input, run over
+    <value> as the judge hands it to them."""
     found = expressions(definition)
     expression_value = _expression_input(definition, value)
     results: dict[str, Any] = {}
@@ -336,9 +307,7 @@ def evaluate(
         results["capture_version"] = version
     if found.custom_checks:
         results["custom_checks"] = {
-            check.name: holds(check, expression_value)
-            for check in found.custom_checks
-            if isinstance(check, CustomCheck)
+            check.name: holds(check, expression_value) for check in found.custom_checks
         }
     return SampleResults.model_validate(results)
 
@@ -367,11 +336,11 @@ def write_sample(
                 "the capture holds lines the payload model does not recognize:",
                 *(f"  {line.problem}" for line in unrecognized),
             )
-    full = evaluate(definition, manifest, value, full_document(definition, value))
+    full = evaluate(definition, value)
     found = needles(definition)
     reduced_document = document(definition, value, lambda body: reduce(body, found, identity))
     reduced_value = parse_sample(definition, reduced_document, str(path))
-    reduced = evaluate(definition, manifest, reduced_value, reduced_document)
+    reduced = evaluate(definition, reduced_value)
     differing = _differing(full, reduced)
     if differing:
         raise SampleRefused(
@@ -414,7 +383,7 @@ def regenerate(definition: ProbeDefinition, manifest: Manifest) -> list[str]:
             raise SampleRefused(f"{path} is not a sample: {e}") from None
         value = parse_sample(definition, sample.input, str(path))
         try:
-            results = evaluate(definition, manifest, value, sample.input)
+            results = evaluate(definition, value)
         except GateFailure as e:
             # Named as `parse_sample` names an input it refuses, so an author can tell which
             # of several samples an expression could not read.
@@ -437,71 +406,8 @@ def sample_paths(package: Path) -> list[Path]:
     return sorted((package / SAMPLES_DIR).glob("*.json"))
 
 
-def _evaluate_v1(
-    definition: ProbeDefinition, manifest: ManifestV1, sample_document: JsonValue
-) -> SampleResults:
-    results: dict[str, Any] = {}
-    with tempfile.TemporaryDirectory(prefix="probe-sample-") as tmp:
-        directory = Path(tmp)
-        view = directory / "view.json"
-        view.write_text(_ascii(_v1_view(definition, sample_document)), encoding="utf-8")
-        if isinstance(manifest.assertion, ProjectionAssertionV1):
-            try:
-                results["assertion"] = record.project(manifest, view)
-            except record.RecordRefused as e:
-                raise SampleRefused(*e.lines, detail=e.detail) from None
-        lines = directory / "payloads.jsonl"
-        if isinstance(sample_document, list):
-            lines.write_text(
-                "".join(json.dumps(v, ensure_ascii=True) + "\n" for v in sample_document),
-                encoding="utf-8",
-            )
-        if manifest.wait_for is not None:
-            results["wait_for"] = jq_cli.test(manifest.wait_for, lines, slurp=True)
-        if isinstance(manifest.version_source, CaptureSourceV1):
-            version = record.capture_version_v1(manifest.version_source.jq, lines)
-            results["capture_version"] = None if version in ("", "null") else version
-        checks = expressions(definition).custom_checks
-        if checks:
-            requests = directory / "requests.json"
-            requests.write_text(
-                _ascii(_v1_view(definition, sample_document, with_responses=False)),
-                encoding="utf-8",
-            )
-            marker = _marker(definition)
-            args = {"m": marker} if marker is not None else {}
-            results["custom_checks"] = {
-                check.name: jq_cli.test(check.expression, requests, args=args)
-                for check in checks
-                if not isinstance(check, CustomCheck)
-            }
-    return SampleResults.model_validate(results)
-
-
-def _v1_view(
-    definition: ProbeDefinition, sample_document: JsonValue, *, with_responses: bool = True
-) -> JsonValue:
-    """The schema 1 view the manifest's jq reads, built from a sample document."""
-    value = parse_sample(definition, sample_document, "<sample>")
-    match definition:
-        case ClaudeOtelProbe():
-            arms: dict[str, JsonValue] = dict(
-                claude_view(value, with_responses=with_responses and definition.requires_responses)
-            )
-            return arms
-        case OpenCodeFakeProbe():
-            requests: dict[str, JsonValue] = dict(opencode_view(value))
-            return requests
-        case OpenCodeDebugProbe() | ManualProbe():
-            return sample_document
-        case CustomProbe():
-            raise SampleRefused("a CustomProbe has no sample format")
-        case _:
-            assert_never(definition)
-
-
 def _marker(definition: ProbeDefinition) -> str | None:
-    """The definition's marker, which a schema 1 custom check reads as `$m`."""
+    """The definition's marker, which `needles` keeps as a line."""
     match definition:
         case ClaudeOtelProbe(marker=marker) | OpenCodeFakeProbe(marker=marker):
             return marker
@@ -542,13 +448,6 @@ def _line(line: object, transform: Callable[[object], JsonValue]) -> JsonValue:
     if isinstance(line, Unparsed | Unrecognized):
         return manual_line_document(line)
     return transform(line)
-
-
-def _ascii(value: JsonValue) -> str:
-    """<value> for jq to read: ASCII-escaped, as `views` writes a view, because a body may
-    carry a lone surrogate (a string cut between the halves of an emoji), which has no
-    UTF-8 encoding."""
-    return json.dumps(value, indent=2, ensure_ascii=True)
 
 
 def _sample_text(sample: Sample) -> str:

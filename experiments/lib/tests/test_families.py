@@ -452,7 +452,7 @@ def test_replay_is_no_longer_a_subcommand(cli: Cli) -> None:
     assert "invalid choice: 'replay'" in result.stderr
 
 
-def test_record_without_jq_on_path_exits_1(
+def test_record_without_git_on_path_exits_1(
     put_package: Callable[..., Path], tmp_path: Path
 ) -> None:
     put_package("alpha", "unattended", 0)
@@ -469,41 +469,4 @@ def test_record_without_jq_on_path_exits_1(
         check=False,
     )
     assert completed.returncode == 1, completed.stderr
-    assert completed.stderr == "probe record: missing required tool(s): jq\n"
-
-
-# A schema 1 manual manifest with no `wait_for`, and a definition carrying none of the
-# Python expressions a schema 1 manifest refuses.
-V1_MANUAL_MANIFEST: dict[str, Any] = {
-    "schema_version": 1,
-    "provider": "opencode",
-    "driver": "manual",
-    "depth": None,
-    "question": "q",
-    "version_source": {"kind": "none"},
-    "assertion": {"projection": ".", "expected": 1},
-}
-
-V1_MANUAL_PROBE_PY = """\
-from probe_harness.families.manual import ManualProbe
-
-PROBE = ManualProbe(instructions="")
-"""
-
-
-def test_record_refuses_a_manual_workspace_whose_manifest_has_no_wait_for(
-    cli: Cli, tree: Path, tmp_path: Path
-) -> None:
-    package = tree / "alpha"
-    (package / "fixtures" / "assertion").mkdir(parents=True)
-    (package / "fixtures" / "capture").mkdir()
-    (package / "fixtures" / "capture" / "dump-hook.sh").write_text("#!/bin/sh\n")
-    (package / "probe.json").write_text(json.dumps(V1_MANUAL_MANIFEST))
-    (package / "probe.py").write_text(V1_MANUAL_PROBE_PY)
-    ws = tmp_path / "ws"
-    (ws / "capture").mkdir(parents=True)
-    (ws / "capture" / "payloads.jsonl").write_text('{"x":1}\n')
-
-    result = cli("record", "alpha", ws, "--dry-run")
-    assert result.returncode == 1
-    assert "probe record: manifest declares no wait_for filter\n" in result.stderr
+    assert completed.stderr == "probe record: missing required tool(s): git\n"

@@ -10,9 +10,8 @@ from probe_harness.contract import (
     CaptureSource,
     CommandSource,
     ExpectedAssertion,
+    Manifest,
     ManifestError,
-    ManifestV1,
-    ManifestV2,
     NoSource,
     Option,
     OptionsAssertion,
@@ -26,7 +25,7 @@ from pydantic import ValidationError
 
 from tests.conftest import EXPERIMENTS_DIR
 
-V2: dict[str, Any] = {
+MANIFEST: dict[str, Any] = {
     "schema_version": 2,
     "provider": "opencode",
     "driver": "unattended",
@@ -36,8 +35,8 @@ V2: dict[str, Any] = {
     "assertion": {"expected": 1},
 }
 
-V2_OPTIONS: dict[str, Any] = {
-    **V2,
+OPTIONS: dict[str, Any] = {
+    **MANIFEST,
     "provider": "cursor",
     "driver": "manual",
     "assertion": {
@@ -48,14 +47,6 @@ V2_OPTIONS: dict[str, Any] = {
         "expected": "a",
     },
 }
-
-V1_PROJECTION: dict[str, Any] = {
-    **V2,
-    "schema_version": 1,
-    "assertion": {"projection": ".", "expected": 1},
-}
-
-V1_OPTIONS: dict[str, Any] = {**V2_OPTIONS, "schema_version": 1, "wait_for": "length > 0"}
 
 BLOB = "0123456789abcdef0123456789abcdef01234567"
 
@@ -84,7 +75,7 @@ def _names(lines: list[str], field: str) -> bool:
 
 
 def _options(*options: Any) -> dict[str, Any]:
-    return {**V2_OPTIONS, "assertion": {"options": list(options), "expected": "a"}}
+    return {**OPTIONS, "assertion": {"options": list(options), "expected": "a"}}
 
 
 def test_a_missing_manifest_is_refused(tmp_path: Path) -> None:
@@ -105,7 +96,7 @@ def test_a_manifest_that_is_not_json_is_refused(tmp_path: Path, text: str) -> No
 
 def test_nan_in_expected_is_refused(tmp_path: Path) -> None:
     path = tmp_path / "probe.json"
-    document = {**V2, "assertion": {"expected": float("nan")}}
+    document = {**MANIFEST, "assertion": {"expected": float("nan")}}
     path.write_text(json.dumps(document), encoding="utf-8")
     with pytest.raises(ManifestError) as exc:
         parse_manifest(path)
@@ -120,53 +111,49 @@ def test_a_root_that_is_not_an_object_is_refused(tmp_path: Path, root: Any) -> N
     assert exc.value.lines == (f"manifest must be a JSON object: {path}",)
 
 
-@pytest.mark.parametrize("version", [1.0, True, "1", 3, None], ids=repr)
-def test_schema_version_must_be_the_integer_1_or_2(tmp_path: Path, version: Any) -> None:
-    document = {**V2, "schema_version": version}
-    assert _refusal(tmp_path, document) == ["schema_version must be 1 or 2"]
+@pytest.mark.parametrize("version", [1, 1.0, True, 2.0, "2", 3, None], ids=repr)
+def test_a_manifest_schema_version_must_be_the_integer_2(tmp_path: Path, version: Any) -> None:
+    document = {**MANIFEST, "schema_version": version}
+    assert _refusal(tmp_path, document) == ["schema_version must be 2"]
 
 
-def test_schema_version_1_parses_as_a_v1_manifest(tmp_path: Path) -> None:
-    assert isinstance(parse_manifest(_write(tmp_path, V1_PROJECTION)), ManifestV1)
-
-
-def test_schema_version_2_parses_as_a_v2_manifest(tmp_path: Path) -> None:
-    manifest = parse_manifest(_write(tmp_path, V2))
-    assert isinstance(manifest, ManifestV2)
+def test_schema_version_2_parses_as_a_manifest(tmp_path: Path) -> None:
+    manifest = parse_manifest(_write(tmp_path, MANIFEST))
+    assert isinstance(manifest, Manifest)
     assert manifest.assertion == ExpectedAssertion(expected=1)
     assert manifest.path == tmp_path / "probe.json"
 
 
-def test_a_v2_manifest_refuses_a_projection_by_its_path(tmp_path: Path) -> None:
-    document = {**V2, "assertion": {"projection": ".", "expected": 1}}
+def test_a_manifest_refuses_a_projection_by_its_path(tmp_path: Path) -> None:
+    document = {**MANIFEST, "assertion": {"projection": ".", "expected": 1}}
     assert _refusal(tmp_path, document) == ["assertion.projection: Extra inputs are not permitted"]
 
 
-def test_a_v2_manifest_refuses_wait_for(tmp_path: Path) -> None:
-    document = {**V2_OPTIONS, "wait_for": "length > 0"}
+def test_a_manifest_refuses_wait_for(tmp_path: Path) -> None:
+    document = {**OPTIONS, "wait_for": "length > 0"}
     assert _refusal(tmp_path, document) == ["wait_for: Extra inputs are not permitted"]
 
 
-def test_a_v2_manifest_refuses_a_capture_source_s_jq(tmp_path: Path) -> None:
-    document = {**V2_OPTIONS, "version_source": {"kind": "capture", "jq": ".[0]"}}
+def test_a_manifest_refuses_a_capture_source_s_jq(tmp_path: Path) -> None:
+    document = {**OPTIONS, "version_source": {"kind": "capture", "jq": ".[0]"}}
     assert _refusal(tmp_path, document) == ["version_source.jq: Extra inputs are not permitted"]
 
 
-def test_a_v2_manifest_accepts_a_capture_source_with_no_expression(tmp_path: Path) -> None:
-    document = {**V2_OPTIONS, "version_source": {"kind": "capture"}}
+def test_a_manifest_accepts_a_capture_source_with_no_expression(tmp_path: Path) -> None:
+    document = {**OPTIONS, "version_source": {"kind": "capture"}}
     manifest = parse_manifest(_write(tmp_path, document))
     assert manifest.version_source == CaptureSource(kind="capture")
     assert isinstance(manifest.assertion, OptionsAssertion)
 
 
-def test_a_v2_options_assertion_still_requires_a_manual_driver(tmp_path: Path) -> None:
-    document = {**V2_OPTIONS, "driver": "unattended"}
+def test_an_options_assertion_requires_a_manual_driver(tmp_path: Path) -> None:
+    document = {**OPTIONS, "driver": "unattended"}
     assert _refusal(tmp_path, document) == ["an options assertion requires a manual driver"]
 
 
 @pytest.mark.parametrize("assertion", ["x", None], ids=repr)
-def test_a_v2_assertion_that_is_not_an_object_is_refused(tmp_path: Path, assertion: Any) -> None:
-    assert _refusal(tmp_path, {**V2, "assertion": assertion}) == [
+def test_an_assertion_that_is_not_an_object_is_refused(tmp_path: Path, assertion: Any) -> None:
+    assert _refusal(tmp_path, {**MANIFEST, "assertion": assertion}) == [
         "assertion: must be an object declaring expected, and options for an option set"
     ]
 
@@ -261,29 +248,23 @@ def test_parse_record_refuses_a_v2_record_without_a_source(tmp_path: Path) -> No
 
 @pytest.mark.parametrize("options", [5, [], {"id": "a"}, None], ids=repr)
 def test_options_must_be_a_non_empty_list(tmp_path: Path, options: Any) -> None:
-    document = {**V2_OPTIONS, "assertion": {"options": options, "expected": "a"}}
+    document = {**OPTIONS, "assertion": {"options": options, "expected": "a"}}
     assert _names(_refusal(tmp_path, document), "assertion.options")
 
 
 def test_an_empty_option_list_is_refused_in_the_author_s_words(tmp_path: Path) -> None:
-    document = {**V2_OPTIONS, "assertion": {"options": [], "expected": "a"}}
+    document = {**OPTIONS, "assertion": {"options": [], "expected": "a"}}
     assert _refusal(tmp_path, document) == ["assertion.options: must be a non-empty list"]
 
 
 def test_a_misspelled_driver_is_reported_beside_a_malformed_option_set(tmp_path: Path) -> None:
     # Every invalid field is reported at once, so a retired driver is never mistaken for a
     # valid one that merely mismatches the option set.
-    document = {**V2_OPTIONS, "driver": "script", "assertion": {"options": 5, "expected": "a"}}
+    document = {**OPTIONS, "driver": "script", "assertion": {"options": 5, "expected": "a"}}
     lines = _refusal(tmp_path, document)
     assert _names(lines, "driver")
     assert _names(lines, "assertion.options")
     assert not any("requires a manual driver" in line for line in lines)
-
-
-@pytest.mark.parametrize("projection", [5, "", None, ["."]], ids=repr)
-def test_a_projection_must_be_a_non_empty_string(tmp_path: Path, projection: Any) -> None:
-    document = {**V1_PROJECTION, "assertion": {"projection": projection, "expected": 1}}
-    assert _names(_refusal(tmp_path, document), "assertion.projection")
 
 
 @pytest.mark.parametrize(
@@ -325,49 +306,29 @@ def test_option_ids_are_unique(tmp_path: Path) -> None:
     assert _refusal(tmp_path, document) == ['manifest declares option id "a" more than once']
 
 
-def test_an_options_assertion_requires_a_manual_driver(tmp_path: Path) -> None:
-    document = {**V1_OPTIONS, "driver": "unattended"}
-    assert _refusal(tmp_path, document) == ["an options assertion requires a manual driver"]
-
-
 def test_an_unknown_top_level_key_is_refused(tmp_path: Path) -> None:
-    document = {**V2, "finding": "x"}
+    document = {**MANIFEST, "finding": "x"}
     assert _refusal(tmp_path, document) == ["finding: Extra inputs are not permitted"]
 
 
 def test_an_absent_expected_is_refused(tmp_path: Path) -> None:
-    document = {**V2, "assertion": {}}
+    document = {**MANIFEST, "assertion": {}}
     assert _refusal(tmp_path, document) == ["assertion.expected: Field required"]
 
 
-def test_an_assertion_declaring_both_shapes_is_refused(tmp_path: Path) -> None:
-    document = {**V1_PROJECTION, "assertion": {"projection": ".", "options": [], "expected": 1}}
-    assert _refusal(tmp_path, document) == [
-        "assertion: must be an object declaring exactly one of projection or options"
-    ]
-
-
-@pytest.mark.parametrize("assertion", ["x", 5, None], ids=repr)
-def test_an_assertion_that_is_not_an_object_is_refused(tmp_path: Path, assertion: Any) -> None:
-    document = {**V1_PROJECTION, "assertion": assertion}
-    assert _refusal(tmp_path, document) == [
-        "assertion: must be an object declaring exactly one of projection or options"
-    ]
-
-
 def test_an_unknown_key_inside_an_assertion_is_refused_by_its_path(tmp_path: Path) -> None:
-    document = {**V2, "assertion": {"expected": 1, "status": "x"}}
+    document = {**MANIFEST, "assertion": {"expected": 1, "status": "x"}}
     assert _refusal(tmp_path, document) == ["assertion.status: Extra inputs are not permitted"]
 
 
 def test_an_absent_depth_is_refused(tmp_path: Path) -> None:
-    document = {k: v for k, v in V2.items() if k != "depth"}
+    document = {k: v for k, v in MANIFEST.items() if k != "depth"}
     assert _refusal(tmp_path, document) == ["depth: Field required"]
 
 
 @pytest.mark.parametrize("source", ["command", 5, ["command"], None], ids=repr)
 def test_version_source_must_be_an_object(tmp_path: Path, source: Any) -> None:
-    document = {**V2, "version_source": source}
+    document = {**MANIFEST, "version_source": source}
     assert _refusal(tmp_path, document) == [
         "version_source: must be an object whose kind is command, capture, or none"
     ]
@@ -375,21 +336,21 @@ def test_version_source_must_be_an_object(tmp_path: Path, source: Any) -> None:
 
 @pytest.mark.parametrize("kind", ["script", "", False, 1], ids=repr)
 def test_version_source_kind_must_be_command_capture_or_none(tmp_path: Path, kind: Any) -> None:
-    document = {**V2, "version_source": {"kind": kind}}
+    document = {**MANIFEST, "version_source": {"kind": kind}}
     assert _refusal(tmp_path, document) == [
         "version_source: must be an object whose kind is command, capture, or none"
     ]
 
 
 def test_a_null_kind_is_refused_rather_than_read_as_none(tmp_path: Path) -> None:
-    document = {**V2, "version_source": {"kind": None}}
+    document = {**MANIFEST, "version_source": {"kind": None}}
     assert _refusal(tmp_path, document) == [
         "version_source: must be an object whose kind is command, capture, or none"
     ]
 
 
 def test_an_unknown_key_inside_a_version_source_is_refused_by_its_path(tmp_path: Path) -> None:
-    document = {**V2, "version_source": {"kind": "none", "command": "x"}}
+    document = {**MANIFEST, "version_source": {"kind": "none", "command": "x"}}
     assert _refusal(tmp_path, document) == [
         "version_source.command: Extra inputs are not permitted"
     ]
@@ -401,12 +362,12 @@ def test_an_unknown_key_inside_a_version_source_is_refused_by_its_path(tmp_path:
 def test_a_command_source_needs_a_non_empty_single_line_command(
     tmp_path: Path, command: Any
 ) -> None:
-    document = {**V2, "version_source": {"kind": "command", "command": command}}
+    document = {**MANIFEST, "version_source": {"kind": "command", "command": command}}
     assert _names(_refusal(tmp_path, document), "version_source.command")
 
 
 def test_a_command_source_splits_on_whitespace(tmp_path: Path) -> None:
-    document = {**V2, "version_source": {"kind": "command", "command": "a \t b  c"}}
+    document = {**MANIFEST, "version_source": {"kind": "command", "command": "a \t b  c"}}
     source = parse_manifest(_write(tmp_path, document)).version_source
     assert isinstance(source, CommandSource)
     assert source.argv == ("a", "b", "c")
@@ -414,26 +375,14 @@ def test_a_command_source_splits_on_whitespace(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("version_source", [{}, None], ids=["no kind", "absent"])
 def test_a_missing_kind_resolves_to_no_source(tmp_path: Path, version_source: Any) -> None:
-    document = {**V2, "version_source": version_source}
+    document = {**MANIFEST, "version_source": version_source}
     if version_source is None:
         del document["version_source"]
     assert parse_manifest(_write(tmp_path, document)).version_source == NoSource()
 
 
-@pytest.mark.parametrize("expr", ["", None, 5], ids=repr)
-def test_a_capture_source_needs_a_non_empty_jq_string(tmp_path: Path, expr: Any) -> None:
-    document = {**V1_OPTIONS, "version_source": {"kind": "capture", "jq": expr}}
-    assert _names(_refusal(tmp_path, document), "version_source.jq")
-
-
-@pytest.mark.parametrize("wait_for", ["", False, 5], ids=repr)
-def test_wait_for_must_be_a_non_empty_string(tmp_path: Path, wait_for: Any) -> None:
-    document = {**V1_OPTIONS, "wait_for": wait_for}
-    assert _names(_refusal(tmp_path, document), "wait_for")
-
-
 def test_an_options_manifest_parses_into_typed_options(tmp_path: Path) -> None:
-    manifest = parse_manifest(_write(tmp_path, V2_OPTIONS))
+    manifest = parse_manifest(_write(tmp_path, OPTIONS))
     assert manifest.assertion == OptionsAssertion(
         options=(
             Option(id="a", text="first"),
@@ -441,7 +390,7 @@ def test_an_options_manifest_parses_into_typed_options(tmp_path: Path) -> None:
         ),
         expected="a",
     )
-    assert isinstance(manifest, ManifestV2)
+    assert isinstance(manifest, Manifest)
     assert not hasattr(manifest, "wait_for")
     assert manifest.path == tmp_path / "probe.json"
 
