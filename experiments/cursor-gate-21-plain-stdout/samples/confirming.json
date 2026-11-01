@@ -2,7 +2,7 @@
   "origin": "capture",
   "input": [
     {
-      "conversation_id": "156a096c-8c69-4a79-9c45-db11e255c259",
+      "conversation_id": "",
       "generation_id": null,
       "model": null,
       "model_id": null,
@@ -10,14 +10,14 @@
       "is_background_agent": null,
       "composer_mode": null,
       "session_id": null,
-      "hook_event_name": "sessionStart",
+      "hook_event_name": "",
       "cursor_version": "3.19.19",
       "workspace_roots": null,
       "user_email": null,
       "transcript_path": null
     },
     {
-      "conversation_id": "09a60cc8-22af-44b3-9b04-65ad9fbe3d9a",
+      "conversation_id": "",
       "generation_id": null,
       "model": null,
       "model_id": null,
@@ -25,14 +25,14 @@
       "is_background_agent": null,
       "composer_mode": null,
       "session_id": null,
-      "hook_event_name": "sessionStart",
-      "cursor_version": "3.19.19",
+      "hook_event_name": "",
+      "cursor_version": "",
       "workspace_roots": null,
       "user_email": null,
       "transcript_path": null
     },
     {
-      "conversation_id": "5530a7dc-b184-446a-97aa-ba4d94c127aa",
+      "conversation_id": "",
       "generation_id": null,
       "model": null,
       "model_id": null,
@@ -40,8 +40,8 @@
       "is_background_agent": null,
       "composer_mode": null,
       "session_id": null,
-      "hook_event_name": "sessionStart",
-      "cursor_version": "3.19.19",
+      "hook_event_name": "",
+      "cursor_version": "",
       "workspace_roots": null,
       "user_email": null,
       "transcript_path": null

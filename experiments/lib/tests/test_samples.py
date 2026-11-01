@@ -1,5 +1,5 @@
-"""`samples.py` and `probe sample`: reduction, anonymization, the leak scan, writing and
-regenerating samples, over stand-in packages built in the test's own tree."""
+"""`samples.py` and `probe sample`: the removal test, anonymization, the leak scan, writing
+and regenerating samples, over stand-in packages built in the test's own tree."""
 
 import json
 import os
@@ -10,18 +10,14 @@ from typing import Any
 import pytest
 from probe_harness import samples
 from probe_harness.contract import SampleOrigin, parse_sample_file
-from probe_harness.families import load_package
+from probe_harness.families import ProbeDefinition, load_package, parse_sample
 from probe_harness.gates import GateFailure
-from probe_harness.gates.bodies import DEFERRED_LISTING, SUBAGENT_FLAG
-from probe_harness.models.raw import ProviderModel, RawJson
+from probe_harness.json_values import JsonValue
 from probe_harness.samples import (
     Identity,
-    Needle,
     SampleRefused,
-    Span,
     anonymize,
     leaks,
-    reduce,
 )
 
 from tests.conftest import Cli
@@ -30,111 +26,159 @@ IDENTITY = Identity(home="/Users/tester", user="tester", email="tester@example.o
 
 MARK = "AGENTSPEC-PROBE-MARKER-SAMPLE"
 
+CUT_PROBE_PY = textwrap.dedent("""\
+    from typing import Annotated
 
-class _Body(ProviderModel):
-    name: str
-    body: RawJson
-
-
-def test_reduce_keeps_declared_keys_and_needle_strings_and_nulls_the_rest() -> None:
-    source = {
-        "name": "kept whole",
-        "body": {"hit": f"a {MARK} b", "miss": "dropped", "n": 3},
-        "extra": "undeclared and unmarked",
-        "marked": {"deep": [f"x {MARK}", "blanked"]},
-    }
-    model = _Body.model_validate(source)
-
-    reduced = reduce(model, (Needle(MARK, Span.LINE),), IDENTITY)
-
-    assert reduced == {
-        "name": "kept whole",
-        "body": {"hit": f"a {MARK} b", "miss": "", "n": 3},
-        "extra": None,
-        "marked": {"deep": [f"x {MARK}", ""]},
-    }
-    assert isinstance(reduced, dict)
-    assert _Body.model_validate(reduced).raw.keys() == model.raw.keys()
+    from pydantic import Field
+    from probe_harness.families.opencode_debug import OpenCodeDebugProbe
+    from probe_harness.families.opencode_env import OpenCodeIsolation
+    from probe_harness.models.raw import ProviderModel, RawJson, tag, type_is
 
 
-def test_reduce_keeps_only_the_listing_paragraph_without_connectors() -> None:
-    text = "\n".join(
-        [
-            "Working directory: /Users/tester/x",
-            "",
-            DEFERRED_LISTING,
-            "ToolSearch",
-            "mcp__fx__alpha",
-            "mcp__claude_ai_Docs__guide",
-            "",
-            "The following skills are available:",
-            "- code-review: review code",
-        ]
+    class Text(ProviderModel):
+        type: str
+        text: str
+
+
+    class Other(ProviderModel):
+        type: str
+
+
+    type Block = Annotated[
+        Annotated[Text, tag("text")] | Annotated[Other, tag("other")], type_is("text")
+    ]
+
+
+    class Doc(ProviderModel):
+        variant: str
+        note: str
+        body: RawJson
+        blocks: Annotated[tuple[Block, ...], Field(strict=False)]
+
+
+    PROBE = OpenCodeDebugProbe(
+        argv=("x",), output=Doc, isolation=OpenCodeIsolation(), assertion={assertion}
     )
-    model = _Body.model_validate({"name": "n", "body": {"text": text}})
+""")
 
-    reduced = reduce(model, samples.SEARCH_STRINGS, IDENTITY)
 
-    assert reduced == {
-        "name": "n",
-        "body": {"text": "\n".join([DEFERRED_LISTING, "ToolSearch", "mcp__fx__alpha"])},
+def _cut_definition(tree: Path, assertion: str = "lambda d: d.variant") -> ProbeDefinition:
+    package = tree / "cut-pkg"
+    (package / "fixtures" / "assertion").mkdir(parents=True)
+    manifest: dict[str, Any] = {
+        "schema_version": 2,
+        "provider": "opencode",
+        "driver": "unattended",
+        "depth": "resolved-config",
+        "question": "q",
+        "version_source": {"kind": "none"},
+        "assertion": {"expected": "high"},
     }
+    (package / "probe.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (package / "probe.py").write_text(CUT_PROBE_PY.format(assertion=assertion), encoding="utf-8")
+    definition, _ = load_package(package)
+    return definition
 
 
-def test_reduce_keeps_each_needle_line_once_in_order() -> None:
-    text = "\n".join(
-        [
-            "preamble",
-            DEFERRED_LISTING,
-            "ToolSearch",
-            f"marked {MARK}",
-            "",
-            "other paragraph",
-            f"header {SUBAGENT_FLAG}; more",
-            "trailing",
-        ]
+def _doc(**fields: Any) -> dict[str, Any]:
+    return {"variant": "high", "note": "", "body": {}, "blocks": [], **fields}
+
+
+def _cut(definition: ProbeDefinition, document: dict[str, Any]) -> JsonValue:
+    """<document> cut against what the definition's expressions yield on it."""
+    oracle = samples.evaluate(definition, parse_sample(definition, document, "t"))
+    return samples.cut(definition, document, oracle, "t")
+
+
+def test_cut_empties_a_modelled_string_no_expression_reads(tree: Path) -> None:
+    definition = _cut_definition(tree)
+
+    assert _cut(definition, _doc(note="unread")) == _doc()
+
+
+def test_cut_keeps_only_the_line_of_a_string_an_expression_needs(tree: Path) -> None:
+    definition = _cut_definition(tree, 'lambda d: "needle" in d.note')
+
+    cut = _cut(definition, _doc(note="first\nhas needle\nlast"))
+
+    assert cut == _doc(variant="", note="has needle")
+
+
+def test_cut_removes_raw_entries_and_keeps_the_undeclared_key(tree: Path) -> None:
+    definition = _cut_definition(tree)
+    document = _doc(body={"k": "v", "n": {"deep": 1}}, extra={"a": 1, "b": {"c": "x"}})
+
+    cut = _cut(definition, document)
+
+    assert cut == _doc(body={}, extra={})
+
+
+def test_cut_never_empties_a_type_tag_that_selects_a_model(tree: Path) -> None:
+    # Emptying `"text"` would parse the block as `Other`, which no expression reads; the
+    # class change rejects the removal, so the block keeps its tag and `text` field.
+    definition = _cut_definition(tree)
+
+    cut = _cut(definition, _doc(blocks=[{"type": "text", "text": "body"}, {"type": "image"}]))
+
+    assert cut == _doc(blocks=[{"type": "text", "text": ""}, {"type": ""}])
+
+
+def test_cut_is_a_fixed_point(tree: Path) -> None:
+    definition = _cut_definition(tree, 'lambda d: [b.text for b in d.blocks if b.type == "text"]')
+    document = _doc(
+        note="a\nb",
+        body={"k": ["x", {"y": "z"}]},
+        blocks=[{"type": "text", "text": "kept\nalso kept"}, {"type": "text", "text": "x"}],
+        extra="dropped",
     )
-    needles = (Needle(MARK, Span.LINE), *samples.SEARCH_STRINGS)
-    model = _Body.model_validate({"name": "n", "body": [text]})
+    oracle = samples.evaluate(definition, parse_sample(definition, document, "t"))
 
-    reduced = reduce(model, needles, IDENTITY)
+    once = samples.cut(definition, document, oracle, "t")
 
-    assert reduced == {
-        "name": "n",
-        "body": [
-            "\n".join(
-                [DEFERRED_LISTING, "ToolSearch", f"marked {MARK}", f"header {SUBAGENT_FLAG}; more"]
-            )
-        ],
-    }
+    assert samples.cut(definition, once, oracle, "t") == once
+    assert once == _doc(
+        variant="",
+        blocks=[{"type": "text", "text": "kept\nalso kept"}, {"type": "text", "text": "x"}],
+        extra="",
+    )
 
 
-def test_reduce_keeps_a_listing_running_to_the_end_of_its_string() -> None:
-    text = "\n".join(["preamble", "", DEFERRED_LISTING, "ToolSearch", "mcp__fx__alpha"])
-    model = _Body.model_validate({"name": "n", "body": [text]})
+def test_cut_holds_a_non_monotone_expression_to_its_oracle(tree: Path) -> None:
+    # Removing the `Y` line or the `Z` line alone flips the result, but removing both
+    # restores it; the `X` line is needed throughout, so `note` is never emptied whole.
+    definition = _cut_definition(
+        tree, 'lambda d: ("Y" in d.note) == ("Z" in d.note) and "X" in d.note'
+    )
+    document = _doc(note="X\nY\nZ")
+    oracle = samples.evaluate(definition, parse_sample(definition, document, "t"))
 
-    reduced = reduce(model, samples.SEARCH_STRINGS, IDENTITY)
+    cut = samples.cut(definition, document, oracle, "t")
 
-    assert reduced == {
-        "name": "n",
-        "body": ["\n".join([DEFERRED_LISTING, "ToolSearch", "mcp__fx__alpha"])],
-    }
-
-
-def test_reduce_keeps_a_needle_on_the_last_line() -> None:
-    text = "\n".join(["first", "", DEFERRED_LISTING])
-    model = _Body.model_validate({"name": "n", "body": [text, f"x\n{MARK}"]})
-
-    reduced = reduce(model, (Needle(MARK, Span.LINE), *samples.SEARCH_STRINGS), IDENTITY)
-
-    assert reduced == {"name": "n", "body": [DEFERRED_LISTING, MARK]}
+    assert samples.evaluate(definition, parse_sample(definition, cut, "t")) == oracle
+    assert cut == _doc(variant="", note="X")
 
 
-def test_reduce_keeps_a_declared_string_whole() -> None:
-    name = f"first line\n{MARK}\nthird line"
-    model = _Body.model_validate({"name": name, "body": {}})
+def test_cut_refuses_an_input_that_does_not_yield_its_oracle(tree: Path) -> None:
+    definition = _cut_definition(tree)
+    oracle = samples.evaluate(definition, parse_sample(definition, _doc(variant="low"), "t"))
 
-    assert reduce(model, (Needle(MARK, Span.LINE),), IDENTITY) == {"name": name, "body": {}}
+    with pytest.raises(SampleRefused, match="does not yield the results it is cut to"):
+        samples.cut(definition, _doc(), oracle, "t")
+
+
+def test_anonymize_rewrites_a_workspace_root_outside_the_home_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    path = f"{tmp_path}/state/agentspec/probe-workspaces/pkg/2026-11-01T000000-assertion/a"
+    encoded = path.replace("/", "-").replace(".", "-")
+
+    assert anonymize(path, IDENTITY) == (
+        "/home/probe/.local/state/agentspec/probe-workspaces/pkg/2026-11-01T000000-assertion/a"
+    )
+    assert anonymize(encoded, IDENTITY) == (
+        "-home-probe--local-state-agentspec-probe-workspaces-pkg-2026-11-01T000000-assertion-a"
+    )
 
 
 @pytest.mark.parametrize(
@@ -254,7 +298,7 @@ def _debug_ws(tmp_path: Path, document: dict[str, Any]) -> Path:
     return ws
 
 
-def test_write_sample_writes_a_reduced_capture_with_the_results(tree: Path, tmp_path: Path) -> None:
+def test_write_sample_writes_a_cut_capture_with_the_results(tree: Path, tmp_path: Path) -> None:
     package = _debug_package(tree)
     ws = _debug_ws(tmp_path, {"variant": "high", "prompt": "/Users/tester/secret", "mode": "m"})
     definition, manifest = load_package(package)
@@ -263,7 +307,7 @@ def test_write_sample_writes_a_reduced_capture_with_the_results(tree: Path, tmp_
 
     sample = parse_sample_file(path)
     assert sample.origin == SampleOrigin.CAPTURE
-    assert sample.input == {"variant": "high", "prompt": None, "mode": "m"}
+    assert sample.input == {"variant": "high", "prompt": "", "mode": ""}
     assert sample.results.model_dump(mode="json") == {"assertion": "high"}
 
 
@@ -277,23 +321,24 @@ def test_write_sample_refuses_to_overwrite(tree: Path, tmp_path: Path) -> None:
         samples.write_sample(definition, manifest, ws, "confirming", identity=IDENTITY)
 
 
-def test_write_sample_refuses_a_result_reduction_changed(tree: Path, tmp_path: Path) -> None:
-    # The assertion searches a string the models do not declare, which reduction blanks.
+def test_write_sample_refuses_a_result_anonymizing_changed(tree: Path, tmp_path: Path) -> None:
+    # The assertion searches for the operator's home, which anonymizing rewrites.
     package = _debug_package(
-        tree, assertion='lambda d: any("needle" in s for s in d.raw.strings())'
+        tree, assertion='lambda d: any("/Users/tester" in s for s in d.raw.strings())'
     )
-    ws = _debug_ws(tmp_path, {"variant": "high", "prompt": "a needle"})
+    ws = _debug_ws(tmp_path, {"variant": "high", "prompt": "/Users/tester/x"})
     definition, manifest = load_package(package)
 
     with pytest.raises(SampleRefused) as exc:
         samples.write_sample(definition, manifest, ws, "confirming", identity=IDENTITY)
-    assert exc.value.lines[1] == "  assertion: full true · reduced false"
+    assert exc.value.lines[1] == "  assertion: full true · anonymized false"
     assert not (package / "samples").exists()
 
 
 def test_write_sample_refuses_a_leak(tree: Path, tmp_path: Path) -> None:
-    package = _debug_package(tree)
-    # A name is not one of the forms anonymization rewrites, so only the scan catches it.
+    # The assertion reads `mode`, so the cut keeps it. A name is not one of the forms
+    # anonymization rewrites, so only the scan catches it.
+    package = _debug_package(tree, assertion="lambda d: d.mode")
     ws = _debug_ws(tmp_path, {"variant": "high", "mode": "written by Tess"})
     definition, manifest = load_package(package)
 
@@ -366,7 +411,8 @@ def test_a_manual_sample_and_its_prefixes(tree: Path, tmp_path: Path) -> None:
     }
     prefix = parse_sample_file(before)
     assert prefix.origin == SampleOrigin.PREFIX
-    assert prefix.input == [{"hook_event_name": "start"}]
+    # Neither expression needs the event's name to stay apart from "stop", so it is emptied.
+    assert prefix.input == [{"hook_event_name": ""}]
     assert prefix.results.model_dump(mode="json") == {"assertion": 1, "wait_for": False}
     assert parse_sample_file(empty).input == []
 
@@ -432,9 +478,9 @@ def test_a_fake_opencode_sample_keeps_the_marker_its_assertion_searches(
     assert sample.input == {
         "one": {
             "requests": [
-                {"messages": [{"role": "system", "content": f"you are {MARK}"}], "x": None},
-                # `content` is a declared string, which a sample keeps whole.
-                {"messages": [{"role": "system", "content": "make a title"}]},
+                {"messages": [{"role": "system", "content": f"you are {MARK}"}], "x": ""},
+                # Ungoverned either way, so nothing in it is needed.
+                {"messages": [{"role": "", "content": ""}]},
             ]
         }
     }
@@ -487,7 +533,40 @@ EDITED: dict[str, Any] = {
 }
 
 
-def test_regenerate_rewrites_a_package_s_results(tree: Path) -> None:
+def test_regenerate_refuses_a_changed_result_and_writes_nothing(tree: Path) -> None:
+    package = _debug_package(tree)
+    path = _put_sample(package, "edited-x", EDITED)
+    before = path.read_bytes()
+    definition, manifest = load_package(package)
+
+    with pytest.raises(SampleRefused) as exc:
+        samples.regenerate(definition, manifest, accept_results=False)
+    assert exc.value.lines[1] == "  edited-x.json: assertion: high → low"
+    assert "--accept-results" in exc.value.lines[-1]
+    assert path.read_bytes() == before
+
+
+def test_a_refused_regenerate_leaves_a_sample_it_would_only_have_re_cut(tree: Path) -> None:
+    package = _debug_package(tree)
+    _put_sample(package, "edited-x", EDITED)
+    uncut = _put_sample(
+        package,
+        "confirming",
+        {
+            "origin": "capture",
+            "input": {"variant": "high", "mode": "m"},
+            "results": {"assertion": "high"},
+        },
+    )
+    before = uncut.read_bytes()
+    definition, manifest = load_package(package)
+
+    with pytest.raises(SampleRefused):
+        samples.regenerate(definition, manifest, accept_results=False)
+    assert uncut.read_bytes() == before
+
+
+def test_regenerate_records_an_accepted_result(tree: Path) -> None:
     package = _debug_package(tree)
     path = _put_sample(package, "edited-x", EDITED)
     # Already right, and indented as no rewrite would leave it.
@@ -497,11 +576,28 @@ def test_regenerate_rewrites_a_package_s_results(tree: Path) -> None:
     before = unchanged.read_bytes()
     definition, manifest = load_package(package)
 
-    changes = samples.regenerate(definition, manifest)
+    changes = samples.regenerate(definition, manifest, accept_results=True)
 
     assert changes == ["edited-x.json: assertion: high → low"]
     assert json.loads(path.read_text()) == {**EDITED, "results": {"assertion": "low"}}
     assert unchanged.read_bytes() == before
+
+
+def test_regenerate_re_cuts_an_uncut_input(tree: Path) -> None:
+    package = _debug_package(tree)
+    uncut = {
+        "origin": "capture",
+        "input": {"variant": "high", "mode": "first\nsecond", "prompt": "x"},
+        "results": {"assertion": "high"},
+    }
+    path = _put_sample(package, "confirming", uncut)
+    definition, manifest = load_package(package)
+
+    changes = samples.regenerate(definition, manifest, accept_results=False)
+
+    assert changes == ["confirming.json: cut 2 strings, 0 lines"]
+    assert json.loads(path.read_text())["input"] == {"variant": "high", "mode": "", "prompt": ""}
+    assert samples.regenerate(definition, manifest, accept_results=False) == []
 
 
 def test_regenerate_leaves_every_sample_when_one_refuses(cli: Cli, tree: Path) -> None:
@@ -513,7 +609,7 @@ def test_regenerate_leaves_every_sample_when_one_refuses(cli: Cli, tree: Path) -
     definition, manifest = load_package(package)
 
     with pytest.raises(GateFailure):
-        samples.regenerate(definition, manifest)
+        samples.regenerate(definition, manifest, accept_results=False)
     assert first.read_bytes() == before
 
     refused = cli("sample", "debug-pkg", "--regenerate")
@@ -528,7 +624,7 @@ def test_regenerate_names_the_sample_an_expression_refused(tree: Path) -> None:
     definition, manifest = load_package(package)
 
     with pytest.raises(GateFailure) as exc:
-        samples.regenerate(definition, manifest)
+        samples.regenerate(definition, manifest, accept_results=False)
     assert exc.value.lines[0].startswith(f"{path}: the assertion did not yield a JSON value")
 
 
@@ -546,7 +642,7 @@ def test_regenerate_leaves_an_unchanged_sample_untouched(tree: Path, tmp_path: P
     path.write_text(json.dumps(json.loads(path.read_text()), indent=4) + "\n", encoding="utf-8")
     before = path.read_bytes()
 
-    assert samples.regenerate(definition, manifest) == []
+    assert samples.regenerate(definition, manifest, accept_results=False) == []
     assert path.read_bytes() == before
 
 
@@ -562,8 +658,8 @@ def test_a_sample_name_must_be_a_plain_slug(tree: Path, tmp_path: Path, name: st
 
 def test_a_lone_surrogate_survives_sampling_ascii_escaped(tree: Path, tmp_path: Path) -> None:
     # A body cut between the halves of an emoji carries an escaped lone surrogate, which
-    # has no UTF-8 encoding.
-    package = _debug_package(tree)
+    # has no UTF-8 encoding. The assertion reads `mode`, so the cut keeps it.
+    package = _debug_package(tree, assertion="lambda d: d.mode")
     ws = tmp_path / "ws"
     ws.mkdir()
     (ws / "view.json").write_text('{"variant": "low", "mode": "cut \\ud83d"}', encoding="utf-8")
@@ -572,7 +668,7 @@ def test_a_lone_surrogate_survives_sampling_ascii_escaped(tree: Path, tmp_path: 
     path = samples.write_sample(definition, manifest, ws, "refuting", identity=IDENTITY)
 
     assert "\\ud83d" in path.read_text(encoding="utf-8")
-    assert parse_sample_file(path).input == {"variant": "low", "mode": "cut \ud83d"}
+    assert parse_sample_file(path).input == {"variant": "", "mode": "cut \ud83d"}
 
 
 def test_a_poll_counts_a_line_cut_inside_a_character_as_not_yet(tree: Path, tmp_path: Path) -> None:

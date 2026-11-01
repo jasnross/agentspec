@@ -3,14 +3,14 @@
   "note": "confirming capture with an {unparsed: ...} line, the hook's stand-in for a payload that was not JSON, ahead of the first line, which must keep its position",
   "input": [
     {
-      "unparsed": "not json"
+      "unparsed": ""
     },
     {
       "session_id": null,
       "transcript_path": null,
       "cwd": null,
-      "hook_event_name": "SessionStart",
-      "source": "startup",
+      "hook_event_name": "",
+      "source": "",
       "model": null
     },
     {
@@ -19,7 +19,7 @@
       "cwd": null,
       "prompt_id": null,
       "permission_mode": null,
-      "hook_event_name": "UserPromptSubmit",
+      "hook_event_name": "",
       "prompt": null
     },
     {

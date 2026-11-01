@@ -4,7 +4,8 @@ Each package's samples must declare exactly the expressions its definition carri
 declared result must be what the current evaluator yields over the sample's input, and
 across a package's samples every expression must take both outcomes. So an assertion,
 `wait_for` or custom check made constant by a later edit, to its own code or to a model it
-reads, fails here. Every sample must also pass the leak scan.
+reads, fails here. Every sample must also be minimal, keeping no text the removal test could
+still cut, and pass the leak scan.
 """
 
 from collections.abc import Iterator
@@ -21,6 +22,7 @@ from probe_harness.contract import (
 from probe_harness.families import ProbeDefinition, load_package, parse_sample
 from probe_harness.samples import (
     Identity,
+    cut,
     evaluate,
     expression_names,
     leaks,
@@ -64,8 +66,22 @@ def test_each_declared_result_is_reproduced_by_the_current_evaluator(package: Pa
         for key in declared:
             assert json_values.equal(produced[key], declared[key]), (
                 f"{path.name}: {key} declares {json_values.to_text(declared[key])} but the "
-                f"evaluator yields {json_values.to_text(produced[key])}"
+                f"evaluator yields {json_values.to_text(produced[key])}. Re-cut the sample from "
+                f"its kept capture with probe sample, re-run the probe, or run probe sample "
+                f"{package.name} --regenerate --accept-results"
             )
+
+
+@pytest.mark.parametrize("package", SAMPLED, ids=lambda p: p.name)
+def test_each_sample_is_minimal(package: Path) -> None:
+    definition, _, samples = _loaded(package)
+    for path, sample in samples:
+        assert json_values.equal(
+            cut(definition, sample.input, sample.results, str(path)), sample.input
+        ), (
+            f"{path.name} keeps text no expression needs; run experiments/probe sample "
+            f"{package.name} --regenerate"
+        )
 
 
 @pytest.mark.parametrize("package", SAMPLED, ids=lambda p: p.name)

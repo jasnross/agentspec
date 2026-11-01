@@ -9,16 +9,16 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "system",
-              "content": "You are a title generator. You output ONLY a thread title. Nothing else.\n\n<task>\nGenerate a brief title that would help the user find this conversation later.\n\nFollow all rules in <rules>\nUse the <examples> so you know what a good title looks like.\nYour output must be:\n- A single line\n- ≤50 characters\n- No explanations\n</task>\n\n<rules>\n- you MUST use the same language as the user message you are summarizing\n- Title must be grammatically correct and read naturally - no word salad\n- Never include tool names in the title (e.g. \"read tool\", \"bash tool\", \"edit tool\")\n- Focus on the main topic or question the user needs to retrieve\n- Vary your phrasing - avoid repetitive patterns like always starting with \"Analyzing\"\n- When a file is mentioned, focus on WHAT the user wants to do WITH the file, not just that they shared it\n- Keep exact: technical terms, numbers, filenames, HTTP codes\n- Remove: the, this, my, a, an\n- Never assume tech stack\n- Never use tools\n- NEVER respond to questions, just generate a title for the conversation\n- The title should NEVER include \"summarizing\" or \"generating\" when generating a title\n- DO NOT SAY YOU CANNOT GENERATE A TITLE OR COMPLAIN ABOUT THE INPUT\n- Always output something meaningful, even if the input is minimal.\n- If the user message is short or conversational (e.g. \"hello\", \"lol\", \"what's up\", \"hey\"):\n  → create a title that reflects the user's tone or intent (such as Greeting, Quick check-in, Light chat, Intro message, etc.)\n</rules>\n\n<examples>\n\"debug 500 errors in production\" → Debugging production 500 errors\n\"refactor user service\" → Refactoring user service\n\"why is app.js failing\" → app.js failure investigation\n\"implement rate limiting\" → Rate limiting implementation\n\"how do I connect postgres to my API\" → Postgres API connection\n\"best practices for React hooks\" → React hooks best practices\n\"@src/auth.ts can you add refresh token support\" → Auth refresh token support\n\"@utils/parser.ts this is broken\" → Parser bug fix\n\"look at @config.json\" → Config review\n\"@App.tsx add dark mode toggle\" → Dark mode toggle in App\n</examples>\n"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "Generate a title for this conversation:\n"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             }
           ],
           "stream": null,
@@ -29,19 +29,19 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "system",
-              "content": "Reply with exactly one word: ok.\n\nAGENTSPEC-PROBE-MARKER-OCPERM5\nYou are powered by the model named m. The exact model ID is fake/m\nHere is some useful information about the environment you are running in:\n<env>\n  Working directory: /home/probe/.local/state/agentspec/probe-workspaces/opencode-agent-permission-deny-all/2026-10-31T064841-assertion/baseline/project\n  Workspace root folder: /\n  Is directory a git repo: no\n  Platform: darwin\n  Today's date: Sat Oct 31 2026\n</env>\nSkills provide specialized instructions and workflows for specific tasks.\nUse the skill tool to load a skill when a task matches its description.\n<available_skills>\n  <skill>\n    <name>customize-opencode</name>\n    <description>Use ONLY when the user is editing or creating opencode's own configuration: opencode.json, opencode.jsonc, files under .opencode/, or files under ~/.config/opencode/. Also use when creating or fixing opencode agents, subagents, skills, plugins, MCP servers, or permission rules. Do not use for the user's own application code, or for any project that is not configuring opencode itself.</description>\n    <location>&lt;built-in&gt;</location>\n  </skill>\n</available_skills>"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             }
           ],
           "tools": [
             {
               "type": null,
               "function": {
-                "name": "bash",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -49,7 +49,7 @@
             {
               "type": null,
               "function": {
-                "name": "edit",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -57,7 +57,7 @@
             {
               "type": null,
               "function": {
-                "name": "fx_beta",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -65,7 +65,7 @@
             {
               "type": null,
               "function": {
-                "name": "glob",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -73,7 +73,7 @@
             {
               "type": null,
               "function": {
-                "name": "grep",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -81,7 +81,7 @@
             {
               "type": null,
               "function": {
-                "name": "read",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -89,7 +89,7 @@
             {
               "type": null,
               "function": {
-                "name": "skill",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -97,7 +97,7 @@
             {
               "type": null,
               "function": {
-                "name": "task",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -105,7 +105,7 @@
             {
               "type": null,
               "function": {
-                "name": "todowrite",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -113,7 +113,7 @@
             {
               "type": null,
               "function": {
-                "name": "webfetch",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -121,7 +121,7 @@
             {
               "type": null,
               "function": {
-                "name": "write",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -140,16 +140,16 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "system",
-              "content": "You are a title generator. You output ONLY a thread title. Nothing else.\n\n<task>\nGenerate a brief title that would help the user find this conversation later.\n\nFollow all rules in <rules>\nUse the <examples> so you know what a good title looks like.\nYour output must be:\n- A single line\n- ≤50 characters\n- No explanations\n</task>\n\n<rules>\n- you MUST use the same language as the user message you are summarizing\n- Title must be grammatically correct and read naturally - no word salad\n- Never include tool names in the title (e.g. \"read tool\", \"bash tool\", \"edit tool\")\n- Focus on the main topic or question the user needs to retrieve\n- Vary your phrasing - avoid repetitive patterns like always starting with \"Analyzing\"\n- When a file is mentioned, focus on WHAT the user wants to do WITH the file, not just that they shared it\n- Keep exact: technical terms, numbers, filenames, HTTP codes\n- Remove: the, this, my, a, an\n- Never assume tech stack\n- Never use tools\n- NEVER respond to questions, just generate a title for the conversation\n- The title should NEVER include \"summarizing\" or \"generating\" when generating a title\n- DO NOT SAY YOU CANNOT GENERATE A TITLE OR COMPLAIN ABOUT THE INPUT\n- Always output something meaningful, even if the input is minimal.\n- If the user message is short or conversational (e.g. \"hello\", \"lol\", \"what's up\", \"hey\"):\n  → create a title that reflects the user's tone or intent (such as Greeting, Quick check-in, Light chat, Intro message, etc.)\n</rules>\n\n<examples>\n\"debug 500 errors in production\" → Debugging production 500 errors\n\"refactor user service\" → Refactoring user service\n\"why is app.js failing\" → app.js failure investigation\n\"implement rate limiting\" → Rate limiting implementation\n\"how do I connect postgres to my API\" → Postgres API connection\n\"best practices for React hooks\" → React hooks best practices\n\"@src/auth.ts can you add refresh token support\" → Auth refresh token support\n\"@utils/parser.ts this is broken\" → Parser bug fix\n\"look at @config.json\" → Config review\n\"@App.tsx add dark mode toggle\" → Dark mode toggle in App\n</examples>\n"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "Generate a title for this conversation:\n"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             }
           ],
           "stream": null,
@@ -161,11 +161,11 @@
           "messages": [
             {
               "role": "system",
-              "content": "Reply with exactly one word: ok.\n\nAGENTSPEC-PROBE-MARKER-OCPERM5\nYou are powered by the model named m. The exact model ID is fake/m\nHere is some useful information about the environment you are running in:\n<env>\n  Working directory: /home/probe/.local/state/agentspec/probe-workspaces/opencode-agent-permission-deny-all/2026-10-31T064841-assertion/read_edit_bash/project\n  Workspace root folder: /\n  Is directory a git repo: no\n  Platform: darwin\n  Today's date: Sat Oct 31 2026\n</env>"
+              "content": "AGENTSPEC-PROBE-MARKER-OCPERM5"
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             }
           ],
           "tools": [
@@ -215,16 +215,16 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "system",
-              "content": "You are a title generator. You output ONLY a thread title. Nothing else.\n\n<task>\nGenerate a brief title that would help the user find this conversation later.\n\nFollow all rules in <rules>\nUse the <examples> so you know what a good title looks like.\nYour output must be:\n- A single line\n- ≤50 characters\n- No explanations\n</task>\n\n<rules>\n- you MUST use the same language as the user message you are summarizing\n- Title must be grammatically correct and read naturally - no word salad\n- Never include tool names in the title (e.g. \"read tool\", \"bash tool\", \"edit tool\")\n- Focus on the main topic or question the user needs to retrieve\n- Vary your phrasing - avoid repetitive patterns like always starting with \"Analyzing\"\n- When a file is mentioned, focus on WHAT the user wants to do WITH the file, not just that they shared it\n- Keep exact: technical terms, numbers, filenames, HTTP codes\n- Remove: the, this, my, a, an\n- Never assume tech stack\n- Never use tools\n- NEVER respond to questions, just generate a title for the conversation\n- The title should NEVER include \"summarizing\" or \"generating\" when generating a title\n- DO NOT SAY YOU CANNOT GENERATE A TITLE OR COMPLAIN ABOUT THE INPUT\n- Always output something meaningful, even if the input is minimal.\n- If the user message is short or conversational (e.g. \"hello\", \"lol\", \"what's up\", \"hey\"):\n  → create a title that reflects the user's tone or intent (such as Greeting, Quick check-in, Light chat, Intro message, etc.)\n</rules>\n\n<examples>\n\"debug 500 errors in production\" → Debugging production 500 errors\n\"refactor user service\" → Refactoring user service\n\"why is app.js failing\" → app.js failure investigation\n\"implement rate limiting\" → Rate limiting implementation\n\"how do I connect postgres to my API\" → Postgres API connection\n\"best practices for React hooks\" → React hooks best practices\n\"@src/auth.ts can you add refresh token support\" → Auth refresh token support\n\"@utils/parser.ts this is broken\" → Parser bug fix\n\"look at @config.json\" → Config review\n\"@App.tsx add dark mode toggle\" → Dark mode toggle in App\n</examples>\n"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "Generate a title for this conversation:\n"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             }
           ],
           "stream": null,
@@ -236,11 +236,11 @@
           "messages": [
             {
               "role": "system",
-              "content": "Reply with exactly one word: ok.\n\nAGENTSPEC-PROBE-MARKER-OCPERM5\nYou are powered by the model named m. The exact model ID is fake/m\nHere is some useful information about the environment you are running in:\n<env>\n  Working directory: /home/probe/.local/state/agentspec/probe-workspaces/opencode-agent-permission-deny-all/2026-10-31T064841-assertion/edit_only/project\n  Workspace root folder: /\n  Is directory a git repo: no\n  Platform: darwin\n  Today's date: Sat Oct 31 2026\n</env>"
+              "content": "AGENTSPEC-PROBE-MARKER-OCPERM5"
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             }
           ],
           "tools": [
@@ -274,16 +274,16 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "system",
-              "content": "You are a title generator. You output ONLY a thread title. Nothing else.\n\n<task>\nGenerate a brief title that would help the user find this conversation later.\n\nFollow all rules in <rules>\nUse the <examples> so you know what a good title looks like.\nYour output must be:\n- A single line\n- ≤50 characters\n- No explanations\n</task>\n\n<rules>\n- you MUST use the same language as the user message you are summarizing\n- Title must be grammatically correct and read naturally - no word salad\n- Never include tool names in the title (e.g. \"read tool\", \"bash tool\", \"edit tool\")\n- Focus on the main topic or question the user needs to retrieve\n- Vary your phrasing - avoid repetitive patterns like always starting with \"Analyzing\"\n- When a file is mentioned, focus on WHAT the user wants to do WITH the file, not just that they shared it\n- Keep exact: technical terms, numbers, filenames, HTTP codes\n- Remove: the, this, my, a, an\n- Never assume tech stack\n- Never use tools\n- NEVER respond to questions, just generate a title for the conversation\n- The title should NEVER include \"summarizing\" or \"generating\" when generating a title\n- DO NOT SAY YOU CANNOT GENERATE A TITLE OR COMPLAIN ABOUT THE INPUT\n- Always output something meaningful, even if the input is minimal.\n- If the user message is short or conversational (e.g. \"hello\", \"lol\", \"what's up\", \"hey\"):\n  → create a title that reflects the user's tone or intent (such as Greeting, Quick check-in, Light chat, Intro message, etc.)\n</rules>\n\n<examples>\n\"debug 500 errors in production\" → Debugging production 500 errors\n\"refactor user service\" → Refactoring user service\n\"why is app.js failing\" → app.js failure investigation\n\"implement rate limiting\" → Rate limiting implementation\n\"how do I connect postgres to my API\" → Postgres API connection\n\"best practices for React hooks\" → React hooks best practices\n\"@src/auth.ts can you add refresh token support\" → Auth refresh token support\n\"@utils/parser.ts this is broken\" → Parser bug fix\n\"look at @config.json\" → Config review\n\"@App.tsx add dark mode toggle\" → Dark mode toggle in App\n</examples>\n"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "Generate a title for this conversation:\n"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             }
           ],
           "stream": null,
@@ -295,11 +295,11 @@
           "messages": [
             {
               "role": "system",
-              "content": "Reply with exactly one word: ok.\n\nAGENTSPEC-PROBE-MARKER-OCPERM5\nYou are powered by the model named m. The exact model ID is fake/m\nHere is some useful information about the environment you are running in:\n<env>\n  Working directory: /home/probe/.local/state/agentspec/probe-workspaces/opencode-agent-permission-deny-all/2026-10-31T064841-assertion/mcp_one/project\n  Workspace root folder: /\n  Is directory a git repo: no\n  Platform: darwin\n  Today's date: Sat Oct 31 2026\n</env>"
+              "content": "AGENTSPEC-PROBE-MARKER-OCPERM5"
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             }
           ],
           "tools": [
@@ -325,16 +325,16 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "system",
-              "content": "You are a title generator. You output ONLY a thread title. Nothing else.\n\n<task>\nGenerate a brief title that would help the user find this conversation later.\n\nFollow all rules in <rules>\nUse the <examples> so you know what a good title looks like.\nYour output must be:\n- A single line\n- ≤50 characters\n- No explanations\n</task>\n\n<rules>\n- you MUST use the same language as the user message you are summarizing\n- Title must be grammatically correct and read naturally - no word salad\n- Never include tool names in the title (e.g. \"read tool\", \"bash tool\", \"edit tool\")\n- Focus on the main topic or question the user needs to retrieve\n- Vary your phrasing - avoid repetitive patterns like always starting with \"Analyzing\"\n- When a file is mentioned, focus on WHAT the user wants to do WITH the file, not just that they shared it\n- Keep exact: technical terms, numbers, filenames, HTTP codes\n- Remove: the, this, my, a, an\n- Never assume tech stack\n- Never use tools\n- NEVER respond to questions, just generate a title for the conversation\n- The title should NEVER include \"summarizing\" or \"generating\" when generating a title\n- DO NOT SAY YOU CANNOT GENERATE A TITLE OR COMPLAIN ABOUT THE INPUT\n- Always output something meaningful, even if the input is minimal.\n- If the user message is short or conversational (e.g. \"hello\", \"lol\", \"what's up\", \"hey\"):\n  → create a title that reflects the user's tone or intent (such as Greeting, Quick check-in, Light chat, Intro message, etc.)\n</rules>\n\n<examples>\n\"debug 500 errors in production\" → Debugging production 500 errors\n\"refactor user service\" → Refactoring user service\n\"why is app.js failing\" → app.js failure investigation\n\"implement rate limiting\" → Rate limiting implementation\n\"how do I connect postgres to my API\" → Postgres API connection\n\"best practices for React hooks\" → React hooks best practices\n\"@src/auth.ts can you add refresh token support\" → Auth refresh token support\n\"@utils/parser.ts this is broken\" → Parser bug fix\n\"look at @config.json\" → Config review\n\"@App.tsx add dark mode toggle\" → Dark mode toggle in App\n</examples>\n"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "Generate a title for this conversation:\n"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             }
           ],
           "stream": null,
@@ -346,11 +346,11 @@
           "messages": [
             {
               "role": "system",
-              "content": "Reply with exactly one word: ok.\n\nAGENTSPEC-PROBE-MARKER-OCPERM5\nYou are powered by the model named m. The exact model ID is fake/m\nHere is some useful information about the environment you are running in:\n<env>\n  Working directory: /home/probe/.local/state/agentspec/probe-workspaces/opencode-agent-permission-deny-all/2026-10-31T064841-assertion/reversed/project\n  Workspace root folder: /\n  Is directory a git repo: no\n  Platform: darwin\n  Today's date: Sat Oct 31 2026\n</env>"
+              "content": "AGENTSPEC-PROBE-MARKER-OCPERM5"
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             }
           ],
           "stream": null,

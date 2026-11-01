@@ -29,6 +29,12 @@ def test_an_abbreviated_subcommand_flag_is_refused(cli: Cli) -> None:
     assert "probe status: error: unrecognized arguments: --sum" in result.stderr
 
 
+def test_accept_results_without_regenerate_exits_2(cli: Cli) -> None:
+    result = cli("sample", "pkg", "ws", "name", "--accept-results")
+    assert result.returncode == 2
+    assert "--accept-results applies only with --regenerate" in result.stderr
+
+
 def _record_file(directory: Path, document: dict[str, Any]) -> Path:
     results = directory / "results"
     results.mkdir(parents=True, exist_ok=True)

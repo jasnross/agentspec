@@ -8,7 +8,9 @@
     probe source <record> <dir> [--arranged]            write a v2 record's files to <dir>
     probe sample <package> <workspace> <name> [--lines N]
                                                         write a sample from a kept workspace
-    probe sample <package> --regenerate                 recompute every sample's results
+    probe sample <package> --regenerate [--accept-results]
+                                                        recompute every sample's results and
+                                                        re-cut every input
 
 Every harness module a subcommand needs is imported before it does any work, so an import
 error surfaces before any work starts, and never after a manual operator has spent a live
@@ -120,6 +122,7 @@ def _parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParse
     sample_parser.add_argument("name", nargs="?")
     sample_parser.add_argument("--lines", type=_count)
     sample_parser.add_argument("--regenerate", action="store_true")
+    sample_parser.add_argument("--accept-results", action="store_true")
 
     source_parser = commands.add_parser("source", prog="probe source", allow_abbrev=False)
     source_parser.add_argument("record")
@@ -136,7 +139,7 @@ def _parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParse
 
 
 def _sample(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
-    """`probe sample`: write one sample from a kept workspace, or regenerate every result."""
+    """`probe sample`: write one sample from a kept workspace, or regenerate every sample."""
     # Imported here: `samples` loads every family, which `probe source` must not.
     from probe_harness import families, samples
     from probe_harness.families.base import UsageError
@@ -148,6 +151,8 @@ def _sample(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     if args.regenerate:
         if args.workspace is not None or args.name is not None or args.lines is not None:
             parser.error("--regenerate takes only a package")
+    elif args.accept_results:
+        parser.error("--accept-results applies only with --regenerate")
     elif args.workspace is None or args.name is None:
         parser.error("a workspace and a sample name are required without --regenerate")
     package = experiments_dir() / args.package
@@ -156,7 +161,9 @@ def _sample(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         if args.lines is not None and not isinstance(definition, ManualProbe):
             parser.error("--lines applies only to a manual package")
         if args.regenerate:
-            for line in samples.regenerate(definition, manifest):
+            for line in samples.regenerate(
+                definition, manifest, accept_results=args.accept_results
+            ):
                 print(line)
             return 0
         workspace, name = str(args.workspace), str(args.name)

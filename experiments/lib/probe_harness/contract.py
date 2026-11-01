@@ -318,9 +318,9 @@ type Record = RecordV1 | RecordV2
 class SampleOrigin(StrEnum):
     """Where a sample's input came from.
 
-    `capture` is a real capture, reduced; `prefix` its first lines, for a `wait_for`'s false
-    side; `edited` a hand-edited copy of a reduced sample, for a false side no fixture makes
-    a provider produce.
+    `capture` is a real capture, cut by the removal test; `prefix` its first lines, for a
+    `wait_for`'s false side; `edited` a hand-edited copy of a cut sample, for a false side no
+    fixture makes a provider produce.
     """
 
     CAPTURE = "capture"

@@ -8,16 +8,16 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "system",
-              "content": "You are a title generator. You output ONLY a thread title. Nothing else.\n\n<task>\nGenerate a brief title that would help the user find this conversation later.\n\nFollow all rules in <rules>\nUse the <examples> so you know what a good title looks like.\nYour output must be:\n- A single line\n- ≤50 characters\n- No explanations\n</task>\n\n<rules>\n- you MUST use the same language as the user message you are summarizing\n- Title must be grammatically correct and read naturally - no word salad\n- Never include tool names in the title (e.g. \"read tool\", \"bash tool\", \"edit tool\")\n- Focus on the main topic or question the user needs to retrieve\n- Vary your phrasing - avoid repetitive patterns like always starting with \"Analyzing\"\n- When a file is mentioned, focus on WHAT the user wants to do WITH the file, not just that they shared it\n- Keep exact: technical terms, numbers, filenames, HTTP codes\n- Remove: the, this, my, a, an\n- Never assume tech stack\n- Never use tools\n- NEVER respond to questions, just generate a title for the conversation\n- The title should NEVER include \"summarizing\" or \"generating\" when generating a title\n- DO NOT SAY YOU CANNOT GENERATE A TITLE OR COMPLAIN ABOUT THE INPUT\n- Always output something meaningful, even if the input is minimal.\n- If the user message is short or conversational (e.g. \"hello\", \"lol\", \"what's up\", \"hey\"):\n  → create a title that reflects the user's tone or intent (such as Greeting, Quick check-in, Light chat, Intro message, etc.)\n</rules>\n\n<examples>\n\"debug 500 errors in production\" → Debugging production 500 errors\n\"refactor user service\" → Refactoring user service\n\"why is app.js failing\" → app.js failure investigation\n\"implement rate limiting\" → Rate limiting implementation\n\"how do I connect postgres to my API\" → Postgres API connection\n\"best practices for React hooks\" → React hooks best practices\n\"@src/auth.ts can you add refresh token support\" → Auth refresh token support\n\"@utils/parser.ts this is broken\" → Parser bug fix\n\"look at @config.json\" → Config review\n\"@App.tsx add dark mode toggle\" → Dark mode toggle in App\n</examples>\n"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "Generate a title for this conversation:\n"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             }
           ],
           "stream": null,
@@ -28,19 +28,19 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "system",
-              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3\nYou are powered by the model named m. The exact model ID is fake/m\nHere is some useful information about the environment you are running in:\n<env>\n  Working directory: /home/probe/.local/state/agentspec/probe-workspaces/opencode-agent-mcp-resource-read/2026-10-31T064803-discriminator/map_read_resource/project\n  Workspace root folder: /\n  Is directory a git repo: no\n  Platform: darwin\n  Today's date: Sat Oct 31 2026\n</env>"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             }
           ],
           "tools": [
             {
               "type": null,
               "function": {
-                "name": "list_mcp_resource_templates",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -48,7 +48,7 @@
             {
               "type": null,
               "function": {
-                "name": "list_mcp_resources",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -56,7 +56,7 @@
             {
               "type": null,
               "function": {
-                "name": "read",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -64,7 +64,7 @@
             {
               "type": null,
               "function": {
-                "name": "read_mcp_resource",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -80,21 +80,21 @@
           "messages": [
             {
               "role": "system",
-              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3\nYou are powered by the model named m. The exact model ID is fake/m\nHere is some useful information about the environment you are running in:\n<env>\n  Working directory: /home/probe/.local/state/agentspec/probe-workspaces/opencode-agent-mcp-resource-read/2026-10-31T064803-discriminator/map_read_resource/project\n  Workspace root folder: /\n  Is directory a git repo: no\n  Platform: darwin\n  Today's date: Sat Oct 31 2026\n</env>"
+              "content": "AGENTSPEC-PROBE-MARKER-OCRES3"
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "assistant",
+              "role": "",
               "content": "",
               "tool_calls": null
             },
             {
               "role": "tool",
               "tool_call_id": null,
-              "content": "Resource: fx://AGENTSPEC-RESOURCE-OCRES3\nMIME: text/plain\nAGENTSPEC-RESOURCE-CONTENT-OCRES3"
+              "content": "AGENTSPEC-RESOURCE-CONTENT-OCRES3"
             }
           ],
           "tools": [
@@ -144,16 +144,16 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "system",
-              "content": "You are a title generator. You output ONLY a thread title. Nothing else.\n\n<task>\nGenerate a brief title that would help the user find this conversation later.\n\nFollow all rules in <rules>\nUse the <examples> so you know what a good title looks like.\nYour output must be:\n- A single line\n- ≤50 characters\n- No explanations\n</task>\n\n<rules>\n- you MUST use the same language as the user message you are summarizing\n- Title must be grammatically correct and read naturally - no word salad\n- Never include tool names in the title (e.g. \"read tool\", \"bash tool\", \"edit tool\")\n- Focus on the main topic or question the user needs to retrieve\n- Vary your phrasing - avoid repetitive patterns like always starting with \"Analyzing\"\n- When a file is mentioned, focus on WHAT the user wants to do WITH the file, not just that they shared it\n- Keep exact: technical terms, numbers, filenames, HTTP codes\n- Remove: the, this, my, a, an\n- Never assume tech stack\n- Never use tools\n- NEVER respond to questions, just generate a title for the conversation\n- The title should NEVER include \"summarizing\" or \"generating\" when generating a title\n- DO NOT SAY YOU CANNOT GENERATE A TITLE OR COMPLAIN ABOUT THE INPUT\n- Always output something meaningful, even if the input is minimal.\n- If the user message is short or conversational (e.g. \"hello\", \"lol\", \"what's up\", \"hey\"):\n  → create a title that reflects the user's tone or intent (such as Greeting, Quick check-in, Light chat, Intro message, etc.)\n</rules>\n\n<examples>\n\"debug 500 errors in production\" → Debugging production 500 errors\n\"refactor user service\" → Refactoring user service\n\"why is app.js failing\" → app.js failure investigation\n\"implement rate limiting\" → Rate limiting implementation\n\"how do I connect postgres to my API\" → Postgres API connection\n\"best practices for React hooks\" → React hooks best practices\n\"@src/auth.ts can you add refresh token support\" → Auth refresh token support\n\"@utils/parser.ts this is broken\" → Parser bug fix\n\"look at @config.json\" → Config review\n\"@App.tsx add dark mode toggle\" → Dark mode toggle in App\n</examples>\n"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "Generate a title for this conversation:\n"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             }
           ],
           "stream": null,
@@ -164,19 +164,19 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "system",
-              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3\nYou are powered by the model named m. The exact model ID is fake/m\nHere is some useful information about the environment you are running in:\n<env>\n  Working directory: /home/probe/.local/state/agentspec/probe-workspaces/opencode-agent-mcp-resource-read/2026-10-31T064803-discriminator/map_list_resources/project\n  Workspace root folder: /\n  Is directory a git repo: no\n  Platform: darwin\n  Today's date: Sat Oct 31 2026\n</env>"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             }
           ],
           "tools": [
             {
               "type": null,
               "function": {
-                "name": "list_mcp_resource_templates",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -184,7 +184,7 @@
             {
               "type": null,
               "function": {
-                "name": "list_mcp_resources",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -192,7 +192,7 @@
             {
               "type": null,
               "function": {
-                "name": "read",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -200,7 +200,7 @@
             {
               "type": null,
               "function": {
-                "name": "read_mcp_resource",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -216,21 +216,21 @@
           "messages": [
             {
               "role": "system",
-              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3\nYou are powered by the model named m. The exact model ID is fake/m\nHere is some useful information about the environment you are running in:\n<env>\n  Working directory: /home/probe/.local/state/agentspec/probe-workspaces/opencode-agent-mcp-resource-read/2026-10-31T064803-discriminator/map_list_resources/project\n  Workspace root folder: /\n  Is directory a git repo: no\n  Platform: darwin\n  Today's date: Sat Oct 31 2026\n</env>"
+              "content": "AGENTSPEC-PROBE-MARKER-OCRES3"
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "assistant",
+              "role": "",
               "content": "",
               "tool_calls": null
             },
             {
               "role": "tool",
               "tool_call_id": null,
-              "content": "{\n  \"resources\": [\n    {\n      \"name\": \"probe-doc\",\n      \"uri\": \"fx://AGENTSPEC-RESOURCE-OCRES3\",\n      \"mimeType\": \"text/plain\",\n      \"server\": \"fx\"\n    }\n  ]\n}"
+              "content": "      \"name\": \"probe-doc\","
             }
           ],
           "tools": [
@@ -280,16 +280,16 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "system",
-              "content": "You are a title generator. You output ONLY a thread title. Nothing else.\n\n<task>\nGenerate a brief title that would help the user find this conversation later.\n\nFollow all rules in <rules>\nUse the <examples> so you know what a good title looks like.\nYour output must be:\n- A single line\n- ≤50 characters\n- No explanations\n</task>\n\n<rules>\n- you MUST use the same language as the user message you are summarizing\n- Title must be grammatically correct and read naturally - no word salad\n- Never include tool names in the title (e.g. \"read tool\", \"bash tool\", \"edit tool\")\n- Focus on the main topic or question the user needs to retrieve\n- Vary your phrasing - avoid repetitive patterns like always starting with \"Analyzing\"\n- When a file is mentioned, focus on WHAT the user wants to do WITH the file, not just that they shared it\n- Keep exact: technical terms, numbers, filenames, HTTP codes\n- Remove: the, this, my, a, an\n- Never assume tech stack\n- Never use tools\n- NEVER respond to questions, just generate a title for the conversation\n- The title should NEVER include \"summarizing\" or \"generating\" when generating a title\n- DO NOT SAY YOU CANNOT GENERATE A TITLE OR COMPLAIN ABOUT THE INPUT\n- Always output something meaningful, even if the input is minimal.\n- If the user message is short or conversational (e.g. \"hello\", \"lol\", \"what's up\", \"hey\"):\n  → create a title that reflects the user's tone or intent (such as Greeting, Quick check-in, Light chat, Intro message, etc.)\n</rules>\n\n<examples>\n\"debug 500 errors in production\" → Debugging production 500 errors\n\"refactor user service\" → Refactoring user service\n\"why is app.js failing\" → app.js failure investigation\n\"implement rate limiting\" → Rate limiting implementation\n\"how do I connect postgres to my API\" → Postgres API connection\n\"best practices for React hooks\" → React hooks best practices\n\"@src/auth.ts can you add refresh token support\" → Auth refresh token support\n\"@utils/parser.ts this is broken\" → Parser bug fix\n\"look at @config.json\" → Config review\n\"@App.tsx add dark mode toggle\" → Dark mode toggle in App\n</examples>\n"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "Generate a title for this conversation:\n"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             }
           ],
           "stream": null,
@@ -300,19 +300,19 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "system",
-              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3\nYou are powered by the model named m. The exact model ID is fake/m\nHere is some useful information about the environment you are running in:\n<env>\n  Working directory: /home/probe/.local/state/agentspec/probe-workspaces/opencode-agent-mcp-resource-read/2026-10-31T064803-discriminator/map_list_templates/project\n  Workspace root folder: /\n  Is directory a git repo: no\n  Platform: darwin\n  Today's date: Sat Oct 31 2026\n</env>"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             }
           ],
           "tools": [
             {
               "type": null,
               "function": {
-                "name": "list_mcp_resource_templates",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -320,7 +320,7 @@
             {
               "type": null,
               "function": {
-                "name": "list_mcp_resources",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -328,7 +328,7 @@
             {
               "type": null,
               "function": {
-                "name": "read",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -336,7 +336,7 @@
             {
               "type": null,
               "function": {
-                "name": "read_mcp_resource",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -352,21 +352,21 @@
           "messages": [
             {
               "role": "system",
-              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3\nYou are powered by the model named m. The exact model ID is fake/m\nHere is some useful information about the environment you are running in:\n<env>\n  Working directory: /home/probe/.local/state/agentspec/probe-workspaces/opencode-agent-mcp-resource-read/2026-10-31T064803-discriminator/map_list_templates/project\n  Workspace root folder: /\n  Is directory a git repo: no\n  Platform: darwin\n  Today's date: Sat Oct 31 2026\n</env>"
+              "content": "AGENTSPEC-PROBE-MARKER-OCRES3"
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "assistant",
+              "role": "",
               "content": "",
               "tool_calls": null
             },
             {
               "role": "tool",
               "tool_call_id": null,
-              "content": "{\n  \"resourceTemplates\": [\n    {\n      \"name\": \"probe-template\",\n      \"uriTemplate\": \"fx://AGENTSPEC-RESOURCE-OCRES3/{id}\",\n      \"server\": \"fx\"\n    }\n  ]\n}"
+              "content": "      \"name\": \"probe-template\","
             }
           ],
           "tools": [
@@ -416,16 +416,16 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "system",
-              "content": "You are a title generator. You output ONLY a thread title. Nothing else.\n\n<task>\nGenerate a brief title that would help the user find this conversation later.\n\nFollow all rules in <rules>\nUse the <examples> so you know what a good title looks like.\nYour output must be:\n- A single line\n- ≤50 characters\n- No explanations\n</task>\n\n<rules>\n- you MUST use the same language as the user message you are summarizing\n- Title must be grammatically correct and read naturally - no word salad\n- Never include tool names in the title (e.g. \"read tool\", \"bash tool\", \"edit tool\")\n- Focus on the main topic or question the user needs to retrieve\n- Vary your phrasing - avoid repetitive patterns like always starting with \"Analyzing\"\n- When a file is mentioned, focus on WHAT the user wants to do WITH the file, not just that they shared it\n- Keep exact: technical terms, numbers, filenames, HTTP codes\n- Remove: the, this, my, a, an\n- Never assume tech stack\n- Never use tools\n- NEVER respond to questions, just generate a title for the conversation\n- The title should NEVER include \"summarizing\" or \"generating\" when generating a title\n- DO NOT SAY YOU CANNOT GENERATE A TITLE OR COMPLAIN ABOUT THE INPUT\n- Always output something meaningful, even if the input is minimal.\n- If the user message is short or conversational (e.g. \"hello\", \"lol\", \"what's up\", \"hey\"):\n  → create a title that reflects the user's tone or intent (such as Greeting, Quick check-in, Light chat, Intro message, etc.)\n</rules>\n\n<examples>\n\"debug 500 errors in production\" → Debugging production 500 errors\n\"refactor user service\" → Refactoring user service\n\"why is app.js failing\" → app.js failure investigation\n\"implement rate limiting\" → Rate limiting implementation\n\"how do I connect postgres to my API\" → Postgres API connection\n\"best practices for React hooks\" → React hooks best practices\n\"@src/auth.ts can you add refresh token support\" → Auth refresh token support\n\"@utils/parser.ts this is broken\" → Parser bug fix\n\"look at @config.json\" → Config review\n\"@App.tsx add dark mode toggle\" → Dark mode toggle in App\n</examples>\n"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "Generate a title for this conversation:\n"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             }
           ],
           "stream": null,
@@ -436,19 +436,19 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "system",
-              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3\nYou are powered by the model named m. The exact model ID is fake/m\nHere is some useful information about the environment you are running in:\n<env>\n  Working directory: /home/probe/.local/state/agentspec/probe-workspaces/opencode-agent-mcp-resource-read/2026-10-31T064803-discriminator/map_read_file/project\n  Workspace root folder: /\n  Is directory a git repo: no\n  Platform: darwin\n  Today's date: Sat Oct 31 2026\n</env>"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             }
           ],
           "tools": [
             {
               "type": null,
               "function": {
-                "name": "list_mcp_resource_templates",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -456,7 +456,7 @@
             {
               "type": null,
               "function": {
-                "name": "list_mcp_resources",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -464,7 +464,7 @@
             {
               "type": null,
               "function": {
-                "name": "read",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -472,7 +472,7 @@
             {
               "type": null,
               "function": {
-                "name": "read_mcp_resource",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -488,21 +488,21 @@
           "messages": [
             {
               "role": "system",
-              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3\nYou are powered by the model named m. The exact model ID is fake/m\nHere is some useful information about the environment you are running in:\n<env>\n  Working directory: /home/probe/.local/state/agentspec/probe-workspaces/opencode-agent-mcp-resource-read/2026-10-31T064803-discriminator/map_read_file/project\n  Workspace root folder: /\n  Is directory a git repo: no\n  Platform: darwin\n  Today's date: Sat Oct 31 2026\n</env>"
+              "content": "AGENTSPEC-PROBE-MARKER-OCRES3"
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "assistant",
+              "role": "",
               "content": "",
               "tool_calls": null
             },
             {
               "role": "tool",
               "tool_call_id": null,
-              "content": "<path>/home/probe/.local/state/agentspec/probe-workspaces/opencode-agent-mcp-resource-read/2026-10-31T064803-discriminator/map_read_file/project/notes.txt</path>\n<type>file</type>\n<content>\n1: AGENTSPEC-FILE-CONTENT-OCRES3\n\n(End of file - total 1 lines)\n</content>"
+              "content": "1: AGENTSPEC-FILE-CONTENT-OCRES3"
             }
           ],
           "tools": [
@@ -552,16 +552,16 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "system",
-              "content": "You are a title generator. You output ONLY a thread title. Nothing else.\n\n<task>\nGenerate a brief title that would help the user find this conversation later.\n\nFollow all rules in <rules>\nUse the <examples> so you know what a good title looks like.\nYour output must be:\n- A single line\n- ≤50 characters\n- No explanations\n</task>\n\n<rules>\n- you MUST use the same language as the user message you are summarizing\n- Title must be grammatically correct and read naturally - no word salad\n- Never include tool names in the title (e.g. \"read tool\", \"bash tool\", \"edit tool\")\n- Focus on the main topic or question the user needs to retrieve\n- Vary your phrasing - avoid repetitive patterns like always starting with \"Analyzing\"\n- When a file is mentioned, focus on WHAT the user wants to do WITH the file, not just that they shared it\n- Keep exact: technical terms, numbers, filenames, HTTP codes\n- Remove: the, this, my, a, an\n- Never assume tech stack\n- Never use tools\n- NEVER respond to questions, just generate a title for the conversation\n- The title should NEVER include \"summarizing\" or \"generating\" when generating a title\n- DO NOT SAY YOU CANNOT GENERATE A TITLE OR COMPLAIN ABOUT THE INPUT\n- Always output something meaningful, even if the input is minimal.\n- If the user message is short or conversational (e.g. \"hello\", \"lol\", \"what's up\", \"hey\"):\n  → create a title that reflects the user's tone or intent (such as Greeting, Quick check-in, Light chat, Intro message, etc.)\n</rules>\n\n<examples>\n\"debug 500 errors in production\" → Debugging production 500 errors\n\"refactor user service\" → Refactoring user service\n\"why is app.js failing\" → app.js failure investigation\n\"implement rate limiting\" → Rate limiting implementation\n\"how do I connect postgres to my API\" → Postgres API connection\n\"best practices for React hooks\" → React hooks best practices\n\"@src/auth.ts can you add refresh token support\" → Auth refresh token support\n\"@utils/parser.ts this is broken\" → Parser bug fix\n\"look at @config.json\" → Config review\n\"@App.tsx add dark mode toggle\" → Dark mode toggle in App\n</examples>\n"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "Generate a title for this conversation:\n"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             }
           ],
           "stream": null,
@@ -572,19 +572,19 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "system",
-              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3\nYou are powered by the model named m. The exact model ID is fake/m\nHere is some useful information about the environment you are running in:\n<env>\n  Working directory: /home/probe/.local/state/agentspec/probe-workspaces/opencode-agent-mcp-resource-read/2026-10-31T064803-discriminator/plain_read_resource/project\n  Workspace root folder: /\n  Is directory a git repo: no\n  Platform: darwin\n  Today's date: Sat Oct 31 2026\n</env>"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             }
           ],
           "tools": [
             {
               "type": null,
               "function": {
-                "name": "list_mcp_resource_templates",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -592,7 +592,7 @@
             {
               "type": null,
               "function": {
-                "name": "list_mcp_resources",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -600,7 +600,7 @@
             {
               "type": null,
               "function": {
-                "name": "read",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -608,7 +608,7 @@
             {
               "type": null,
               "function": {
-                "name": "read_mcp_resource",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -624,21 +624,21 @@
           "messages": [
             {
               "role": "system",
-              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3\nYou are powered by the model named m. The exact model ID is fake/m\nHere is some useful information about the environment you are running in:\n<env>\n  Working directory: /home/probe/.local/state/agentspec/probe-workspaces/opencode-agent-mcp-resource-read/2026-10-31T064803-discriminator/plain_read_resource/project\n  Workspace root folder: /\n  Is directory a git repo: no\n  Platform: darwin\n  Today's date: Sat Oct 31 2026\n</env>"
+              "content": "AGENTSPEC-PROBE-MARKER-OCRES3"
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "assistant",
+              "role": "",
               "content": "",
               "tool_calls": null
             },
             {
               "role": "tool",
               "tool_call_id": null,
-              "content": "Resource: fx://AGENTSPEC-RESOURCE-OCRES3\nMIME: text/plain\nAGENTSPEC-RESOURCE-CONTENT-OCRES3"
+              "content": "AGENTSPEC-RESOURCE-CONTENT-OCRES3"
             }
           ],
           "tools": [
@@ -688,16 +688,16 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "system",
-              "content": "You are a title generator. You output ONLY a thread title. Nothing else.\n\n<task>\nGenerate a brief title that would help the user find this conversation later.\n\nFollow all rules in <rules>\nUse the <examples> so you know what a good title looks like.\nYour output must be:\n- A single line\n- ≤50 characters\n- No explanations\n</task>\n\n<rules>\n- you MUST use the same language as the user message you are summarizing\n- Title must be grammatically correct and read naturally - no word salad\n- Never include tool names in the title (e.g. \"read tool\", \"bash tool\", \"edit tool\")\n- Focus on the main topic or question the user needs to retrieve\n- Vary your phrasing - avoid repetitive patterns like always starting with \"Analyzing\"\n- When a file is mentioned, focus on WHAT the user wants to do WITH the file, not just that they shared it\n- Keep exact: technical terms, numbers, filenames, HTTP codes\n- Remove: the, this, my, a, an\n- Never assume tech stack\n- Never use tools\n- NEVER respond to questions, just generate a title for the conversation\n- The title should NEVER include \"summarizing\" or \"generating\" when generating a title\n- DO NOT SAY YOU CANNOT GENERATE A TITLE OR COMPLAIN ABOUT THE INPUT\n- Always output something meaningful, even if the input is minimal.\n- If the user message is short or conversational (e.g. \"hello\", \"lol\", \"what's up\", \"hey\"):\n  → create a title that reflects the user's tone or intent (such as Greeting, Quick check-in, Light chat, Intro message, etc.)\n</rules>\n\n<examples>\n\"debug 500 errors in production\" → Debugging production 500 errors\n\"refactor user service\" → Refactoring user service\n\"why is app.js failing\" → app.js failure investigation\n\"implement rate limiting\" → Rate limiting implementation\n\"how do I connect postgres to my API\" → Postgres API connection\n\"best practices for React hooks\" → React hooks best practices\n\"@src/auth.ts can you add refresh token support\" → Auth refresh token support\n\"@utils/parser.ts this is broken\" → Parser bug fix\n\"look at @config.json\" → Config review\n\"@App.tsx add dark mode toggle\" → Dark mode toggle in App\n</examples>\n"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "Generate a title for this conversation:\n"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             }
           ],
           "stream": null,
@@ -708,19 +708,19 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "system",
-              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3\nYou are powered by the model named m. The exact model ID is fake/m\nHere is some useful information about the environment you are running in:\n<env>\n  Working directory: /home/probe/.local/state/agentspec/probe-workspaces/opencode-agent-mcp-resource-read/2026-10-31T064803-discriminator/plain_list_resources/project\n  Workspace root folder: /\n  Is directory a git repo: no\n  Platform: darwin\n  Today's date: Sat Oct 31 2026\n</env>"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             }
           ],
           "tools": [
             {
               "type": null,
               "function": {
-                "name": "list_mcp_resource_templates",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -728,7 +728,7 @@
             {
               "type": null,
               "function": {
-                "name": "list_mcp_resources",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -736,7 +736,7 @@
             {
               "type": null,
               "function": {
-                "name": "read",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -744,7 +744,7 @@
             {
               "type": null,
               "function": {
-                "name": "read_mcp_resource",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -760,21 +760,21 @@
           "messages": [
             {
               "role": "system",
-              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3\nYou are powered by the model named m. The exact model ID is fake/m\nHere is some useful information about the environment you are running in:\n<env>\n  Working directory: /home/probe/.local/state/agentspec/probe-workspaces/opencode-agent-mcp-resource-read/2026-10-31T064803-discriminator/plain_list_resources/project\n  Workspace root folder: /\n  Is directory a git repo: no\n  Platform: darwin\n  Today's date: Sat Oct 31 2026\n</env>"
+              "content": "AGENTSPEC-PROBE-MARKER-OCRES3"
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "assistant",
+              "role": "",
               "content": "",
               "tool_calls": null
             },
             {
               "role": "tool",
               "tool_call_id": null,
-              "content": "{\n  \"resources\": [\n    {\n      \"name\": \"probe-doc\",\n      \"uri\": \"fx://AGENTSPEC-RESOURCE-OCRES3\",\n      \"mimeType\": \"text/plain\",\n      \"server\": \"fx\"\n    }\n  ]\n}"
+              "content": "      \"name\": \"probe-doc\","
             }
           ],
           "tools": [
@@ -824,16 +824,16 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "system",
-              "content": "You are a title generator. You output ONLY a thread title. Nothing else.\n\n<task>\nGenerate a brief title that would help the user find this conversation later.\n\nFollow all rules in <rules>\nUse the <examples> so you know what a good title looks like.\nYour output must be:\n- A single line\n- ≤50 characters\n- No explanations\n</task>\n\n<rules>\n- you MUST use the same language as the user message you are summarizing\n- Title must be grammatically correct and read naturally - no word salad\n- Never include tool names in the title (e.g. \"read tool\", \"bash tool\", \"edit tool\")\n- Focus on the main topic or question the user needs to retrieve\n- Vary your phrasing - avoid repetitive patterns like always starting with \"Analyzing\"\n- When a file is mentioned, focus on WHAT the user wants to do WITH the file, not just that they shared it\n- Keep exact: technical terms, numbers, filenames, HTTP codes\n- Remove: the, this, my, a, an\n- Never assume tech stack\n- Never use tools\n- NEVER respond to questions, just generate a title for the conversation\n- The title should NEVER include \"summarizing\" or \"generating\" when generating a title\n- DO NOT SAY YOU CANNOT GENERATE A TITLE OR COMPLAIN ABOUT THE INPUT\n- Always output something meaningful, even if the input is minimal.\n- If the user message is short or conversational (e.g. \"hello\", \"lol\", \"what's up\", \"hey\"):\n  → create a title that reflects the user's tone or intent (such as Greeting, Quick check-in, Light chat, Intro message, etc.)\n</rules>\n\n<examples>\n\"debug 500 errors in production\" → Debugging production 500 errors\n\"refactor user service\" → Refactoring user service\n\"why is app.js failing\" → app.js failure investigation\n\"implement rate limiting\" → Rate limiting implementation\n\"how do I connect postgres to my API\" → Postgres API connection\n\"best practices for React hooks\" → React hooks best practices\n\"@src/auth.ts can you add refresh token support\" → Auth refresh token support\n\"@utils/parser.ts this is broken\" → Parser bug fix\n\"look at @config.json\" → Config review\n\"@App.tsx add dark mode toggle\" → Dark mode toggle in App\n</examples>\n"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "Generate a title for this conversation:\n"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             }
           ],
           "stream": null,
@@ -844,19 +844,19 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "system",
-              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3\nYou are powered by the model named m. The exact model ID is fake/m\nHere is some useful information about the environment you are running in:\n<env>\n  Working directory: /home/probe/.local/state/agentspec/probe-workspaces/opencode-agent-mcp-resource-read/2026-10-31T064803-discriminator/plain_list_templates/project\n  Workspace root folder: /\n  Is directory a git repo: no\n  Platform: darwin\n  Today's date: Sat Oct 31 2026\n</env>"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             }
           ],
           "tools": [
             {
               "type": null,
               "function": {
-                "name": "list_mcp_resource_templates",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -864,7 +864,7 @@
             {
               "type": null,
               "function": {
-                "name": "list_mcp_resources",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -872,7 +872,7 @@
             {
               "type": null,
               "function": {
-                "name": "read",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -880,7 +880,7 @@
             {
               "type": null,
               "function": {
-                "name": "read_mcp_resource",
+                "name": "",
                 "description": null,
                 "parameters": null
               }
@@ -896,21 +896,21 @@
           "messages": [
             {
               "role": "system",
-              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3\nYou are powered by the model named m. The exact model ID is fake/m\nHere is some useful information about the environment you are running in:\n<env>\n  Working directory: /home/probe/.local/state/agentspec/probe-workspaces/opencode-agent-mcp-resource-read/2026-10-31T064803-discriminator/plain_list_templates/project\n  Workspace root folder: /\n  Is directory a git repo: no\n  Platform: darwin\n  Today's date: Sat Oct 31 2026\n</env>"
+              "content": "AGENTSPEC-PROBE-MARKER-OCRES3"
             },
             {
-              "role": "user",
-              "content": "hi"
+              "role": "",
+              "content": ""
             },
             {
-              "role": "assistant",
+              "role": "",
               "content": "",
               "tool_calls": null
             },
             {
               "role": "tool",
               "tool_call_id": null,
-              "content": "{\n  \"resourceTemplates\": [\n    {\n      \"name\": \"probe-template\",\n      \"uriTemplate\": \"fx://AGENTSPEC-RESOURCE-OCRES3/{id}\",\n      \"server\": \"fx\"\n    }\n  ]\n}"
+              "content": "      \"name\": \"probe-template\","
             }
           ],
           "tools": [

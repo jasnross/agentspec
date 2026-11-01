@@ -267,7 +267,7 @@ def test_record_dry_run_judges_a_kept_workspace(cli: Cli, package: Path, tmp_pat
     assert json.loads(replayed.stdout)["status"] == "confirmed"
 
 
-def test_a_sample_keeps_the_declared_fields_and_drops_server_names(
+def test_a_sample_keeps_only_the_server_sources_the_assertion_reads(
     cli: Cli, package: Path, tmp_path: Path
 ) -> None:
     env = _env(_source(tmp_path), tmp_path / "env.jsonl", PROBE_DRY_RUN="1")
@@ -278,9 +278,9 @@ def test_a_sample_keeps_the_declared_fields_and_drops_server_names(
     sample = json.loads((package / "samples" / "confirming.json").read_text(encoding="utf-8"))
     assert sample["results"] == {"assertion": {"login": ["claudeai"], "relocated": ["user"]}}
     init = sample["input"]["login"]["init"]
-    assert init["mcp_servers"] == [{"name": None, "status": "connected", "source": "claudeai"}]
-    assert init["tools"] is None
-    assert sample["input"]["relocated"]["result"]["result"] == "Invalid key"
+    assert init["mcp_servers"] == [{"name": "", "status": "", "source": "claudeai"}]
+    assert init["tools"] == ["", ""]
+    assert sample["input"]["relocated"]["result"]["result"] == ""
 
 
 def test_a_missing_user_config_template_is_refused_before_any_arm_runs(

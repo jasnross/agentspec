@@ -4,412 +4,162 @@
     "none": {
       "requests": [
         {
-          "model": "claude-sonnet-5-5",
+          "model": "",
           "messages": [
             {
-              "role": "user",
+              "role": "",
               "content": [
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 },
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 },
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 },
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 }
               ]
             },
             {
-              "role": "system",
+              "role": "",
               "content": [
                 {
-                  "type": "text",
-                  "text": "The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded — calling them directly will fail with InputValidationError. Use ToolSearch with query \"select:<name>[,<name>...]\" to load tool schemas before calling them:\nCronCreate\nCronDelete\nCronList\nDesignSync\nEnterWorktree\nExitWorktree\nMonitor\nNotebookEdit\nPushNotification\nRemoteTrigger\nSendMessage\nTaskStop\nWebFetch\nWebSearch\nmcp__fx__alpha\nmcp__fx__beta",
+                  "type": "",
+                  "text": "",
                   "cache_control": null
                 }
               ],
               "output_config": null
             }
           ],
-          "system": [
-            {
-              "type": "",
-              "text": ""
-            },
-            {
-              "type": "",
-              "text": ""
-            },
-            {
-              "type": "",
-              "text": "",
-              "cache_control": {
-                "type": "",
-                "ttl": "",
-                "scope": ""
-              }
-            },
-            {
-              "type": "",
-              "text": "AGENTSPEC-PROBE-MARKER-CCSKILL7",
-              "cache_control": {
-                "type": "",
-                "ttl": ""
-              }
-            }
-          ],
+          "system": [{}, {}, {}, {}],
           "tools": [
             {
-              "name": "Agent",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "prompt": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "subagent_type": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "model": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", "", "", ""]
-                  },
-                  "run_in_background": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "isolation": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", ""]
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Bash",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "command": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "timeout": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "run_in_background": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "dangerouslyDisableSandbox": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Edit",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "old_string": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "new_string": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "replace_all": {
-                    "description": "",
-                    "default": false,
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ListAgents",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "channel": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 256
-                  },
-                  "q": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 256
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Read",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "offset": {
-                    "description": "",
-                    "type": "",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "limit": {
-                    "description": "",
-                    "type": "",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "pages": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ReportFindings",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "level": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", "", "", "", ""]
-                  },
-                  "findings": {
-                    "description": "",
-                    "maxItems": 32,
-                    "type": "",
-                    "items": {
-                      "type": "",
-                      "properties": {
-                        "file": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "line": {
-                          "description": "",
-                          "type": "",
-                          "minimum": -9007199254740991,
-                          "maximum": 9007199254740991
-                        },
-                        "summary": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "short_summary": {
-                          "description": "",
-                          "type": "",
-                          "maxLength": 60
-                        },
-                        "failure_scenario": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "category": {
-                          "description": "",
-                          "type": "",
-                          "maxLength": 40
-                        },
-                        "verdict": {
-                          "description": "",
-                          "type": "",
-                          "enum": ["", ""]
-                        },
-                        "outcome": {
-                          "description": "",
-                          "type": "",
-                          "enum": ["", "", ""]
-                        }
-                      },
-                      "required": ["", "", ""],
-                      "additionalProperties": false
-                    }
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ScheduleWakeup",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "delaySeconds": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "reason": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "prompt": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "stop": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "noop": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Skill",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "skill": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "args": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ToolSearch",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "query": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "max_results": {
-                    "description": "",
-                    "default": 5,
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Workflow",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "script": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 524288
-                  },
-                  "name": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "title": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "args": {
-                    "description": ""
-                  },
-                  "scriptPath": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "resumeFromRunId": {
-                    "description": "",
-                    "type": "",
-                    "pattern": ""
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "DeferredToolPlaceholder",
+              "name": "",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -418,21 +168,12 @@
               "defer_loading": null
             },
             {
-              "name": "Write",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "content": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
@@ -440,7 +181,7 @@
             },
             {
               "type": null,
-              "name": "advisor",
+              "name": "",
               "model": null,
               "defer_loading": null
             }
@@ -451,14 +192,14 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": "low"
+            "effort": ""
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "claude-sonnet-5-5",
+          "model": "",
           "messages": [
             {
               "role": "user",
@@ -472,438 +213,195 @@
               ]
             },
             {
-              "role": "system",
+              "role": "",
               "content": [
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null,
                   "cache_control": null
                 }
               ]
             }
           ],
-          "system": [
-            {
-              "type": "",
-              "text": ""
-            }
-          ],
+          "system": [{}],
           "betas": null,
           "metadata": null,
           "max_tokens": null,
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": "low"
+            "effort": ""
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "claude-sonnet-5-5",
+          "model": "",
           "messages": [
             {
-              "role": "user",
+              "role": "",
               "content": [
                 {
                   "type": "tool_result",
-                  "tool_use_id": "toolu_01AVhoXQALF4ZZyc25BVwQrf",
+                  "tool_use_id": "",
                   "content": [
                     {
-                      "type": "tool_reference",
+                      "type": "",
                       "tool_name": null
                     }
                   ]
                 },
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 }
               ]
             },
             {
-              "role": "system",
+              "role": "",
               "content": [
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null,
                   "cache_control": null
                 }
               ]
             }
           ],
-          "system": [
-            {
-              "type": "",
-              "text": ""
-            }
-          ],
+          "system": [{}],
           "tools": [
             {
-              "name": "Agent",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "prompt": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "subagent_type": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "model": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", "", "", ""]
-                  },
-                  "run_in_background": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "isolation": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", ""]
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Bash",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "command": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "timeout": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "run_in_background": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "dangerouslyDisableSandbox": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Edit",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "old_string": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "new_string": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "replace_all": {
-                    "description": "",
-                    "default": false,
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ListAgents",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "channel": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 256
-                  },
-                  "q": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 256
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Read",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "offset": {
-                    "description": "",
-                    "type": "",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "limit": {
-                    "description": "",
-                    "type": "",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "pages": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ReportFindings",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "level": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", "", "", "", ""]
-                  },
-                  "findings": {
-                    "description": "",
-                    "maxItems": 32,
-                    "type": "",
-                    "items": {
-                      "type": "",
-                      "properties": {
-                        "file": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "line": {
-                          "description": "",
-                          "type": "",
-                          "minimum": -9007199254740991,
-                          "maximum": 9007199254740991
-                        },
-                        "summary": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "short_summary": {
-                          "description": "",
-                          "type": "",
-                          "maxLength": 60
-                        },
-                        "failure_scenario": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "category": {
-                          "description": "",
-                          "type": "",
-                          "maxLength": 40
-                        },
-                        "verdict": {
-                          "description": "",
-                          "type": "",
-                          "enum": ["", ""]
-                        },
-                        "outcome": {
-                          "description": "",
-                          "type": "",
-                          "enum": ["", "", ""]
-                        }
-                      },
-                      "required": ["", "", ""],
-                      "additionalProperties": false
-                    }
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ScheduleWakeup",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "delaySeconds": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "reason": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "prompt": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "stop": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "noop": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Skill",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "skill": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "args": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ToolSearch",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "query": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "max_results": {
-                    "description": "",
-                    "default": 5,
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Workflow",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "script": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 524288
-                  },
-                  "name": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "title": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "args": {
-                    "description": ""
-                  },
-                  "scriptPath": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "resumeFromRunId": {
-                    "description": "",
-                    "type": "",
-                    "pattern": ""
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Write",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "content": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "DeferredToolPlaceholder",
+              "name": "",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -912,7 +410,7 @@
               "defer_loading": null
             },
             {
-              "name": "mcp__fx__alpha",
+              "name": "",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -923,7 +421,7 @@
             },
             {
               "type": null,
-              "name": "advisor",
+              "name": "",
               "model": null,
               "defer_loading": null
             }
@@ -934,7 +432,7 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": "low"
+            "effort": ""
           },
           "thread": null,
           "diagnostics": null,
@@ -950,8 +448,8 @@
           "content": [
             {
               "type": "tool_use",
-              "id": "toolu_01AVhoXQALF4ZZyc25BVwQrf",
-              "name": "ToolSearch",
+              "id": "",
+              "name": "",
               "input": null,
               "caller": null
             }
@@ -995,7 +493,7 @@
           "role": null,
           "content": [
             {
-              "type": "text",
+              "type": "",
               "text": null
             }
           ],
@@ -1013,409 +511,171 @@
     "exact": {
       "requests": [
         {
-          "model": "claude-sonnet-5-5",
+          "model": "",
           "messages": [
             {
-              "role": "user",
+              "role": "",
               "content": [
                 {
                   "type": "tool_result",
-                  "tool_use_id": "toolu_01BKY6djt1jRVvSRsm4jt7PA",
+                  "tool_use_id": "",
                   "content": [
                     {
-                      "type": "tool_reference",
+                      "type": "",
                       "tool_name": null
                     }
                   ]
                 },
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 }
               ]
             },
             {
-              "role": "system",
+              "role": "",
               "content": [
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null,
                   "cache_control": null
                 }
               ]
             }
           ],
-          "system": [
-            {
-              "type": "",
-              "text": ""
-            }
-          ],
+          "system": [{}],
           "tools": [
             {
-              "name": "Agent",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "prompt": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "subagent_type": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "model": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", "", "", ""]
-                  },
-                  "run_in_background": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "isolation": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", ""]
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Bash",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "command": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "timeout": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "run_in_background": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "dangerouslyDisableSandbox": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Edit",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "old_string": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "new_string": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "replace_all": {
-                    "description": "",
-                    "default": false,
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ListAgents",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "channel": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 256
-                  },
-                  "q": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 256
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Read",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "offset": {
-                    "description": "",
-                    "type": "",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "limit": {
-                    "description": "",
-                    "type": "",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "pages": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ReportFindings",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "level": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", "", "", "", ""]
-                  },
-                  "findings": {
-                    "description": "",
-                    "maxItems": 32,
-                    "type": "",
-                    "items": {
-                      "type": "",
-                      "properties": {
-                        "file": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "line": {
-                          "description": "",
-                          "type": "",
-                          "minimum": -9007199254740991,
-                          "maximum": 9007199254740991
-                        },
-                        "summary": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "short_summary": {
-                          "description": "",
-                          "type": "",
-                          "maxLength": 60
-                        },
-                        "failure_scenario": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "category": {
-                          "description": "",
-                          "type": "",
-                          "maxLength": 40
-                        },
-                        "verdict": {
-                          "description": "",
-                          "type": "",
-                          "enum": ["", ""]
-                        },
-                        "outcome": {
-                          "description": "",
-                          "type": "",
-                          "enum": ["", "", ""]
-                        }
-                      },
-                      "required": ["", "", ""],
-                      "additionalProperties": false
-                    }
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ScheduleWakeup",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "delaySeconds": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "reason": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "prompt": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "stop": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "noop": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Skill",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "skill": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "args": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ToolSearch",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "query": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "max_results": {
-                    "description": "",
-                    "default": 5,
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Workflow",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "script": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 524288
-                  },
-                  "name": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "title": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "args": {
-                    "description": ""
-                  },
-                  "scriptPath": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "resumeFromRunId": {
-                    "description": "",
-                    "type": "",
-                    "pattern": ""
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Write",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "content": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "DeferredToolPlaceholder",
+              "name": "",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -1424,7 +684,7 @@
               "defer_loading": null
             },
             {
-              "name": "mcp__fx__alpha",
+              "name": "",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -1435,7 +695,7 @@
             },
             {
               "type": null,
-              "name": "advisor",
+              "name": "",
               "model": null,
               "defer_loading": null
             }
@@ -1446,419 +706,169 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": "low"
+            "effort": ""
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "claude-sonnet-5-5",
+          "model": "",
           "messages": [
             {
-              "role": "user",
+              "role": "",
               "content": [
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 },
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 },
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 },
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 }
               ]
             },
             {
-              "role": "system",
+              "role": "",
               "content": [
                 {
-                  "type": "text",
-                  "text": "The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded — calling them directly will fail with InputValidationError. Use ToolSearch with query \"select:<name>[,<name>...]\" to load tool schemas before calling them:\nCronCreate\nCronDelete\nCronList\nDesignSync\nEnterWorktree\nExitWorktree\nMonitor\nNotebookEdit\nPushNotification\nRemoteTrigger\nSendMessage\nTaskStop\nWebFetch\nWebSearch\nmcp__fx__alpha\nmcp__fx__beta",
+                  "type": "",
+                  "text": "",
                   "cache_control": null
                 }
               ],
               "output_config": null
             }
           ],
-          "system": [
-            {
-              "type": "",
-              "text": ""
-            },
-            {
-              "type": "",
-              "text": ""
-            },
-            {
-              "type": "",
-              "text": "",
-              "cache_control": {
-                "type": "",
-                "ttl": "",
-                "scope": ""
-              }
-            },
-            {
-              "type": "",
-              "text": "AGENTSPEC-PROBE-MARKER-CCSKILL7",
-              "cache_control": {
-                "type": "",
-                "ttl": ""
-              }
-            }
-          ],
+          "system": [{}, {}, {}, {}],
           "tools": [
             {
-              "name": "Agent",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "prompt": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "subagent_type": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "model": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", "", "", ""]
-                  },
-                  "run_in_background": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "isolation": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", ""]
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Bash",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "command": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "timeout": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "run_in_background": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "dangerouslyDisableSandbox": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Edit",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "old_string": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "new_string": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "replace_all": {
-                    "description": "",
-                    "default": false,
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ListAgents",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "channel": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 256
-                  },
-                  "q": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 256
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Read",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "offset": {
-                    "description": "",
-                    "type": "",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "limit": {
-                    "description": "",
-                    "type": "",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "pages": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ReportFindings",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "level": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", "", "", "", ""]
-                  },
-                  "findings": {
-                    "description": "",
-                    "maxItems": 32,
-                    "type": "",
-                    "items": {
-                      "type": "",
-                      "properties": {
-                        "file": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "line": {
-                          "description": "",
-                          "type": "",
-                          "minimum": -9007199254740991,
-                          "maximum": 9007199254740991
-                        },
-                        "summary": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "short_summary": {
-                          "description": "",
-                          "type": "",
-                          "maxLength": 60
-                        },
-                        "failure_scenario": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "category": {
-                          "description": "",
-                          "type": "",
-                          "maxLength": 40
-                        },
-                        "verdict": {
-                          "description": "",
-                          "type": "",
-                          "enum": ["", ""]
-                        },
-                        "outcome": {
-                          "description": "",
-                          "type": "",
-                          "enum": ["", "", ""]
-                        }
-                      },
-                      "required": ["", "", ""],
-                      "additionalProperties": false
-                    }
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ScheduleWakeup",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "delaySeconds": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "reason": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "prompt": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "stop": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "noop": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Skill",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "skill": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "args": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ToolSearch",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "query": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "max_results": {
-                    "description": "",
-                    "default": 5,
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Workflow",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "script": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 524288
-                  },
-                  "name": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "title": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "args": {
-                    "description": ""
-                  },
-                  "scriptPath": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "resumeFromRunId": {
-                    "description": "",
-                    "type": "",
-                    "pattern": ""
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "DeferredToolPlaceholder",
+              "name": "",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -1867,21 +877,12 @@
               "defer_loading": null
             },
             {
-              "name": "Write",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "content": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
@@ -1889,7 +890,7 @@
             },
             {
               "type": null,
-              "name": "advisor",
+              "name": "",
               "model": null,
               "defer_loading": null
             }
@@ -1900,14 +901,14 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": "low"
+            "effort": ""
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "claude-sonnet-5-5",
+          "model": "",
           "messages": [
             {
               "role": "user",
@@ -1925,29 +926,24 @@
               ]
             },
             {
-              "role": "system",
+              "role": "",
               "content": [
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null,
                   "cache_control": null
                 }
               ]
             }
           ],
-          "system": [
-            {
-              "type": "",
-              "text": ""
-            }
-          ],
+          "system": [{}],
           "betas": null,
           "metadata": null,
           "max_tokens": null,
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": "low"
+            "effort": ""
           },
           "thread": null,
           "diagnostics": null,
@@ -1963,8 +959,8 @@
           "content": [
             {
               "type": "tool_use",
-              "id": "toolu_01BKY6djt1jRVvSRsm4jt7PA",
-              "name": "ToolSearch",
+              "id": "",
+              "name": "",
               "input": null,
               "caller": null
             }
@@ -2008,7 +1004,7 @@
           "role": null,
           "content": [
             {
-              "type": "text",
+              "type": "",
               "text": null
             }
           ],
@@ -2026,409 +1022,171 @@
     "server": {
       "requests": [
         {
-          "model": "claude-sonnet-5-5",
+          "model": "",
           "messages": [
             {
-              "role": "user",
+              "role": "",
               "content": [
                 {
                   "type": "tool_result",
-                  "tool_use_id": "toolu_019TTmxQ8NTtT175VAsTxbVK",
+                  "tool_use_id": "",
                   "content": [
                     {
-                      "type": "tool_reference",
+                      "type": "",
                       "tool_name": null
                     }
                   ]
                 },
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 }
               ]
             },
             {
-              "role": "system",
+              "role": "",
               "content": [
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null,
                   "cache_control": null
                 }
               ]
             }
           ],
-          "system": [
-            {
-              "type": "",
-              "text": ""
-            }
-          ],
+          "system": [{}],
           "tools": [
             {
-              "name": "Agent",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "prompt": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "subagent_type": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "model": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", "", "", ""]
-                  },
-                  "run_in_background": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "isolation": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", ""]
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Bash",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "command": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "timeout": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "run_in_background": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "dangerouslyDisableSandbox": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Edit",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "old_string": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "new_string": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "replace_all": {
-                    "description": "",
-                    "default": false,
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ListAgents",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "channel": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 256
-                  },
-                  "q": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 256
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Read",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "offset": {
-                    "description": "",
-                    "type": "",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "limit": {
-                    "description": "",
-                    "type": "",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "pages": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ReportFindings",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "level": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", "", "", "", ""]
-                  },
-                  "findings": {
-                    "description": "",
-                    "maxItems": 32,
-                    "type": "",
-                    "items": {
-                      "type": "",
-                      "properties": {
-                        "file": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "line": {
-                          "description": "",
-                          "type": "",
-                          "minimum": -9007199254740991,
-                          "maximum": 9007199254740991
-                        },
-                        "summary": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "short_summary": {
-                          "description": "",
-                          "type": "",
-                          "maxLength": 60
-                        },
-                        "failure_scenario": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "category": {
-                          "description": "",
-                          "type": "",
-                          "maxLength": 40
-                        },
-                        "verdict": {
-                          "description": "",
-                          "type": "",
-                          "enum": ["", ""]
-                        },
-                        "outcome": {
-                          "description": "",
-                          "type": "",
-                          "enum": ["", "", ""]
-                        }
-                      },
-                      "required": ["", "", ""],
-                      "additionalProperties": false
-                    }
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ScheduleWakeup",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "delaySeconds": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "reason": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "prompt": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "stop": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "noop": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Skill",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "skill": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "args": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ToolSearch",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "query": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "max_results": {
-                    "description": "",
-                    "default": 5,
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Workflow",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "script": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 524288
-                  },
-                  "name": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "title": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "args": {
-                    "description": ""
-                  },
-                  "scriptPath": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "resumeFromRunId": {
-                    "description": "",
-                    "type": "",
-                    "pattern": ""
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Write",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "content": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "DeferredToolPlaceholder",
+              "name": "",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -2437,7 +1195,7 @@
               "defer_loading": null
             },
             {
-              "name": "mcp__fx__alpha",
+              "name": "",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -2448,7 +1206,7 @@
             },
             {
               "type": null,
-              "name": "advisor",
+              "name": "",
               "model": null,
               "defer_loading": null
             }
@@ -2459,14 +1217,14 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": "low"
+            "effort": ""
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "claude-sonnet-5-5",
+          "model": "",
           "messages": [
             {
               "role": "user",
@@ -2484,441 +1242,186 @@
               ]
             },
             {
-              "role": "system",
+              "role": "",
               "content": [
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null,
                   "cache_control": null
                 }
               ]
             }
           ],
-          "system": [
-            {
-              "type": "",
-              "text": ""
-            }
-          ],
+          "system": [{}],
           "betas": null,
           "metadata": null,
           "max_tokens": null,
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": "low"
+            "effort": ""
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "claude-sonnet-5-5",
+          "model": "",
           "messages": [
             {
-              "role": "user",
+              "role": "",
               "content": [
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 },
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 },
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 },
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 }
               ]
             },
             {
-              "role": "system",
+              "role": "",
               "content": [
                 {
-                  "type": "text",
-                  "text": "The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded — calling them directly will fail with InputValidationError. Use ToolSearch with query \"select:<name>[,<name>...]\" to load tool schemas before calling them:\nCronCreate\nCronDelete\nCronList\nDesignSync\nEnterWorktree\nExitWorktree\nMonitor\nNotebookEdit\nPushNotification\nRemoteTrigger\nSendMessage\nTaskStop\nWebFetch\nWebSearch\nmcp__fx__alpha\nmcp__fx__beta",
+                  "type": "",
+                  "text": "",
                   "cache_control": null
                 }
               ],
               "output_config": null
             }
           ],
-          "system": [
-            {
-              "type": "",
-              "text": ""
-            },
-            {
-              "type": "",
-              "text": ""
-            },
-            {
-              "type": "",
-              "text": "",
-              "cache_control": {
-                "type": "",
-                "ttl": "",
-                "scope": ""
-              }
-            },
-            {
-              "type": "",
-              "text": "AGENTSPEC-PROBE-MARKER-CCSKILL7",
-              "cache_control": {
-                "type": "",
-                "ttl": ""
-              }
-            }
-          ],
+          "system": [{}, {}, {}, {}],
           "tools": [
             {
-              "name": "Agent",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "prompt": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "subagent_type": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "model": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", "", "", ""]
-                  },
-                  "run_in_background": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "isolation": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", ""]
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Bash",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "command": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "timeout": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "run_in_background": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "dangerouslyDisableSandbox": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Edit",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "old_string": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "new_string": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "replace_all": {
-                    "description": "",
-                    "default": false,
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ListAgents",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "channel": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 256
-                  },
-                  "q": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 256
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Read",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "offset": {
-                    "description": "",
-                    "type": "",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "limit": {
-                    "description": "",
-                    "type": "",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "pages": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ReportFindings",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "level": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", "", "", "", ""]
-                  },
-                  "findings": {
-                    "description": "",
-                    "maxItems": 32,
-                    "type": "",
-                    "items": {
-                      "type": "",
-                      "properties": {
-                        "file": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "line": {
-                          "description": "",
-                          "type": "",
-                          "minimum": -9007199254740991,
-                          "maximum": 9007199254740991
-                        },
-                        "summary": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "short_summary": {
-                          "description": "",
-                          "type": "",
-                          "maxLength": 60
-                        },
-                        "failure_scenario": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "category": {
-                          "description": "",
-                          "type": "",
-                          "maxLength": 40
-                        },
-                        "verdict": {
-                          "description": "",
-                          "type": "",
-                          "enum": ["", ""]
-                        },
-                        "outcome": {
-                          "description": "",
-                          "type": "",
-                          "enum": ["", "", ""]
-                        }
-                      },
-                      "required": ["", "", ""],
-                      "additionalProperties": false
-                    }
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ScheduleWakeup",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "delaySeconds": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "reason": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "prompt": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "stop": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "noop": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Skill",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "skill": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "args": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ToolSearch",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "query": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "max_results": {
-                    "description": "",
-                    "default": 5,
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Workflow",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "script": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 524288
-                  },
-                  "name": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "title": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "args": {
-                    "description": ""
-                  },
-                  "scriptPath": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "resumeFromRunId": {
-                    "description": "",
-                    "type": "",
-                    "pattern": ""
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "DeferredToolPlaceholder",
+              "name": "",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -2927,21 +1430,12 @@
               "defer_loading": null
             },
             {
-              "name": "Write",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "content": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
@@ -2949,7 +1443,7 @@
             },
             {
               "type": null,
-              "name": "advisor",
+              "name": "",
               "model": null,
               "defer_loading": null
             }
@@ -2960,7 +1454,7 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": "low"
+            "effort": ""
           },
           "thread": null,
           "diagnostics": null,
@@ -2976,8 +1470,8 @@
           "content": [
             {
               "type": "tool_use",
-              "id": "toolu_019TTmxQ8NTtT175VAsTxbVK",
-              "name": "ToolSearch",
+              "id": "",
+              "name": "",
               "input": null,
               "caller": null
             }
@@ -3021,7 +1515,7 @@
           "role": null,
           "content": [
             {
-              "type": "text",
+              "type": "",
               "text": null
             }
           ],
@@ -3039,412 +1533,162 @@
     "server_glob": {
       "requests": [
         {
-          "model": "claude-sonnet-5-5",
+          "model": "",
           "messages": [
             {
-              "role": "user",
+              "role": "",
               "content": [
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 },
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 },
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 },
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 }
               ]
             },
             {
-              "role": "system",
+              "role": "",
               "content": [
                 {
-                  "type": "text",
-                  "text": "The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded — calling them directly will fail with InputValidationError. Use ToolSearch with query \"select:<name>[,<name>...]\" to load tool schemas before calling them:\nCronCreate\nCronDelete\nCronList\nDesignSync\nEnterWorktree\nExitWorktree\nMonitor\nNotebookEdit\nPushNotification\nRemoteTrigger\nSendMessage\nTaskStop\nWebFetch\nWebSearch\nmcp__fx__alpha\nmcp__fx__beta",
+                  "type": "",
+                  "text": "",
                   "cache_control": null
                 }
               ],
               "output_config": null
             }
           ],
-          "system": [
-            {
-              "type": "",
-              "text": ""
-            },
-            {
-              "type": "",
-              "text": ""
-            },
-            {
-              "type": "",
-              "text": "",
-              "cache_control": {
-                "type": "",
-                "ttl": "",
-                "scope": ""
-              }
-            },
-            {
-              "type": "",
-              "text": "AGENTSPEC-PROBE-MARKER-CCSKILL7",
-              "cache_control": {
-                "type": "",
-                "ttl": ""
-              }
-            }
-          ],
+          "system": [{}, {}, {}, {}],
           "tools": [
             {
-              "name": "Agent",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "prompt": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "subagent_type": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "model": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", "", "", ""]
-                  },
-                  "run_in_background": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "isolation": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", ""]
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Bash",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "command": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "timeout": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "run_in_background": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "dangerouslyDisableSandbox": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Edit",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "old_string": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "new_string": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "replace_all": {
-                    "description": "",
-                    "default": false,
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ListAgents",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "channel": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 256
-                  },
-                  "q": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 256
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Read",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "offset": {
-                    "description": "",
-                    "type": "",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "limit": {
-                    "description": "",
-                    "type": "",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "pages": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ReportFindings",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "level": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", "", "", "", ""]
-                  },
-                  "findings": {
-                    "description": "",
-                    "maxItems": 32,
-                    "type": "",
-                    "items": {
-                      "type": "",
-                      "properties": {
-                        "file": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "line": {
-                          "description": "",
-                          "type": "",
-                          "minimum": -9007199254740991,
-                          "maximum": 9007199254740991
-                        },
-                        "summary": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "short_summary": {
-                          "description": "",
-                          "type": "",
-                          "maxLength": 60
-                        },
-                        "failure_scenario": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "category": {
-                          "description": "",
-                          "type": "",
-                          "maxLength": 40
-                        },
-                        "verdict": {
-                          "description": "",
-                          "type": "",
-                          "enum": ["", ""]
-                        },
-                        "outcome": {
-                          "description": "",
-                          "type": "",
-                          "enum": ["", "", ""]
-                        }
-                      },
-                      "required": ["", "", ""],
-                      "additionalProperties": false
-                    }
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ScheduleWakeup",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "delaySeconds": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "reason": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "prompt": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "stop": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "noop": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Skill",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "skill": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "args": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ToolSearch",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "query": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "max_results": {
-                    "description": "",
-                    "default": 5,
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Workflow",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "script": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 524288
-                  },
-                  "name": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "title": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "args": {
-                    "description": ""
-                  },
-                  "scriptPath": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "resumeFromRunId": {
-                    "description": "",
-                    "type": "",
-                    "pattern": ""
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "DeferredToolPlaceholder",
+              "name": "",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -3453,21 +1697,12 @@
               "defer_loading": null
             },
             {
-              "name": "Write",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "content": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
@@ -3475,7 +1710,7 @@
             },
             {
               "type": null,
-              "name": "advisor",
+              "name": "",
               "model": null,
               "defer_loading": null
             }
@@ -3486,416 +1721,178 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": "low"
+            "effort": ""
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "claude-sonnet-5-5",
+          "model": "",
           "messages": [
             {
-              "role": "user",
+              "role": "",
               "content": [
                 {
                   "type": "tool_result",
-                  "tool_use_id": "toolu_01NaWUtCcSDz4gr4nvskhd98",
+                  "tool_use_id": "",
                   "content": [
                     {
-                      "type": "tool_reference",
+                      "type": "",
                       "tool_name": null
                     }
                   ]
                 },
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 }
               ]
             },
             {
-              "role": "system",
+              "role": "",
               "content": [
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null,
                   "cache_control": null
                 }
               ]
             }
           ],
-          "system": [
-            {
-              "type": "",
-              "text": ""
-            }
-          ],
+          "system": [{}],
           "tools": [
             {
-              "name": "Agent",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "prompt": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "subagent_type": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "model": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", "", "", ""]
-                  },
-                  "run_in_background": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "isolation": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", ""]
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Bash",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "command": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "timeout": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "run_in_background": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "dangerouslyDisableSandbox": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Edit",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "old_string": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "new_string": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "replace_all": {
-                    "description": "",
-                    "default": false,
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ListAgents",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "channel": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 256
-                  },
-                  "q": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 256
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Read",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "offset": {
-                    "description": "",
-                    "type": "",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "limit": {
-                    "description": "",
-                    "type": "",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "pages": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ReportFindings",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "level": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", "", "", "", ""]
-                  },
-                  "findings": {
-                    "description": "",
-                    "maxItems": 32,
-                    "type": "",
-                    "items": {
-                      "type": "",
-                      "properties": {
-                        "file": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "line": {
-                          "description": "",
-                          "type": "",
-                          "minimum": -9007199254740991,
-                          "maximum": 9007199254740991
-                        },
-                        "summary": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "short_summary": {
-                          "description": "",
-                          "type": "",
-                          "maxLength": 60
-                        },
-                        "failure_scenario": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "category": {
-                          "description": "",
-                          "type": "",
-                          "maxLength": 40
-                        },
-                        "verdict": {
-                          "description": "",
-                          "type": "",
-                          "enum": ["", ""]
-                        },
-                        "outcome": {
-                          "description": "",
-                          "type": "",
-                          "enum": ["", "", ""]
-                        }
-                      },
-                      "required": ["", "", ""],
-                      "additionalProperties": false
-                    }
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ScheduleWakeup",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "delaySeconds": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "reason": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "prompt": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "stop": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "noop": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Skill",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "skill": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "args": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ToolSearch",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "query": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "max_results": {
-                    "description": "",
-                    "default": 5,
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Workflow",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "script": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 524288
-                  },
-                  "name": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "title": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "args": {
-                    "description": ""
-                  },
-                  "scriptPath": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "resumeFromRunId": {
-                    "description": "",
-                    "type": "",
-                    "pattern": ""
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Write",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "content": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "DeferredToolPlaceholder",
+              "name": "",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -3904,7 +1901,7 @@
               "defer_loading": null
             },
             {
-              "name": "mcp__fx__alpha",
+              "name": "",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -3915,7 +1912,7 @@
             },
             {
               "type": null,
-              "name": "advisor",
+              "name": "",
               "model": null,
               "defer_loading": null
             }
@@ -3926,14 +1923,14 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": "low"
+            "effort": ""
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "claude-sonnet-5-5",
+          "model": "",
           "messages": [
             {
               "role": "user",
@@ -3951,29 +1948,24 @@
               ]
             },
             {
-              "role": "system",
+              "role": "",
               "content": [
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null,
                   "cache_control": null
                 }
               ]
             }
           ],
-          "system": [
-            {
-              "type": "",
-              "text": ""
-            }
-          ],
+          "system": [{}],
           "betas": null,
           "metadata": null,
           "max_tokens": null,
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": "low"
+            "effort": ""
           },
           "thread": null,
           "diagnostics": null,
@@ -3989,8 +1981,8 @@
           "content": [
             {
               "type": "tool_use",
-              "id": "toolu_01NaWUtCcSDz4gr4nvskhd98",
-              "name": "ToolSearch",
+              "id": "",
+              "name": "",
               "input": null,
               "caller": null
             }
@@ -4034,7 +2026,7 @@
           "role": null,
           "content": [
             {
-              "type": "text",
+              "type": "",
               "text": null
             }
           ],
@@ -4052,412 +2044,162 @@
     "plugin_none": {
       "requests": [
         {
-          "model": "claude-sonnet-5-5",
+          "model": "",
           "messages": [
             {
-              "role": "user",
+              "role": "",
               "content": [
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 },
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 },
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 },
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 }
               ]
             },
             {
-              "role": "system",
+              "role": "",
               "content": [
                 {
-                  "type": "text",
-                  "text": "The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded — calling them directly will fail with InputValidationError. Use ToolSearch with query \"select:<name>[,<name>...]\" to load tool schemas before calling them:\nCronCreate\nCronDelete\nCronList\nDesignSync\nEnterWorktree\nExitWorktree\nMonitor\nNotebookEdit\nPushNotification\nRemoteTrigger\nSendMessage\nTaskStop\nWebFetch\nWebSearch\nmcp__plugin_fxp_fx__alpha\nmcp__plugin_fxp_fx__beta",
+                  "type": "",
+                  "text": "",
                   "cache_control": null
                 }
               ],
               "output_config": null
             }
           ],
-          "system": [
-            {
-              "type": "",
-              "text": ""
-            },
-            {
-              "type": "",
-              "text": ""
-            },
-            {
-              "type": "",
-              "text": "",
-              "cache_control": {
-                "type": "",
-                "ttl": "",
-                "scope": ""
-              }
-            },
-            {
-              "type": "",
-              "text": "AGENTSPEC-PROBE-MARKER-CCSKILL7",
-              "cache_control": {
-                "type": "",
-                "ttl": ""
-              }
-            }
-          ],
+          "system": [{}, {}, {}, {}],
           "tools": [
             {
-              "name": "Agent",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "prompt": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "subagent_type": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "model": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", "", "", ""]
-                  },
-                  "run_in_background": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "isolation": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", ""]
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Bash",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "command": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "timeout": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "run_in_background": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "dangerouslyDisableSandbox": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Edit",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "old_string": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "new_string": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "replace_all": {
-                    "description": "",
-                    "default": false,
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ListAgents",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "channel": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 256
-                  },
-                  "q": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 256
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Read",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "offset": {
-                    "description": "",
-                    "type": "",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "limit": {
-                    "description": "",
-                    "type": "",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "pages": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ReportFindings",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "level": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", "", "", "", ""]
-                  },
-                  "findings": {
-                    "description": "",
-                    "maxItems": 32,
-                    "type": "",
-                    "items": {
-                      "type": "",
-                      "properties": {
-                        "file": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "line": {
-                          "description": "",
-                          "type": "",
-                          "minimum": -9007199254740991,
-                          "maximum": 9007199254740991
-                        },
-                        "summary": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "short_summary": {
-                          "description": "",
-                          "type": "",
-                          "maxLength": 60
-                        },
-                        "failure_scenario": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "category": {
-                          "description": "",
-                          "type": "",
-                          "maxLength": 40
-                        },
-                        "verdict": {
-                          "description": "",
-                          "type": "",
-                          "enum": ["", ""]
-                        },
-                        "outcome": {
-                          "description": "",
-                          "type": "",
-                          "enum": ["", "", ""]
-                        }
-                      },
-                      "required": ["", "", ""],
-                      "additionalProperties": false
-                    }
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ScheduleWakeup",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "delaySeconds": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "reason": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "prompt": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "stop": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "noop": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Skill",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "skill": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "args": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ToolSearch",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "query": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "max_results": {
-                    "description": "",
-                    "default": 5,
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Workflow",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "script": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 524288
-                  },
-                  "name": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "title": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "args": {
-                    "description": ""
-                  },
-                  "scriptPath": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "resumeFromRunId": {
-                    "description": "",
-                    "type": "",
-                    "pattern": ""
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "DeferredToolPlaceholder",
+              "name": "",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -4466,21 +2208,12 @@
               "defer_loading": null
             },
             {
-              "name": "Write",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "content": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
@@ -4488,7 +2221,7 @@
             },
             {
               "type": null,
-              "name": "advisor",
+              "name": "",
               "model": null,
               "defer_loading": null
             }
@@ -4499,14 +2232,14 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": "low"
+            "effort": ""
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "claude-sonnet-5-5",
+          "model": "",
           "messages": [
             {
               "role": "user",
@@ -4520,438 +2253,195 @@
               ]
             },
             {
-              "role": "system",
+              "role": "",
               "content": [
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null,
                   "cache_control": null
                 }
               ]
             }
           ],
-          "system": [
-            {
-              "type": "",
-              "text": ""
-            }
-          ],
+          "system": [{}],
           "betas": null,
           "metadata": null,
           "max_tokens": null,
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": "low"
+            "effort": ""
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "claude-sonnet-5-5",
+          "model": "",
           "messages": [
             {
-              "role": "user",
+              "role": "",
               "content": [
                 {
                   "type": "tool_result",
-                  "tool_use_id": "toolu_01FL5h7ZkqN548RXooVRd1GV",
+                  "tool_use_id": "",
                   "content": [
                     {
-                      "type": "tool_reference",
+                      "type": "",
                       "tool_name": null
                     }
                   ]
                 },
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 }
               ]
             },
             {
-              "role": "system",
+              "role": "",
               "content": [
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null,
                   "cache_control": null
                 }
               ]
             }
           ],
-          "system": [
-            {
-              "type": "",
-              "text": ""
-            }
-          ],
+          "system": [{}],
           "tools": [
             {
-              "name": "Agent",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "prompt": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "subagent_type": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "model": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", "", "", ""]
-                  },
-                  "run_in_background": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "isolation": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", ""]
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Bash",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "command": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "timeout": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "run_in_background": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "dangerouslyDisableSandbox": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Edit",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "old_string": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "new_string": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "replace_all": {
-                    "description": "",
-                    "default": false,
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ListAgents",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "channel": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 256
-                  },
-                  "q": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 256
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Read",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "offset": {
-                    "description": "",
-                    "type": "",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "limit": {
-                    "description": "",
-                    "type": "",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "pages": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ReportFindings",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "level": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", "", "", "", ""]
-                  },
-                  "findings": {
-                    "description": "",
-                    "maxItems": 32,
-                    "type": "",
-                    "items": {
-                      "type": "",
-                      "properties": {
-                        "file": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "line": {
-                          "description": "",
-                          "type": "",
-                          "minimum": -9007199254740991,
-                          "maximum": 9007199254740991
-                        },
-                        "summary": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "short_summary": {
-                          "description": "",
-                          "type": "",
-                          "maxLength": 60
-                        },
-                        "failure_scenario": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "category": {
-                          "description": "",
-                          "type": "",
-                          "maxLength": 40
-                        },
-                        "verdict": {
-                          "description": "",
-                          "type": "",
-                          "enum": ["", ""]
-                        },
-                        "outcome": {
-                          "description": "",
-                          "type": "",
-                          "enum": ["", "", ""]
-                        }
-                      },
-                      "required": ["", "", ""],
-                      "additionalProperties": false
-                    }
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ScheduleWakeup",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "delaySeconds": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "reason": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "prompt": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "stop": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "noop": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Skill",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "skill": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "args": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ToolSearch",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "query": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "max_results": {
-                    "description": "",
-                    "default": 5,
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Workflow",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "script": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 524288
-                  },
-                  "name": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "title": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "args": {
-                    "description": ""
-                  },
-                  "scriptPath": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "resumeFromRunId": {
-                    "description": "",
-                    "type": "",
-                    "pattern": ""
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Write",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "content": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "DeferredToolPlaceholder",
+              "name": "",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -4960,7 +2450,7 @@
               "defer_loading": null
             },
             {
-              "name": "mcp__plugin_fxp_fx__alpha",
+              "name": "",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -4971,7 +2461,7 @@
             },
             {
               "type": null,
-              "name": "advisor",
+              "name": "",
               "model": null,
               "defer_loading": null
             }
@@ -4982,7 +2472,7 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": "low"
+            "effort": ""
           },
           "thread": null,
           "diagnostics": null,
@@ -4998,8 +2488,8 @@
           "content": [
             {
               "type": "tool_use",
-              "id": "toolu_01FL5h7ZkqN548RXooVRd1GV",
-              "name": "ToolSearch",
+              "id": "",
+              "name": "",
               "input": null,
               "caller": null
             }
@@ -5043,7 +2533,7 @@
           "role": null,
           "content": [
             {
-              "type": "text",
+              "type": "",
               "text": null
             }
           ],
@@ -5061,409 +2551,171 @@
     "plugin_glob": {
       "requests": [
         {
-          "model": "claude-sonnet-5-5",
+          "model": "",
           "messages": [
             {
-              "role": "user",
+              "role": "",
               "content": [
                 {
                   "type": "tool_result",
-                  "tool_use_id": "toolu_01PJ4rBvULcXe23KdJbLdL2u",
+                  "tool_use_id": "",
                   "content": [
                     {
-                      "type": "tool_reference",
+                      "type": "",
                       "tool_name": null
                     }
                   ]
                 },
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 }
               ]
             },
             {
-              "role": "system",
+              "role": "",
               "content": [
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null,
                   "cache_control": null
                 }
               ]
             }
           ],
-          "system": [
-            {
-              "type": "",
-              "text": ""
-            }
-          ],
+          "system": [{}],
           "tools": [
             {
-              "name": "Agent",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "prompt": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "subagent_type": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "model": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", "", "", ""]
-                  },
-                  "run_in_background": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "isolation": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", ""]
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Bash",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "command": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "timeout": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "run_in_background": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "dangerouslyDisableSandbox": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Edit",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "old_string": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "new_string": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "replace_all": {
-                    "description": "",
-                    "default": false,
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ListAgents",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "channel": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 256
-                  },
-                  "q": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 256
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Read",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "offset": {
-                    "description": "",
-                    "type": "",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "limit": {
-                    "description": "",
-                    "type": "",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "pages": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ReportFindings",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "level": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", "", "", "", ""]
-                  },
-                  "findings": {
-                    "description": "",
-                    "maxItems": 32,
-                    "type": "",
-                    "items": {
-                      "type": "",
-                      "properties": {
-                        "file": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "line": {
-                          "description": "",
-                          "type": "",
-                          "minimum": -9007199254740991,
-                          "maximum": 9007199254740991
-                        },
-                        "summary": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "short_summary": {
-                          "description": "",
-                          "type": "",
-                          "maxLength": 60
-                        },
-                        "failure_scenario": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "category": {
-                          "description": "",
-                          "type": "",
-                          "maxLength": 40
-                        },
-                        "verdict": {
-                          "description": "",
-                          "type": "",
-                          "enum": ["", ""]
-                        },
-                        "outcome": {
-                          "description": "",
-                          "type": "",
-                          "enum": ["", "", ""]
-                        }
-                      },
-                      "required": ["", "", ""],
-                      "additionalProperties": false
-                    }
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ScheduleWakeup",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "delaySeconds": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "reason": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "prompt": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "stop": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "noop": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Skill",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "skill": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "args": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ToolSearch",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "query": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "max_results": {
-                    "description": "",
-                    "default": 5,
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Workflow",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "script": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 524288
-                  },
-                  "name": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "title": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "args": {
-                    "description": ""
-                  },
-                  "scriptPath": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "resumeFromRunId": {
-                    "description": "",
-                    "type": "",
-                    "pattern": ""
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Write",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "content": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "DeferredToolPlaceholder",
+              "name": "",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -5472,7 +2724,7 @@
               "defer_loading": null
             },
             {
-              "name": "mcp__plugin_fxp_fx__alpha",
+              "name": "",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -5483,7 +2735,7 @@
             },
             {
               "type": null,
-              "name": "advisor",
+              "name": "",
               "model": null,
               "defer_loading": null
             }
@@ -5494,419 +2746,169 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": "low"
+            "effort": ""
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "claude-sonnet-5-5",
+          "model": "",
           "messages": [
             {
-              "role": "user",
+              "role": "",
               "content": [
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 },
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 },
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 },
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null
                 }
               ]
             },
             {
-              "role": "system",
+              "role": "",
               "content": [
                 {
-                  "type": "text",
-                  "text": "The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded — calling them directly will fail with InputValidationError. Use ToolSearch with query \"select:<name>[,<name>...]\" to load tool schemas before calling them:\nCronCreate\nCronDelete\nCronList\nDesignSync\nEnterWorktree\nExitWorktree\nMonitor\nNotebookEdit\nPushNotification\nRemoteTrigger\nSendMessage\nTaskStop\nWebFetch\nWebSearch\nmcp__plugin_fxp_fx__alpha\nmcp__plugin_fxp_fx__beta",
+                  "type": "",
+                  "text": "",
                   "cache_control": null
                 }
               ],
               "output_config": null
             }
           ],
-          "system": [
-            {
-              "type": "",
-              "text": ""
-            },
-            {
-              "type": "",
-              "text": ""
-            },
-            {
-              "type": "",
-              "text": "",
-              "cache_control": {
-                "type": "",
-                "ttl": "",
-                "scope": ""
-              }
-            },
-            {
-              "type": "",
-              "text": "AGENTSPEC-PROBE-MARKER-CCSKILL7",
-              "cache_control": {
-                "type": "",
-                "ttl": ""
-              }
-            }
-          ],
+          "system": [{}, {}, {}, {}],
           "tools": [
             {
-              "name": "Agent",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "prompt": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "subagent_type": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "model": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", "", "", ""]
-                  },
-                  "run_in_background": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "isolation": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", ""]
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Bash",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "command": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "timeout": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "run_in_background": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "dangerouslyDisableSandbox": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Edit",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "old_string": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "new_string": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "replace_all": {
-                    "description": "",
-                    "default": false,
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ListAgents",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "channel": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 256
-                  },
-                  "q": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 256
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Read",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "offset": {
-                    "description": "",
-                    "type": "",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "limit": {
-                    "description": "",
-                    "type": "",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "pages": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ReportFindings",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "level": {
-                    "description": "",
-                    "type": "",
-                    "enum": ["", "", "", "", ""]
-                  },
-                  "findings": {
-                    "description": "",
-                    "maxItems": 32,
-                    "type": "",
-                    "items": {
-                      "type": "",
-                      "properties": {
-                        "file": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "line": {
-                          "description": "",
-                          "type": "",
-                          "minimum": -9007199254740991,
-                          "maximum": 9007199254740991
-                        },
-                        "summary": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "short_summary": {
-                          "description": "",
-                          "type": "",
-                          "maxLength": 60
-                        },
-                        "failure_scenario": {
-                          "description": "",
-                          "type": ""
-                        },
-                        "category": {
-                          "description": "",
-                          "type": "",
-                          "maxLength": 40
-                        },
-                        "verdict": {
-                          "description": "",
-                          "type": "",
-                          "enum": ["", ""]
-                        },
-                        "outcome": {
-                          "description": "",
-                          "type": "",
-                          "enum": ["", "", ""]
-                        }
-                      },
-                      "required": ["", "", ""],
-                      "additionalProperties": false
-                    }
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ScheduleWakeup",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "delaySeconds": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "reason": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "prompt": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "stop": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "noop": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Skill",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "skill": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "args": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "ToolSearch",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "query": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "max_results": {
-                    "description": "",
-                    "default": 5,
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "Workflow",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "script": {
-                    "description": "",
-                    "type": "",
-                    "maxLength": 524288
-                  },
-                  "name": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "description": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "title": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "args": {
-                    "description": ""
-                  },
-                  "scriptPath": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "resumeFromRunId": {
-                    "description": "",
-                    "type": "",
-                    "pattern": ""
-                  }
-                },
+                "properties": {},
                 "additionalProperties": null
               },
               "eager_input_streaming": null
             },
             {
-              "name": "DeferredToolPlaceholder",
+              "name": "",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -5915,21 +2917,12 @@
               "defer_loading": null
             },
             {
-              "name": "Write",
+              "name": "",
               "description": null,
               "input_schema": {
                 "$schema": null,
                 "type": null,
-                "properties": {
-                  "file_path": {
-                    "description": "",
-                    "type": ""
-                  },
-                  "content": {
-                    "description": "",
-                    "type": ""
-                  }
-                },
+                "properties": {},
                 "required": null,
                 "additionalProperties": null
               },
@@ -5937,7 +2930,7 @@
             },
             {
               "type": null,
-              "name": "advisor",
+              "name": "",
               "model": null,
               "defer_loading": null
             }
@@ -5948,14 +2941,14 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": "low"
+            "effort": ""
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "claude-sonnet-5-5",
+          "model": "",
           "messages": [
             {
               "role": "user",
@@ -5973,29 +2966,24 @@
               ]
             },
             {
-              "role": "system",
+              "role": "",
               "content": [
                 {
-                  "type": "text",
+                  "type": "",
                   "text": null,
                   "cache_control": null
                 }
               ]
             }
           ],
-          "system": [
-            {
-              "type": "",
-              "text": ""
-            }
-          ],
+          "system": [{}],
           "betas": null,
           "metadata": null,
           "max_tokens": null,
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": "low"
+            "effort": ""
           },
           "thread": null,
           "diagnostics": null,
@@ -6011,8 +2999,8 @@
           "content": [
             {
               "type": "tool_use",
-              "id": "toolu_01PJ4rBvULcXe23KdJbLdL2u",
-              "name": "ToolSearch",
+              "id": "",
+              "name": "",
               "input": null,
               "caller": null
             }
@@ -6056,7 +3044,7 @@
           "role": null,
           "content": [
             {
-              "type": "text",
+              "type": "",
               "text": null
             }
           ],

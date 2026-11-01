@@ -2,11 +2,12 @@
 
 A sample is `<package>/samples/<name>.json`, holding an input in the family's sample
 format and the result each expression the definition carries yields on it. `probe sample`
-writes one from a kept workspace: it parses the workspace through the family, reduces the
-input to what the models declare plus the lines a search reads, anonymizes what is left,
-and writes the sample only when every expression yields on the reduced input what it yields
-on the full capture, and the leak scan finds nothing. The samples prove the definition's
-expressions, and `--regenerate` rewrites their results from the definition.
+writes one from a kept workspace: it builds the input from every body's full source JSON,
+anonymizes it, and cuts it by the removal test (`cut`) to the text the expressions need to
+yield what they yield on the full capture. It writes the sample only when the anonymized
+input still yields those results and the leak scan finds nothing in the cut one.
+`--regenerate` recomputes the results from the definition, refusing a changed one unless
+told to accept it, and re-cuts every input against them.
 """
 
 import contextlib
@@ -14,13 +15,13 @@ import getpass
 import json
 import re
 import subprocess
-from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass
-from enum import StrEnum
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, fields, is_dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, assert_never
 
-from pydantic import RootModel
+from pydantic import BaseModel, RootModel
 
 from probe_harness import json_values
 from probe_harness.contract import (
@@ -44,43 +45,10 @@ from probe_harness.families.manual import ManualProbe, Unparsed, Unrecognized, r
 from probe_harness.families.manual import line_document as manual_line_document
 from probe_harness.families.opencode_debug import OpenCodeDebugProbe
 from probe_harness.families.opencode_fake import OpenCodeFakeProbe
-from probe_harness.gates import GateFailure, bodies
+from probe_harness.gates import GateFailure
 from probe_harness.json_values import JsonValue
 from probe_harness.models.raw import ProviderModel, RawJson, sample_source
-
-
-class Span(StrEnum):
-    """The lines a search reads around the line carrying its search string."""
-
-    # That line alone.
-    LINE = "line"
-    # That line and each following line up to, not including, the first empty one.
-    PARAGRAPH = "paragraph"
-
-
-@dataclass(frozen=True)
-class Needle:
-    """A search string, and the span of lines a sample keeps around each line carrying it."""
-
-    text: str
-    span: Span
-
-
-# Searches a gate or an expression makes of a body, besides a definition's marker. The
-# deferred-tools listing names its tools on the lines after its header, so its whole
-# paragraph survives reduction. A search reading more of the listing's string than that
-# may yield differently on a sample than on the capture, which `write_sample`'s equality
-# check refuses, so a written sample proves no expression's result depended on a dropped
-# line.
-SEARCH_STRINGS: tuple[Needle, ...] = (
-    Needle(bodies.DEFERRED_LISTING, Span.PARAGRAPH),
-    Needle(bodies.SUBAGENT_FLAG, Span.LINE),
-)
-
-# Names of the operator's claude.ai connector tools, which are account configuration rather
-# than anything a fixture arranged. Reduction drops a kept line starting with it, and the
-# leak scan refuses a sample still carrying it.
-CONNECTOR_PREFIX = "mcp__claude_ai_"
+from probe_harness.workspace import workspace_root
 
 SAMPLES_DIR = "samples"
 
@@ -92,6 +60,9 @@ _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 _TEMP_DIR = re.compile(r"(/private)?/var/folders/[^/]+/[^/]+/T/+")
 _ENCODED_TEMP_DIR = re.compile(r"-private-var-folders-[^-]+-[^-]+-T-")
 _LEAK_PATTERNS = ("/Users/", "/var/folders/", "var-folders")
+
+# Where every sample spells the workspace root, wherever `workspace_root` puts it.
+SAMPLE_WORKSPACE_ROOT = "/home/probe/.local/state/agentspec/probe-workspaces"
 
 
 class SampleRefused(Exception):
@@ -161,7 +132,15 @@ class Identity:
 
 
 def anonymize(text: str, identity: Identity) -> str:
-    """<text> with the operator's paths and username replaced by generic ones."""
+    """<text> with the operator's paths and username replaced by generic ones.
+
+    The workspace root is rewritten first, in its slash form and in the `-`-encoded form
+    Claude Code gives a working directory, so it is spelled one way whether or not
+    `XDG_STATE_HOME` puts it under the home directory.
+    """
+    root = str(workspace_root())
+    text = text.replace(root, SAMPLE_WORKSPACE_ROOT)
+    text = text.replace(_encoded(root), _encoded(SAMPLE_WORKSPACE_ROOT))
     text = text.replace(identity.home, "/home/probe")
     text = _TEMP_DIR.sub("/tmp/", text)
     text = text.replace("/private/tmp/", "/tmp/")
@@ -191,59 +170,69 @@ def leaks(text: str, identity: Identity) -> list[str]:
         for pattern in _LEAK_PATTERNS:
             if pattern in haystack:
                 hits[f"path: {pattern}"] = None
-        if CONNECTOR_PREFIX in haystack:
-            hits[f"connector: {CONNECTOR_PREFIX}"] = None
+        if "mcp__claude_ai_" in haystack:
+            hits["connector: mcp__claude_ai_"] = None
         for email in _EMAIL.findall(haystack):
             hits[f"email: {email}"] = None
     return list(hits)
 
 
-def needles(definition: ProbeDefinition) -> tuple[Needle, ...]:
-    """Each search a sample of <definition> must still answer: the search string, and the
-    lines a sample keeps around each line carrying it. The definition's marker is a line."""
-    marker = _marker(definition)
-    return SEARCH_STRINGS if marker is None else (Needle(marker, Span.LINE), *SEARCH_STRINGS)
-
-
-def reduce(value: object, needles: Sequence[Needle], identity: Identity) -> JsonValue:
-    """<value>, a parsed input or any part of one, as the JSON a sample keeps.
-
-    A model keeps every key it was parsed from, so `raw.keys()` is unchanged: a declared
-    key that was set keeps its reduced value, and any other keeps its value only when a
-    string in it carries a needle, and is `null` otherwise. A declared string is kept whole,
-    since an expression reads it by name. A string kept under an undeclared key or in a
-    `RawJson` value keeps only the lines its needles' spans cover, less any line starting
-    with a claude.ai connector tool name. A string kept is anonymized.
-    """
+def anonymize_document(value: JsonValue, identity: Identity) -> JsonValue:
+    """<value> with `anonymize` applied to every string and every key."""
     match value:
-        case ProviderModel():
-            source = sample_source(value)
-            assert isinstance(source, dict), "a provider model is validated from an object"
-            declared = type(value).model_fields
-            return {
-                key: (
-                    reduce(getattr(value, key), needles, identity)
-                    if key in declared and key in value.model_fields_set
-                    else (_scrub(raw, needles, identity) if _carries(raw, needles) else None)
-                )
-                for key, raw in source.items()
-            }
-        case RootModel():
-            return reduce(value.root, needles, identity)
-        case RawJson():
-            return _scrub(sample_source(value), needles, identity)
-        case tuple() | list():
-            return [reduce(item, needles, identity) for item in value]
         case dict():
             return {
-                anonymize(str(key), identity): reduce(item, needles, identity)
+                anonymize(key, identity): anonymize_document(item, identity)
                 for key, item in value.items()
             }
+        case list():
+            return [anonymize_document(item, identity) for item in value]
         case str():
             return anonymize(value, identity)
-        case bool() | int() | float() | None:
+        case _:
             return value
-    raise TypeError(f"a {type(value).__name__} has no sample form")
+
+
+def cut(
+    definition: ProbeDefinition, document: JsonValue, oracle: SampleResults, label: str
+) -> JsonValue:
+    """<document>, a sample input, cut to the text its expressions need to yield <oracle>.
+
+    The removal test. Raw content is a `RawJson` field's value, or the value of a key a
+    modelled object does not declare; it is reachable only through `raw`. Three kinds of
+    unit are tried for removal, a pass each, in this order and each in document order:
+    every entry of an object inside raw content, key and value together; every string leaf,
+    emptied; and every line of a multi-line string. Passes repeat until one removes nothing,
+    so the result is a fixed point even for an expression whose result is not monotone in
+    its input. Each pass tries its units in halving batches: a rejected batch splits in two,
+    down to single units. A batch may remove units that one-at-a-time trials would keep,
+    when their removals compensate, but in the final round every single unit's removal is
+    rejected, which is what makes the result a fixed point.
+
+    A removal stands only when the document still parses through the family, the parse
+    keeps the same class at every model position and the same `model_fields_set` on every
+    model, and every expression still yields <oracle>. Modelled structure is never touched:
+    its keys, list lengths and non-string scalars stay, and so do a model's undeclared
+    keys, so `raw.keys()` is unchanged. Refuses when <document> itself does not yield
+    <oracle>.
+    """
+    reference = parse_sample(definition, document, label)
+    if not _yields(definition, document, reference, oracle, label):
+        raise SampleRefused(f"{label}: the uncut input does not yield the results it is cut to")
+    roots = list(_raw_paths(reference, document, ()))
+    current = document
+    while True:
+        removed = False
+        for kind in _UnitKind:
+            current, changed = _cut_pass(
+                current,
+                kind,
+                list(_removals(current, kind, roots)),
+                lambda candidate: _yields(definition, candidate, reference, oracle, label),
+            )
+            removed = removed or changed
+        if not removed:
+            return current
 
 
 def document(
@@ -342,28 +331,31 @@ def write_sample(
                 "the capture holds lines the payload model does not recognize:",
                 *(f"  {line.problem}" for line in unrecognized),
             )
-    full = evaluate(definition, value)
-    found = needles(definition)
-    reduced_document = document(definition, value, lambda body: reduce(body, found, identity))
-    reduced_value = parse_sample(definition, reduced_document, str(path))
-    reduced = evaluate(definition, reduced_value)
-    differing = _differing(full, reduced)
+    oracle = evaluate(definition, value)
+    anonymized = document(
+        definition, value, lambda body: anonymize_document(_source_of(body), identity)
+    )
+    differing = _differing(
+        oracle, evaluate(definition, parse_sample(definition, anonymized, str(path)))
+    )
     if differing:
         raise SampleRefused(
-            "reducing the capture changed what these expressions yield, so the sample would "
+            "anonymizing the capture changed what these expressions yield, so the sample would "
             "not prove them:",
             *(
-                f"  {key}: full {full_text} · reduced {reduced_text}"
-                for key, full_text, reduced_text in differing
+                f"  {key}: full {full_text} · anonymized {anonymized_text}"
+                for key, full_text, anonymized_text in differing
             ),
         )
     origin = SampleOrigin.PREFIX if lines is not None else SampleOrigin.CAPTURE
-    sample = Sample(origin=origin, input=reduced_document, results=full)
+    sample = Sample(
+        origin=origin, input=cut(definition, anonymized, oracle, str(path)), results=oracle
+    )
     text = _sample_text(sample)
     found_leaks = leaks(text, identity)
     if found_leaks:
         raise SampleRefused(
-            "the reduced sample still carries personal data:",
+            "the cut sample still carries personal data:",
             *(f"  {leak}" for leak in found_leaks),
         )
     path.parent.mkdir(exist_ok=True)
@@ -371,24 +363,33 @@ def write_sample(
     return path
 
 
-def regenerate(definition: ProbeDefinition, manifest: Manifest) -> list[str]:
-    """Recompute every sample's `results` from its `input`; one line per changed result.
+def regenerate(
+    definition: ProbeDefinition, manifest: Manifest, *, accept_results: bool
+) -> list[str]:
+    """Recompute every sample's `results` from its `input`, and re-cut every input.
 
-    The results are what the definition's expressions yield over each input. Only the
-    samples whose results changed are rewritten; their `origin`, `note` and `input` keep
+    A changed result is refused unless <accept_results>: regenerate cannot tell whether an
+    expression changed in a way that needs text an earlier cut removed, and recording a
+    result computed on gutted input would agree with the code by construction. Each input
+    is then cut (`cut`) against its recorded results, or the accepted ones. A sample is
+    rewritten only when its results or its input changed; its `origin` and `note` keep
     their values, though the whole file is re-serialized, so `just fmt` restores its
-    formatting. Every sample is evaluated before any is rewritten, so a refusal leaves them
-    all as they were.
+    formatting. Every sample is evaluated and cut before any is rewritten, so a refusal
+    leaves them all as they were.
+
+    Returns `<sample>: <key>: <before> → <after>` per changed result, and
+    `<sample>: cut <n> strings, <m> lines` per re-cut input.
     """
-    changes: list[str] = []
+    changed_results: list[str] = []
+    lines: list[str] = []
     rewritten: list[tuple[Path, Sample]] = []
     for path in sample_paths(manifest.path.parent):
         try:
             sample = parse_sample_file(path)
         except ValueError as e:
             raise SampleRefused(f"{path} is not a sample: {e}") from None
-        value = parse_sample(definition, sample.input, str(path))
         try:
+            value = parse_sample(definition, sample.input, str(path))
             results = evaluate(definition, value)
         except GateFailure as e:
             # Named as `parse_sample` names an input it refuses, so an author can tell which
@@ -396,31 +397,34 @@ def regenerate(definition: ProbeDefinition, manifest: Manifest) -> list[str]:
             first, *rest = e.lines or ("",)
             raise GateFailure(f"{path}: {first}", *rest, detail=e.detail) from None
         differing = _differing(sample.results, results)
-        if not differing:
-            # Rewriting an unchanged sample would replace its prettier-formatted bytes.
-            continue
         for key, before, after in differing:
-            changes.append(f"{path.name}: {key}: {before} → {after}")
-        rewritten.append((path, sample.model_copy(update={"results": results})))
+            changed_results.append(f"{path.name}: {key}: {before} → {after}")
+        if differing and not accept_results:
+            continue
+        cut_input = cut(definition, sample.input, results, str(path))
+        recut = not json_values.equal(cut_input, sample.input)
+        if recut:
+            strings, removed_lines = _cut_counts(sample.input, cut_input)
+            lines.append(f"{path.name}: cut {strings} strings, {removed_lines} lines")
+        if differing or recut:
+            rewritten.append(
+                (path, sample.model_copy(update={"results": results, "input": cut_input}))
+            )
+    if changed_results and not accept_results:
+        raise SampleRefused(
+            "regenerating would change these results:",
+            *(f"  {change}" for change in changed_results),
+            "re-cut the sample from its kept capture with probe sample, re-run the probe, or "
+            "pass --accept-results for a change no cut text bears on, such as a hand edit",
+        )
     for path, sample in rewritten:
         path.write_text(_sample_text(sample), encoding="utf-8")
-    return changes
+    return [*changed_results, *lines]
 
 
 def sample_paths(package: Path) -> list[Path]:
     """Every sample a package commits, in name order."""
     return sorted((package / SAMPLES_DIR).glob("*.json"))
-
-
-def _marker(definition: ProbeDefinition) -> str | None:
-    """The definition's marker, which `needles` keeps as a line."""
-    match definition:
-        case ClaudeOtelProbe(marker=marker) | OpenCodeFakeProbe(marker=marker):
-            return marker
-        case ManualProbe() | OpenCodeDebugProbe() | ClaudeInitProbe() | CustomProbe():
-            return None
-        case _:
-            assert_never(definition)
 
 
 def _expression_input(definition: ProbeDefinition, value: Any) -> Any:
@@ -434,6 +438,11 @@ def _expression_input(definition: ProbeDefinition, value: Any) -> Any:
             return value
         case _:
             assert_never(definition)
+
+
+def _encoded(path: str) -> str:
+    """<path> as Claude Code encodes a working directory: every `/` and `.` written `-`."""
+    return path.replace("/", "-").replace(".", "-")
 
 
 def _differing(a: SampleResults, b: SampleResults) -> list[tuple[str, str, str]]:
@@ -478,42 +487,277 @@ def _source_of(value: object) -> JsonValue:
     raise TypeError(f"a {type(value).__name__} has no source")
 
 
-def _carries(value: JsonValue, needles: Sequence[Needle]) -> bool:
-    return any(needle.text in s for s in RawJson(value).strings() for needle in needles)
+class _UnitKind(Enum):
+    """A pass of the removal test, in the order passes run."""
+
+    ENTRY = "entry"
+    STRING = "string"
+    LINE = "line"
 
 
-def _scrub(value: JsonValue, needles: Sequence[Needle], identity: Identity) -> JsonValue:
-    """<value>'s shape, with every string not carrying a needle blanked, and the rest cut to
-    the lines its needles' spans cover and anonymized."""
+type _Key = str | int
+type _Path = tuple[_Key, ...]
+
+
+@dataclass(frozen=True)
+class _Unit:
+    """One removal: the entry or string at <path>, or line <line> of the string there."""
+
+    path: _Path
+    line: int = -1
+
+
+class _Deleted:
+    """An edit removing an object entry."""
+
+
+_DELETED = _Deleted()
+_ABSENT = object()
+
+
+def _yields(
+    definition: ProbeDefinition,
+    candidate: JsonValue,
+    reference: object,
+    oracle: SampleResults,
+    label: str,
+) -> bool:
+    """Whether <candidate> parses to <reference>'s shape and yields <oracle>."""
+    try:
+        value = parse_sample(definition, candidate, label)
+        if not _same_shape(reference, value):
+            return False
+        return not _differing(oracle, evaluate(definition, value))
+    except GateFailure, ValueError:
+        return False
+
+
+def _raw_paths(value: object, doc: JsonValue, path: _Path) -> Iterator[_Path]:
+    """The JSON paths of raw content in <doc>, walked beside <value>, its parse."""
+    match value:
+        case RootModel():
+            yield from _raw_paths(value.root, doc, path)
+        case BaseModel():
+            if not isinstance(doc, dict):
+                return
+            declared = type(value).model_fields
+            for key, item in doc.items():
+                if key in declared and key in value.model_fields_set:
+                    yield from _raw_paths(getattr(value, key), item, (*path, key))
+                else:
+                    yield (*path, key)
+        case RawJson():
+            yield path
+        case tuple() | list():
+            if isinstance(doc, list):
+                for i, (item, element) in enumerate(zip(value, doc, strict=False)):
+                    yield from _raw_paths(item, element, (*path, i))
+        case dict():
+            if isinstance(doc, dict):
+                for key, element in doc.items():
+                    if key in value:
+                        yield from _raw_paths(value[key], element, (*path, key))
+        case _ if is_dataclass(value) and isinstance(doc, dict):
+            # A family's arm capture, whose sample keys are its field names.
+            names = {f.name for f in fields(value)}
+            for key, element in doc.items():
+                if key in names:
+                    yield from _raw_paths(getattr(value, key), element, (*path, key))
+        case _:
+            return
+
+
+def _same_shape(a: object, b: object) -> bool:
+    """Whether <a> and <b> hold the same class at every model position, and the same
+    `model_fields_set` on every model. Raw content and scalars may differ."""
+    if type(a) is not type(b):
+        return False
+    match a:
+        case RootModel():
+            return _same_shape(a.root, getattr(b, "root", None))
+        case BaseModel():
+            assert isinstance(b, BaseModel)
+            return a.model_fields_set == b.model_fields_set and all(
+                _same_shape(getattr(a, key), getattr(b, key)) for key in a.model_fields_set
+            )
+        case RawJson():
+            return True
+        case tuple() | list():
+            assert isinstance(b, tuple | list)
+            return len(a) == len(b) and all(map(_same_shape, a, b, strict=True))
+        case dict():
+            assert isinstance(b, dict)
+            return a.keys() == b.keys() and all(_same_shape(a[k], b[k]) for k in a)
+        case _ if is_dataclass(a):
+            return all(_same_shape(getattr(a, f.name), getattr(b, f.name)) for f in fields(a))
+        case _:
+            return True
+
+
+def _removals(doc: JsonValue, kind: _UnitKind, roots: Sequence[_Path]) -> Iterator[_Unit]:
+    """The units a pass of <kind> tries on <doc>, in document order."""
+    match kind:
+        case _UnitKind.ENTRY:
+            for root in roots:
+                yield from (
+                    _Unit(path) for path, _ in _nodes(_at(doc, root), root) if _is_entry(path, root)
+                )
+        case _UnitKind.STRING:
+            yield from (
+                _Unit(path)
+                for path, node in _nodes(doc, ())
+                if node != "" and isinstance(node, str)
+            )
+        case _UnitKind.LINE:
+            for path, node in _nodes(doc, ()):
+                if isinstance(node, str) and "\n" in node:
+                    yield from (_Unit(path, i) for i in range(node.count("\n") + 1))
+        case _:
+            assert_never(kind)
+
+
+def _cut_pass(
+    doc: JsonValue,
+    kind: _UnitKind,
+    units: Sequence[_Unit],
+    accepts: Callable[[JsonValue], bool],
+) -> tuple[JsonValue, bool]:
+    """<doc> after one pass over <units>, and whether any removal stood.
+
+    A batch of units is tried at once; a rejected batch is split in halves, down to single
+    units, so a unit stays only when removing it alone is rejected.
+    """
+    # A line pass removes lines from each string as it stood when the pass began.
+    original = {u.path: _at(doc, u.path) for u in units} if kind is _UnitKind.LINE else {}
+    removed_lines: dict[_Path, set[int]] = {}
+    removed = False
+
+    def edits(batch: Sequence[_Unit]) -> dict[_Path, JsonValue | _Deleted]:
+        found: dict[_Path, JsonValue | _Deleted] = {}
+        match kind:
+            case _UnitKind.ENTRY:
+                found = {u.path: _DELETED for u in batch if _at(doc, u.path) is not _ABSENT}
+            case _UnitKind.STRING:
+                found = {u.path: "" for u in batch if _at(doc, u.path) not in ("", _ABSENT)}
+            case _UnitKind.LINE:
+                by_path: dict[_Path, set[int]] = {}
+                for u in batch:
+                    by_path.setdefault(u.path, set()).add(u.line)
+                for path, indices in by_path.items():
+                    already = removed_lines.get(path, set())
+                    text = original[path]
+                    if not indices - already or not isinstance(text, str):
+                        continue
+                    gone = already | indices
+                    found[path] = "\n".join(
+                        line for i, line in enumerate(text.split("\n")) if i not in gone
+                    )
+            case _:
+                assert_never(kind)
+        return found
+
+    def attempt(batch: Sequence[_Unit]) -> None:
+        nonlocal doc, removed
+        found = edits(batch)
+        if not found:
+            return
+        candidate = _edited(doc, found)
+        if accepts(candidate):
+            doc, removed = candidate, True
+            if kind is _UnitKind.LINE:
+                for u in batch:
+                    removed_lines.setdefault(u.path, set()).add(u.line)
+            return
+        if len(batch) > 1:
+            middle = len(batch) // 2
+            attempt(batch[:middle])
+            attempt(batch[middle:])
+
+    attempt(units)
+    return doc, removed
+
+
+def _nodes(value: JsonValue, path: _Path) -> Iterator[tuple[_Path, JsonValue]]:
+    """Every node under <value>, itself first, in document order."""
+    yield path, value
     match value:
         case dict():
-            return {key: _scrub(item, needles, identity) for key, item in value.items()}
+            for key, item in value.items():
+                yield from _nodes(item, (*path, key))
         case list():
-            return [_scrub(item, needles, identity) for item in value]
-        case str():
-            if not any(needle.text in value for needle in needles):
-                return ""
-            return anonymize(_kept_lines(value, needles), identity)
+            for i, item in enumerate(value):
+                yield from _nodes(item, (*path, i))
+        case _:
+            pass
+
+
+def _is_entry(path: _Path, root: _Path) -> bool:
+    """Whether <path>, under raw root <root>, names an object entry rather than the root or a
+    list element."""
+    return len(path) > len(root) and isinstance(path[-1], str)
+
+
+def _at(doc: JsonValue, path: _Path) -> Any:
+    """The node at <path> in <doc>, or `_ABSENT`."""
+    node: Any = doc
+    for key in path:
+        found = (isinstance(key, str) and isinstance(node, dict) and key in node) or (
+            isinstance(key, int) and isinstance(node, list) and key < len(node)
+        )
+        if not found:
+            return _ABSENT
+        node = node[key]
+    return node
+
+
+def _edited(doc: JsonValue, edits: Mapping[_Path, JsonValue | _Deleted]) -> JsonValue:
+    """<doc> with each edit applied, sharing every subtree no edit reaches."""
+    trie: dict[Any, Any] = {}
+    for path, edit in edits.items():
+        node = trie
+        for key in path:
+            node = node.setdefault(key, {})
+        node[_LEAF] = edit
+    return _rebuilt(doc, trie)
+
+
+_LEAF = object()
+
+
+def _rebuilt(value: JsonValue, trie: dict[Any, Any]) -> JsonValue:
+    if _LEAF in trie:
+        edit = trie[_LEAF]
+        assert not isinstance(edit, _Deleted), "a deletion is applied by its parent"
+        return edit  # type: ignore[no-any-return]
+    match value:
+        case dict():
+            rebuilt: dict[str, JsonValue] = {}
+            for key, item in value.items():
+                sub = trie.get(key)
+                if sub is None:
+                    rebuilt[key] = item
+                elif sub.get(_LEAF) is not _DELETED:
+                    rebuilt[key] = _rebuilt(item, sub)
+            return rebuilt
+        case list():
+            return [_rebuilt(item, trie[i]) if i in trie else item for i, item in enumerate(value)]
         case _:
             return value
 
 
-def _kept_lines(text: str, needles: Sequence[Needle]) -> str:
-    """The lines of <text> its needles' spans cover, in order and each once, less any line
-    starting with a claude.ai connector tool name."""
-    lines = text.split("\n")
-    kept: set[int] = set()
-    for i, line in enumerate(lines):
-        for needle in needles:
-            if needle.text not in line:
-                continue
-            kept.add(i)
-            if needle.span is Span.PARAGRAPH:
-                end = i + 1
-                while end < len(lines) and lines[end] != "":
-                    kept.add(end)
-                    end += 1
-    return "\n".join(lines[i] for i in sorted(kept) if not lines[i].startswith(CONNECTOR_PREFIX))
+def _cut_counts(before: JsonValue, after: JsonValue) -> tuple[int, int]:
+    """How many of <before>'s strings a cut removed or emptied, and how many lines it removed
+    from the strings it kept."""
+    strings = lines = 0
+    for path, node in _nodes(before, ()):
+        if not isinstance(node, str) or node == "":
+            continue
+        kept = _at(after, path)
+        if kept is _ABSENT or kept == "":
+            strings += 1
+        elif kept != node and isinstance(kept, str):
+            lines += node.count("\n") - kept.count("\n")
+    return strings, lines
 
 
 def _git_config(key: str) -> str | None:

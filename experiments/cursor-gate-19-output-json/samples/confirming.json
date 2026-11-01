@@ -2,7 +2,7 @@
   "origin": "capture",
   "input": [
     {
-      "conversation_id": "c2790c9b-6d22-482d-85a7-1f2180bbb1c1",
+      "conversation_id": "",
       "generation_id": null,
       "model": null,
       "tool_name": null,
@@ -10,14 +10,14 @@
       "tool_use_id": null,
       "cwd": null,
       "session_id": null,
-      "hook_event_name": "preToolUse",
+      "hook_event_name": "",
       "cursor_version": "3.19.19",
       "workspace_roots": null,
       "user_email": null,
       "transcript_path": null
     },
     {
-      "conversation_id": "7bec276f-6a3f-4c5e-ba4b-36d789872662",
+      "conversation_id": "",
       "generation_id": null,
       "model": null,
       "tool_name": null,
@@ -25,8 +25,8 @@
       "tool_use_id": null,
       "cwd": null,
       "session_id": null,
-      "hook_event_name": "preToolUse",
-      "cursor_version": "3.19.19",
+      "hook_event_name": "",
+      "cursor_version": "",
       "workspace_roots": null,
       "user_email": null,
       "transcript_path": null

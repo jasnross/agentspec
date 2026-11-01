@@ -11,21 +11,21 @@
         "mcp_servers": [
           {
             "name": null,
-            "status": "connected",
+            "status": "",
             "source": "claudeai"
           },
           {
             "name": null,
-            "status": "connected",
+            "status": "",
             "source": "claudeai"
           },
           {
             "name": null,
-            "status": "connected",
+            "status": "",
             "source": "claudeai"
           }
         ],
-        "model": "agentspec-probe-unrecognized-model",
+        "model": "",
         "permissionMode": null,
         "slash_commands": null,
         "terminal_slash_commands": null,
@@ -65,7 +65,7 @@
         "num_turns": null,
         "subtype": null,
         "api_error_status": null,
-        "result": "There's an issue with the selected model (agentspec-probe-unrecognized-model). It may not exist or you may not have access to it. Run --model to pick a different model.",
+        "result": "",
         "type": "result",
         "duration_ms": null,
         "uuid": null,
@@ -81,7 +81,7 @@
         "session_id": null,
         "tools": null,
         "mcp_servers": [],
-        "model": "agentspec-probe-unrecognized-model",
+        "model": "",
         "permissionMode": null,
         "slash_commands": null,
         "terminal_slash_commands": null,
@@ -121,7 +121,7 @@
         "num_turns": null,
         "subtype": null,
         "api_error_status": null,
-        "result": "There's an issue with the selected model (agentspec-probe-unrecognized-model). It may not exist or you may not have access to it. Run --model to pick a different model.",
+        "result": "",
         "type": "result",
         "duration_ms": null,
         "uuid": null,
@@ -139,26 +139,26 @@
         "mcp_servers": [
           {
             "name": null,
-            "status": "connected",
+            "status": "",
             "source": "plugin"
           },
           {
             "name": null,
-            "status": "connected",
+            "status": "",
             "source": "claudeai"
           },
           {
             "name": null,
-            "status": "connected",
+            "status": "",
             "source": "claudeai"
           },
           {
             "name": null,
-            "status": "connected",
+            "status": "",
             "source": "claudeai"
           }
         ],
-        "model": "agentspec-probe-unrecognized-model",
+        "model": "",
         "permissionMode": null,
         "slash_commands": null,
         "terminal_slash_commands": null,
@@ -198,7 +198,7 @@
         "num_turns": null,
         "subtype": null,
         "api_error_status": null,
-        "result": "There's an issue with the selected model (agentspec-probe-unrecognized-model). It may not exist or you may not have access to it. Run --model to pick a different model.",
+        "result": "",
         "type": "result",
         "duration_ms": null,
         "uuid": null,
@@ -214,7 +214,7 @@
         "session_id": null,
         "tools": null,
         "mcp_servers": [],
-        "model": "agentspec-probe-unrecognized-model",
+        "model": "",
         "permissionMode": null,
         "slash_commands": null,
         "terminal_slash_commands": null,
@@ -254,7 +254,7 @@
         "num_turns": null,
         "subtype": null,
         "api_error_status": null,
-        "result": "There's an issue with the selected model (agentspec-probe-unrecognized-model). It may not exist or you may not have access to it. Run --model to pick a different model.",
+        "result": "",
         "type": "result",
         "duration_ms": null,
         "uuid": null,
@@ -272,11 +272,11 @@
         "mcp_servers": [
           {
             "name": null,
-            "status": "connected",
+            "status": "",
             "source": "plugin"
           }
         ],
-        "model": "agentspec-probe-unrecognized-model",
+        "model": "",
         "permissionMode": null,
         "slash_commands": null,
         "terminal_slash_commands": null,
@@ -316,7 +316,7 @@
         "num_turns": null,
         "subtype": null,
         "api_error_status": null,
-        "result": "There's an issue with the selected model (agentspec-probe-unrecognized-model). It may not exist or you may not have access to it. Run --model to pick a different model.",
+        "result": "",
         "type": "result",
         "duration_ms": null,
         "uuid": null,
@@ -332,7 +332,7 @@
         "session_id": null,
         "tools": null,
         "mcp_servers": [],
-        "model": "agentspec-probe-unrecognized-model",
+        "model": "",
         "permissionMode": null,
         "slash_commands": null,
         "terminal_slash_commands": null,
@@ -371,7 +371,7 @@
         "subtype": null,
         "api_error_status": null,
         "api_error_origin": null,
-        "result": "Invalid API key · Fix external API key",
+        "result": "",
         "type": "result",
         "duration_ms": null,
         "uuid": null,
@@ -387,7 +387,7 @@
         "session_id": null,
         "tools": null,
         "mcp_servers": [],
-        "model": "agentspec-probe-unrecognized-model",
+        "model": "",
         "permissionMode": null,
         "slash_commands": null,
         "terminal_slash_commands": null,
@@ -426,7 +426,7 @@
         "subtype": null,
         "api_error_status": null,
         "api_error_origin": null,
-        "result": "Invalid API key · Fix external API key",
+        "result": "",
         "type": "result",
         "duration_ms": null,
         "uuid": null,
@@ -444,11 +444,11 @@
         "mcp_servers": [
           {
             "name": null,
-            "status": "connected",
+            "status": "",
             "source": "plugin"
           }
         ],
-        "model": "agentspec-probe-unrecognized-model",
+        "model": "",
         "permissionMode": null,
         "slash_commands": null,
         "terminal_slash_commands": null,
@@ -487,7 +487,7 @@
         "subtype": null,
         "api_error_status": null,
         "api_error_origin": null,
-        "result": "Invalid API key · Fix external API key",
+        "result": "",
         "type": "result",
         "duration_ms": null,
         "uuid": null,
@@ -503,7 +503,7 @@
         "session_id": null,
         "tools": null,
         "mcp_servers": [],
-        "model": "agentspec-probe-unrecognized-model",
+        "model": "",
         "permissionMode": null,
         "slash_commands": null,
         "terminal_slash_commands": null,
@@ -542,7 +542,7 @@
         "subtype": null,
         "api_error_status": null,
         "api_error_origin": null,
-        "result": "Invalid API key · Fix external API key",
+        "result": "",
         "type": "result",
         "duration_ms": null,
         "uuid": null,
@@ -560,11 +560,11 @@
         "mcp_servers": [
           {
             "name": null,
-            "status": "connected",
+            "status": "",
             "source": "user"
           }
         ],
-        "model": "agentspec-probe-unrecognized-model",
+        "model": "",
         "permissionMode": null,
         "slash_commands": null,
         "terminal_slash_commands": null,
@@ -603,7 +603,7 @@
         "subtype": null,
         "api_error_status": null,
         "api_error_origin": null,
-        "result": "Invalid API key · Fix external API key",
+        "result": "",
         "type": "result",
         "duration_ms": null,
         "uuid": null,

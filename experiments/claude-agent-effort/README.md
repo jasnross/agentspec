@@ -81,7 +81,7 @@ The fixture's own `.claude/settings.json` pin (`effortLevel: medium`) is **not**
 
 ## Discriminate evidence
 
-`samples/confirming.json` and `samples/refuting.json` come from kept workspaces of the `assertion` and `discriminator` fixture variants, both taken on Claude Code **2.1.287**. The two fixtures differ only in the agent's `effort:` value. The refuting workspace, `…T233326-discriminator`, was taken on 2026-10-21. Its `max` subagent tried tools, so it also holds five subagent follow-up requests gate 3 excludes; gate 3 refused the run when it was taken, before that exclusion existed. One string in it is redacted, so its `origin` is `edited`: the subagent's report, which described the operator's user-level instructions and connectors. The other edited samples are the confirming sample changed by hand, each change named in the sample's `note`.
+`samples/confirming.json` and `samples/refuting.json` come from kept workspaces of the `assertion` and `discriminator` fixture variants, both taken on Claude Code **2.1.287**. The two fixtures differ only in the agent's `effort:` value. The refuting workspace, `…T233326-discriminator`, was taken on 2026-10-21. Its `max` subagent tried tools, so it also holds five subagent follow-up requests gate 3 excludes; gate 3 refused the run when it was taken, before that exclusion existed. The capture's subagent report described the operator's user-level instructions and connectors; no expression needs it, so the removal test cuts it, and the sample is an unedited `capture`. The edited samples are the confirming sample changed by hand, each change named in the sample's `note`.
 
 | Sample | Assertion |
 | --- | --- |
