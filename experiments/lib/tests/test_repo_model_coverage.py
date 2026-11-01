@@ -17,6 +17,7 @@ import probe_harness.models
 from probe_harness.arms import ArmCapture
 from probe_harness.contract import parse_sample_file
 from probe_harness.families import load_package, parse_sample
+from probe_harness.families.claude_init import InitCapture
 from probe_harness.models.raw import ExpectedAbsent, ProviderModel
 from probe_harness.samples import sample_paths
 from pydantic import MISSING, BaseModel, RootModel
@@ -86,6 +87,9 @@ def _walk(value: object) -> Iterator[ProviderModel]:
         case ArmCapture():
             yield from _walk(value.requests)
             yield from _walk(value.responses)
+        case InitCapture():
+            yield from _walk(value.init)
+            yield from _walk(value.result)
         case tuple() | list():
             for item in value:
                 yield from _walk(item)

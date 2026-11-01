@@ -3,10 +3,10 @@
 A fixture tree no code path reaches is evidence nobody can reproduce, and a discriminator
 tree a run could record would commit a false `refuted`. So each entry directly under a
 package's `fixtures/`, directory or file, must be a declared variant, or `capture` for a
-manual probe. Inside a Claude probe's variant tree, which the family reads piecemeal rather
-than copying whole, each entry must be an arm tree, an MCP config template, a plugin source,
-or a name the definition lists in its module-level `FIXTURE_PATHS`; every such name must
-exist in every variant tree.
+manual probe. Inside a Claude probe's variant tree, which both Claude families read piecemeal
+rather than copying whole, each entry must be an arm tree, an MCP config template, a plugin
+source, a user-scope config template, or a name the definition lists in its module-level
+`FIXTURE_PATHS`; every such name must exist in every variant tree.
 """
 
 import shutil
@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 from probe_harness.families import DEFINITION_TYPES, ProbeDefinition
+from probe_harness.families.claude_init import ClaudeInitArm, ClaudeInitProbe
 from probe_harness.families.claude_otel import ClaudeOtelProbe, McpConfig, PluginDir
 from probe_harness.families.manual import CAPTURE_DIR, ManualProbe
 from probe_harness.loader import load_definition
@@ -40,9 +41,11 @@ def _top_level_roots(definition: ProbeDefinition) -> set[str]:
     return roots
 
 
-def _claude_variant_roots(package: Path, definition: ClaudeOtelProbe) -> set[str]:
+def _claude_variant_roots(package: Path, definition: ClaudeOtelProbe | ClaudeInitProbe) -> set[str]:
     """The entries a Claude probe reads from inside each of its variant trees."""
     roots = {arm.tree for arm in definition.arms}
+    if isinstance(definition, ClaudeInitProbe):
+        roots |= {arm.home.template for arm in definition.arms if arm.home is not None}
     roots |= {arm.server.source for arm in definition.arms if isinstance(arm.server, PluginDir)}
     roots |= {arm.server.template for arm in definition.arms if isinstance(arm.server, McpConfig)}
     return roots | _fixture_paths(package)
@@ -53,7 +56,7 @@ def _unreachable(package: Path) -> set[str]:
     definition = load_definition(package, DEFINITION_TYPES)
     fixtures = package / "fixtures"
     unreachable = {p.name for p in fixtures.iterdir()} - _top_level_roots(definition)
-    if isinstance(definition, ClaudeOtelProbe):
+    if isinstance(definition, ClaudeOtelProbe | ClaudeInitProbe):
         roots = _claude_variant_roots(package, definition)
         for variant in definition.variants:
             tree = fixtures / variant
@@ -95,12 +98,16 @@ def test_every_declared_variant_directory_exists(package: Path) -> None:
 @pytest.mark.parametrize("package", _packages(), ids=lambda p: p.name)
 def test_every_claude_arm_input_exists_under_every_variant(package: Path) -> None:
     definition = load_definition(package, DEFINITION_TYPES)
-    if not isinstance(definition, ClaudeOtelProbe):
+    if not isinstance(definition, ClaudeOtelProbe | ClaudeInitProbe):
         return
     for variant in definition.variants:
         fixtures = package / "fixtures" / variant
         for arm in definition.arms:
             assert (fixtures / arm.tree).is_dir(), f"{package.name}: no {variant}/{arm.tree}"
+            home = arm.home if isinstance(arm, ClaudeInitArm) else None
+            if home is not None:
+                template = home.template
+                assert (fixtures / template).is_file(), f"{package.name}: no {variant}/{template}"
             if isinstance(arm.server, McpConfig):
                 template = arm.server.template
                 assert (fixtures / template).is_file(), f"{package.name}: no {variant}/{template}"

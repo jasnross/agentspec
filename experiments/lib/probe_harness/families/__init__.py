@@ -19,7 +19,7 @@ from probe_harness.contract import (
     Manifest,
     OptionsAssertion,
 )
-from probe_harness.families import claude_otel, manual, opencode_debug, opencode_fake
+from probe_harness.families import claude_init, claude_otel, manual, opencode_debug, opencode_fake
 from probe_harness.families.base import (
     CustomCheck,
     CustomProbe,
@@ -34,6 +34,7 @@ from probe_harness.families.base import (
     refused,
     source_changed,
 )
+from probe_harness.families.claude_init import ClaudeInitArm, ClaudeInitProbe
 from probe_harness.families.claude_otel import ClaudeOtelProbe, McpConfig, PluginDir
 from probe_harness.families.manual import ManualProbe
 from probe_harness.families.opencode_debug import OpenCodeDebugProbe
@@ -62,6 +63,7 @@ type ProbeDefinition = (
     | OpenCodeDebugProbe[Any]
     | OpenCodeFakeProbe
     | ClaudeOtelProbe
+    | ClaudeInitProbe
     | CustomProbe[Any]
 )
 
@@ -70,6 +72,7 @@ DEFINITION_TYPES: tuple[type, ...] = (
     OpenCodeDebugProbe,
     OpenCodeFakeProbe,
     ClaudeOtelProbe,
+    ClaudeInitProbe,
     CustomProbe,
 )
 
@@ -105,6 +108,8 @@ def run_package(name: str, experiments_dir: Path) -> int:
                 return opencode_fake.run(manifest, name, options, definition)
             case ClaudeOtelProbe():
                 return claude_otel.run(manifest, name, options, definition)
+            case ClaudeInitProbe():
+                return claude_init.run(manifest, name, options, definition)
             case CustomProbe():
                 return _run_custom(manifest, name, options, definition)
             case _:
@@ -199,6 +204,8 @@ def record_package(
                 result = opencode_fake.judge(ws, definition)
             case ClaudeOtelProbe():
                 result = claude_otel.judge(ws, definition)
+            case ClaudeInitProbe():
+                result = claude_init.judge(ws, definition)
             case CustomProbe():
                 result = _judge_custom(ws, definition)
             case _:
@@ -275,6 +282,8 @@ def parse_workspace(definition: ProbeDefinition, ws: Path, lines: int | None = N
             return opencode_fake.parse(ws, definition)
         case ClaudeOtelProbe():
             return claude_otel.parse(ws, definition)
+        case ClaudeInitProbe():
+            return claude_init.parse(ws, definition)
         case CustomProbe():
             raise UsageError(f"{ws}: a CustomProbe has no sample format")
         case _:
@@ -293,6 +302,8 @@ def parse_sample(definition: ProbeDefinition, document: JsonValue, label: str) -
             return opencode_fake.parse_sample(document, label, definition)
         case ClaudeOtelProbe():
             return claude_otel.parse_sample(document, label, definition)
+        case ClaudeInitProbe():
+            return claude_init.parse_sample(document, label, definition)
         case CustomProbe():
             raise UsageError(f"{label}: a CustomProbe has no sample format")
         case _:
@@ -320,7 +331,7 @@ def expressions(definition: ProbeDefinition) -> Expressions:
                 manual=True,
                 wait_for=definition.wait_for,
             )
-        case OpenCodeDebugProbe() | OpenCodeFakeProbe() | ClaudeOtelProbe():
+        case OpenCodeDebugProbe() | OpenCodeFakeProbe() | ClaudeOtelProbe() | ClaudeInitProbe():
             return Expressions(definition.assertion, definition.custom_checks)
         case CustomProbe():
             return Expressions(definition.assertion)
@@ -354,6 +365,13 @@ def _definition_refusal(name: str, definition: ProbeDefinition, manifest: Manife
                 _variant_trees(name, definition, package)
                 or _unique_arms(name, [arm.name for arm in definition.arms])
                 or _claude_gate_arms(name, definition)
+                or _needs_capture(name, definition, manifest)
+                or _claude_variant_inputs(name, definition, package)
+            )
+        case ClaudeInitProbe():
+            return (
+                _variant_trees(name, definition, package)
+                or _unique_arms(name, [arm.name for arm in definition.arms])
                 or _needs_capture(name, definition, manifest)
                 or _claude_variant_inputs(name, definition, package)
             )
@@ -464,7 +482,9 @@ def _claude_gate_arms(name: str, definition: ClaudeOtelProbe) -> str | None:
     return None
 
 
-def _claude_variant_inputs(name: str, definition: ClaudeOtelProbe, package: Path) -> str | None:
+def _claude_variant_inputs(
+    name: str, definition: ClaudeOtelProbe | ClaudeInitProbe, package: Path
+) -> str | None:
     # Each variant tree carries its own copy of every input an arm reads, so one a variant
     # lacks would fail only at that arm, after the arms before it had spent model calls.
     for variant in definition.variants:
@@ -479,6 +499,9 @@ def _claude_variant_inputs(name: str, definition: ClaudeOtelProbe, package: Path
                     missing = None
                 case _:
                     assert_never(arm.server)
+            home = arm.home if isinstance(arm, ClaudeInitArm) else None
+            if home is not None and not (fixtures / home.template).is_file():
+                missing = home.template
             if not (fixtures / arm.tree).is_dir():
                 missing = arm.tree
             if missing is not None:
@@ -499,6 +522,8 @@ def _family_tools(definition: ProbeDefinition) -> tuple[str, ...]:
             return opencode_fake.FAMILY_TOOLS
         case ClaudeOtelProbe():
             return claude_otel.FAMILY_TOOLS
+        case ClaudeInitProbe():
+            return claude_init.FAMILY_TOOLS
         case CustomProbe():
             return definition.required_tools
         case _:

@@ -38,6 +38,7 @@ from probe_harness.families.base import (
     observe,
     run_wait_for,
 )
+from probe_harness.families.claude_init import ClaudeInitProbe
 from probe_harness.families.claude_otel import ClaudeOtelProbe, expression_input
 from probe_harness.families.manual import ManualProbe, Unparsed, Unrecognized, recognized
 from probe_harness.families.manual import line_document as manual_line_document
@@ -263,6 +264,11 @@ def document(
                 arm: {"requests": [transform(r) for r in capture.requests]}
                 for arm, capture in value.items()
             }
+        case ClaudeInitProbe():
+            return {
+                arm: {"init": transform(capture.init), "result": transform(capture.result)}
+                for arm, capture in value.items()
+            }
         case OpenCodeDebugProbe():
             return transform(value)
         case ManualProbe():
@@ -411,7 +417,7 @@ def _marker(definition: ProbeDefinition) -> str | None:
     match definition:
         case ClaudeOtelProbe(marker=marker) | OpenCodeFakeProbe(marker=marker):
             return marker
-        case ManualProbe() | OpenCodeDebugProbe() | CustomProbe():
+        case ManualProbe() | OpenCodeDebugProbe() | ClaudeInitProbe() | CustomProbe():
             return None
         case _:
             assert_never(definition)
@@ -424,7 +430,7 @@ def _expression_input(definition: ProbeDefinition, value: Any) -> Any:
             return expression_input(value, definition)
         case ManualProbe():
             return recognized(value)
-        case OpenCodeFakeProbe() | OpenCodeDebugProbe() | CustomProbe():
+        case OpenCodeFakeProbe() | OpenCodeDebugProbe() | ClaudeInitProbe() | CustomProbe():
             return value
         case _:
             assert_never(definition)

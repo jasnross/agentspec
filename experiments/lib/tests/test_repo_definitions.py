@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 from probe_harness.families import DEFINITION_TYPES
+from probe_harness.families.claude_init import ClaudeInitProbe
 from probe_harness.families.claude_otel import ClaudeOtelProbe
 from probe_harness.families.manual import ManualProbe
 from probe_harness.families.opencode_debug import OpenCodeDebugProbe
@@ -38,11 +39,14 @@ def _packages() -> list[Path]:
 
 def _expected_family(package: Path) -> type:
     """The family a package's manifest and name imply."""
-    driver = json.loads((package / "probe.json").read_text(encoding="utf-8"))["driver"]
+    manifest = json.loads((package / "probe.json").read_text(encoding="utf-8"))
+    driver = manifest["driver"]
     if driver == "manual":
         return ManualProbe
     if driver == "billed":
         return ClaudeOtelProbe
+    if manifest["provider"] == "claude":
+        return ClaudeInitProbe
     return OpenCodeDebugProbe if package.name in DEBUG_PACKAGES else OpenCodeFakeProbe
 
 

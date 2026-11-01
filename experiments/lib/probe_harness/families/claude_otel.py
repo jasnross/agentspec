@@ -257,6 +257,35 @@ def judge(ws: Path, probe: ClaudeOtelProbe) -> JudgeResult:
     return decide(probe.assertion, value)
 
 
+def arrange_server(
+    fixtures: Path, arm_dir: Path, server: McpConfig | PluginDir | None
+) -> list[str]:
+    """Set up an arm's MCP server in <arm_dir>, and return the `claude` arguments that load it.
+
+    An `--mcp-config` server always comes with `--strict-mcp-config`, so it is the only one the
+    arm loads.
+    """
+    pairs = {
+        "PYTHON": sys.executable,
+        "FX_SERVER": str(FX_SERVER),
+        "FX_STAMP": str(arm_dir / "fx.stamp"),
+    }
+    match server:
+        case None:
+            return []
+        case McpConfig(template=template):
+            config = arm_dir / "mcp.json"
+            template_file(fixtures / template, config, **pairs)
+            return ["--mcp-config", str(config), "--strict-mcp-config"]
+        case PluginDir(source=source):
+            plugin = arm_dir / "fxp"
+            shutil.copytree(fixtures / source, plugin, symlinks=True)
+            template_file(fixtures / source / ".mcp.json", plugin / ".mcp.json", **pairs)
+            return ["--plugin-dir", str(plugin)]
+        case _:
+            assert_never(server)
+
+
 def _check(gate: ClaudeGate, arms: ClaudeArms, ws: Path, probe: ClaudeOtelProbe) -> None:
     match gate:
         case Control():
@@ -287,7 +316,7 @@ def _run_arm(fixtures: Path, ws: Path, arm: ClaudeArm, probe: ClaudeOtelProbe) -
     sink.mkdir()
     shutil.copytree(fixtures / arm.tree, project, symlinks=True, dirs_exist_ok=True)
 
-    server_args = _server(fixtures, arm_dir, arm.server)
+    server_args = arrange_server(fixtures, arm_dir, arm.server)
     if probe.arrange_arm is not None:
         probe.arrange_arm(fixtures, arm_dir, arm)
 
@@ -321,26 +350,3 @@ def _run_arm(fixtures: Path, ws: Path, arm: ClaudeArm, probe: ClaudeOtelProbe) -
             f"the {arm.name} arm exited nonzero; its stderr follows:",
             detail=file_lines(arm_dir / "stderr"),
         )
-
-
-def _server(fixtures: Path, arm_dir: Path, server: McpConfig | PluginDir | None) -> list[str]:
-    """Set up the arm's MCP server, and return the `claude` arguments that load it."""
-    pairs = {
-        "PYTHON": sys.executable,
-        "FX_SERVER": str(FX_SERVER),
-        "FX_STAMP": str(arm_dir / "fx.stamp"),
-    }
-    match server:
-        case None:
-            return []
-        case McpConfig(template=template):
-            config = arm_dir / "mcp.json"
-            template_file(fixtures / template, config, **pairs)
-            return ["--mcp-config", str(config), "--strict-mcp-config"]
-        case PluginDir(source=source):
-            plugin = arm_dir / "fxp"
-            shutil.copytree(fixtures / source, plugin, symlinks=True)
-            template_file(fixtures / source / ".mcp.json", plugin / ".mcp.json", **pairs)
-            return ["--plugin-dir", str(plugin)]
-        case _:
-            assert_never(server)
