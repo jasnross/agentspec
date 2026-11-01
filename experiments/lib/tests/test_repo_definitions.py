@@ -50,8 +50,8 @@ def _expected_family(package: Path) -> type:
     return OpenCodeDebugProbe if package.name in DEBUG_PACKAGES else OpenCodeFakeProbe
 
 
-def test_the_tree_holds_all_twenty_seven_packages() -> None:
-    assert len(_packages()) == 27
+def test_the_tree_holds_all_twenty_eight_packages() -> None:
+    assert len(_packages()) == 28
 
 
 @pytest.mark.parametrize("package", _packages(), ids=lambda p: p.name)
