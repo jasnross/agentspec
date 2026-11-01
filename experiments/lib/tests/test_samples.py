@@ -11,6 +11,7 @@ import pytest
 from probe_harness import samples
 from probe_harness.contract import SampleOrigin, parse_sample_file
 from probe_harness.families import load_package
+from probe_harness.gates import GateFailure
 from probe_harness.gates.bodies import DEFERRED_LISTING, SUBAGENT_FLAG
 from probe_harness.models.raw import ProviderModel, RawJson
 from probe_harness.samples import (
@@ -499,25 +500,87 @@ def test_the_cli_writes_a_sample_and_refuses_usage_errors(
     assert missing.returncode == 2
 
     again = cli("sample", "debug-pkg", "--regenerate", env=env)
-    assert again.returncode == 1
-    assert "is schema 2" in again.stderr
+    assert again.returncode == 0, again.output
+    # The sample was just written from this definition, so no result changed.
+    assert again.stdout == ""
 
 
-def test_regenerate_refuses_a_schema_2_package(tree: Path, tmp_path: Path) -> None:
+def _put_sample(package: Path, name: str, document: dict[str, Any]) -> Path:
+    path = package / "samples" / f"{name}.json"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+EDITED: dict[str, Any] = {
+    "origin": "edited",
+    "note": "variant changed by hand",
+    "input": {"variant": "low"},
+    "results": {"assertion": "high"},
+}
+
+
+def test_regenerate_rewrites_a_schema_2_package_s_results(tree: Path) -> None:
+    package = _debug_package(tree)
+    path = _put_sample(package, "edited-x", EDITED)
+    # Already right, and indented as no rewrite would leave it.
+    unchanged = package / "samples" / "unchanged.json"
+    right = {"origin": "capture", "input": {"variant": "high"}, "results": {"assertion": "high"}}
+    unchanged.write_text(json.dumps(right, indent=4) + "\n", encoding="utf-8")
+    before = unchanged.read_bytes()
+    definition, manifest = load_package(package)
+
+    changes = samples.regenerate(definition, manifest)
+
+    assert changes == ["edited-x.json: assertion: high → low"]
+    assert json.loads(path.read_text()) == {**EDITED, "results": {"assertion": "low"}}
+    assert unchanged.read_bytes() == before
+
+
+def test_regenerate_leaves_every_sample_when_one_refuses(cli: Cli, tree: Path) -> None:
+    package = _debug_package(tree)
+    first = _put_sample(package, "a-edited", EDITED)
+    before = first.read_bytes()
+    # No `variant`, which the definition's output model requires.
+    _put_sample(package, "b-unparsable", {"origin": "capture", "input": {}, "results": {}})
+    definition, manifest = load_package(package)
+
+    with pytest.raises(GateFailure):
+        samples.regenerate(definition, manifest)
+    assert first.read_bytes() == before
+
+    refused = cli("sample", "debug-pkg", "--regenerate")
+    assert refused.returncode == 1, refused.output
+    assert "b-unparsable.json" in refused.stderr
+    assert first.read_bytes() == before
+
+
+def test_regenerate_names_the_sample_an_expression_refused(tree: Path) -> None:
+    package = _debug_package(tree, assertion="lambda d: d.mode")
+    path = _put_sample(package, "edited-x", EDITED)
+    definition, manifest = load_package(package)
+
+    with pytest.raises(GateFailure) as exc:
+        samples.regenerate(definition, manifest)
+    assert exc.value.lines[0].startswith(f"{path}: the assertion did not yield a JSON value")
+
+
+def test_regenerate_leaves_an_unchanged_sample_untouched(tree: Path, tmp_path: Path) -> None:
     package = _debug_package(tree)
     definition, manifest = load_package(package)
-    samples.write_sample(
+    path = samples.write_sample(
         definition,
         manifest,
         _debug_ws(tmp_path, {"variant": "high"}),
         "confirming",
         identity=IDENTITY,
     )
-    before = (package / "samples" / "confirming.json").read_text()
+    # Re-indented by hand, as a formatter would leave it.
+    path.write_text(json.dumps(json.loads(path.read_text()), indent=4) + "\n", encoding="utf-8")
+    before = path.read_bytes()
 
-    with pytest.raises(SampleRefused, match="is schema 2"):
-        samples.regenerate(definition, manifest)
-    assert (package / "samples" / "confirming.json").read_text() == before
+    assert samples.regenerate(definition, manifest) == []
+    assert path.read_bytes() == before
 
 
 @pytest.mark.parametrize("name", ["../escape", "a/b", "Confirming", "", "-x"], ids=repr)

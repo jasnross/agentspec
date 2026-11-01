@@ -397,17 +397,14 @@ def write_sample(
 
 
 def regenerate(definition: ProbeDefinition, manifest: Manifest) -> list[str]:
-    """Rewrite every sample's `results` from its `input`; one line per changed result.
+    """Recompute every sample's `results` from its `input`; one line per changed result.
 
-    Never touches `origin`, `note` or `input`. Refused for a schema 2 manifest, whose
-    samples' results are the jq's that the Python must reproduce. Every sample is evaluated
-    before any is rewritten, so a refusal leaves them all as they were.
+    The results are what the definition's expressions yield over each input. Only the
+    samples whose results changed are rewritten; their `origin`, `note` and `input` keep
+    their values, though the whole file is re-serialized, so `just fmt` restores its
+    formatting. Every sample is evaluated before any is rewritten, so a refusal leaves them
+    all as they were.
     """
-    if not isinstance(manifest, ManifestV1):
-        raise SampleRefused(
-            f"{manifest.path} is schema 2: its samples' results are the record of what the "
-            "jq yielded, which regenerating would overwrite with what the Python yields"
-        )
     changes: list[str] = []
     rewritten: list[tuple[Path, Sample]] = []
     for path in sample_paths(manifest.path.parent):
@@ -416,8 +413,18 @@ def regenerate(definition: ProbeDefinition, manifest: Manifest) -> list[str]:
         except ValueError as e:
             raise SampleRefused(f"{path} is not a sample: {e}") from None
         value = parse_sample(definition, sample.input, str(path))
-        results = evaluate(definition, manifest, value, sample.input)
-        for key, before, after in _differing(sample.results, results):
+        try:
+            results = evaluate(definition, manifest, value, sample.input)
+        except GateFailure as e:
+            # Named as `parse_sample` names an input it refuses, so an author can tell which
+            # of several samples an expression could not read.
+            first, *rest = e.lines or ("",)
+            raise GateFailure(f"{path}: {first}", *rest, detail=e.detail) from None
+        differing = _differing(sample.results, results)
+        if not differing:
+            # Rewriting an unchanged sample would replace its prettier-formatted bytes.
+            continue
+        for key, before, after in differing:
             changes.append(f"{path.name}: {key}: {before} → {after}")
         rewritten.append((path, sample.model_copy(update={"results": results})))
     for path, sample in rewritten:

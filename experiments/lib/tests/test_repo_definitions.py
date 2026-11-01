@@ -106,13 +106,14 @@ def test_every_manual_package_loads_as_a_manual_probe(name: str) -> None:
 def test_hook_command_argv_refuses_a_shell_significant_workspace_root(
     cli: Cli, tmp_path: Path, character: str
 ) -> None:
-    # Refused before any workspace exists, so the directory itself need not exist.
+    # Refused before any workspace exists, so the directory itself need not exist. A dry
+    # run, so the clean-tree gate never refuses first while the harness has uncommitted edits.
     state = f"{tmp_path}/a{character}b"
     root = f"{state}/agentspec/probe-workspaces"
     result = cli(
         "run",
         "cursor-hook-command-argv",
-        env={"XDG_STATE_HOME": state, "PROBE_TIMEOUT_SECONDS": "1"},
+        env={"XDG_STATE_HOME": state, "PROBE_TIMEOUT_SECONDS": "1", "PROBE_DRY_RUN": "1"},
     )
     assert result.returncode == 1
     assert result.stderr == (
