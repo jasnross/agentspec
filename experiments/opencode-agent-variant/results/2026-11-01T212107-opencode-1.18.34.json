@@ -1,0 +1,73 @@
+{
+  "schema_version": 2,
+  "provider": "opencode",
+  "status": "confirmed",
+  "depth": "resolved-config",
+  "date": "2026-11-01",
+  "tool_version": "1.18.34",
+  "source": {
+    "experiments/lib/probe_harness/__init__.py": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+    "experiments/lib/probe_harness/arms.py": "5d62b5260e67fef7afe826efe950e993f945d08d",
+    "experiments/lib/probe_harness/assertions.py": "4df857efa9296ff86fd3178cf7b47b59ee2b8a46",
+    "experiments/lib/probe_harness/cli.py": "229cc06b1751f6684422b5edd79ce68e4df09314",
+    "experiments/lib/probe_harness/console.py": "292cfc0d722af6144c6c53e4c806836c26754e28",
+    "experiments/lib/probe_harness/contract.py": "62ec0c7f5dbc0577a1a142e772bcdf0a1463f5d4",
+    "experiments/lib/probe_harness/families/__init__.py": "4bf5727f48f5916a561dcfe313903a773540e611",
+    "experiments/lib/probe_harness/families/base.py": "4532ce477b9e039d3c3fb1e2fbb3e8cc170ae6a6",
+    "experiments/lib/probe_harness/families/claude_init.py": "ab7fa4d2dc697c54bd66d57a79b8ff8dea7d50f3",
+    "experiments/lib/probe_harness/families/claude_otel.py": "e6f8c125204725f09b3ce0c34618705dd61b89c5",
+    "experiments/lib/probe_harness/families/manual.py": "8945014d6428389fcfcbf3144cf6dfa381655715",
+    "experiments/lib/probe_harness/families/opencode_debug.py": "22845768f62213e2f436a92154b1cc434cf6de8a",
+    "experiments/lib/probe_harness/families/opencode_env.py": "ddc6b31d4549237bc8d716593296a5b862922687",
+    "experiments/lib/probe_harness/families/opencode_fake.py": "4971a71721cf8c53cffa9535ab4eb94e594fb3a2",
+    "experiments/lib/probe_harness/gates/__init__.py": "c06d370d6b00190fbc9b6f01038b474ce8f15f3e",
+    "experiments/lib/probe_harness/gates/bodies.py": "f017dbaa10ec2389079ba762c95704d6d92e5401",
+    "experiments/lib/probe_harness/gates/claude_otel.py": "dd56c02884a1046a0ab6256ab6e3da329c6a44d8",
+    "experiments/lib/probe_harness/gates/opencode.py": "b99a335efb47e3c6f9e4c67d130f637a321e2959",
+    "experiments/lib/probe_harness/json_values.py": "ae333f52edc95cafbe1a494b7d253c99432af26c",
+    "experiments/lib/probe_harness/loader.py": "ff7e35b1bc828dc7e6f0e7f5da5d3031eac40948",
+    "experiments/lib/probe_harness/models/__init__.py": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+    "experiments/lib/probe_harness/models/claude_hook.py": "84c08bffc89cb51d7edfc347a3c72adb1fef13fc",
+    "experiments/lib/probe_harness/models/claude_request.py": "8ea4d912407e457999d15da95bb07ee715ce1b5d",
+    "experiments/lib/probe_harness/models/claude_response.py": "a2e0b1bedb2ed7fab4d14664cab33a5abda84fa8",
+    "experiments/lib/probe_harness/models/claude_stream.py": "96139b10567d845a81d7565d8871fde977455379",
+    "experiments/lib/probe_harness/models/cursor_hook.py": "47e27afe1cdbd3f4dfce08688f9dec347cc45644",
+    "experiments/lib/probe_harness/models/opencode_debug.py": "c2faa86325c97d27256e3d68ae6bf40bdcc162d3",
+    "experiments/lib/probe_harness/models/opencode_request.py": "a4220b5dc2cbf847e00f145fd7202aec27351bcc",
+    "experiments/lib/probe_harness/models/raw.py": "c4602cf23a5df7a082f62ff39315241e9bbad027",
+    "experiments/lib/probe_harness/preflight.py": "0e7ad3568fcec11e3afcd27c09386b2c5048aec0",
+    "experiments/lib/probe_harness/record.py": "3ef17a53047bcb25bad8b8ccafb13ee80aa6c662",
+    "experiments/lib/probe_harness/run_all.py": "a7f5b30040e7cb95bbd50abd2679f887136bc49f",
+    "experiments/lib/probe_harness/samples.py": "3b1faeb6bc5bca9a287926a7978b4b3e64669a0d",
+    "experiments/lib/probe_harness/source.py": "cb4413d5f50cbf82cda3ae18c92c4e54e4ef40a7",
+    "experiments/lib/probe_harness/state.py": "dfbcfbf19251f7394c2700ada92f578abf6b10c8",
+    "experiments/lib/probe_harness/status.py": "afec743b5d8d85299efdd3b257faaf36477abe6d",
+    "experiments/lib/probe_harness/views.py": "90ab779e094ee57871d217b7b26c877433f52008",
+    "experiments/lib/probe_harness/workspace.py": "26cfa8737f796114e414a047ebbc502e78b1b2eb",
+    "experiments/lib/stubs/fake_provider.py": "16e7fd4defe1722c6573e6111309fa0a9692b897",
+    "experiments/lib/stubs/fx_server.py": "e4d2c0dbb809746dbb7aaf1ee3efb94ed41c6d81",
+    "experiments/opencode-agent-variant/fixtures/assertion/.opencode/agent/probe.md": "e6ac228fad9ebb2aca25e9acfdaf22d35b54655d",
+    "experiments/opencode-agent-variant/fixtures/discriminator/.opencode/agent/probe.md": "7b224ed79243c645c69867fbb96f3eba4df6e0c1",
+    "experiments/opencode-agent-variant/probe.json": "91af67db1c54d5c36d4a1f22974040703c306319",
+    "experiments/opencode-agent-variant/probe.py": "c20832c0e2d54c251a091e84de3c10f5f1604f17",
+    "experiments/probe": "4ed69ba47b04301b7704c09ec604cb24b22fd6d2",
+    "experiments/pyproject.toml": "fc518382858322fc209a3800d6c91f7be7040ac0",
+    "experiments/uv.lock": "fdb0f62207b726b404c1b577926eac4ea04cc9e8"
+  },
+  "assertion": {
+    "expected": {
+      "model": {
+        "providerID": "anthropic",
+        "modelID": "claude-sonnet-4-5"
+      },
+      "variant": "high"
+    },
+    "observed": {
+      "model": {
+        "providerID": "anthropic",
+        "modelID": "claude-sonnet-4-5"
+      },
+      "variant": "high"
+    }
+  }
+}

@@ -4,8 +4,9 @@ Fully script-driven: no human step, no network, no credentials. The oracle's raw
 goes to `view.json` unprojected, and is validated against the definition's `output` model:
 the definition's assertion reads the model.
 
-Workspace layout: the variant's fixture tree copied to `<ws>/` (or to `<ws>/project/`
-under an isolated layout), plus `<ws>/view.json` and `<ws>/oracle.stderr`.
+Every run is isolated (`OpenCodeIsolation`). Workspace layout: the variant's fixture tree
+copied to `<ws>/project/`, beside `<ws>/home/` and `<ws>/xdg/{config,cache,data,state}/`,
+plus `<ws>/view.json` and `<ws>/oracle.stderr`.
 """
 
 import shutil
@@ -34,11 +35,11 @@ from probe_harness.families.base import (
     refused,
     run_checks,
 )
-from probe_harness.families.opencode_env import OpenCodeIsolation
+from probe_harness.families.opencode_env import OpenCodeIsolation, ancestor_instructions_refusal
 from probe_harness.json_values import JsonValue
 from probe_harness.models.raw import ProviderModel, field_path
 from probe_harness.source import write_source
-from probe_harness.workspace import create_workspace
+from probe_harness.workspace import create_workspace, workspace_root
 
 FAMILY_TOOLS = ("opencode",)
 
@@ -49,8 +50,8 @@ class OpenCodeDebugProbe[D: ProviderModel | RootModel[Any]]:
     argv: tuple[str, ...]
     # The model the oracle's document is validated against.
     output: type[D]
+    isolation: OpenCodeIsolation
     variants: tuple[str, ...] = ("assertion",)
-    isolation: OpenCodeIsolation | None = None
     # Required by a manifest declaring `expected`, and refused by an option set.
     assertion: Callable[[D], JsonValue] | None = None
     custom_checks: tuple[CustomCheck[D], ...] = ()
@@ -61,6 +62,9 @@ def run[D: ProviderModel | RootModel[Any]](
     manifest: Manifest, name: str, options: RunOptions, probe: OpenCodeDebugProbe[D]
 ) -> int:
     package = manifest.path.parent
+    if (refusal := ancestor_instructions_refusal(workspace_root())) is not None:
+        console.say_refusal(refusal)
+        return 1
     ws = create_workspace(name, options.variant)
     with kept_on_failure(ws):
         write_source(ws, options.source)
@@ -137,12 +141,9 @@ def _arrange_and_act[D: ProviderModel | RootModel[Any]](
     manifest: Manifest, package: Path, ws: Path, variant: str, probe: OpenCodeDebugProbe[D]
 ) -> None:
     source = package / "fixtures" / variant
-    env = None
-    cwd = ws
-    if probe.isolation is not None:
-        layout = probe.isolation.layout(ws)
-        cwd = layout.project
-        env = probe.isolation.env(layout)
+    layout = probe.isolation.layout(ws)
+    cwd = layout.project
+    env = probe.isolation.env(layout)
     shutil.copytree(source, cwd, symlinks=True, dirs_exist_ok=True)
 
     # Redirected to a file rather than piped: `opencode debug` truncates its stdout at

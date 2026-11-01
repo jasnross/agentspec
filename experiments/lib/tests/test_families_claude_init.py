@@ -55,7 +55,7 @@ DEFINITION = textwrap.dedent(f"""\
                 "tree",
                 home=UserConfig(),
                 setting_sources=None,
-                set_env=(("STUB_SET_ME", "on"),),
+                set_env=(("STUB_SET_ME", "on"), ("CLAUDE_CODE_DISABLE_CLAUDE_MDS", "0")),
             ),
         ),
         settle_seconds=0,
@@ -166,6 +166,7 @@ def test_each_arm_runs_as_declared_with_its_message_on_stdin(
         STUB_UNSET_ME="present",
         ANTHROPIC_API_KEY="the operator's key",
         CLAUDE_CONFIG_DIR="/elsewhere",
+        CLAUDE_CODE_DISABLE_CLAUDE_MDS="0",
     )
     result = cli("run", "claude-init-family", env=env)
     assert result.returncode == 0, result.stderr
@@ -188,6 +189,8 @@ def test_each_arm_runs_as_declared_with_its_message_on_stdin(
         seen = call["env"]
         assert "STUB_UNSET_ME" not in seen
         assert "CLAUDE_CONFIG_DIR" not in seen
+        # Forced past the caller's environment and, in `relocated`, the arm's own `set_env`.
+        assert seen["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] == "1"
         assert json.loads(call["stdin"]) == {
             "type": "user",
             "message": {"role": "user", "content": "hi"},

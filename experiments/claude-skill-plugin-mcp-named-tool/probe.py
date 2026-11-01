@@ -68,8 +68,6 @@ PROBE = ClaudeOtelProbe(
         ToolAnswered("plugin_named", _PLUGIN_ALPHA),
     ),
     unset_env=_UNSET,
-    # A claude.ai connector would add MCP tools the assertion cannot tell from the fixture's.
-    set_env=(("ENABLE_CLAUDEAI_MCP_SERVERS", "false"),),
     requires_responses=True,
     assertion=_assertion,
     variants=("assertion", "discriminator"),

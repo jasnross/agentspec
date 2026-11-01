@@ -25,6 +25,7 @@ MANUAL = textwrap.dedent("""\
 DEBUG = textwrap.dedent("""\
     from probe_harness.families.base import CustomCheck
     from probe_harness.families.opencode_debug import OpenCodeDebugProbe
+    from probe_harness.families.opencode_env import OpenCodeIsolation
     from probe_harness.models.raw import ProviderModel
 
 
@@ -32,7 +33,9 @@ DEBUG = textwrap.dedent("""\
         variant: str
 
 
-    PROBE = OpenCodeDebugProbe(argv=("agent", "x"), output=Doc, {fields})
+    PROBE = OpenCodeDebugProbe(
+        argv=("agent", "x"), output=Doc, isolation=OpenCodeIsolation(), {fields}
+    )
 """)
 
 PAYLOAD = "payload=Line"

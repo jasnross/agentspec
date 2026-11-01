@@ -7,6 +7,8 @@ environment it was run with.
 import json
 from pathlib import Path
 
+from probe_harness.families.opencode_env import ancestor_instruction_files
+
 from tests.conftest import (
     AGENT_VIEW,
     Cli,
@@ -78,3 +80,15 @@ def test_an_isolated_oracle_sees_no_operator_config_and_its_own_directories(
     assert seen["OPENCODE_DISABLE_AUTOUPDATE"] == "1"
     assert seen["OPENCODE_DISABLE_MODELS_FETCH"] == "1"
     assert seen["OPENCODE_DISABLE_EXTERNAL_SKILLS"] == "1"
+
+
+def test_ancestor_instruction_files_finds_a_file_two_levels_up(tmp_path: Path) -> None:
+    (tmp_path / "AGENTS.md").write_text("x\n", encoding="utf-8")
+    root = tmp_path / "state" / "probe-workspaces"
+    root.mkdir(parents=True)
+    assert ancestor_instruction_files(root) == [tmp_path / "AGENTS.md"]
+
+
+def test_ancestor_instruction_files_finds_nothing_in_a_clean_tree(tmp_path: Path) -> None:
+    # The root need not exist: the check runs before any workspace is made.
+    assert ancestor_instruction_files(tmp_path / "state" / "probe-workspaces") == []

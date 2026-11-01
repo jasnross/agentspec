@@ -268,41 +268,22 @@ def test_the_oracle_runs_in_the_workspace_with_stdout_to_a_file(
     assert kind == "file"
 
 
-UNISOLATED_DEFINITION = """\
-from probe_harness.families.opencode_debug import OpenCodeDebugProbe
-from probe_harness.models.opencode_debug import OpenCodeAgent
-
-PROBE = OpenCodeDebugProbe(
-    argv=("agent", "probe"),
-    output=OpenCodeAgent,
-    assertion=lambda agent: {"model": {"providerID": agent.model.providerID,
-                                       "modelID": agent.model.modelID},
-                             "variant": agent.variant},
-)
-"""
-
-
-def test_an_unisolated_definition_runs_the_oracle_in_the_workspace_itself(
+def test_an_instruction_file_above_the_workspace_root_refuses_before_any_workspace(
     cli: Cli, tree: Path, experiments_dir: Path, opencode_debug_stub: Path, tmp_path: Path
 ) -> None:
-    package = copy_package(experiments_dir, tree, "opencode-agent-variant")
-    (package / "probe.py").write_text(UNISOLATED_DEFINITION, encoding="utf-8")
-    call = tmp_path / "call.txt"
+    copy_package(experiments_dir, tree, "opencode-agent-variant")
+    # The suite's `XDG_STATE_HOME` is `<tmp>/state`; this sits two levels above the root.
+    (tmp_path / "state").mkdir()
+    (tmp_path / "state" / "CLAUDE.md").write_text("operator instructions\n", encoding="utf-8")
     result = cli(
         "run",
         "opencode-agent-variant",
-        env={
-            "STUB_ORACLE": oracle_file(tmp_path, json.dumps(AGENT_VIEW)),
-            "STUB_CALL_FILE": str(call),
-            "PROBE_DRY_RUN": "1",
-        },
+        env={"STUB_ORACLE": oracle_file(tmp_path, json.dumps(AGENT_VIEW))},
     )
-    assert result.returncode == 0, result.stderr
-    (ws,) = workspaces("opencode-agent-variant")
-    cwd, _ = call.read_text(encoding="utf-8").splitlines()
-    assert Path(cwd).resolve() == ws.resolve()
-    assert (ws / ".opencode").is_dir()
-    assert not (ws / "project").exists()
+    assert result.returncode == 1
+    assert "OpenCode would load it into the run:" in result.stderr
+    assert f"probe run:   {tmp_path / 'state' / 'CLAUDE.md'}" in result.stderr
+    assert workspaces("opencode-agent-variant") == []
 
 
 def test_the_discriminator_dry_run_arranges_the_discriminator_fixture(

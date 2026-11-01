@@ -47,7 +47,7 @@ Requiring the permission text keeps any other error — a call made before `Tool
 ## Isolation
 
 - **`--setting-sources project`** — excludes the operator's user-tier settings, permission rules included, so nothing outside the skill pre-approves an `fx` tool.
-- **`ENABLE_CLAUDEAI_MCP_SERVERS=false`** — on 2.1.287 `--strict-mcp-config` drops plugin-bundled servers too, so the arms cannot use it; this variable keeps the operator's account-level claude.ai connectors out instead. A user-scope server in `~/.claude.json` still loads; its tools cannot carry the `mcp__plugin_fxp_fx__` prefix the calls name.
+- **The family isolates every run**, keeping the operator's instruction files, user-scope servers and claude.ai connectors out without `--strict-mcp-config`, which on 2.1.287 drops plugin-bundled servers too, so the arms cannot use it.
 - **One fixture tree per arm**, holding only that arm's skill.
 - **Unset variables**, matching the sibling runners: `ENABLE_TOOL_SEARCH`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`, `CLAUDE_CODE_MCP_STARTUP_WAIT_MS`, `CLAUDE_CODE_SUBAGENT_MODEL`, and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE`.
 - **`--max-budget-usd 0.50`** — a cap hit ends the turn before the call is answered, which surfaces as a gate-9 failure rather than a wrong answer.

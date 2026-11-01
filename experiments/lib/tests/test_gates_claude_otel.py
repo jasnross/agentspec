@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from probe_harness.gates import GateFailure, bodies, claude_otel
+from probe_harness.gates import APPARATUS_FAILURE, GateFailure, bodies, claude_otel
 from probe_harness.gates.bodies import ClaudeArms, MarkerField
 from probe_harness.views import SinkEntry, SinkValues
 
@@ -585,61 +585,195 @@ def test_gate_mcp_connected_ignores_governed_and_agent_less_requests(tmp_path: P
     claude_otel.mcp_connected(arms, MARKER, ["mcp__fx__alpha"])
 
 
-def test_gate_mcp_absent_passes_when_no_main_thread_request_lists_a_tool_with_the_prefix(
+TOKEN = "AGENTSPEC-CANARY-" + "0123456789abcdef" * 2
+
+
+def isolated_arm(
+    ws: Path,
+    arm: str,
+    *,
+    canary: bool = True,
+    mcp_config: bool = False,
+    plugin: bool = False,
+    project_files: dict[str, str] | None = None,
+) -> None:
+    """An arm directory as the family leaves it: its canary, and the server copies it arranged.
+
+    <mcp_config> writes `<arm>/mcp.json` declaring `fx`; <plugin> writes `<arm>/fxp/` with a
+    `.mcp.json` declaring `fx` and a manifest naming the plugin `fxp`; <project_files> maps
+    paths under `<arm>/project/` to their text.
+    """
+    arm_dir = ws / arm
+    (arm_dir / "project").mkdir(parents=True)
+    if canary:
+        (arm_dir / "CLAUDE.md").write_text(f"Isolation canary: {TOKEN}\n", encoding="utf-8")
+    servers = compact({"mcpServers": {"fx": {"type": "stdio", "command": "python"}}})
+    if mcp_config:
+        (arm_dir / "mcp.json").write_text(servers, encoding="utf-8")
+    if plugin:
+        (arm_dir / "fxp" / ".claude-plugin").mkdir(parents=True)
+        (arm_dir / "fxp" / ".mcp.json").write_text(servers, encoding="utf-8")
+        (arm_dir / "fxp" / ".claude-plugin" / "plugin.json").write_text(
+            compact({"name": "fxp"}), encoding="utf-8"
+        )
+    for path, text in (project_files or {}).items():
+        target = arm_dir / "project" / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+
+
+def test_gate_isolated_passes_when_every_request_names_only_arranged_servers(
     tmp_path: Path,
 ) -> None:
-    plugin_main = claude_request(
-        system="main thread",
-        tools=[{"name": "Agent"}, {"name": "mcp__plugin_fxp_fx__alpha"}],
-    )
-    arms = arms_from_view(
-        {"a": [plugin_main, direct_request()], "b": [main_thread("mcp__plugin_fxp_fx__beta")]},
-    )
-
-    claude_otel.mcp_absent(arms, MARKER, "mcp__fx__")
-
-
-def test_gate_mcp_absent_fails_and_names_the_tool_when_a_main_thread_lists_it_directly(
-    tmp_path: Path,
-) -> None:
-    foreign_main = claude_request(
-        system="main thread",
-        tools=[{"name": "Agent"}, {"name": "mcp__fx__alpha"}],
-    )
-    arms = arms_from_view(
-        {"a": [main_thread("mcp__plugin_fxp_fx__alpha")], "b": [foreign_main]},
-    )
-
-    with pytest.raises(GateFailure) as exc:
-        claude_otel.mcp_absent(arms, MARKER, "mcp__fx__")
-    assert "arm b: mcp__fx__alpha" in failure_output(exc)
-
-
-def test_gate_mcp_absent_fails_when_a_main_thread_lists_the_tool_as_deferred(
-    tmp_path: Path,
-) -> None:
-    arms = arms_from_view({"a": [main_thread("mcp__plugin_fxp_fx__alpha", "mcp__fx__beta")]})
-
-    with pytest.raises(GateFailure) as exc:
-        claude_otel.mcp_absent(arms, MARKER, "mcp__fx__")
-    assert "arm a: mcp__fx__beta" in failure_output(exc)
-
-
-def test_gate_mcp_absent_ignores_governed_and_agent_less_requests(tmp_path: Path) -> None:
-    # A subagent's own grant is the finding, not a foreign server, and the title sidecar
-    # offers no Agent; neither may fail the gate.
-    sidecar = claude_request(system="generate a title", tools=[{"name": "mcp__fx__alpha"}])
+    ws = tmp_path / "ws"
+    isolated_arm(ws, "a", mcp_config=True)
+    isolated_arm(ws, "b", plugin=True)
     arms = arms_from_view(
         {
-            "a": [
-                main_thread("mcp__plugin_fxp_fx__alpha"),
-                direct_request("mcp__fx__alpha"),
-                sidecar,
-            ]
-        },
+            "a": [main_thread("mcp__fx__alpha"), direct_request("mcp__fx__beta")],
+            "b": [main_thread("mcp__plugin_fxp_fx__alpha")],
+        }
     )
 
-    claude_otel.mcp_absent(arms, MARKER, "mcp__fx__")
+    claude_otel.isolated(arms, ws)
+
+
+def test_gate_isolated_fails_when_an_arm_has_no_canary(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    isolated_arm(ws, "a")
+    isolated_arm(ws, "b", canary=False)
+
+    with pytest.raises(GateFailure) as exc:
+        claude_otel.isolated(arms_from_view({"a": [marked("low")], "b": [marked("low")]}), ws)
+    assert "arm b: the canary file is missing" in failure_output(exc)
+    assert "arm a" not in failure_output(exc)
+    assert exc.value.lines[-1] == APPARATUS_FAILURE
+
+
+def test_gate_isolated_fails_when_a_request_carries_the_canary_token(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    isolated_arm(ws, "a")
+    loaded = claude_request(
+        system=MARKER,
+        messages=[{"role": "user", "content": [{"type": "text", "text": f"Contents: {TOKEN}"}]}],
+    )
+
+    with pytest.raises(GateFailure) as exc:
+        claude_otel.isolated(arms_from_view({"a": [loaded]}), ws)
+    assert "arm a: a request carried the canary token" in failure_output(exc)
+
+
+def test_gate_isolated_fails_on_a_connector_in_a_deferred_listing(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    isolated_arm(ws, "a", plugin=True)
+    arms = arms_from_view({"a": [main_thread("mcp__plugin_fxp_fx__alpha", "mcp__claude_ai_X__y")]})
+
+    with pytest.raises(GateFailure) as exc:
+        claude_otel.isolated(arms, ws)
+    output = failure_output(exc)
+    assert "arm a: a request offered a tool of mcp__claude_ai_X__, a server the arm" in output
+    assert "mcp__plugin_fxp_fx__" not in output
+
+
+def test_gate_isolated_fails_on_an_unprefixed_server_in_a_plugin_only_arm(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    isolated_arm(ws, "a", plugin=True, project_files={"README.md": "no server named here"})
+
+    with pytest.raises(GateFailure) as exc:
+        claude_otel.isolated(arms_from_view({"a": [main_thread("mcp__fx__alpha")]}), ws)
+    assert "arm a: a request offered a tool of mcp__fx__, a server the arm did not arrange" in (
+        failure_output(exc)
+    )
+
+
+def test_gate_isolated_accepts_a_server_the_arms_own_fixture_names(tmp_path: Path) -> None:
+    # An agent naming `mcp__fx__alpha` on purpose: Claude Code repeats its tools line in the
+    # Agent tool's description although only the plugin's server is arranged.
+    ws = tmp_path / "ws"
+    agent = "---\nname: probe\ntools: Read, mcp__fx__alpha\n---\nbody\n"
+    isolated_arm(ws, "a", plugin=True, project_files={".claude/agents/probe.md": agent})
+    described = claude_request(
+        system="main thread",
+        tools=[{"name": "Agent", "description": "- probe: x (Tools: Read, mcp__fx__alpha)"}],
+    )
+
+    claude_otel.isolated(arms_from_view({"a": [described]}), ws)
+
+
+def test_gate_isolated_refuses_an_offered_tool_the_fixture_names_but_no_server_arranged(
+    tmp_path: Path,
+) -> None:
+    # A server outside the fixture sharing the name the agent grants: offering its tool is
+    # what the fixture-named exception must not cover.
+    ws = tmp_path / "ws"
+    agent = "---\nname: probe\ntools: Read, mcp__fx__alpha\n---\nbody\n"
+    isolated_arm(ws, "a", plugin=True, project_files={".claude/agents/probe.md": agent})
+
+    for request in (main_thread("mcp__fx__alpha"), direct_request("mcp__fx__alpha")):
+        with pytest.raises(GateFailure) as exc:
+            claude_otel.isolated(arms_from_view({"a": [request]}), ws)
+        assert (
+            "arm a: a request offered a tool of mcp__fx__, a server the arm did not arrange"
+            in failure_output(exc)
+        )
+
+
+def test_gate_isolated_refuses_a_connector_named_only_in_message_text(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    isolated_arm(ws, "a")
+    text = "Your connectors include mcp__claude_ai_X__y."
+    report = claude_request(
+        system=MARKER, messages=[{"role": "user", "content": [{"type": "text", "text": text}]}]
+    )
+
+    with pytest.raises(GateFailure) as exc:
+        claude_otel.isolated(arms_from_view({"a": [report]}), ws)
+    assert "arm a: a request named mcp__claude_ai_X__, a server the arm did not arrange" in (
+        failure_output(exc)
+    )
+
+
+def test_gate_isolated_accepts_the_plugin_prefix_in_a_plugin_arm(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    isolated_arm(ws, "a", plugin=True)
+    arms = arms_from_view({"a": [direct_request("mcp__plugin_fxp_fx__alpha")]})
+
+    claude_otel.isolated(arms, ws)
+
+
+def test_gate_isolated_refuses_the_plugin_prefix_when_the_plugin_has_no_manifest_name(
+    tmp_path: Path,
+) -> None:
+    ws = tmp_path / "ws"
+    isolated_arm(ws, "a", plugin=True)
+    (ws / "a" / "fxp" / ".claude-plugin" / "plugin.json").unlink()
+
+    with pytest.raises(GateFailure) as exc:
+        claude_otel.isolated(
+            arms_from_view({"a": [direct_request("mcp__plugin_fxp_fx__alpha")]}), ws
+        )
+    assert "arm a: a request offered a tool of mcp__plugin_fxp_fx__" in failure_output(exc)
+
+
+def test_gate_isolated_accepts_a_server_named_only_in_the_plugin_copy(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    isolated_arm(ws, "a", plugin=True)
+    agent = "---\nname: probe\ntools: mcp__fx__alpha\n---\nbody\n"
+    (ws / "a" / "fxp" / "agents").mkdir()
+    (ws / "a" / "fxp" / "agents" / "probe.md").write_text(agent, encoding="utf-8")
+    described = claude_request(
+        system="main thread",
+        tools=[{"name": "Agent", "description": "- probe: x (Tools: mcp__fx__alpha)"}],
+    )
+
+    claude_otel.isolated(arms_from_view({"a": [described]}), ws)
+
+
+def test_an_mcp_prefix_ends_at_the_first_double_underscore_after_mcp() -> None:
+    assert claude_otel._prefixes("mcp__claude_ai_Claude_Docs__guide") == {
+        "mcp__claude_ai_Claude_Docs__"
+    }
+    assert claude_otel._prefixes("mcp__plugin_fxp_fx__alpha") == {"mcp__plugin_fxp_fx__"}
 
 
 def test_gate_delegation_background_passes_for_true_when_every_call_asked_for_and_ran_in_the_background(  # noqa: E501

@@ -13,11 +13,25 @@ reaches `~/.claude/skills` that way, so the scan is switched off: every skill a 
 arranges sits in the project's `.opencode/`, outside the scan. Not blocked: OpenCode's
 skills documentation says the same walk reads an `.opencode/` directory above the project
 too, so an operator's `~/.opencode/skills/` would reach a workspace under their home.
+
+Nor does either redirect stop OpenCode's instruction-file search. OpenCode 1.18.34 walks up
+from the project to its git worktree, which is `/` for a non-git workspace, for
+`INSTRUCTION_FILES`, and loads every match of the first name it finds (measured by
+`opencode-ancestor-instructions`). An instruction file anywhere above the workspace would
+therefore load into every run, so each OpenCode family refuses to run while
+`ancestor_instruction_files` finds one. The list is OpenCode 1.18.34's, read from the
+filesystem rather than from OpenCode's own view, so a name a later OpenCode adds is missed
+until the list changes.
 """
 
 import os
 from dataclasses import dataclass
 from pathlib import Path
+
+from probe_harness.gates import GateFailure
+
+# The instruction files OpenCode 1.18.34 searches for above a project.
+INSTRUCTION_FILES = ("AGENTS.md", "CLAUDE.md", "CONTEXT.md")
 
 # Each would inject or discard config from the operator's shell.
 CLEARED = (
@@ -64,6 +78,34 @@ class OpenCodeIsolation:
         env["OPENCODE_DISABLE_MODELS_FETCH"] = "1"
         env["OPENCODE_DISABLE_EXTERNAL_SKILLS"] = "1"
         return env
+
+
+def ancestor_instruction_files(root: Path) -> list[Path]:
+    """Each of `INSTRUCTION_FILES` present in <root> or any of its ancestors, up to `/`.
+
+    <root> need not exist yet, so the check can run before a workspace is made under it. A
+    relative <root> is made absolute first, so its real ancestors are searched.
+    """
+    root = root.absolute()
+    return [
+        directory / name
+        for directory in (root, *root.parents)
+        for name in INSTRUCTION_FILES
+        if (directory / name).is_file()
+    ]
+
+
+def ancestor_instructions_refusal(root: Path) -> GateFailure | None:
+    """The refusal a run under <root> gets when `ancestor_instruction_files` finds any."""
+    found = ancestor_instruction_files(root)
+    if not found:
+        return None
+    return GateFailure(
+        "an instruction file sits above the workspace root, and OpenCode would load it into "
+        "the run:",
+        *(f"  {path}" for path in found),
+        "move it, or set XDG_STATE_HOME to a directory with none above it. No workspace made.",
+    )
 
 
 _XDG_KINDS = ("config", "cache", "data", "state")

@@ -18,6 +18,7 @@ import pytest
 from probe_harness import samples
 from probe_harness.families import load_package
 from probe_harness.gates.bodies import DEFERRED_LISTING
+from probe_harness.gates.claude_otel import CANARY_PREFIX
 
 from tests.conftest import (
     Cli,
@@ -77,7 +78,11 @@ DEFINITION = textwrap.dedent(f"""\
         ),
         gates=(Model(),),
         unset_env=("STUB_UNSET_ME",),
-        set_env=(("STUB_SET_ME", "on"),),
+        set_env=(
+            ("STUB_SET_ME", "on"),
+            ("CLAUDE_CODE_DISABLE_CLAUDE_MDS", "0"),
+            ("ENABLE_CLAUDEAI_MCP_SERVERS", "true"),
+        ),
         assertion=lambda arms: {{"a": len(arms["a"].requests), "b": len(arms["b"].requests)}},
     )
 """)
@@ -187,6 +192,9 @@ def test_the_environment_reaching_claude_is_isolated_and_pointed_at_the_sink(
         PROBE_DRY_RUN="1",
         CLAUDE_CODE_EFFORT_LEVEL="max",
         STUB_UNSET_ME="present",
+        # The definition sets both the other way too; the family's own values win over each.
+        CLAUDE_CODE_DISABLE_CLAUDE_MDS="0",
+        ENABLE_CLAUDEAI_MCP_SERVERS="true",
     )
     result = cli("run", "claude-family", env=env)
     assert result.returncode == 0, result.stderr
@@ -197,9 +205,13 @@ def test_the_environment_reaching_claude_is_isolated_and_pointed_at_the_sink(
         assert "CLAUDE_CODE_EFFORT_LEVEL" not in seen
         assert "STUB_UNSET_ME" not in seen
         assert seen["STUB_SET_ME"] == "on"
+        assert seen["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] == "1"
+        assert seen["ENABLE_CLAUDEAI_MCP_SERVERS"] == "false"
         assert seen["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
         project = Path(call["cwd"])
         assert project.name == "project"
+        canary = (project.parent / "CLAUDE.md").read_text(encoding="utf-8")
+        assert canary.startswith(f"Isolation canary: {CANARY_PREFIX}")
         assert Path(call["pwd"]).resolve() == project.resolve()
         assert seen["OTEL_LOG_RAW_API_BODIES"] == f"file:{Path(call['pwd']).parent / 'sink'}"
     a, b = calls
@@ -261,17 +273,22 @@ def test_a_claude_sample_keeps_only_the_listing_paragraph(
             "- my-own-skill: does the operator's own thing",
         ]
     )
-    source = _source(tmp_path)
+    run = cli(
+        "run",
+        "claude-family",
+        env=_env(_source(tmp_path), tmp_path / "env.jsonl", PROBE_DRY_RUN="1"),
+    )
+    assert run.returncode == 0, run.stderr
+    (ws,) = workspaces("claude-family")
+    # Written into the kept workspace after the run, since the isolation gate refuses a run
+    # whose request names a connector; `probe sample` reads a workspace without gating it.
     request = claude_request(
         system=f"agent body {MARKER}",
         model=MODEL,
         output_config={"effort": "low"},
         messages=[{"role": "user", "content": [{"type": "text", "text": block}]}],
     )
-    (source / "a" / "sink" / "0000.request.json").write_text(json.dumps(request), encoding="utf-8")
-    run = cli("run", "claude-family", env=_env(source, tmp_path / "env.jsonl", PROBE_DRY_RUN="1"))
-    assert run.returncode == 0, run.stderr
-    (ws,) = workspaces("claude-family")
+    (ws / "a" / "sink" / "0000.request.json").write_text(json.dumps(request), encoding="utf-8")
     home = tmp_path / "home"
     (home / ".claude" / "skills" / "my-own-skill").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))

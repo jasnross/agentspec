@@ -1,7 +1,10 @@
 """The ten gates of the billed Claude probes, over each arm's typed bodies.
 
 A gate reads each arm's `ArmCapture`, validated once per arm by the family's parse step, so a
-body that does not fit its model has already refused the run before any gate runs.
+body that does not fit its model has already refused the run before any gate runs. Gates 1
+(request files) and 2 (`marker`) and the isolation gate, gate 7 (`isolated`), run on every
+probe; a definition opts into the rest: 3 `control`, 4 `deferred_mcp`, 5 `model`, 6
+`mcp_connected`, 8 `delegation_background`, 9 `tool_answered` and 10 `delegation_fork`.
 
 No gate names an effort level: the effort packages' assertion is relational, comparing
 each arm against the run's ungoverned main-thread requests.
@@ -11,14 +14,16 @@ gate 3 compares, `relative_effort`, which reads an arm against it, and `call_out
 classifies an arm's calls to one tool.
 """
 
-from collections.abc import Sequence
+import re
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 from pydantic import MISSING
 
+from probe_harness import json_values
 from probe_harness.arms import ArmCapture
 from probe_harness.assertions import NO_GOVERNED_REQUEST, unique
-from probe_harness.gates import GateFailure
+from probe_harness.gates import APPARATUS_FAILURE, GateFailure
 from probe_harness.gates.bodies import (
     ClaudeArms,
     MarkerField,
@@ -39,6 +44,17 @@ type _Capture = ArmCapture[ClaudeRequest, ClaudeResponse]
 # whose governed requests ran at that level.
 NO_CONTROL_SET = "no-usable-control-set"
 SAME_AS_UNGOVERNED = "same-as-ungoverned"
+
+# The key `call_outcome` files a call's result texts under when neither outcome names them.
+UNRECOGNIZED = "unrecognized"
+
+# What every arm's canary token opens with. The family writes `<arm>/CLAUDE.md` holding it,
+# followed by 32 hex digits, and gate 7 reads the token back from there.
+CANARY_PREFIX = "AGENTSPEC-CANARY-"
+_CANARY = re.compile(re.escape(CANARY_PREFIX) + r"[0-9a-f]{32}")
+
+# An MCP tool's server prefix: `mcp__`, the shortest name up to the next `__`, then `__`.
+_MCP_PREFIX = re.compile(r"mcp__[A-Za-z0-9_-]+?__")
 
 # The text Claude Code answers a call with when `--permission-prompts none` refuses it.
 _PERMISSION_DENIED = "Permission for this tool use was denied"
@@ -200,27 +216,46 @@ def mcp_connected(arms: Arms, marker: str, tools: Sequence[str]) -> None:
     )
 
 
-def mcp_absent(arms: Arms, marker: str, prefix: str) -> None:
-    """Gate 7: no main-thread request, in any arm, lists a tool starting with <prefix>.
+def isolated(arms: Arms, ws: Path) -> None:
+    """Gate 7: no arm loaded configuration from outside its fixture.
 
-    A package keeping names by prefix needs the session to hold no server that prefix could
-    match other than the fixture's, such as a user-scope server in `~/.claude.json`.
+    Each arm's `<arm>/CLAUDE.md` canary must exist, and no string of any of its requests may
+    carry the canary's token: the canary sits above the project on Claude Code's search
+    path, so a carried token shows instruction files were loaded.
+
+    An MCP server from outside the fixture, such as a claude.ai connector, shows as an
+    `mcp__<server>__` prefix. A tool a request offers, in `tools[]` or the deferred listing,
+    must come from a server the arm arranged (`_arranged_prefixes`). Any other request text
+    may also name a prefix the arm's own files name (`_fixture_named_prefixes`): an agent
+    granting a tool of a server the arm does not arrange is a measured condition, and Claude
+    Code repeats the grant in the Agent tool's description.
     """
-    found = {
-        name: sorted(
-            {n for r in _main_thread(arm, marker) for n in listed_tools(r) if n.startswith(prefix)}
+    found: list[str] = []
+    for name, arm in arms.items():
+        arm_dir = ws / name
+        strings = [s for r in arm.requests for s in r.raw.strings()]
+        token = _canary_token(arm_dir / "CLAUDE.md")
+        if token is None:
+            found.append(f"arm {name}: the canary file is missing or holds no token")
+        elif any(token in s for s in strings):
+            found.append(f"arm {name}: a request carried the canary token")
+        arranged = _arranged_prefixes(arm_dir)
+        offered = {p for r in arm.requests for tool in listed_tools(r) for p in _prefixes(tool)}
+        named = {p for s in strings for p in _prefixes(s)}
+        found.extend(
+            f"arm {name}: a request offered a tool of {prefix}, a server the arm did not arrange"
+            for prefix in sorted(offered - arranged)
         )
-        for name, arm in arms.items()
-    }
-    if not any(found.values()):
-        return
-    raise GateFailure(
-        f"a main-thread request listed a tool starting with {prefix}:",
-        *(f"  arm {name}: {n}" for name, names in found.items() for n in names),
-        "a server outside the fixture shares that name, likely a user-scope server in "
-        "~/.claude.json, so the assertion cannot tell its tools from the fixture's. "
-        "No record written.",
-    )
+        found.extend(
+            f"arm {name}: a request named {prefix}, a server the arm did not arrange"
+            for prefix in sorted(named - offered - arranged - _fixture_named_prefixes(arm_dir))
+        )
+    if found:
+        raise GateFailure(
+            "an arm's run was not isolated from the operator's configuration:",
+            *(f"  {line}" for line in found),
+            APPARATUS_FAILURE,
+        )
 
 
 def delegation_background(arms: Arms, ws: Path, arm: str, expected: bool) -> None:
@@ -327,7 +362,74 @@ def call_outcome(arm: _Capture, tool: str, reply: str) -> JsonValue:
     ):
         return "denied"
     texts: list[JsonValue] = [block.text for block in results]
-    return {"unrecognized": texts}
+    return {UNRECOGNIZED: texts}
+
+
+def _canary_token(path: Path) -> str | None:
+    """The token in the arm's canary file, or `None` when it is missing or holds none."""
+    try:
+        found = _CANARY.search(path.read_text(encoding="utf-8"))
+    except OSError:
+        return None
+    return found.group() if found else None
+
+
+def _arranged_prefixes(arm_dir: Path) -> set[str]:
+    """The MCP prefixes of the servers the family arranged for the arm.
+
+    `mcp__<k>__` for each server `<k>` in `<arm>/mcp.json`, and `mcp__plugin_<name>_<k>__` for
+    each server in `<arm>/fxp/.mcp.json`, where `<name>` is the plugin manifest's. A plugin
+    with no manifest name gets no prefix, so its tools are refused rather than guessed at.
+    """
+    arranged = {f"mcp__{k}__" for k in _servers(arm_dir / "mcp.json")}
+    plugin = arm_dir / "fxp"
+    manifest = _json_file(plugin / ".claude-plugin" / "plugin.json")
+    if isinstance(manifest, dict) and isinstance(name := manifest.get("name"), str):
+        arranged |= {f"mcp__plugin_{name}_{k}__" for k in _servers(plugin / ".mcp.json")}
+    return arranged
+
+
+def _fixture_named_prefixes(arm_dir: Path) -> set[str]:
+    """Every MCP prefix occurring in the files `_fixture_files` reads."""
+    return {
+        prefix
+        for path in _fixture_files(arm_dir)
+        for prefix in _prefixes(path.read_text(encoding="utf-8", errors="replace"))
+    }
+
+
+def _prefixes(text: str) -> set[str]:
+    """Every `mcp__<server>__` prefix in <text>, each ending at the first `__` after `mcp__`."""
+    return set(_MCP_PREFIX.findall(text))
+
+
+def _fixture_files(arm_dir: Path) -> Iterator[Path]:
+    """Every file under the arm's project and plugin copies, and its MCP config.
+
+    Read when the arm is judged, so this is the fixture's copy plus whatever `arrange_arm`
+    and the run itself wrote there. A fixture copied with its symlinks keeps them, so linked
+    directories are followed.
+    """
+    for tree in (arm_dir / "project", arm_dir / "fxp"):
+        found = tree.rglob("*", recurse_symlinks=True)
+        yield from (path for path in sorted(found) if path.is_file())
+    if (arm_dir / "mcp.json").is_file():
+        yield arm_dir / "mcp.json"
+
+
+def _servers(config: Path) -> list[str]:
+    """The keys under `mcpServers` in an MCP config; none when the file is absent."""
+    document = _json_file(config)
+    servers = document.get("mcpServers") if isinstance(document, dict) else None
+    return list(servers) if isinstance(servers, dict) else []
+
+
+def _json_file(path: Path) -> JsonValue:
+    """<path> as JSON, or `None` when it is absent or not JSON."""
+    try:
+        return json_values.loads(path.read_text(encoding="utf-8"))
+    except OSError, ValueError:
+        return None
 
 
 def _requests(arms: Arms, arm: str) -> tuple[ClaudeRequest, ...]:

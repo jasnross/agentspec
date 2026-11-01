@@ -215,6 +215,7 @@ def test_identity_current_reads_instruction_lines_and_skill_names_from_home(
 DEBUG_PROBE_PY = textwrap.dedent("""\
     from pydantic import MISSING
     from probe_harness.families.opencode_debug import OpenCodeDebugProbe
+    from probe_harness.families.opencode_env import OpenCodeIsolation
     from probe_harness.models.raw import ProviderModel
 
 
@@ -223,7 +224,9 @@ DEBUG_PROBE_PY = textwrap.dedent("""\
         mode: str | MISSING = MISSING
 
 
-    PROBE = OpenCodeDebugProbe(argv=("agent", "x"), output=Doc, assertion={assertion})
+    PROBE = OpenCodeDebugProbe(
+        argv=("agent", "x"), output=Doc, isolation=OpenCodeIsolation(), assertion={assertion}
+    )
 """)
 
 

@@ -17,6 +17,10 @@ gets a placeholder API key; it can say nothing about what the operator's account
 `--setting-sources project` is passed unless an arm clears `setting_sources`, as the billed
 Claude family always passes it.
 
+Instruction files are always off: `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` is set after each arm's
+own variables. Connectors are left to each arm, unlike the billed family, since a probe of
+this family may measure which of them load.
+
 Workspace layout, per arm: `<ws>/<arm>/{project, stdout, stderr, fxp/, home/, *.stamp}`,
 plus `<ws>/view.json`.
 """
@@ -261,6 +265,7 @@ def _run_arm(fixtures: Path, ws: Path, arm: ClaudeInitArm, probe: ClaudeInitProb
         env["HOME"] = str(home)
         env["ANTHROPIC_API_KEY"] = PLACEHOLDER_API_KEY
     env.update(dict(arm.set_env))
+    env["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] = "1"
 
     sources = () if arm.setting_sources is None else ("--setting-sources", arm.setting_sources)
     argv = [

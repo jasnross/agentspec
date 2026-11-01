@@ -188,6 +188,19 @@ def test_an_mcp_server_that_never_answered_is_refused(
     assert _no_fake_running(tmp_path)
 
 
+def test_an_instruction_file_above_the_workspace_root_refuses_before_any_workspace(
+    cli: Cli, package: Path, tmp_path: Path
+) -> None:
+    # The suite's `XDG_STATE_HOME` is `<tmp>/state`, so this sits above the workspace root.
+    (tmp_path / "state").mkdir()
+    (tmp_path / "state" / "AGENTS.md").write_text("operator instructions\n", encoding="utf-8")
+    result = cli("run", "fake-family", env={"STUB_BODIES": _bodies(tmp_path, MARKER)})
+    assert result.returncode == 1
+    assert "OpenCode would load it into the run:" in result.stderr
+    assert f"probe run:   {tmp_path / 'state' / 'AGENTS.md'}" in result.stderr
+    assert workspaces("fake-family") == []
+
+
 def test_a_real_run_records_and_keeps_the_workspace(
     cli: Cli, package: Path, tmp_path: Path
 ) -> None:

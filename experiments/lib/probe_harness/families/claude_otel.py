@@ -5,11 +5,21 @@ OpenTelemetry raw-body logging pointed at the arm's sink. Every arm spends a bil
 call, which is why these packages declare `driver: billed`.
 
 `--setting-sources project` excludes the user settings tier outright rather than
-out-ranking it, and `CLAUDE_CODE_EFFORT_LEVEL` is removed because it outranks frontmatter:
-an exported one would make a probe measure the operator's shell.
+out-ranking it, user-scope MCP servers in `~/.claude.json` with it (measured by
+`claude-mcp-server-sources`). `CLAUDE_CODE_EFFORT_LEVEL` is removed because it outranks
+frontmatter: an exported one would make a probe measure the operator's shell.
 
-Workspace layout, per arm: `<ws>/<arm>/{project, sink, stdout, stderr, mcp.json | fxp/,
-fx.stamp}`, plus `<ws>/view.json`.
+Every run loads none of the operator's configuration. Two variables are set last, after the
+definition's own, so neither an exported value nor a definition can re-enable loading:
+`CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` keeps every instruction file out, and
+`ENABLE_CLAUDEAI_MCP_SERVERS=false` keeps the account's claude.ai connectors out while a
+plugin's own server still loads. Each arm also gets `<arm>/CLAUDE.md`, a canary holding a
+fresh token, above its project on Claude Code's search path. The isolation gate refuses an
+arm whose canary is missing, whose requests carry its token, or whose requests name an MCP
+server the arm did not arrange.
+
+Workspace layout, per arm: `<ws>/<arm>/{CLAUDE.md, project, sink, stdout, stderr,
+mcp.json | fxp/, fx.stamp}`, plus `<ws>/view.json`.
 
 Judging is `parse`, which reads every arm's sink into models, then the gates, the custom
 checks and the definition's judge function, then the outcome. The expressions see the arms
@@ -17,6 +27,7 @@ checks and the definition's judge function, then the outcome. The expressions se
 """
 
 import os
+import secrets
 import shutil
 import subprocess
 import sys
@@ -110,13 +121,6 @@ class McpConnected:
 
 
 @dataclass(frozen=True)
-class McpAbsent:
-    """Gate 7: no main-thread request lists a tool starting with <prefix>."""
-
-    prefix: str
-
-
-@dataclass(frozen=True)
 class DelegationBackground:
     """Gate 8: the arm delegated with `run_in_background` equal to <expected>."""
 
@@ -144,13 +148,13 @@ type ClaudeGate = (
     | Model
     | DeferredMcp
     | McpConnected
-    | McpAbsent
     | DelegationBackground
     | DelegationFork
     | ToolAnswered
 )
 
 # (the variant's fixture directory, arm directory, arm), run after the arm's server is set up.
+# The family then writes the arm's canary to `<arm>/CLAUDE.md`, replacing any file there.
 type ArmArrange = Callable[[Path, Path, ClaudeArm], None]
 
 
@@ -245,6 +249,7 @@ def judge(ws: Path, probe: ClaudeOtelProbe) -> JudgeResult:
     view_path = ws / "view.json"
     views.write_arm_view(view_path, view(arms, with_responses=probe.requires_responses))
     gates.marker(arms, probe.marker, probe.marker_field)
+    gates.isolated(arms, ws)
     for gate in probe.gates:
         _check(gate, arms, ws, probe)
     value = expression_input(arms, probe)
@@ -296,8 +301,6 @@ def _check(gate: ClaudeGate, arms: ClaudeArms, ws: Path, probe: ClaudeOtelProbe)
             gates.deferred_mcp(arms, probe.marker, arm, tools)
         case McpConnected(tools=tools):
             gates.mcp_connected(arms, probe.marker, tools)
-        case McpAbsent(prefix=prefix):
-            gates.mcp_absent(arms, probe.marker, prefix)
         case DelegationBackground(arm=arm, expected=expected):
             gates.delegation_background(arms, ws, arm, expected)
         case DelegationFork(arm=arm):
@@ -319,6 +322,9 @@ def _run_arm(fixtures: Path, ws: Path, arm: ClaudeArm, probe: ClaudeOtelProbe) -
     server_args = arrange_server(fixtures, arm_dir, arm.server)
     if probe.arrange_arm is not None:
         probe.arrange_arm(fixtures, arm_dir, arm)
+    (arm_dir / "CLAUDE.md").write_text(
+        f"Isolation canary: {gates.CANARY_PREFIX}{secrets.token_hex(16)}\n", encoding="utf-8"
+    )
 
     env = {
         k: v
@@ -326,6 +332,8 @@ def _run_arm(fixtures: Path, ws: Path, arm: ClaudeArm, probe: ClaudeOtelProbe) -
         if k != "CLAUDE_CODE_EFFORT_LEVEL" and k not in probe.unset_env
     }
     env.update(dict(probe.set_env))
+    env["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] = "1"
+    env["ENABLE_CLAUDEAI_MCP_SERVERS"] = "false"
     env["CLAUDE_CODE_ENABLE_TELEMETRY"] = "1"
     env["OTEL_LOG_RAW_API_BODIES"] = f"file:{sink}"
     argv = [
