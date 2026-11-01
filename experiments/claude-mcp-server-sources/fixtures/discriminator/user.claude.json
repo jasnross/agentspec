@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "ux": {
+      "type": "stdio",
+      "command": "{{PYTHON}}",
+      "args": ["{{FX_SERVER}}", "--stamp", "{{USER_STAMP}}"]
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "schema_version": 2,
+  "provider": "claude",
+  "driver": "unattended",
+  "depth": "resolved-config",
+  "question": "Under `--setting-sources project`, which MCP server sources (user-scope servers in `~/.claude.json`, claude.ai connectors, a `--plugin-dir` plugin's server) does Claude Code load into a `claude -p` run with no server and into a plugin run, with and without `--strict-mcp-config`, and does `ENABLE_CLAUDEAI_MCP_SERVERS=false` keep connectors out of a plugin run while its server loads?",
+  "version_source": {
+    "kind": "command",
+    "command": "claude --version"
+  },
+  "assertion": {
+    "expected": {
+      "none": ["claudeai"],
+      "strict": [],
+      "plugin": ["claudeai", "plugin"],
+      "plugin_strict": [],
+      "plugin_no_connectors": ["plugin"],
+      "user_none": [],
+      "user_strict": [],
+      "user_plugin": ["plugin"],
+      "user_plugin_strict": [],
+      "user_all_sources": ["user"]
+    }
+  }
+}
