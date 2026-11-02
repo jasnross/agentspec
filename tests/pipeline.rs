@@ -7146,3 +7146,106 @@ fn test_validate_mcp_tool_rejects_undeclared_server_in_body() {
         "{stderr}"
     );
 }
+
+/// One spec, two servers' tool names: Claude and `OpenCode` each map the
+/// spec's logical tools to their own server's names, and Cursor, with no map,
+/// keeps the logical name.
+#[test]
+fn test_compile_mcp_tool_names_compose_real_ids() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_agentspec_toml_with(
+        &dir,
+        "[mcp.atlassian.claude]\nserver = \"company_jira\"\n\
+         tool-names = { get_issue = \"fetch_issue\", search = \"find\" }\n\n\
+         [mcp.atlassian.opencode]\n\
+         tool-names = { get_issue = \"issue_get\", search = \"issue_search\" }\n",
+    );
+    install_agent_with_capabilities_and_body(
+        &dir,
+        "  tools: [read]\n  mcp:\n    atlassian: { tools: [get_issue, search] }\n",
+        "Fetch with `{{ mcp_tool(\"atlassian\", \"get_issue\") }}`.",
+    );
+
+    let (ok, _, stderr) = run_in(&dir, &["compile"]);
+    assert!(ok, "compile failed:\n{stderr}");
+
+    let claude = generated_frontmatter(&dir.join("generated/claude/agents/test-agent.md"));
+    let tools: Vec<&str> = claude["tools"]
+        .as_sequence()
+        .map(|seq| seq.iter().filter_map(serde_yml::Value::as_str).collect())
+        .unwrap_or_default();
+    assert_eq!(
+        tools,
+        [
+            "Read",
+            "mcp__company_jira__fetch_issue",
+            "mcp__company_jira__find"
+        ]
+    );
+
+    let opencode = generated_frontmatter(&dir.join("generated/opencode/agents/test-agent.md"));
+    let keys: Vec<&str> = opencode["permission"]
+        .as_mapping()
+        .map(|m| m.keys().filter_map(serde_yml::Value::as_str).collect())
+        .unwrap_or_default();
+    for key in ["atlassian_issue_get", "atlassian_issue_search"] {
+        assert!(keys.contains(&key), "{key}: {keys:?}");
+    }
+
+    for (provider, rendered) in [
+        ("claude", "`mcp__company_jira__fetch_issue`"),
+        ("opencode", "`atlassian_issue_get`"),
+        ("cursor", "`atlassian:get_issue`"),
+    ] {
+        let path = dir.join(format!("generated/{provider}/agents/test-agent.md"));
+        let content = std::fs::read_to_string(&path);
+        assert!(content.is_ok(), "read {}: {content:?}", path.display());
+        let content = content.unwrap_or_default();
+        assert!(
+            content.contains(&format!("Fetch with {rendered}.")),
+            "{provider}:\n{content}"
+        );
+    }
+}
+
+#[test]
+fn test_validate_mcp_tool_names_rejects_unmapped_grant() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_agentspec_toml_with(
+        &dir,
+        "[mcp.atlassian.claude]\ntool-names = { get_issue = \"fetch_issue\" }\n",
+    );
+    install_agent_with_capabilities(
+        &dir,
+        "  tools: [read]\n  mcp:\n    atlassian: { tools: [get_issue, search] }\n",
+    );
+
+    let (ok, _, stderr) = run_in(&dir, &["validate"]);
+    assert!(!ok, "validate should fail");
+    assert!(
+        stderr.contains("[mcp.atlassian.claude] `tool-names` does not map"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("'search'"), "{stderr}");
+}
+
+#[test]
+fn test_validate_mcp_tool_names_rejects_unmapped_body_reference() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_agentspec_toml_with(
+        &dir,
+        "[mcp.atlassian.cursor]\ntool-names = { search = \"find\" }\n",
+    );
+    install_agent_with_capabilities_and_body(
+        &dir,
+        "  tools: [read]\n",
+        "Fetch with {{ mcp_tool(\"atlassian\", \"get_issue\") }}.",
+    );
+
+    let (ok, _, stderr) = run_in(&dir, &["validate"]);
+    assert!(!ok, "validate should fail");
+    assert!(stderr.contains("mcp_tool() names 'get_issue'"), "{stderr}");
+}

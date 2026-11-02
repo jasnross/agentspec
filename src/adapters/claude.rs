@@ -21,7 +21,9 @@ use crate::compile::{
 };
 use crate::declarations::Declarations;
 use crate::hooks_merge::{merge_owned, remove_owned};
-use crate::mcp::{ClaudeMcpServer, McpServer, McpServers, is_mcp_name};
+use crate::mcp::{
+    ClaudeMcpServer, McpServer, McpServers, McpToolNames, is_mcp_name, real_tool_name,
+};
 use crate::plan::{FileKind, ForwardPatch, ReversePatch};
 use crate::presets::{ClaudeEffort, ProviderPresets, ProviderPresetsMap};
 use crate::provider::Provider;
@@ -350,6 +352,10 @@ impl Adapter for ClaudeAdapter {
         compose_mcp_tool(server, logical, tool)
     }
 
+    fn mcp_tool_names<'a>(&self, server: &'a McpServer) -> Option<&'a McpToolNames> {
+        tool_names(server)
+    }
+
     fn body_skill_root(&self) -> Option<&'static str> {
         Some("${CLAUDE_SKILL_DIR}")
     }
@@ -399,7 +405,12 @@ impl Adapter for ClaudeAdapter {
                 cursor: _,
                 opencode: _,
             } = server;
-            let Some(ClaudeMcpServer { server, plugin }) = claude else {
+            let Some(ClaudeMcpServer {
+                server,
+                plugin,
+                tool_names: _,
+            }) = claude
+            else {
                 continue;
             };
             for (field, value) in [("server", server), ("plugin", plugin)] {
@@ -769,15 +780,27 @@ fn mcp_server_prefix(server: &McpServer, logical: &str) -> String {
         opencode: _,
     } = server;
     let (name, plugin) = match claude {
-        Some(ClaudeMcpServer { server, plugin }) => {
-            (server.as_deref().unwrap_or(logical), plugin.as_deref())
-        }
+        Some(ClaudeMcpServer {
+            server,
+            plugin,
+            tool_names: _,
+        }) => (server.as_deref().unwrap_or(logical), plugin.as_deref()),
         None => (logical, None),
     };
     match plugin {
         Some(plugin) => format!("mcp__plugin_{plugin}_{name}"),
         None => format!("mcp__{name}"),
     }
+}
+
+/// The `[mcp.<name>.claude] tool-names` map, when the block declares one.
+fn tool_names(server: &McpServer) -> Option<&McpToolNames> {
+    let McpServer {
+        claude,
+        cursor: _,
+        opencode: _,
+    } = server;
+    claude.as_ref().and_then(|c| c.tool_names.as_ref())
 }
 
 /// Reject declarations whose Claude tool ids could be mistaken for another's.
@@ -848,9 +871,14 @@ fn mcp_id_ambiguities(mcp: &McpServers) -> Vec<String> {
 }
 
 /// Claude's id for one tool of a declared server: the one place the named-tool
-/// spelling is composed.
+/// spelling is composed. `tool` is the logical name; the id's tool segment is
+/// its real name under `[mcp.<name>.claude] tool-names`.
 fn compose_mcp_tool(server: &McpServer, logical: &str, tool: &str) -> String {
-    format!("{}__{tool}", mcp_server_prefix(server, logical))
+    format!(
+        "{}__{}",
+        mcp_server_prefix(server, logical),
+        real_tool_name(tool_names(server), tool)
+    )
 }
 
 /// Claude's spelling for every tool of a declared server. `__*` for both a
@@ -2206,6 +2234,7 @@ mod mcp_declaration_tests {
                     claude: Some(ClaudeMcpServer {
                         server: Some("a.b".to_owned()),
                         plugin: Some("work tools".to_owned()),
+                        tool_names: None,
                     }),
                     ..McpServer::default()
                 },
@@ -2240,6 +2269,7 @@ mod mcp_declaration_tests {
             claude: Some(ClaudeMcpServer {
                 server: server.map(str::to_owned),
                 plugin: plugin.map(str::to_owned),
+                tool_names: None,
             }),
             ..McpServer::default()
         }
@@ -2344,6 +2374,7 @@ mod mcp_grant_tests {
                     claude: Some(ClaudeMcpServer {
                         server: None,
                         plugin: Some("work-tools".to_owned()),
+                        tool_names: None,
                     }),
                     ..McpServer::default()
                 },
@@ -2354,6 +2385,7 @@ mod mcp_grant_tests {
                     claude: Some(ClaudeMcpServer {
                         server: Some("other".to_owned()),
                         plugin: None,
+                        tool_names: None,
                     }),
                     ..McpServer::default()
                 },
@@ -2416,6 +2448,11 @@ mod mcp_grant_tests {
     /// Compile one spec and return the tool list its file carries, as strings,
     /// with the file's deliveries.
     fn compile(spec: Spec) -> (Vec<String>, Vec<SettingKey>) {
+        compile_with(spec, &servers())
+    }
+
+    /// As [`compile`], against `servers` rather than the shared fixture.
+    fn compile_with(spec: Spec, servers: &McpServers) -> (Vec<String>, Vec<SettingKey>) {
         #[derive(Deserialize)]
         #[serde(rename_all = "kebab-case")]
         struct Frontmatter {
@@ -2423,7 +2460,6 @@ mod mcp_grant_tests {
             allowed_tools: Option<Vec<String>>,
         }
 
-        let servers = servers();
         let presets = HashMap::new();
         let ctx = CompileCtx {
             mode: SyncDestinationMode::Compile,
@@ -2431,7 +2467,7 @@ mod mcp_grant_tests {
             cwd: Path::new("/tmp/cwd"),
             target_dir: None,
             presets: &presets,
-            mcp_servers: &servers,
+            mcp_servers: servers,
             adapter_config: None,
             overwrite: false,
         };
@@ -2504,6 +2540,7 @@ mod mcp_grant_tests {
             claude: Some(ClaudeMcpServer {
                 server: Some("srv".to_owned()),
                 plugin: Some("plg".to_owned()),
+                tool_names: None,
             }),
             ..McpServer::default()
         };
@@ -2577,5 +2614,65 @@ mod mcp_grant_tests {
                 &SettingKey::Mcp("quip".to_owned()),
             ]
         );
+    }
+
+    fn mapped_server(plugin: Option<&str>) -> McpServer {
+        McpServer {
+            claude: Some(ClaudeMcpServer {
+                server: Some("company_jira".to_owned()),
+                plugin: plugin.map(str::to_owned),
+                tool_names: Some(McpToolNames::from([(
+                    "getJiraIssue".to_owned(),
+                    "get_issue".to_owned(),
+                )])),
+            }),
+            ..McpServer::default()
+        }
+    }
+
+    /// A granted id and a body reference spell the mapped tool the same way.
+    #[test]
+    fn test_tool_names_compose_claude_grant_and_body() {
+        let server = mapped_server(None);
+        let servers = McpServers::from([("atlassian".to_owned(), server.clone())]);
+        let (tools, _) = compile_with(
+            agent(capabilities(
+                Some(vec![]),
+                &[("atlassian", named(&["getJiraIssue"]))],
+            )),
+            &servers,
+        );
+        assert_eq!(tools, strings(&["mcp__company_jira__get_issue"]));
+        assert_eq!(
+            ClaudeAdapter.body_mcp_tool_name(&server, "atlassian", "getJiraIssue"),
+            "mcp__company_jira__get_issue"
+        );
+    }
+
+    #[test]
+    fn test_tool_names_compose_under_claude_plugin() {
+        assert_eq!(
+            compose_mcp_tool(&mapped_server(Some("work")), "atlassian", "getJiraIssue"),
+            "mcp__plugin_work_company_jira__get_issue"
+        );
+    }
+
+    #[test]
+    fn test_tool_names_accessor_reads_claude_block() {
+        let server = mapped_server(None);
+        assert_eq!(
+            ClaudeAdapter.mcp_tool_names(&server),
+            server.claude.as_ref().and_then(|c| c.tool_names.as_ref())
+        );
+        assert!(ClaudeAdapter.mcp_tool_names(&server).is_some());
+
+        let opencode_only = McpServer {
+            opencode: Some(crate::mcp::OpenCodeMcpServer {
+                server: None,
+                tool_names: Some(McpToolNames::new()),
+            }),
+            ..McpServer::default()
+        };
+        assert_eq!(ClaudeAdapter.mcp_tool_names(&opencode_only), None);
     }
 }

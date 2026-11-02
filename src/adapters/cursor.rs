@@ -20,7 +20,7 @@ use crate::compile::{
 };
 use crate::declarations::Declarations;
 use crate::hooks_merge::{merge_owned, remove_owned};
-use crate::mcp::{CursorMcpServer, McpServer, is_mcp_name};
+use crate::mcp::{CursorMcpServer, McpServer, McpToolNames, is_mcp_name, real_tool_name};
 use crate::plan::{FileKind, ForwardPatch, ReversePatch};
 use crate::presets::{CursorPreset, ProviderPresets, ProviderPresetsMap};
 use crate::provider::Provider;
@@ -272,10 +272,12 @@ impl Adapter for CursorAdapter {
     }
 
     /// `<server>:<tool>`, where `<server>` is `[mcp.<name>.cursor] server` or the
-    /// logical name. Descriptive: Cursor docs name no model-facing id for an MCP
-    /// tool, and `server:tool` is the only form they use to name one tool by
-    /// server and tool (its permission rules). Unlike a description, it reads
-    /// correctly inside backticks, where most tool references sit.
+    /// logical name, and `<tool>` is the tool's `[mcp.<name>.cursor] tool-names`
+    /// entry or its logical name. Descriptive: Cursor docs name no model-facing
+    /// id for an MCP tool, and `server:tool` is the only form they use to name
+    /// one tool by server and tool (its permission rules). Unlike a
+    /// description, it reads correctly inside backticks, where most tool
+    /// references sit.
     fn body_mcp_tool_name(&self, server: &McpServer, logical: &str, tool: &str) -> String {
         let McpServer {
             claude: _,
@@ -286,7 +288,12 @@ impl Adapter for CursorAdapter {
             .as_ref()
             .and_then(|c| c.server.as_deref())
             .unwrap_or(logical);
-        format!("{resolved}:{tool}")
+        let real = real_tool_name(tool_names(server), tool);
+        format!("{resolved}:{real}")
+    }
+
+    fn mcp_tool_names<'a>(&self, server: &'a McpServer) -> Option<&'a McpToolNames> {
+        tool_names(server)
     }
 
     fn body_skill_root(&self) -> Option<&'static str> {
@@ -356,6 +363,7 @@ impl Adapter for CursorAdapter {
             } = server;
             if let Some(CursorMcpServer {
                 server: Some(override_name),
+                tool_names: _,
             }) = cursor
                 && !is_mcp_name(override_name)
             {
@@ -611,6 +619,16 @@ fn config_dir(
 ) -> PathBuf {
     let dotdir = Path::new(HOOK_DOTDIR);
     super::resolve_config_dir(mode, target_dir, home, cwd, dotdir, dotdir)
+}
+
+/// The `[mcp.<name>.cursor] tool-names` map, when the block declares one.
+fn tool_names(server: &McpServer) -> Option<&McpToolNames> {
+    let McpServer {
+        claude: _,
+        cursor,
+        opencode: _,
+    } = server;
+    cursor.as_ref().and_then(|c| c.tool_names.as_ref())
 }
 
 /// Forward-direction hooks.json patch.
@@ -2330,6 +2348,7 @@ mod mcp_declaration_tests {
                 McpServer {
                     cursor: Some(CursorMcpServer {
                         server: Some("a:b".to_owned()),
+                        tool_names: None,
                     }),
                     ..McpServer::default()
                 },
@@ -2340,5 +2359,45 @@ mod mcp_declaration_tests {
             CursorAdapter.validate_declarations(&declarations),
             ["[mcp.quip.cursor] `server` must match [A-Za-z0-9_-]+ (got \"a:b\")"]
         );
+    }
+
+    fn mapped_server() -> McpServer {
+        McpServer {
+            cursor: Some(CursorMcpServer {
+                server: Some("company_jira".to_owned()),
+                tool_names: Some(McpToolNames::from([(
+                    "getJiraIssue".to_owned(),
+                    "get_issue".to_owned(),
+                )])),
+            }),
+            ..McpServer::default()
+        }
+    }
+
+    #[test]
+    fn test_tool_names_compose_cursor_body() {
+        assert_eq!(
+            CursorAdapter.body_mcp_tool_name(&mapped_server(), "atlassian", "getJiraIssue"),
+            "company_jira:get_issue"
+        );
+    }
+
+    #[test]
+    fn test_tool_names_accessor_reads_cursor_block() {
+        let server = mapped_server();
+        assert_eq!(
+            CursorAdapter.mcp_tool_names(&server),
+            server.cursor.as_ref().and_then(|c| c.tool_names.as_ref())
+        );
+        assert!(CursorAdapter.mcp_tool_names(&server).is_some());
+
+        let claude_only = McpServer {
+            claude: Some(crate::mcp::ClaudeMcpServer {
+                tool_names: Some(McpToolNames::new()),
+                ..crate::mcp::ClaudeMcpServer::default()
+            }),
+            ..McpServer::default()
+        };
+        assert_eq!(CursorAdapter.mcp_tool_names(&claude_only), None);
     }
 }

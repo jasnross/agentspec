@@ -20,7 +20,7 @@ pub use opencode::OpenCodeAdapter;
 
 use crate::compile::{AdapterConfig, GeneratedFile, HookEmitMode};
 use crate::declarations::Declarations;
-use crate::mcp::{McpServer, McpServers};
+use crate::mcp::{McpServer, McpServers, McpToolNames};
 use crate::plan::{FileKind, ForwardPatch, ReversePatch, expand_tilde};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
@@ -516,8 +516,17 @@ pub trait Adapter: std::fmt::Debug + Send + Sync {
     /// Returns an owned `String` because a composed id is not static. An
     /// adapter that writes grants composes this through the same function
     /// grant emission uses, so a body reference and a granted id cannot drift
-    /// apart.
+    /// apart. The composed id uses the real tool name from
+    /// [`Adapter::mcp_tool_names`].
     fn body_mcp_tool_name(&self, server: &McpServer, logical: &str, tool: &str) -> String;
+
+    /// The real tool names this provider's block declares for `server`, or
+    /// `None` when the block declares no `tool-names`.
+    ///
+    /// Each adapter destructures `McpServer` and returns its own block's
+    /// field, so a new provider block is a compile error here until each
+    /// adapter decides which block is its own.
+    fn mcp_tool_names<'a>(&self, server: &'a McpServer) -> Option<&'a McpToolNames>;
 
     /// Resolve a canonical tool to the name this provider expects in hook
     /// matcher values for tool-execute events (`PreToolUse`, `PostToolUse`,
@@ -559,12 +568,14 @@ pub trait Adapter: std::fmt::Debug + Send + Sync {
     ///
     /// A claim about the provider's schema, not about any spec.
     ///
-    /// `test_carriable_agrees_with_carried` is the sole consumer of the claim:
-    /// it compares this table against what the frontmatter struct for `kind`
+    /// The claim has two consumers. `test_carriable_agrees_with_carried`
+    /// compares this table against what the frontmatter struct for `kind`
     /// actually records, in both directions. A declared setting with no field
     /// to hold it and no composer writing it is a bug in this table; a
     /// recorded delivery whose setting this table omits is a bug the other
-    /// way.
+    /// way. `validate.rs`'s MCP tool-name coverage check reads
+    /// `SettingKind::Mcp` from it to decide which providers write a spec's
+    /// grants.
     ///
     /// The table is also what `README.md`'s prose about which spec values
     /// reach which provider is written against — the prose is hand-maintained,
@@ -752,6 +763,7 @@ mod tests {
                     claude: Some(ClaudeMcpServer {
                         server: None,
                         plugin: Some("fxp".to_owned()),
+                        tool_names: None,
                     }),
                     ..McpServer::default()
                 },

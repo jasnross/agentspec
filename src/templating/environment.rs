@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use minijinja::Environment;
+use strum::VariantArray as _;
 
 use super::ExtraIncludeDir;
 use crate::mcp::{McpServers, is_mcp_name};
@@ -259,8 +260,11 @@ fn resolve_tool(name: &str, provider: Option<Provider>) -> Result<String, miniji
 /// discards the output — the result is `mcp.<server>.<tool>`, matching the
 /// `mcp.<server>` label `agentspec inspect` uses.
 ///
-/// Does not check that the spec grants the tool; that is a separate concern
-/// from naming it.
+/// Checks that every `tool-names` map the render consults covers the tool:
+/// every provider's when rendering without a provider, and that provider's
+/// otherwise, so a reference that only one provider's render reaches still
+/// fails `compile`. It does not check that the spec grants the tool; that is
+/// a separate concern from naming it.
 fn resolve_mcp_tool(
     server: &str,
     tool: &str,
@@ -281,6 +285,22 @@ fn resolve_mcp_tool(
             minijinja::ErrorKind::InvalidOperation,
             format!("mcp_tool() tool name '{tool}' must match [A-Za-z0-9_-]+"),
         ));
+    }
+    let consulted = provider
+        .as_ref()
+        .map_or(Provider::VARIANTS, std::slice::from_ref);
+    for p in consulted {
+        if let Some(names) = p.adapter().mcp_tool_names(declaration)
+            && !names.contains_key(tool)
+        {
+            return Err(minijinja::Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                format!(
+                    "mcp_tool() names '{tool}' of server '{server}', which [mcp.{server}.{p}] \
+                     `tool-names` does not map; add `{tool} = \"<real name>\"`"
+                ),
+            ));
+        }
     }
     let Some(p) = provider else {
         return Ok(format!("mcp.{server}.{tool}"));
@@ -1890,7 +1910,9 @@ mod tests {
 #[cfg(test)]
 mod mcp_tool_tests {
     use super::*;
-    use crate::mcp::{ClaudeMcpServer, CursorMcpServer, McpServer, OpenCodeMcpServer};
+    use crate::mcp::{
+        ClaudeMcpServer, CursorMcpServer, McpServer, McpToolNames, OpenCodeMcpServer,
+    };
     use crate::spec::{AgentFrontmatter, AgentSpec};
 
     fn servers() -> McpServers {
@@ -1902,12 +1924,15 @@ mod mcp_tool_tests {
                     claude: Some(ClaudeMcpServer {
                         server: None,
                         plugin: Some("work-tools".to_owned()),
+                        tool_names: None,
                     }),
                     cursor: Some(CursorMcpServer {
                         server: Some("atl".to_owned()),
+                        tool_names: None,
                     }),
                     opencode: Some(OpenCodeMcpServer {
                         server: Some("jira".to_owned()),
+                        tool_names: None,
                     }),
                 },
             ),
@@ -2010,6 +2035,7 @@ mod mcp_tool_tests {
                 claude: Some(ClaudeMcpServer {
                     server: Some("srv".to_owned()),
                     plugin: Some("plg".to_owned()),
+                    tool_names: None,
                 }),
                 ..McpServer::default()
             },
@@ -2034,5 +2060,69 @@ mod mcp_tool_tests {
         let err = render(r#"{{ mcp_tool("quip", "a b") }}"#, None).expect_err("rejected");
         let msg = format!("{err:#}");
         assert!(msg.contains("tool name 'a b'"), "{msg}");
+    }
+
+    fn names(entries: &[(&str, &str)]) -> McpToolNames {
+        entries
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect()
+    }
+
+    /// A `jira` server whose Claude block maps `get` and whose Cursor block
+    /// maps `cursor_map` — empty unless the test supplies entries.
+    fn mapped(cursor_map: &[(&str, &str)]) -> McpServers {
+        McpServers::from([(
+            "jira".to_owned(),
+            McpServer {
+                claude: Some(ClaudeMcpServer {
+                    tool_names: Some(names(&[("get", "get_issue")])),
+                    ..ClaudeMcpServer::default()
+                }),
+                cursor: Some(CursorMcpServer {
+                    tool_names: Some(names(cursor_map)),
+                    ..CursorMcpServer::default()
+                }),
+                opencode: None,
+            },
+        )])
+    }
+
+    #[test]
+    fn test_tool_names_mcp_tool_renders_mapped_name() {
+        let servers = mapped(&[("get", "fetch")]);
+        assert_eq!(
+            resolve_mcp_tool("jira", "get", &servers, Some(Provider::Claude)).expect("resolves"),
+            "mcp__jira__get_issue"
+        );
+        assert_eq!(
+            resolve_mcp_tool("jira", "get", &servers, Some(Provider::OpenCode)).expect("resolves"),
+            "jira_get"
+        );
+    }
+
+    #[test]
+    fn test_tool_names_validate_render_checks_every_map() {
+        let err = resolve_mcp_tool("jira", "get", &mapped(&[]), None).expect_err("rejected");
+        assert_eq!(
+            err.detail(),
+            Some(
+                "mcp_tool() names 'get' of server 'jira', which [mcp.jira.cursor] `tool-names` \
+                 does not map; add `get = \"<real name>\"`"
+            )
+        );
+    }
+
+    #[test]
+    fn test_tool_names_compile_render_checks_own_map() {
+        assert_eq!(
+            resolve_mcp_tool("jira", "get", &mapped(&[]), Some(Provider::Claude))
+                .expect("Cursor's map is not consulted"),
+            "mcp__jira__get_issue"
+        );
+        let err = resolve_mcp_tool("jira", "other", &mapped(&[]), Some(Provider::Claude))
+            .expect_err("Claude's map lacks the tool");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("[mcp.jira.claude] `tool-names`"), "{msg}");
     }
 }

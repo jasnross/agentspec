@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -7,7 +7,9 @@ use strum::VariantArray as _;
 
 use crate::declarations::Declarations;
 use crate::mcp::{McpServers, is_mcp_name};
+use crate::plan::FileKind;
 use crate::provider::Provider;
+use crate::setting::SettingKind;
 use crate::spec::{McpGrant, McpTools, Spec, ToolFrontmatter};
 
 /// A validation error (spec semantics or config shape).
@@ -154,7 +156,8 @@ pub fn validate_semantics(
     errors
 }
 
-/// The provider-neutral rule on every declared MCP server name, then each
+/// The provider-neutral rule on every declared MCP server name, then the
+/// provider-neutral rules on every provider block's `tool-names`, then each
 /// adapter's checks on its own provider's blocks in every declaration section,
 /// all reported against the config file.
 ///
@@ -185,6 +188,7 @@ fn validate_config_declarations(
         .filter(|name| !is_mcp_name(name))
         .map(|name| format!("[mcp.{name}] the server name must match [A-Za-z0-9_-]+"));
     neutral
+        .chain(tool_names_errors(&declarations.mcp))
         .chain(
             Provider::VARIANTS
                 .iter()
@@ -195,6 +199,55 @@ fn validate_config_declarations(
             message,
         })
         .collect()
+}
+
+/// The provider-neutral rules on each provider block's `tool-names`: every
+/// key and value is an MCP name, and no two keys share a value.
+///
+/// A shared value would compose one id for two logical tools, so two grants
+/// would write one permission key and two body references would name one
+/// tool. Servers are visited in name order, providers in `Provider::VARIANTS`
+/// order, and entries in key order.
+fn tool_names_errors(mcp: &McpServers) -> Vec<String> {
+    let mut errors = Vec::new();
+    for (name, server) in mcp {
+        for provider in Provider::VARIANTS {
+            let Some(names) = provider.adapter().mcp_tool_names(server) else {
+                continue;
+            };
+            let block = format!("[mcp.{name}.{provider}] `tool-names`");
+            let mut first_key_for: BTreeMap<&str, &str> = BTreeMap::new();
+            let mut reported: BTreeSet<&str> = BTreeSet::new();
+            let mut shared: Vec<String> = Vec::new();
+            for (key, value) in names {
+                if !is_mcp_name(key) {
+                    errors.push(format!("{block} key '{key}' must match [A-Za-z0-9_-]+"));
+                }
+                if !is_mcp_name(value) {
+                    errors.push(format!(
+                        "{block} maps '{key}' to '{value}', which must match [A-Za-z0-9_-]+"
+                    ));
+                }
+                match first_key_for.get(value.as_str()) {
+                    None => {
+                        first_key_for.insert(value, key);
+                    }
+                    // Only the second key sharing a value is reported; a
+                    // third would name the same pair's first key again.
+                    Some(first) if !reported.contains(value.as_str()) => {
+                        reported.insert(value);
+                        shared.push(format!(
+                            "{block} maps both '{first}' and '{key}' to '{value}'; each logical \
+                             tool needs its own real tool"
+                        ));
+                    }
+                    Some(_) => {}
+                }
+            }
+            errors.extend(shared);
+        }
+    }
+    errors
 }
 
 /// Check an agent's or skill's `capabilities`: the built-in tool list, each
@@ -214,6 +267,7 @@ fn validate_capabilities(spec: &Spec, servers: &McpServers, errors: &mut Vec<Val
         return;
     };
     validate_mcp_grants(spec.path(), grants, servers, errors);
+    validate_mcp_tool_coverage(spec, grants, servers, errors);
     if matches!(spec, Spec::Agent(_)) && !spec.declares_tools() {
         errors.push(ValidationError {
             path: spec.path().to_path_buf(),
@@ -291,6 +345,72 @@ fn validate_mcp_grants(
                 push(format!(
                     "`capabilities.mcp.{server}.tools` lists '{tool}' more than once"
                 ));
+            }
+        }
+    }
+}
+
+/// The file kinds a spec's grants could reach on any provider.
+fn grant_kinds(spec: &Spec) -> &'static [FileKind] {
+    match spec {
+        Spec::Agent(_) => &[FileKind::Agents],
+        Spec::Skill(_) => &[FileKind::Skills, FileKind::Commands],
+        Spec::Rule(_) | Spec::Hook(_) => &[],
+    }
+}
+
+/// Require an entry for every named tool of every grant in each provider
+/// block's `tool-names`, for the providers that write the grant.
+///
+/// A provider whose `carriable` omits `Mcp` for the spec's kinds writes no
+/// grant for the spec, so requiring an entry there would demand config that
+/// changes no output. A block with no map
+/// keeps every logical name and needs no entry. An undeclared server and a
+/// malformed tool name are `validate_mcp_grants`'s to report, so they are
+/// skipped here; each `(tool, provider)` pair is reported once, however often
+/// the grant repeats the tool.
+fn validate_mcp_tool_coverage(
+    spec: &Spec,
+    grants: &BTreeMap<String, McpGrant>,
+    servers: &McpServers,
+    errors: &mut Vec<ValidationError>,
+) {
+    let kinds = grant_kinds(spec);
+    let writers: Vec<Provider> = Provider::VARIANTS
+        .iter()
+        .copied()
+        .filter(|provider| {
+            let adapter = provider.adapter();
+            kinds
+                .iter()
+                .any(|&kind| adapter.carriable(kind).contains(&SettingKind::Mcp))
+        })
+        .collect();
+    for (server, McpGrant { tools }) in grants {
+        let Some(declaration) = servers.get(server) else {
+            continue;
+        };
+        let McpTools::Named(named) = tools else {
+            continue;
+        };
+        for (i, tool) in named.iter().enumerate() {
+            if !is_mcp_name(tool) || named[..i].contains(tool) {
+                continue;
+            }
+            for provider in &writers {
+                let Some(names) = provider.adapter().mcp_tool_names(declaration) else {
+                    continue;
+                };
+                if !names.contains_key(tool) {
+                    errors.push(ValidationError {
+                        path: spec.path().to_path_buf(),
+                        message: format!(
+                            "`capabilities.mcp.{server}.tools` names '{tool}', which \
+                             [mcp.{server}.{provider}] `tool-names` does not map; add \
+                             `{tool} = \"<real name>\"`"
+                        ),
+                    });
+                }
             }
         }
     }
@@ -377,7 +497,9 @@ mod tests {
     use indexmap::IndexMap;
 
     use super::*;
-    use crate::mcp::McpServer;
+    use crate::mcp::{
+        ClaudeMcpServer, CursorMcpServer, McpServer, McpToolNames, OpenCodeMcpServer,
+    };
     use crate::presets::{ProviderPresets, ProviderPresetsMap};
     use crate::spec::{
         AgentFrontmatter, AgentSpec, CapabilitiesFrontmatter, ExecutionFrontmatter, HookEvent,
@@ -754,6 +876,247 @@ mod tests {
         assert_eq!(
             messages,
             ["[mcp.a.b] the server name must match [A-Za-z0-9_-]+"]
+        );
+    }
+
+    fn tool_names(entries: &[(&str, &str)]) -> McpToolNames {
+        entries
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect()
+    }
+
+    fn claude_mapped(entries: &[(&str, &str)]) -> McpServer {
+        McpServer {
+            claude: Some(ClaudeMcpServer {
+                tool_names: Some(tool_names(entries)),
+                ..ClaudeMcpServer::default()
+            }),
+            ..McpServer::default()
+        }
+    }
+
+    fn opencode_mapped(entries: &[(&str, &str)]) -> McpServer {
+        McpServer {
+            opencode: Some(OpenCodeMcpServer {
+                tool_names: Some(tool_names(entries)),
+                ..OpenCodeMcpServer::default()
+            }),
+            ..McpServer::default()
+        }
+    }
+
+    fn cursor_mapped(entries: &[(&str, &str)]) -> McpServer {
+        McpServer {
+            cursor: Some(CursorMcpServer {
+                tool_names: Some(tool_names(entries)),
+                ..CursorMcpServer::default()
+            }),
+            ..McpServer::default()
+        }
+    }
+
+    /// `[mcp.s]` declared as `server`.
+    fn declaring(server: McpServer) -> Declarations {
+        Declarations {
+            mcp: McpServers::from([("s".to_owned(), server)]),
+            ..Declarations::default()
+        }
+    }
+
+    fn declaration_messages(server: McpServer) -> Vec<String> {
+        validate_config_declarations(&declaring(server), test_config_path())
+            .into_iter()
+            .map(|e| e.message)
+            .collect()
+    }
+
+    fn coverage_message(tool: &str, provider: &str) -> String {
+        format!(
+            "`capabilities.mcp.s.tools` names '{tool}', which [mcp.s.{provider}] `tool-names` \
+             does not map; add `{tool} = \"<real name>\"`"
+        )
+    }
+
+    #[test]
+    fn test_tool_names_rejects_bad_key() {
+        assert_eq!(
+            declaration_messages(claude_mapped(&[("a.b", "x")])),
+            ["[mcp.s.claude] `tool-names` key 'a.b' must match [A-Za-z0-9_-]+"]
+        );
+    }
+
+    #[test]
+    fn test_tool_names_rejects_bad_value() {
+        assert_eq!(
+            declaration_messages(opencode_mapped(&[("a", "x.y")])),
+            ["[mcp.s.opencode] `tool-names` maps 'a' to 'x.y', which must match [A-Za-z0-9_-]+"]
+        );
+    }
+
+    /// Reported once per shared value, naming the first two keys in map order.
+    #[test]
+    fn test_tool_names_rejects_shared_value() {
+        assert_eq!(
+            declaration_messages(cursor_mapped(&[("a", "x"), ("b", "x"), ("c", "x")])),
+            [
+                "[mcp.s.cursor] `tool-names` maps both 'a' and 'b' to 'x'; each logical tool \
+                 needs its own real tool"
+            ]
+        );
+    }
+
+    /// A malformed value shared by two keys is wrong twice over, and both
+    /// faults are reported: each format error, then the shared value.
+    #[test]
+    fn test_tool_names_reports_shared_malformed_value_both_ways() {
+        assert_eq!(
+            declaration_messages(claude_mapped(&[("a", "x.y"), ("b", "x.y")])),
+            [
+                "[mcp.s.claude] `tool-names` maps 'a' to 'x.y', which must match [A-Za-z0-9_-]+",
+                "[mcp.s.claude] `tool-names` maps 'b' to 'x.y', which must match [A-Za-z0-9_-]+",
+                "[mcp.s.claude] `tool-names` maps both 'a' and 'b' to 'x.y'; each logical tool \
+                 needs its own real tool",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_tool_names_accepts_identity_entry() {
+        assert_eq!(
+            declaration_messages(claude_mapped(&[("x", "x"), ("y", "z")])),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn test_tool_names_claude_map_must_cover_agent_grant() {
+        let spec = with_mcp(
+            make_agent("a", "body"),
+            Some(vec![]),
+            &[("s", named(&["t"]))],
+        );
+        assert_eq!(
+            mcp_messages(spec, &declaring(claude_mapped(&[]))),
+            [coverage_message("t", "claude")]
+        );
+    }
+
+    #[test]
+    fn test_tool_names_opencode_map_must_cover_agent_grant() {
+        let spec = with_mcp(
+            make_agent("a", "body"),
+            Some(vec![]),
+            &[("s", named(&["t"]))],
+        );
+        assert_eq!(
+            mcp_messages(spec, &declaring(opencode_mapped(&[("u", "v")]))),
+            [coverage_message("t", "opencode")]
+        );
+    }
+
+    /// `OpenCode` writes no grant on a skill's files.
+    #[test]
+    fn test_tool_names_opencode_map_ignores_skill_grant() {
+        let spec = with_mcp(make_skill("s", "body"), None, &[("s", named(&["t"]))]);
+        assert_eq!(
+            mcp_messages(spec, &declaring(opencode_mapped(&[]))),
+            Vec::<String>::new()
+        );
+    }
+
+    /// Cursor writes no grant on any file kind.
+    #[test]
+    fn test_tool_names_cursor_map_ignores_grants() {
+        for spec in [
+            with_mcp(
+                make_agent("a", "body"),
+                Some(vec![]),
+                &[("s", named(&["t"]))],
+            ),
+            with_mcp(make_skill("k", "body"), None, &[("s", named(&["t"]))]),
+        ] {
+            assert_eq!(
+                mcp_messages(spec, &declaring(cursor_mapped(&[]))),
+                Vec::<String>::new()
+            );
+        }
+    }
+
+    #[test]
+    fn test_tool_names_whole_server_grant_needs_no_entry() {
+        let spec = with_mcp(
+            make_agent("a", "body"),
+            Some(vec![]),
+            &[("s", McpTools::All)],
+        );
+        assert_eq!(
+            mcp_messages(spec, &declaring(claude_mapped(&[]))),
+            Vec::<String>::new()
+        );
+    }
+
+    /// An undeclared server and a malformed tool name each keep their one
+    /// existing message; a valid tool beside the malformed one is still
+    /// checked.
+    #[test]
+    fn test_tool_names_skip_already_reported_grants() {
+        let spec = with_mcp(make_skill("k", "body"), None, &[("q", named(&["t"]))]);
+        assert_eq!(
+            mcp_messages(spec, &declaring(claude_mapped(&[]))),
+            ["unknown MCP server 'q'"]
+        );
+
+        let spec = with_mcp(
+            make_skill("k", "body"),
+            None,
+            &[("s", named(&["a.b", "t"]))],
+        );
+        assert_eq!(
+            mcp_messages(spec, &declaring(claude_mapped(&[]))),
+            [
+                "`capabilities.mcp.s.tools` names 'a.b', which must match [A-Za-z0-9_-]+"
+                    .to_owned(),
+                coverage_message("t", "claude"),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_tool_names_repeated_tool_reported_once() {
+        let server = McpServer {
+            claude: claude_mapped(&[]).claude,
+            opencode: opencode_mapped(&[]).opencode,
+            ..McpServer::default()
+        };
+        let spec = with_mcp(
+            make_agent("a", "body"),
+            Some(vec![]),
+            &[("s", named(&["t", "t"]))],
+        );
+        let coverage: Vec<String> = mcp_messages(spec, &declaring(server))
+            .into_iter()
+            .filter(|m| m.contains("`tool-names` does not map"))
+            .collect();
+        assert_eq!(
+            coverage,
+            [
+                coverage_message("t", "claude"),
+                coverage_message("t", "opencode")
+            ]
+        );
+    }
+
+    #[test]
+    fn test_tool_names_absent_everywhere_adds_no_message() {
+        let spec = with_mcp(
+            make_agent("a", "body"),
+            Some(vec![]),
+            &[("s", named(&["t"]))],
+        );
+        assert_eq!(
+            mcp_messages(spec, &declaring(McpServer::default())),
+            Vec::<String>::new()
         );
     }
 

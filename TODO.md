@@ -1,4 +1,4 @@
-<!-- next: 65 -->
+<!-- next: 67 -->
 
 - #1 Consider deriving id from path instead of requiring in frontmatter
    - Currently `id` is a required `String` in all frontmatter structs; missing it causes a parse error at load time
@@ -233,3 +233,10 @@
   - Add an after-the-fact guard over committed samples beyond the identity scan, for instance flagging prose that refers to the operator's own configuration (a mention of the user's own instruction files, or of account connectors), so a leak a future capture carries is caught by `just probe-test` rather than by review.
 - #64 **Refuse a `probe.py` that raises on import with a `DefinitionError`, not a traceback.** `load_definition` in `experiments/lib/probe_harness/loader.py` runs `spec.loader.exec_module(module)` unguarded, so any exception a definition raises while being imported reaches the CLI as a raw traceback rather than a `probe run:`/`probe record:` refusal. A `ManualProbe(...)` missing its required `payload` or `wait_for` is one such case (a `TypeError` from the dataclass), as is any `NameError` or failed import. mypy `--strict` under `just probe-lint` catches the first statically, and every case fails before a workspace exists, so no capture is lost.
   - Likely shape: catch `Exception` around `exec_module`, and raise `DefinitionError` naming the package and the exception, keeping the traceback as detail the CLI prints after it.
+- #65 **Report declarations no spec uses.** Presets, `[mcp]` servers, and `[mcp.<name>.<provider>] tool-names` entries that no spec reaches are all silent today, so a stale declaration costs upkeep and verifies nothing.
+  - Knowing which tools a body names needs a record of every `mcp_tool()` reference made during rendering. TODO #46 needs the same record, so the two share that work.
+- #66 **Decide and document when diagnostics report every error versus stop at the first.** The pipeline mixes the two without a stated rule, so each new check reopens the question.
+  - `validate_semantics` and `validate_config_declarations` (`src/validate.rs`) collect every error and print them together. MCP grant coverage and the `tool-names` declaration rules follow that pattern.
+  - Template rendering stops at the first error across all specs: `resolve_fragments` (`src/templating/fragments.rs`) returns through `?` on the first failing render. That covers an undeclared server or a bad tool name in `mcp_tool()`, a missing include, and an unmapped `tool-names` entry for a body reference. The last one also stops at the first provider map that lacks the tool.
+  - Sync-target config validation (`config.validate_sync_config()` in `src/main.rs`) collects all its errors, then bails.
+  - Decide which stages should report everything, with the reasoning (for example, whether a render error can leave later renders meaningless). Then record the rule where new checks will find it, e.g. `.claude/rules/validation-locality.md`, and bring any outliers into line.

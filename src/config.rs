@@ -548,7 +548,7 @@ impl SyncFlags {
 mod tests {
     use std::fs;
 
-    use agentspec::mcp::{ClaudeMcpServer, McpServer, OpenCodeMcpServer};
+    use agentspec::mcp::{ClaudeMcpServer, McpServer, McpToolNames, OpenCodeMcpServer};
     use agentspec::presets::{ClaudeEffort, ClaudePreset, CursorPreset, OpenCodePreset};
 
     use super::*;
@@ -669,15 +669,42 @@ server = "jira"
                         claude: Some(ClaudeMcpServer {
                             server: None,
                             plugin: Some("work-tools".to_owned()),
+                            tool_names: None,
                         }),
                         cursor: None,
                         opencode: Some(OpenCodeMcpServer {
                             server: Some("jira".to_owned()),
+                            tool_names: None,
                         }),
                     },
                 ),
             ])
         );
+    }
+
+    #[test]
+    fn test_discover_parses_mcp_tool_names() {
+        let config = discover_toml(
+            "[mcp.atlassian.claude]\ntool-names = { getJiraIssue = \"get_issue\" }\n",
+        )
+        .expect("expected value");
+        let claude = config.mcp["atlassian"].claude.as_ref();
+        assert_eq!(
+            claude.and_then(|c| c.tool_names.clone()),
+            Some(McpToolNames::from([(
+                "getJiraIssue".into(),
+                "get_issue".into()
+            )]))
+        );
+    }
+
+    /// The key is spelled kebab-case; the snake-case field name is not
+    /// accepted as a second spelling.
+    #[test]
+    fn test_discover_rejects_snake_case_tool_names() {
+        let err = discover_toml("[mcp.x.cursor]\ntool_names = {}\n").expect_err("parse error");
+        let full = format!("{err:#}");
+        assert!(full.contains("unknown field"), "error: {full}");
     }
 
     #[test]

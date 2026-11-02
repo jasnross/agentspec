@@ -15,7 +15,9 @@ use super::{
 };
 use crate::compile::{AdapterConfig, GeneratedFile};
 use crate::declarations::Declarations;
-use crate::mcp::{McpServer, McpServers, OpenCodeMcpServer, is_mcp_name};
+use crate::mcp::{
+    McpServer, McpServers, McpToolNames, OpenCodeMcpServer, is_mcp_name, real_tool_name,
+};
 use crate::plan::{FileKind, ForwardPatch, RemovePatchReport, ReversePatch};
 use crate::presets::{ProviderPresets, ProviderPresetsMap};
 use crate::provider::Provider;
@@ -325,6 +327,10 @@ impl Adapter for OpenCodeAdapter {
         compose_mcp_tool(server, logical, tool)
     }
 
+    fn mcp_tool_names<'a>(&self, server: &'a McpServer) -> Option<&'a McpToolNames> {
+        tool_names(server)
+    }
+
     fn body_skill_root(&self) -> Option<&'static str> {
         None
     }
@@ -366,6 +372,7 @@ impl Adapter for OpenCodeAdapter {
             } = server;
             if let Some(OpenCodeMcpServer {
                 server: Some(override_name),
+                tool_names: _,
             }) = opencode
                 && !is_mcp_name(override_name)
             {
@@ -889,10 +896,25 @@ fn resolved_server<'a>(logical: &'a str, server: &'a McpServer) -> &'a str {
         .unwrap_or(logical)
 }
 
+/// The `[mcp.<name>.opencode] tool-names` map, when the block declares one.
+fn tool_names(server: &McpServer) -> Option<&McpToolNames> {
+    let McpServer {
+        claude: _,
+        cursor: _,
+        opencode,
+    } = server;
+    opencode.as_ref().and_then(|o| o.tool_names.as_ref())
+}
+
 /// `OpenCode`'s id for one tool of a declared server, `<server>_<tool>`: the
-/// one place the named-tool spelling is composed.
+/// one place the named-tool spelling is composed. `tool` is the logical
+/// name; `<tool>` is its real name under `[mcp.<name>.opencode] tool-names`.
 fn compose_mcp_tool(server: &McpServer, logical: &str, tool: &str) -> String {
-    format!("{}_{tool}", resolved_server(logical, server))
+    format!(
+        "{}_{}",
+        resolved_server(logical, server),
+        real_tool_name(tool_names(server), tool)
+    )
 }
 
 /// `OpenCode`'s key for every tool of a declared server, `<server>_*`. It
@@ -2475,6 +2497,7 @@ mod mcp_declaration_tests {
         McpServer {
             opencode: Some(OpenCodeMcpServer {
                 server: Some(name.to_owned()),
+                tool_names: None,
             }),
             ..McpServer::default()
         }
@@ -2621,6 +2644,7 @@ mod mcp_grant_tests {
                 McpServer {
                     opencode: Some(OpenCodeMcpServer {
                         server: Some("jira".to_owned()),
+                        tool_names: None,
                     }),
                     ..McpServer::default()
                 },
@@ -2791,5 +2815,57 @@ mod mcp_grant_tests {
         };
         assert!(pushed(&[("quip", McpTools::All)]));
         assert!(!pushed(&[("quip", named(&["a"]))]));
+    }
+
+    fn mapped_server() -> McpServer {
+        McpServer {
+            opencode: Some(OpenCodeMcpServer {
+                server: Some("jira".to_owned()),
+                tool_names: Some(McpToolNames::from([(
+                    "getJiraIssue".to_owned(),
+                    "get_issue".to_owned(),
+                )])),
+            }),
+            ..McpServer::default()
+        }
+    }
+
+    /// A permission key and a body reference spell the mapped tool the same
+    /// way.
+    #[test]
+    fn test_tool_names_compose_opencode_grant_and_body() {
+        let server = mapped_server();
+        let servers = McpServers::from([("atlassian".to_owned(), server.clone())]);
+        let map = build_permission_map(
+            &[],
+            Some(&grants(&[("atlassian", named(&["getJiraIssue"]))])),
+            &servers,
+        )
+        .0;
+        assert!(map.contains_key("jira_get_issue"), "{map:?}");
+        assert!(!map.contains_key("jira_getJiraIssue"), "{map:?}");
+        assert_eq!(
+            OpenCodeAdapter.body_mcp_tool_name(&server, "atlassian", "getJiraIssue"),
+            "jira_get_issue"
+        );
+    }
+
+    #[test]
+    fn test_tool_names_accessor_reads_opencode_block() {
+        let server = mapped_server();
+        assert_eq!(
+            OpenCodeAdapter.mcp_tool_names(&server),
+            server.opencode.as_ref().and_then(|o| o.tool_names.as_ref())
+        );
+        assert!(OpenCodeAdapter.mcp_tool_names(&server).is_some());
+
+        let claude_only = McpServer {
+            claude: Some(crate::mcp::ClaudeMcpServer {
+                tool_names: Some(McpToolNames::new()),
+                ..crate::mcp::ClaudeMcpServer::default()
+            }),
+            ..McpServer::default()
+        };
+        assert_eq!(OpenCodeAdapter.mcp_tool_names(&claude_only), None);
     }
 }
