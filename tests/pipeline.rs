@@ -7269,6 +7269,171 @@ fn test_validate_mcp_tool_names_rejects_unmapped_grant() {
         "{stderr}"
     );
     assert!(stderr.contains("'search'"), "{stderr}");
+    assert!(stderr.contains("`search = false`"), "{stderr}");
+}
+
+/// A tool set to `false` is left out of every grant the provider writes, and
+/// `inspect` names it apart from the losses.
+#[test]
+fn test_compile_mcp_tool_names_false_drops_tool() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let names = "tool-names = { getJiraIssue = \"get_jira_issue\", \
+                 getAccessibleAtlassianResources = false }\n";
+    install_agentspec_toml_with(
+        &dir,
+        &format!("[mcp.atlassian.claude]\n{names}\n[mcp.atlassian.opencode]\n{names}"),
+    );
+    install_agent_with_capabilities(
+        &dir,
+        "  tools: [read]\n  mcp:\n    atlassian: { tools: [getJiraIssue, getAccessibleAtlassianResources] }\n",
+    );
+
+    let (ok, _, stderr) = run_in(&dir, &["compile"]);
+    assert!(ok, "compile failed:\n{stderr}");
+
+    let claude = generated_frontmatter(&dir.join("generated/claude/agents/test-agent.md"));
+    let tools: Vec<&str> = claude["tools"]
+        .as_sequence()
+        .map(|seq| seq.iter().filter_map(serde_yml::Value::as_str).collect())
+        .unwrap_or_default();
+    assert_eq!(tools, ["Read", "mcp__atlassian__get_jira_issue"]);
+
+    let opencode = generated_frontmatter(&dir.join("generated/opencode/agents/test-agent.md"));
+    let keys: Vec<&str> = opencode["permission"]
+        .as_mapping()
+        .map(|m| m.keys().filter_map(serde_yml::Value::as_str).collect())
+        .unwrap_or_default();
+    assert!(
+        !keys
+            .iter()
+            .any(|k| k.contains("getAccessibleAtlassianResources")),
+        "{keys:?}"
+    );
+
+    let (ok, stdout, stderr) = run_in(&dir, &["inspect", "--provider", "claude"]);
+    assert!(ok, "inspect failed:\n{stderr}");
+    for expected in [
+        "dropped by config:",
+        "1 spec drops `mcp.atlassian.getAccessibleAtlassianResources`",
+    ] {
+        assert!(stdout.contains(expected), "{expected}:\n{stdout}");
+    }
+    assert!(
+        stdout.lines().any(|l| l.ends_with(", 1 config drop")),
+        "footer:\n{stdout}"
+    );
+    assert!(!stdout.contains("carries `mcp.atlassian`"), "{stdout}");
+}
+
+/// A grant whose every tool is `false` writes nothing for its server. The
+/// debug binary panics on a loss its provider's table says it carries, so a
+/// clean compile shows the grant raised no `mcp.atlassian` intent.
+#[test]
+fn test_compile_mcp_tool_names_all_false_grant_compiles_clean() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    let names = "tool-names = { getJiraIssue = false, getAccessibleAtlassianResources = false }\n";
+    install_agentspec_toml_with(
+        &dir,
+        &format!("[mcp.atlassian.claude]\n{names}\n[mcp.atlassian.opencode]\n{names}"),
+    );
+    install_agent_with_capabilities(
+        &dir,
+        "  tools: []\n  mcp:\n    atlassian: { tools: [getJiraIssue, getAccessibleAtlassianResources] }\n",
+    );
+
+    let (ok, _, stderr) = run_in(&dir, &["compile"]);
+    assert!(ok, "compile failed:\n{stderr}");
+
+    // Cursor is filtered out: it writes no grant, so it always reports
+    // `mcp.atlassian` as not delivered.
+    let (ok, stdout, stderr) = run_in(&dir, &["inspect", "--provider", "claude,opencode"]);
+    assert!(ok, "inspect failed:\n{stderr}");
+    assert!(stdout.contains("dropped by config:"), "{stdout}");
+    for provider in ["claude", "opencode"] {
+        for tool in ["getJiraIssue", "getAccessibleAtlassianResources"] {
+            assert!(
+                stdout.contains(&format!("{provider}: 1 spec drops `mcp.atlassian.{tool}`")),
+                "{provider} {tool}:\n{stdout}"
+            );
+        }
+    }
+    assert!(!stdout.contains("carries `mcp.atlassian`"), "{stdout}");
+}
+
+/// Cursor writes no grant, so its map need not cover a granted tool, and
+/// compile must not resolve the grant against it.
+#[test]
+fn test_compile_mcp_tool_names_unwritten_grant_needs_no_entry() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_agentspec_toml_with(
+        &dir,
+        "[mcp.atlassian.cursor]\ntool-names = { getJiraIssue = \"get_issue\" }\n",
+    );
+    install_agent_with_capabilities(
+        &dir,
+        "  tools: [read]\n  mcp:\n    atlassian: { tools: [getJiraIssue, searchJiraIssuesUsingJql] }\n",
+    );
+
+    let (ok, _, stderr) = run_in(&dir, &["compile"]);
+    assert!(ok, "compile failed:\n{stderr}");
+}
+
+/// On a provider that writes no grant, a `false` entry withholds nothing, so
+/// the grant stays an ordinary loss.
+#[test]
+fn test_inspect_cursor_false_entry_stays_not_delivered() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_agentspec_toml_with(
+        &dir,
+        "[mcp.atlassian.cursor]\n\
+         tool-names = { getJiraIssue = false, getAccessibleAtlassianResources = false }\n",
+    );
+    install_agent_with_capabilities(
+        &dir,
+        "  tools: [read]\n  mcp:\n    atlassian: { tools: [getJiraIssue, getAccessibleAtlassianResources] }\n",
+    );
+
+    let (ok, stdout, stderr) = run_in(&dir, &["inspect", "--provider", "cursor"]);
+    assert!(ok, "inspect failed:\n{stderr}");
+    assert!(
+        stdout.contains("no cursor agents file carries `mcp.atlassian`"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("dropped by config"), "{stdout}");
+}
+
+#[test]
+fn test_validate_mcp_tool_rejects_false_tool_body_reference() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_agentspec_toml_with(
+        &dir,
+        "[mcp.atlassian.cursor]\ntool-names = { getAccessibleAtlassianResources = false }\n",
+    );
+    install_agent_with_capabilities_and_body(
+        &dir,
+        "  tools: [read]\n",
+        "Find the site with {{ mcp_tool(\"atlassian\", \"getAccessibleAtlassianResources\") }}.",
+    );
+
+    let (ok, _, stderr) = run_in(&dir, &["validate"]);
+    assert!(!ok, "validate should fail");
+    assert!(stderr.contains("sets to `false`"), "{stderr}");
+}
+
+#[test]
+fn test_config_rejects_mcp_tool_names_true() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_agentspec_toml_with(&dir, "[mcp.atlassian.claude]\ntool-names = { a = true }\n");
+
+    let (ok, _, stderr) = run_in(&dir, &["validate"]);
+    assert!(!ok, "validate should fail");
+    assert!(stderr.contains("a real tool name or `false`"), "{stderr}");
 }
 
 #[test]

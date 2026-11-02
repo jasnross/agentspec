@@ -350,7 +350,13 @@ impl Adapter for ClaudeAdapter {
     }
 
     fn body_mcp_tool_name(&self, server: &McpServer, logical: &str, tool: &str) -> String {
-        compose_mcp_tool(server, logical, real_tool_name(tool_names(server), tool))
+        let real = real_tool_name(tool_names(server), tool);
+        debug_assert!(
+            real.is_some(),
+            "mcp_tool() reference to '{tool}', which `tool-names` sets to false, should have \
+             been rejected by resolve_mcp_tool"
+        );
+        compose_mcp_tool(server, logical, real.unwrap_or(tool))
     }
 
     fn mcp_tool_names<'a>(&self, server: &'a McpServer) -> Option<&'a McpToolNames> {
@@ -903,6 +909,7 @@ fn mcp_entries(grants: &BTreeMap<String, McpGrant>, servers: &McpServers) -> Vec
         let ids = match granted {
             McpTools::All => vec![compose_mcp_server_glob(server, logical)],
             McpTools::Named(named) => resolve_named_tools(tool_names(server), named)
+                .real
                 .into_iter()
                 .map(|real| compose_mcp_tool(server, logical, real))
                 .collect(),
@@ -2361,6 +2368,7 @@ mod mcp_grant_tests {
     use serde::Deserialize;
 
     use super::*;
+    use crate::mcp::McpToolName;
     use crate::spec::{AgentFrontmatter, CapabilitiesFrontmatter, SkillFrontmatter};
 
     fn servers() -> McpServers {
@@ -2621,7 +2629,7 @@ mod mcp_grant_tests {
                 plugin: plugin.map(str::to_owned),
                 tool_names: Some(McpToolNames::from([(
                     "getJiraIssue".to_owned(),
-                    "get_issue".to_owned(),
+                    McpToolName::Real("get_issue".to_owned()),
                 )])),
             }),
             ..McpServer::default()
@@ -2668,10 +2676,13 @@ mod mcp_grant_tests {
                 server: Some("company_jira".to_owned()),
                 plugin: None,
                 tool_names: Some(McpToolNames::from([
-                    ("getJiraIssue".to_owned(), "get_jira_issue".to_owned()),
+                    (
+                        "getJiraIssue".to_owned(),
+                        McpToolName::Real("get_jira_issue".to_owned()),
+                    ),
                     (
                         "listJiraIssueComments".to_owned(),
-                        "get_jira_issue".to_owned(),
+                        McpToolName::Real("get_jira_issue".to_owned()),
                     ),
                 ])),
             }),
@@ -2695,6 +2706,55 @@ mod mcp_grant_tests {
                 "mcp__company_jira__get_jira_issue"
             );
         }
+    }
+
+    /// A tool set to `false` writes no id. A grant whose every tool is `false`
+    /// writes no entry for its server, so it records no `Mcp` delivery.
+    #[test]
+    fn test_tool_names_false_tool_writes_no_id() {
+        let servers = McpServers::from([(
+            "atlassian".to_owned(),
+            McpServer {
+                claude: Some(ClaudeMcpServer {
+                    tool_names: Some(McpToolNames::from([
+                        (
+                            "getJiraIssue".to_owned(),
+                            McpToolName::Real("getJiraIssue".to_owned()),
+                        ),
+                        (
+                            "getAccessibleAtlassianResources".to_owned(),
+                            McpToolName::Absent,
+                        ),
+                    ])),
+                    ..ClaudeMcpServer::default()
+                }),
+                ..McpServer::default()
+            },
+        )]);
+        let mcp = SettingKey::Mcp("atlassian".to_owned());
+
+        let (tools, settings) = compile_with(
+            agent(capabilities(
+                Some(vec![]),
+                &[(
+                    "atlassian",
+                    named(&["getJiraIssue", "getAccessibleAtlassianResources"]),
+                )],
+            )),
+            &servers,
+        );
+        assert_eq!(tools, strings(&["mcp__atlassian__getJiraIssue"]));
+        assert!(settings.contains(&mcp), "{settings:?}");
+
+        let (tools, settings) = compile_with(
+            agent(capabilities(
+                Some(vec![]),
+                &[("atlassian", named(&["getAccessibleAtlassianResources"]))],
+            )),
+            &servers,
+        );
+        assert_eq!(tools, Vec::<String>::new());
+        assert!(!settings.contains(&mcp), "{settings:?}");
     }
 
     #[test]

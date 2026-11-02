@@ -325,7 +325,13 @@ impl Adapter for OpenCodeAdapter {
     }
 
     fn body_mcp_tool_name(&self, server: &McpServer, logical: &str, tool: &str) -> String {
-        compose_mcp_tool(server, logical, real_tool_name(tool_names(server), tool))
+        let real = real_tool_name(tool_names(server), tool);
+        debug_assert!(
+            real.is_some(),
+            "mcp_tool() reference to '{tool}', which `tool-names` sets to false, should have \
+             been rejected by resolve_mcp_tool"
+        );
+        compose_mcp_tool(server, logical, real.unwrap_or(tool))
     }
 
     fn mcp_tool_names<'a>(&self, server: &'a McpServer) -> Option<&'a McpToolNames> {
@@ -793,7 +799,7 @@ fn tidy_instructions(top: &CstObject, rules_dest_dir: &Path) -> TidyResult {
 ///
 /// MCP grants follow the built-in allows, one `allow` per composed key sorted
 /// by key, and precede the restatements. Returns the map with the logical
-/// servers it wrote a key for.
+/// servers it wrote at least one key for.
 fn build_permission_map(
     tools: &[ToolFrontmatter],
     grants: Option<&BTreeMap<String, McpGrant>>,
@@ -815,11 +821,18 @@ fn build_permission_map(
         };
         match granted {
             McpTools::All => mcp_keys.push(compose_mcp_server_glob(server, logical)),
-            McpTools::Named(named) => mcp_keys.extend(
-                resolve_named_tools(tool_names(server), named)
-                    .into_iter()
-                    .map(|real| compose_mcp_tool(server, logical, real)),
-            ),
+            McpTools::Named(named) => {
+                let resolved = resolve_named_tools(tool_names(server), named);
+                if resolved.real.is_empty() {
+                    continue;
+                }
+                mcp_keys.extend(
+                    resolved
+                        .real
+                        .into_iter()
+                        .map(|real| compose_mcp_tool(server, logical, real)),
+                );
+            }
         }
         carried.push(logical.clone());
     }
@@ -2633,6 +2646,7 @@ mod mcp_grant_tests {
     use indexmap::IndexMap;
 
     use super::*;
+    use crate::mcp::McpToolName;
     use crate::spec::{AgentFrontmatter, CapabilitiesFrontmatter, SkillFrontmatter};
 
     fn servers() -> McpServers {
@@ -2822,7 +2836,7 @@ mod mcp_grant_tests {
                 server: Some("jira".to_owned()),
                 tool_names: Some(McpToolNames::from([(
                     "getJiraIssue".to_owned(),
-                    "get_issue".to_owned(),
+                    McpToolName::Real("get_issue".to_owned()),
                 )])),
             }),
             ..McpServer::default()
@@ -2857,10 +2871,13 @@ mod mcp_grant_tests {
             opencode: Some(OpenCodeMcpServer {
                 server: Some("jira".to_owned()),
                 tool_names: Some(McpToolNames::from([
-                    ("getJiraIssue".to_owned(), "get_jira_issue".to_owned()),
+                    (
+                        "getJiraIssue".to_owned(),
+                        McpToolName::Real("get_jira_issue".to_owned()),
+                    ),
                     (
                         "listJiraIssueComments".to_owned(),
-                        "get_jira_issue".to_owned(),
+                        McpToolName::Real("get_jira_issue".to_owned()),
                     ),
                 ])),
             }),
@@ -2884,6 +2901,52 @@ mod mcp_grant_tests {
                 "jira_get_jira_issue"
             );
         }
+    }
+
+    /// A grant whose every tool is `false` writes no key and records no
+    /// server; one real tool is enough to record it.
+    #[test]
+    fn test_build_permission_map_all_false_grant_records_no_server() {
+        let servers = McpServers::from([(
+            "atlassian".to_owned(),
+            McpServer {
+                opencode: Some(OpenCodeMcpServer {
+                    server: Some("jira".to_owned()),
+                    tool_names: Some(McpToolNames::from([
+                        (
+                            "getJiraIssue".to_owned(),
+                            McpToolName::Real("get_issue".to_owned()),
+                        ),
+                        (
+                            "getAccessibleAtlassianResources".to_owned(),
+                            McpToolName::Absent,
+                        ),
+                    ])),
+                }),
+                ..McpServer::default()
+            },
+        )]);
+
+        let (map, carried) = build_permission_map(
+            &[],
+            Some(&grants(&[(
+                "atlassian",
+                named(&["getAccessibleAtlassianResources"]),
+            )])),
+            &servers,
+        );
+        assert!(!map.keys().any(|k| k.starts_with("jira_")), "{map:?}");
+        assert!(carried.is_empty(), "{carried:?}");
+
+        let (_, carried) = build_permission_map(
+            &[],
+            Some(&grants(&[(
+                "atlassian",
+                named(&["getJiraIssue", "getAccessibleAtlassianResources"]),
+            )])),
+            &servers,
+        );
+        assert_eq!(carried, ["atlassian"]);
     }
 
     #[test]

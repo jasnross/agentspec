@@ -6,7 +6,7 @@ use minijinja::Environment;
 use strum::VariantArray as _;
 
 use super::ExtraIncludeDir;
-use crate::mcp::{McpServers, is_mcp_name};
+use crate::mcp::{McpServers, McpToolName, is_mcp_name};
 use crate::provider::Provider;
 use crate::spec::{Spec, ToolFrontmatter};
 use crate::symlink::{is_symlink, unresolvable_symlink};
@@ -263,8 +263,9 @@ fn resolve_tool(name: &str, provider: Option<Provider>) -> Result<String, miniji
 /// Checks that every `tool-names` map the render consults covers the tool:
 /// every provider's when rendering without a provider, and that provider's
 /// otherwise, so a reference that only one provider's render reaches still
-/// fails `compile`. It does not check that the spec grants the tool; that is
-/// a separate concern from naming it.
+/// fails `compile`. A tool a consulted map sets to `false` fails the render
+/// too. It does not check that the spec grants the tool; that is a separate
+/// concern from naming it.
 fn resolve_mcp_tool(
     server: &str,
     tool: &str,
@@ -290,16 +291,31 @@ fn resolve_mcp_tool(
         .as_ref()
         .map_or(Provider::VARIANTS, std::slice::from_ref);
     for p in consulted {
-        if let Some(names) = p.adapter().mcp_tool_names(declaration)
-            && !names.contains_key(tool)
-        {
-            return Err(minijinja::Error::new(
-                minijinja::ErrorKind::InvalidOperation,
-                format!(
-                    "mcp_tool() names '{tool}' of server '{server}', which [mcp.{server}.{p}] \
-                     `tool-names` does not map; add `{tool} = \"<real name>\"`"
-                ),
-            ));
+        let Some(names) = p.adapter().mcp_tool_names(declaration) else {
+            continue;
+        };
+        match names.get(tool) {
+            None => {
+                return Err(minijinja::Error::new(
+                    minijinja::ErrorKind::InvalidOperation,
+                    format!(
+                        "mcp_tool() names '{tool}' of server '{server}', which \
+                         [mcp.{server}.{p}] `tool-names` does not map; add \
+                         `{tool} = \"<real name>\"`"
+                    ),
+                ));
+            }
+            Some(McpToolName::Absent) => {
+                return Err(minijinja::Error::new(
+                    minijinja::ErrorKind::InvalidOperation,
+                    format!(
+                        "mcp_tool() names '{tool}' of server '{server}', which \
+                         [mcp.{server}.{p}] `tool-names` sets to `false`: that server has no \
+                         equivalent of it, so no body can name it"
+                    ),
+                ));
+            }
+            Some(McpToolName::Real(_)) => {}
         }
     }
     let Some(p) = provider else {
@@ -2065,7 +2081,7 @@ mod mcp_tool_tests {
     fn names(entries: &[(&str, &str)]) -> McpToolNames {
         entries
             .iter()
-            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .map(|(k, v)| ((*k).to_owned(), McpToolName::Real((*v).to_owned())))
             .collect()
     }
 
@@ -2124,5 +2140,34 @@ mod mcp_tool_tests {
             .expect_err("Claude's map lacks the tool");
         let msg = format!("{err:#}");
         assert!(msg.contains("[mcp.jira.claude] `tool-names`"), "{msg}");
+    }
+
+    /// A tool a consulted map sets to `false` has no name to render; a render
+    /// that does not consult that map is unaffected.
+    #[test]
+    fn test_tool_names_mcp_tool_rejects_false_tool() {
+        let servers = McpServers::from([(
+            "jira".to_owned(),
+            McpServer {
+                cursor: Some(CursorMcpServer {
+                    tool_names: Some(McpToolNames::from([(
+                        "get".to_owned(),
+                        McpToolName::Absent,
+                    )])),
+                    ..CursorMcpServer::default()
+                }),
+                ..McpServer::default()
+            },
+        )]);
+        for provider in [None, Some(Provider::Cursor)] {
+            let err = resolve_mcp_tool("jira", "get", &servers, provider).expect_err("rejected");
+            let msg = format!("{err:#}");
+            assert!(msg.contains("sets to `false`"), "{provider:?}: {msg}");
+            assert!(msg.contains("[mcp.jira.cursor]"), "{provider:?}: {msg}");
+        }
+        assert_eq!(
+            resolve_mcp_tool("jira", "get", &servers, Some(Provider::Claude)).expect("resolves"),
+            "mcp__jira__get"
+        );
     }
 }

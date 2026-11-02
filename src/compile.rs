@@ -5,11 +5,12 @@ use anyhow::Result;
 
 use crate::adapters::{CompileCtx, Degradation, Delivery, SyncDestinationMode};
 use crate::declarations::Declarations;
+use crate::mcp::{McpServers, resolve_named_tools};
 use crate::plan::{FileKind, ForwardPatch};
 use crate::presets::ProviderPresetsMap;
 use crate::provider::Provider;
-use crate::setting::SettingKey;
-use crate::spec::{HookEvent, Spec};
+use crate::setting::{SettingKey, SettingKind};
+use crate::spec::{HookEvent, McpGrant, McpTools, Spec};
 use crate::specs::ValidatedSpecs;
 use crate::templating::{TemplateContext, Templating, resolve_fragments};
 
@@ -377,23 +378,98 @@ impl Loss {
     }
 }
 
+/// A granted tool that a `false` entry in `[mcp.<server>.<provider>]
+/// tool-names` withheld from a file kind that carries MCP grants.
+///
+/// Derived in [`intents`] from the same resolver the adapters emit grants
+/// through, so the tools dropped here and the ids an adapter omitted cannot
+/// disagree. It is not a [`Loss`]: it names a share of configured intent the
+/// author's own config withheld, which is why the subtraction never sees it.
+/// The constructor is private to this module.
+///
+/// Field declaration order is the sort key.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ConfigDrop {
+    provider: Provider,
+    server: String,
+    tool: String,
+    kind: FileKind,
+    spec_type: &'static str,
+    spec_id: String,
+}
+
+impl ConfigDrop {
+    /// Build a config drop directly, for tests that exercise a renderer rather
+    /// than the derivation that produces one.
+    ///
+    /// Test support, not part of the supported surface — `intents` is the only
+    /// producer in the pipeline. It cannot be `#[cfg(test)]` for the reason
+    /// [`Loss::for_test`] gives, and as there, nothing reaches
+    /// [`CompileDiagnostics`] from here.
+    #[doc(hidden)]
+    pub fn for_test(
+        provider: Provider,
+        server: &str,
+        tool: &str,
+        kind: FileKind,
+        spec_type: &'static str,
+        spec_id: &str,
+    ) -> Self {
+        Self {
+            provider,
+            server: server.to_owned(),
+            tool: tool.to_owned(),
+            kind,
+            spec_type,
+            spec_id: spec_id.to_owned(),
+        }
+    }
+
+    pub fn provider(&self) -> Provider {
+        self.provider
+    }
+
+    pub fn server(&self) -> &str {
+        &self.server
+    }
+
+    pub fn tool(&self) -> &str {
+        &self.tool
+    }
+
+    pub fn kind(&self) -> FileKind {
+        self.kind
+    }
+
+    pub fn spec_type(&self) -> &'static str {
+        self.spec_type
+    }
+
+    pub fn spec_id(&self) -> &str {
+        &self.spec_id
+    }
+}
+
 /// Diagnostics surfaced from the compile stage.
 ///
-/// Three channels, split by who originates them. `losses` records values an
+/// Four channels, split by who originates them. `losses` records values an
 /// author configured that reached no generated file; each is derived here by
 /// subtracting what the adapters recorded delivering from what the author
-/// configured, so no adapter constructs one. `degradations` records provider
+/// configured, so no adapter constructs one. `config_drops` records granted
+/// tools a `false` entry in `tool-names` withheld, split off configured intent
+/// here before the subtraction. `degradations` records provider
 /// limitations — facts about a provider runtime acting on bytes agentspec
 /// delivered successfully — each constructed by the adapter making the claim
 /// and drained here. `parity` records disagreements across the active
 /// provider set, which no single adapter can compute.
 ///
-/// Every field is private, and neither `Loss` nor `Degradation` has a
-/// constructor reachable from outside its own module, so no code path can
-/// append to the wrong channel.
+/// Every field is private, and none of `Loss`, `ConfigDrop`, and
+/// `Degradation` has a pipeline constructor reachable from outside its own
+/// module, so no code path can append to the wrong channel.
 #[derive(Debug, Default)]
 pub struct CompileDiagnostics {
     losses: Vec<Loss>,
+    config_drops: Vec<ConfigDrop>,
     degradations: Vec<Degradation>,
     parity: Vec<ParityWarning>,
 }
@@ -405,6 +481,13 @@ impl CompileDiagnostics {
     /// same population `categorical` was counted against — stays contiguous.
     pub fn losses(&self) -> &[Loss] {
         &self.losses
+    }
+
+    /// Ordered by `(provider, server, tool, kind, spec_type, spec_id)`, so
+    /// consecutive entries sharing `(provider, server, tool)` form a
+    /// renderable group.
+    pub fn config_drops(&self) -> &[ConfigDrop] {
+        &self.config_drops
     }
 
     /// Ordered by `(provider, kind, subject)` and deduplicated at the drain
@@ -457,13 +540,23 @@ type Intent = (String, SettingKey, Option<FileKind>);
 /// A spec the provider emitted nothing for yields only its `Body` intent.
 /// Reporting a lost `model` beside "no file at all" is noise, and a per-kind
 /// rule over an empty set would make the total drop unreportable.
+///
+/// An MCP grant raises one `mcp.<server>` intent per emitted kind. On a kind
+/// whose `carriable` table carries MCP grants, each named tool the provider's
+/// `tool-names` sets to `false` becomes a [`ConfigDrop`] rather than part of
+/// the server's intent, and a grant whose every tool is `false` raises no
+/// intent at all. On other kinds the whole grant stays an intent, so it
+/// surfaces as an ordinary loss.
 fn intents(
     specs: &[Spec],
     provider: Provider,
     presets: &ProviderPresetsMap,
+    servers: &McpServers,
     files: &[GeneratedFile],
-) -> Vec<Intent> {
+) -> (Vec<Intent>, Vec<ConfigDrop>) {
+    let adapter = provider.adapter();
     let mut out = Vec::new();
+    let mut drops = Vec::new();
     for spec in specs {
         let id = spec.id();
         out.push((id.to_owned(), SettingKey::Body, None));
@@ -492,31 +585,68 @@ fn intents(
         if spec.declares_paths() {
             configured.push(SettingKey::Paths);
         }
-        if let Some(grants) = spec.mcp_grants() {
-            configured.extend(grants.keys().map(|server| SettingKey::Mcp(server.clone())));
-        }
 
         for key in configured {
             for &kind in &emitted {
                 out.push((id.to_owned(), key.clone(), Some(kind)));
             }
         }
+
+        for (server, McpGrant { tools }) in spec.mcp_grants().into_iter().flatten() {
+            for &kind in &emitted {
+                let intent = (id.to_owned(), SettingKey::Mcp(server.clone()), Some(kind));
+                // Resolve only where this provider writes the grant.
+                // Validation requires map coverage only there
+                // (`validate_mcp_tool_coverage`), so a map on a kind that
+                // writes no grant may lack a granted tool, and resolving it
+                // would trip `real_tool_name`'s unmapped-key check.
+                let named = match tools {
+                    McpTools::Named(named)
+                        if adapter.carriable(kind).contains(&SettingKind::Mcp) =>
+                    {
+                        named
+                    }
+                    McpTools::Named(_) | McpTools::All => {
+                        out.push(intent);
+                        continue;
+                    }
+                };
+                let names = servers
+                    .get(server)
+                    .and_then(|declaration| adapter.mcp_tool_names(declaration));
+                let resolved = resolve_named_tools(names, named);
+                drops.extend(resolved.dropped.iter().map(|tool| ConfigDrop {
+                    provider,
+                    server: server.clone(),
+                    tool: (*tool).to_owned(),
+                    kind,
+                    spec_type: spec.spec_type(),
+                    spec_id: id.to_owned(),
+                }));
+                if !resolved.real.is_empty() {
+                    out.push(intent);
+                }
+            }
+        }
     }
-    out
+    (out, drops)
 }
 
 /// Subtract what each adapter recorded delivering from what the author
-/// configured. The remainder is the loss set.
+/// configured. The remainder is the loss set; the config drops `intents`
+/// split off on the way are returned beside it.
 fn derive_losses(
     specs: &[Spec],
     presets: &ProviderPresetsMap,
+    servers: &McpServers,
     providers: &[Provider],
     files: &[GeneratedFile],
     deliveries: &HashMap<Provider, Vec<Delivery>>,
-) -> BTreeSet<Loss> {
+) -> (BTreeSet<Loss>, BTreeSet<ConfigDrop>) {
     let spec_types: HashMap<&str, &'static str> =
         specs.iter().map(|s| (s.id(), s.spec_type())).collect();
     let mut losses: BTreeSet<Loss> = BTreeSet::new();
+    let mut config_drops: BTreeSet<ConfigDrop> = BTreeSet::new();
 
     for &provider in providers {
         // A `Body` delivery is reduced to `(spec_id, Body, None)`, discarding
@@ -549,7 +679,8 @@ fn derive_losses(
             .filter_map(|f| f.spec_id.as_deref())
             .collect();
 
-        let raised = intents(specs, provider, presets, files);
+        let (raised, drops) = intents(specs, provider, presets, servers, files);
+        config_drops.extend(drops);
         let mut lost: Vec<Intent> = Vec::new();
         for intent in &raised {
             let satisfied = if intent.1 == SettingKey::Body {
@@ -582,7 +713,10 @@ fn derive_losses(
             // agent `tools` and `OpenCode`'s `permission` map exist only beside
             // `capabilities.tools`. `validate_semantics` closes that gap by
             // rejecting an agent that declares `mcp` without `tools`, and both
-            // adapters `debug_assert!` it. `test_carriable_agrees_with_carried` checks the weaker
+            // adapters `debug_assert!` it. A grant whose every named tool is set
+            // to `false` raises no `Mcp` intent on a carriable kind, so it
+            // cannot reach this check either.
+            // `test_carriable_agrees_with_carried` checks the weaker
             // existential claim (some spec delivered each declared setting),
             // so it narrows this rather than proving it; a future adapter that
             // gates a declared field on a predicate narrower than the one
@@ -621,7 +755,7 @@ fn derive_losses(
             });
         }
     }
-    losses
+    (losses, config_drops)
 }
 
 /// Compile validated specs into provider-specific generated files.
@@ -636,10 +770,11 @@ fn derive_losses(
 /// (Path mode, no `target_dir`, no overwrite) — appropriate for the `compile`
 /// command path which has no sync destination.
 ///
-/// Returns the generated files alongside a [`CompileDiagnostics`] carrying two
-/// channels: the `Degradation` values each adapter reported for inputs it
-/// could not honor, and the cross-provider `ParityWarning` gates that only the
-/// full active provider set can evaluate.
+/// Returns the generated files alongside a [`CompileDiagnostics`] carrying the
+/// losses derived by subtraction, the config drops `tool-names` asked for, the
+/// `Degradation` values each adapter reported for inputs it could not honor,
+/// and the cross-provider `ParityWarning` gates that only the full active
+/// provider set can evaluate.
 ///
 /// Declarations come from `validated`, not a parameter, so the ones compiled
 /// against are the ones [`Specs::validate`](crate::specs::Specs::validate)
@@ -755,9 +890,10 @@ pub(crate) fn compile_specs(
     // capabilities, and paths pass through untouched, so both sides agree on
     // spec identity and on what the author configured. A resolution step that
     // ever rewrote frontmatter would make every setting read as lost.
-    let losses = derive_losses(
+    let (losses, config_drops) = derive_losses(
         specs,
         &declarations.presets,
+        &declarations.mcp,
         &sorted_providers,
         &files,
         &deliveries,
@@ -809,12 +945,14 @@ pub(crate) fn compile_specs(
             dest_roots,
         },
         CompileDiagnostics {
-            // `BTreeSet` ordering is what makes both drained orders
+            // `BTreeSet` ordering is what makes every drained order
             // independent of adapter iteration order and of the order in which
             // an adapter happens to walk specs — by
-            // `(provider, setting, kind, spec_type, spec_id)` for losses and
-            // `(provider, kind, subject)` for degradations.
+            // `(provider, setting, kind, spec_type, spec_id)` for losses,
+            // `(provider, server, tool, kind, spec_type, spec_id)` for config
+            // drops, and `(provider, kind, subject)` for degradations.
             losses: losses.into_iter().collect(),
+            config_drops: config_drops.into_iter().collect(),
             degradations: degradations.into_iter().collect(),
             parity,
         },
@@ -827,15 +965,16 @@ mod loss_tests {
 
     use indexmap::IndexMap;
 
-    use super::{GeneratedFile, Loss, derive_losses};
+    use super::{ConfigDrop, GeneratedFile, Loss, derive_losses};
     use crate::adapters::Delivery;
+    use crate::mcp::{McpServer, McpServers, McpToolName, McpToolNames, OpenCodeMcpServer};
     use crate::plan::FileKind;
     use crate::presets::{OpenCodePreset, ProviderPresets, ProviderPresetsMap};
     use crate::provider::Provider;
     use crate::setting::SettingKey;
     use crate::spec::{
-        CapabilitiesFrontmatter, ExecutionFrontmatter, McpGrant, McpTools, SkillFrontmatter,
-        SkillSpec, Spec, ToolFrontmatter,
+        AgentFrontmatter, AgentSpec, CapabilitiesFrontmatter, ExecutionFrontmatter, McpGrant,
+        McpTools, SkillFrontmatter, SkillSpec, Spec, ToolFrontmatter,
     };
 
     const PROVIDER: Provider = Provider::OpenCode;
@@ -885,10 +1024,83 @@ mod loss_tests {
     }
 
     fn losses_for(specs: &[Spec], files: &[GeneratedFile], deliveries: Vec<Delivery>) -> Vec<Loss> {
+        derive(specs, &McpServers::new(), files, deliveries).0
+    }
+
+    /// Both halves of [`derive_losses`], against `servers`.
+    fn derive(
+        specs: &[Spec],
+        servers: &McpServers,
+        files: &[GeneratedFile],
+        deliveries: Vec<Delivery>,
+    ) -> (Vec<Loss>, Vec<ConfigDrop>) {
         let map = std::collections::HashMap::from([(PROVIDER, deliveries)]);
-        derive_losses(specs, &presets(), &[PROVIDER], files, &map)
-            .into_iter()
-            .collect()
+        let (losses, drops) = derive_losses(specs, &presets(), servers, &[PROVIDER], files, &map);
+        (losses.into_iter().collect(), drops.into_iter().collect())
+    }
+
+    /// An agent granting `grants`, with no `capabilities.tools`. No adapter
+    /// runs in these tests, so the `Mcp` intent comes from the grant alone,
+    /// and a `tools` list would raise a `Tools` intent on `Agents` that
+    /// `OpenCode`'s table carries — undelivered, it would trip the
+    /// `derive_losses` debug check.
+    fn agent(id: &str, grants: &[(&str, &[&str])]) -> Spec {
+        Spec::Agent(AgentSpec {
+            path: "test.md".into(),
+            frontmatter: AgentFrontmatter {
+                id: id.to_owned(),
+                description: "d".to_owned(),
+                tags: None,
+                execution: None,
+                capabilities: Some(mcp_capabilities(grants)),
+            },
+            body: "Body.".to_owned(),
+        })
+    }
+
+    fn mcp_capabilities(grants: &[(&str, &[&str])]) -> CapabilitiesFrontmatter {
+        CapabilitiesFrontmatter {
+            tools: None,
+            mcp: Some(
+                grants
+                    .iter()
+                    .map(|(server, tools)| {
+                        (
+                            (*server).to_owned(),
+                            McpGrant {
+                                tools: McpTools::Named(
+                                    tools.iter().map(|t| (*t).to_owned()).collect(),
+                                ),
+                            },
+                        )
+                    })
+                    .collect(),
+            ),
+        }
+    }
+
+    /// `[mcp.s]` whose `OpenCode` block maps `real` to themselves and sets
+    /// `absent` to `false`.
+    fn servers(real: &[&str], absent: &[&str]) -> McpServers {
+        let names: McpToolNames = real
+            .iter()
+            .map(|t| ((*t).to_owned(), McpToolName::Real((*t).to_owned())))
+            .chain(
+                absent
+                    .iter()
+                    .map(|t| ((*t).to_owned(), McpToolName::Absent)),
+            )
+            .collect();
+        McpServers::from([(
+            "s".to_owned(),
+            McpServer {
+                opencode: Some(OpenCodeMcpServer {
+                    server: None,
+                    tool_names: Some(names),
+                }),
+                ..McpServer::default()
+            },
+        )])
     }
 
     #[test]
@@ -1020,6 +1232,88 @@ mod loss_tests {
             !model_losses[0].is_categorical(),
             "one holder delivered, so the group is per-spec: {model_losses:#?}"
         );
+    }
+
+    fn dropped(drops: &[ConfigDrop]) -> Vec<(&str, &str, FileKind)> {
+        drops
+            .iter()
+            .map(|d| (d.server(), d.tool(), d.kind()))
+            .collect()
+    }
+
+    #[test]
+    fn test_false_tool_on_carriable_kind_is_a_config_drop() {
+        let specs = [agent("a", &[("s", &["a", "b"])])];
+        let files = [file("a", FileKind::Agents)];
+        let mcp = SettingKey::Mcp("s".to_owned());
+        let (losses, drops) = derive(
+            &specs,
+            &servers(&["a"], &["b"]),
+            &files,
+            vec![delivery("a", &mcp, FileKind::Agents)],
+        );
+        assert!(losses.is_empty(), "{losses:#?}");
+        assert_eq!(dropped(&drops), [("s", "b", FileKind::Agents)]);
+    }
+
+    /// No adapter writes an entry for a grant whose every tool is `false`, so
+    /// raising its intent would trip the `derive_losses` debug check.
+    #[test]
+    fn test_all_false_grant_raises_no_intent() {
+        let specs = [agent("a", &[("s", &["a", "b"])])];
+        let files = [file("a", FileKind::Agents)];
+        let (losses, drops) = derive(&specs, &servers(&[], &["a", "b"]), &files, Vec::new());
+        assert!(losses.is_empty(), "{losses:#?}");
+        assert_eq!(
+            dropped(&drops),
+            [("s", "a", FileKind::Agents), ("s", "b", FileKind::Agents)]
+        );
+    }
+
+    /// A whole-server grant names no tool, so a `false` entry withholds
+    /// nothing from it.
+    #[test]
+    fn test_whole_server_grant_ignores_false_entries() {
+        let mut spec = agent("a", &[]);
+        if let Spec::Agent(a) = &mut spec {
+            a.frontmatter.capabilities = Some(CapabilitiesFrontmatter {
+                tools: None,
+                mcp: Some(BTreeMap::from([(
+                    "s".to_owned(),
+                    McpGrant {
+                        tools: McpTools::All,
+                    },
+                )])),
+            });
+        }
+        let files = [file("a", FileKind::Agents)];
+        let mcp = SettingKey::Mcp("s".to_owned());
+        let (losses, drops) = derive(
+            &[spec],
+            &servers(&[], &["a"]),
+            &files,
+            vec![delivery("a", &mcp, FileKind::Agents)],
+        );
+        assert!(losses.is_empty(), "{losses:#?}");
+        assert!(drops.is_empty(), "{drops:#?}");
+    }
+
+    /// `OpenCode` writes no grant on a skill file, so the whole grant is lost
+    /// there whatever `tool-names` says.
+    #[test]
+    fn test_false_tool_on_non_carriable_kind_stays_a_loss() {
+        let mut spec = skill("k", false, false);
+        if let Spec::Skill(s) = &mut spec {
+            s.frontmatter.capabilities = Some(mcp_capabilities(&[("s", &["a", "b"])]));
+        }
+        let files = [file("k", FileKind::Skills)];
+        let (losses, drops) = derive(&[spec], &servers(&[], &["a", "b"]), &files, Vec::new());
+        let lost: Vec<String> = losses
+            .iter()
+            .map(|l| l.setting().label().into_owned())
+            .collect();
+        assert_eq!(lost, ["mcp.s"]);
+        assert!(drops.is_empty(), "{drops:#?}");
     }
 }
 

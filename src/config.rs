@@ -548,7 +548,9 @@ impl SyncFlags {
 mod tests {
     use std::fs;
 
-    use agentspec::mcp::{ClaudeMcpServer, McpServer, McpToolNames, OpenCodeMcpServer};
+    use agentspec::mcp::{
+        ClaudeMcpServer, McpServer, McpToolName, McpToolNames, OpenCodeMcpServer,
+    };
     use agentspec::presets::{ClaudeEffort, ClaudePreset, CursorPreset, OpenCodePreset};
 
     use super::*;
@@ -693,9 +695,49 @@ server = "jira"
             claude.and_then(|c| c.tool_names.clone()),
             Some(McpToolNames::from([(
                 "getJiraIssue".into(),
-                "get_issue".into()
+                McpToolName::Real("get_issue".into())
             )]))
         );
+    }
+
+    #[test]
+    fn test_discover_parses_mcp_tool_names_false() {
+        let config =
+            discover_toml("[mcp.atlassian.claude]\ntool-names = { a = \"x\", b = false }\n")
+                .expect("expected value");
+        let names = config.mcp["atlassian"]
+            .claude
+            .as_ref()
+            .and_then(|c| c.tool_names.clone())
+            .unwrap_or_default();
+        assert_eq!(names.get("b"), Some(&McpToolName::Absent));
+        assert_eq!(names.get("a"), Some(&McpToolName::Real("x".into())));
+    }
+
+    #[test]
+    fn test_discover_rejects_mcp_tool_names_true() {
+        let err = discover_toml("[mcp.atlassian.claude]\ntool-names = { a = true }\n")
+            .expect_err("parse error");
+        let full = format!("{err:#}");
+        assert!(
+            full.contains("a real tool name or `false`"),
+            "error: {full}"
+        );
+    }
+
+    #[test]
+    fn test_discover_rejects_mcp_tool_names_of_other_types() {
+        for value in ["1", "{}", "[\"x\"]"] {
+            let err = discover_toml(&format!(
+                "[mcp.atlassian.claude]\ntool-names = {{ a = {value} }}\n"
+            ))
+            .expect_err("parse error");
+            let full = format!("{err:#}");
+            assert!(
+                full.contains("a real tool name or `false`"),
+                "{value}: {full}"
+            );
+        }
     }
 
     /// The key is spelled kebab-case; the snake-case field name is not

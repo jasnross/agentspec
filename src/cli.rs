@@ -31,7 +31,7 @@ pub enum Command {
     /// Compile spec files into provider-specific configurations
     Compile(CommonArgs),
 
-    /// Report configured values that reached no generated file, and measured provider limitations
+    /// Report configured values that reached no generated file, tools a `tool-names` entry dropped, and measured provider limitations
     Inspect(CommonArgs),
 
     /// Compile and distribute generated files to each tool's config directory

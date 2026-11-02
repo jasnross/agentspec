@@ -5,18 +5,22 @@
 //! happens here, and the caller does the printing. That split is what makes
 //! the report unit-testable without spawning the binary.
 
+use std::collections::BTreeSet;
+
 use agentspec::adapters::Presentation;
-use agentspec::compile::{CompileDiagnostics, Loss};
+use agentspec::compile::{CompileDiagnostics, ConfigDrop, Loss};
 
 /// Render the compile-stage diagnostics as stderr-ready lines.
 ///
-/// Two sections making claims of different strength. A **loss** is agentspec's
+/// Three sections making claims of different kinds. A **loss** is agentspec's
 /// own warranty about its own output — a value the author configured that
 /// reached no generated file — and is certain. A **provider limitation** is a
 /// measured claim about how a provider's runtime treats bytes agentspec
-/// delivered successfully, and cites `docs/hooks-canonical.md`.
+/// delivered successfully, and cites `docs/hooks-canonical.md`. A **config
+/// drop** is a granted tool the author's own `tool-names` entry withheld by
+/// setting it to `false`, and names that entry.
 ///
-/// Neither section renders a success state, because agentspec cannot warrant
+/// No section renders a success state, because agentspec cannot warrant
 /// that a delivered value is honored — `README.md` records the standing
 /// example, an `OpenCode` `variant` discarded whenever the session resolves a
 /// different model than the agent declares.
@@ -24,12 +28,13 @@ use agentspec::compile::{CompileDiagnostics, Loss};
 /// `verbose` lists the specs behind a counted line. It changes nothing else:
 /// per-spec loss lines and provider limitations render identically either way.
 ///
-/// Returns an empty `Vec` when there is nothing in either section, so the
-/// caller prints nothing rather than a bare heading.
+/// Returns an empty `Vec` when there is nothing in any of the three sections,
+/// so the caller prints nothing rather than a bare heading.
 pub fn format_compile_report(diagnostics: &CompileDiagnostics, verbose: bool) -> Vec<String> {
     let losses = diagnostics.losses();
     let limitations = format_limitations(diagnostics);
-    if losses.is_empty() && limitations.is_empty() {
+    let drops = diagnostics.config_drops();
+    if losses.is_empty() && limitations.is_empty() && drops.is_empty() {
         return Vec::new();
     }
 
@@ -43,8 +48,22 @@ pub fn format_compile_report(diagnostics: &CompileDiagnostics, verbose: bool) ->
         lines.push(String::from("provider limitations:"));
         lines.extend(limitations);
     }
+    if !drops.is_empty() {
+        lines.push(String::from("dropped by config:"));
+        lines.extend(format_config_drops(drops, verbose));
+    }
+    // A library with no `false` entries keeps the two-count footer.
+    let drop_count = if drops.is_empty() {
+        String::new()
+    } else {
+        format!(
+            ", {} config {}",
+            drops.len(),
+            if drops.len() == 1 { "drop" } else { "drops" }
+        )
+    };
     lines.push(format!(
-        "{} {}, {limitation_count} provider {}",
+        "{} {}, {limitation_count} provider {}{drop_count}",
         losses.len(),
         if losses.len() == 1 { "loss" } else { "losses" },
         if limitation_count == 1 {
@@ -175,6 +194,50 @@ fn explain_group(head: &Loss) -> String {
     }
 }
 
+/// Group config drops by `(provider, server, tool)`, one counted line each.
+///
+/// A `false` entry applies to every spec granting the tool on that provider,
+/// so every group is categorical: the line counts the distinct specs, and
+/// `verbose` lists them. The input arrives ordered by `(provider, server, tool, kind,
+/// spec_type, spec_id)`, so a group's members are adjacent.
+fn format_config_drops(drops: &[ConfigDrop], verbose: bool) -> Vec<String> {
+    let mut lines = Vec::new();
+    let groups = drops.chunk_by(|a, b| {
+        a.provider() == b.provider() && a.server() == b.server() && a.tool() == b.tool()
+    });
+    for group in groups {
+        // Unreachable for the reason `format_losses` gives.
+        let Some(head) = group.first() else { continue };
+        let provider = head.provider();
+        // A spec emitting two kinds that both carry grants drops the tool
+        // from each, so the count is of distinct specs, not of drops.
+        let specs: BTreeSet<(&str, &str)> = group
+            .iter()
+            .map(|drop| (drop.spec_type(), drop.spec_id()))
+            .collect();
+        let n = specs.len();
+        let (word, verb) = if n == 1 {
+            ("spec", "drops")
+        } else {
+            ("specs", "drop")
+        };
+        lines.push(format!(
+            "  {provider}: {n} {word} {verb} `mcp.{server}.{tool}` — [mcp.{server}.{provider}] \
+             `tool-names` sets it to `false`",
+            server = head.server(),
+            tool = head.tool(),
+        ));
+        if verbose {
+            for (spec_type, spec_id) in specs {
+                lines.push(format!("    {spec_type}/{spec_id}"));
+            }
+        } else {
+            lines.push(String::from("    (--verbose lists them)"));
+        }
+    }
+    lines
+}
+
 /// Provider limitations, one line each: the adapter-pushed degradations
 /// followed by the cross-provider parity warnings.
 fn format_limitations(diagnostics: &CompileDiagnostics) -> Vec<String> {
@@ -214,7 +277,7 @@ mod tests {
     use agentspec::provider::Provider;
     use agentspec::setting::SettingKey;
 
-    use super::{format_compile_report, format_losses};
+    use super::{format_compile_report, format_config_drops, format_losses};
 
     /// `Loss` has no public constructor by design, so the renderer's own tests
     /// build the shape they render through the library's test-only builder.
@@ -309,5 +372,130 @@ mod tests {
             lines.iter().any(|l| l.contains("no opencode skills file")),
             "{lines:#?}"
         );
+    }
+
+    #[test]
+    fn test_config_drops_render_counted_line_per_tool() {
+        let drops = [
+            agentspec::compile::ConfigDrop::for_test(
+                Provider::OpenCode,
+                "s",
+                "t",
+                FileKind::Agents,
+                "agent",
+                "a",
+            ),
+            agentspec::compile::ConfigDrop::for_test(
+                Provider::OpenCode,
+                "s",
+                "t",
+                FileKind::Agents,
+                "agent",
+                "b",
+            ),
+        ];
+
+        let quiet = format_config_drops(&drops, false);
+        assert_eq!(quiet.len(), 2, "{quiet:#?}");
+        assert!(quiet[0].contains("2 specs drop `mcp.s.t`"), "{quiet:#?}");
+        assert!(
+            quiet[0].contains("[mcp.s.opencode] `tool-names` sets it to `false`"),
+            "{quiet:#?}"
+        );
+        assert!(quiet[1].contains("(--verbose lists them)"), "{quiet:#?}");
+
+        let loud = format_config_drops(&drops, true);
+        assert_eq!(loud.len(), 3, "{loud:#?}");
+        assert!(loud[1].contains("agent/a"), "{loud:#?}");
+        assert!(loud[2].contains("agent/b"), "{loud:#?}");
+    }
+
+    /// One spec dropping a tool from two file kinds is still one spec.
+    #[test]
+    fn test_config_drops_count_each_spec_once() {
+        let drops = [
+            agentspec::compile::ConfigDrop::for_test(
+                Provider::OpenCode,
+                "s",
+                "t",
+                FileKind::Agents,
+                "skill",
+                "a",
+            ),
+            agentspec::compile::ConfigDrop::for_test(
+                Provider::OpenCode,
+                "s",
+                "t",
+                FileKind::Commands,
+                "skill",
+                "a",
+            ),
+        ];
+        let quiet = format_config_drops(&drops, false);
+        assert!(quiet[0].contains("1 spec drops `mcp.s.t`"), "{quiet:#?}");
+        let loud = format_config_drops(&drops, true);
+        assert_eq!(loud.len(), 2, "{loud:#?}");
+    }
+
+    #[test]
+    fn test_single_config_drop_uses_singular_verb() {
+        let drops = [agentspec::compile::ConfigDrop::for_test(
+            Provider::Claude,
+            "s",
+            "t",
+            FileKind::Skills,
+            "skill",
+            "a",
+        )];
+        let lines = format_config_drops(&drops, false);
+        assert!(lines[0].contains("1 spec drops `mcp.s.t`"), "{lines:#?}");
+    }
+
+    #[test]
+    fn test_config_drops_split_by_provider_server_and_tool() {
+        let two_tools = [
+            agentspec::compile::ConfigDrop::for_test(
+                Provider::Claude,
+                "s",
+                "t",
+                FileKind::Agents,
+                "agent",
+                "a",
+            ),
+            agentspec::compile::ConfigDrop::for_test(
+                Provider::Claude,
+                "s",
+                "u",
+                FileKind::Agents,
+                "agent",
+                "a",
+            ),
+        ];
+        let two_providers = [
+            agentspec::compile::ConfigDrop::for_test(
+                Provider::Claude,
+                "s",
+                "t",
+                FileKind::Agents,
+                "agent",
+                "a",
+            ),
+            agentspec::compile::ConfigDrop::for_test(
+                Provider::OpenCode,
+                "s",
+                "t",
+                FileKind::Agents,
+                "agent",
+                "a",
+            ),
+        ];
+        for drops in [two_tools, two_providers] {
+            let lines = format_config_drops(&drops, false);
+            let counted: Vec<&String> = lines
+                .iter()
+                .filter(|l| l.contains("1 spec drops"))
+                .collect();
+            assert_eq!(counted.len(), 2, "{lines:#?}");
+        }
     }
 }

@@ -272,12 +272,12 @@ impl Adapter for CursorAdapter {
     }
 
     /// `<server>:<tool>`, where `<server>` is `[mcp.<name>.cursor] server` or the
-    /// logical name, and `<tool>` is the tool's `[mcp.<name>.cursor] tool-names`
-    /// entry or its logical name. Descriptive: Cursor docs name no model-facing
-    /// id for an MCP tool, and `server:tool` is the only form they use to name
-    /// one tool by server and tool (its permission rules). Unlike a
-    /// description, it reads correctly inside backticks, where most tool
-    /// references sit.
+    /// logical name, and `<tool>` is the tool's real name under
+    /// `[mcp.<name>.cursor] tool-names`, or its logical name. Descriptive:
+    /// Cursor docs name no model-facing id for an MCP tool, and `server:tool`
+    /// is the only form they use to name one tool by server and tool (its
+    /// permission rules). Unlike a description, it reads correctly inside
+    /// backticks, where most tool references sit.
     fn body_mcp_tool_name(&self, server: &McpServer, logical: &str, tool: &str) -> String {
         let McpServer {
             claude: _,
@@ -289,7 +289,12 @@ impl Adapter for CursorAdapter {
             .and_then(|c| c.server.as_deref())
             .unwrap_or(logical);
         let real = real_tool_name(tool_names(server), tool);
-        format!("{resolved}:{real}")
+        debug_assert!(
+            real.is_some(),
+            "mcp_tool() reference to '{tool}', which `tool-names` sets to false, should have \
+             been rejected by resolve_mcp_tool"
+        );
+        format!("{resolved}:{}", real.unwrap_or(tool))
     }
 
     fn mcp_tool_names<'a>(&self, server: &'a McpServer) -> Option<&'a McpToolNames> {
@@ -2367,7 +2372,7 @@ mod mcp_declaration_tests {
                 server: Some("company_jira".to_owned()),
                 tool_names: Some(McpToolNames::from([(
                     "getJiraIssue".to_owned(),
-                    "get_issue".to_owned(),
+                    crate::mcp::McpToolName::Real("get_issue".to_owned()),
                 )])),
             }),
             ..McpServer::default()

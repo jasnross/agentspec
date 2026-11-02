@@ -6,7 +6,7 @@ use globset::GlobBuilder;
 use strum::VariantArray as _;
 
 use crate::declarations::Declarations;
-use crate::mcp::{McpServers, is_mcp_name};
+use crate::mcp::{McpServers, McpToolName, is_mcp_name};
 use crate::plan::FileKind;
 use crate::provider::Provider;
 use crate::setting::SettingKind;
@@ -202,7 +202,8 @@ fn validate_config_declarations(
 }
 
 /// The provider-neutral rule on each provider block's `tool-names`: every
-/// key and value is an MCP name.
+/// key is an MCP name, and every value is either a real name, which must be
+/// an MCP name too, or `false`.
 ///
 /// Several keys may share a value, for a server whose one tool serves several
 /// logical tools; Claude and `OpenCode` grant that tool once. Servers are
@@ -220,7 +221,9 @@ fn tool_names_errors(mcp: &McpServers) -> Vec<String> {
                 if !is_mcp_name(key) {
                     errors.push(format!("{block} key '{key}' must match [A-Za-z0-9_-]+"));
                 }
-                if !is_mcp_name(value) {
+                if let McpToolName::Real(value) = value
+                    && !is_mcp_name(value)
+                {
                     errors.push(format!(
                         "{block} maps '{key}' to '{value}', which must match [A-Za-z0-9_-]+"
                     ));
@@ -341,7 +344,8 @@ fn grant_kinds(spec: &Spec) -> &'static [FileKind] {
 }
 
 /// Require an entry for every named tool of every grant in each provider
-/// block's `tool-names`, for the providers that write the grant.
+/// block's `tool-names`, for the providers that write the grant. A real name
+/// and `false` each cover the tool.
 ///
 /// A provider whose `carriable` omits `Mcp` for the spec's kinds writes no
 /// grant for the spec, so requiring an entry there would demand config that
@@ -388,7 +392,8 @@ fn validate_mcp_tool_coverage(
                         message: format!(
                             "`capabilities.mcp.{server}.tools` names '{tool}', which \
                              [mcp.{server}.{provider}] `tool-names` does not map; add \
-                             `{tool} = \"<real name>\"`"
+                             `{tool} = \"<real name>\"`, or `{tool} = false` if that server \
+                             has no equivalent"
                         ),
                     });
                 }
@@ -863,8 +868,24 @@ mod tests {
     fn tool_names(entries: &[(&str, &str)]) -> McpToolNames {
         entries
             .iter()
-            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .map(|(k, v)| ((*k).to_owned(), McpToolName::Real((*v).to_owned())))
             .collect()
+    }
+
+    /// A Claude block whose `tool-names` sets each of `tools` to `false`.
+    fn claude_absent(tools: &[&str]) -> McpServer {
+        McpServer {
+            claude: Some(ClaudeMcpServer {
+                tool_names: Some(
+                    tools
+                        .iter()
+                        .map(|t| ((*t).to_owned(), McpToolName::Absent))
+                        .collect(),
+                ),
+                ..ClaudeMcpServer::default()
+            }),
+            ..McpServer::default()
+        }
     }
 
     fn claude_mapped(entries: &[(&str, &str)]) -> McpServer {
@@ -915,7 +936,8 @@ mod tests {
     fn coverage_message(tool: &str, provider: &str) -> String {
         format!(
             "`capabilities.mcp.s.tools` names '{tool}', which [mcp.s.{provider}] `tool-names` \
-             does not map; add `{tool} = \"<real name>\"`"
+             does not map; add `{tool} = \"<real name>\"`, or `{tool} = false` if that server has \
+             no equivalent"
         )
     }
 
@@ -952,6 +974,27 @@ mod tests {
                 "[mcp.s.claude] `tool-names` maps 'a' to 'x.y', which must match [A-Za-z0-9_-]+",
                 "[mcp.s.claude] `tool-names` maps 'b' to 'x.y', which must match [A-Za-z0-9_-]+",
             ]
+        );
+    }
+
+    #[test]
+    fn test_tool_names_false_value_needs_no_name_check() {
+        assert_eq!(
+            declaration_messages(claude_absent(&["a"])),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn test_tool_names_false_entry_covers_grant() {
+        let spec = with_mcp(
+            make_agent("a", "body"),
+            Some(vec![]),
+            &[("s", named(&["t"]))],
+        );
+        assert_eq!(
+            mcp_messages(spec, &declaring(claude_absent(&["t"]))),
+            Vec::<String>::new()
         );
     }
 

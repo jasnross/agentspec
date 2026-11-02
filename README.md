@@ -601,7 +601,7 @@ Built-in variables are available in both spec bodies and included fragments. Add
 
 A provider block's [`tool-names`](#mcp-servers) replaces the tool argument of `mcp_tool()` with the mapped name in that provider's spelling; the `none` row keeps the logical name.
 
-Cursor documents no name its model sees for an MCP tool, so agentspec uses `<server>:<tool>`, the form Cursor's permission docs use; `[mcp.<name>.cursor] server` overrides `<server>`. The server must be declared and the tool name must match `[A-Za-z0-9_-]+`, or rendering fails. Rendering also fails when a declared `tool-names` map lacks the tool. `mcp_tool()` does not check that the spec grants the tool it names, so pair each reference with a matching `capabilities.mcp` grant.
+Cursor documents no name its model sees for an MCP tool, so agentspec uses `<server>:<tool>`, the form Cursor's permission docs use; `[mcp.<name>.cursor] server` overrides `<server>`. The server must be declared and the tool name must match `[A-Za-z0-9_-]+`, or rendering fails. Rendering also fails when a declared `tool-names` map lacks the tool or sets it to `false`. `mcp_tool()` does not check that the spec grants the tool it names, so pair each reference with a matching `capabilities.mcp` grant.
 
 ## Usage
 
@@ -763,12 +763,12 @@ server = "jira"
 
 An absent block, or a block with no `server`, means the provider registers the server under its logical name. Every name — the logical name, each `server`, and `plugin` — must match `[A-Za-z0-9_-]+`, the only characters every provider leaves unchanged in a tool id.
 
-`tool-names` maps a logical tool name, as specs grant it and name it in `mcp_tool()`, to the real name of the server that provider reaches, so one spec can serve servers whose equivalent tools are named differently. Every key and value must match `[A-Za-z0-9_-]+`. Several keys may share a value, for a server whose one tool serves several logical tools; Claude and OpenCode then grant that tool once, and every `mcp_tool()` reference to those logical tools names it. A grant then reaches the whole real tool, so granting one of those logical tools grants what the others name too. Once a block declares the map, `agentspec validate` requires an entry for every named tool that provider writes: Claude writes agent and skill grants, OpenCode writes agent grants only, Cursor writes no grants, and every provider writes `mcp_tool()` references. A whole-server grant needs no entry. Use an identity entry (`x = "x"`) for a tool whose name is unchanged.
+`tool-names` maps a logical tool name, as specs grant it and name it in `mcp_tool()`, to the real name of the server that provider reaches, so one spec can serve servers whose equivalent tools are named differently. A value is either a real name or `false`, which marks a tool that server has no equivalent of. Every key, and every real name, must match `[A-Za-z0-9_-]+`. Several keys may share a value, for a server whose one tool serves several logical tools; Claude and OpenCode then grant that tool once, and every `mcp_tool()` reference to those logical tools names it. A grant then reaches the whole real tool, so granting one of those logical tools grants what the others name too. Once a block declares the map, `agentspec validate` requires an entry, a real name or `false`, for every named tool that provider writes: Claude writes agent and skill grants, OpenCode writes agent grants only, Cursor writes no grants, and every provider writes `mcp_tool()` references. A whole-server grant needs no entry. Use an identity entry (`x = "x"`) for a tool whose name is unchanged. A tool set to `false` is left out of every grant the provider writes, `mcp_tool()` fails on it, and `agentspec inspect` lists it under `dropped by config`.
 
 ```toml
 [mcp.tracker.claude]
 server = "company_jira"
-tool-names = { getJiraIssue = "get_issue", searchJiraIssuesUsingJql = "search" }
+tool-names = { getJiraIssue = "get_issue", searchJiraIssuesUsingJql = "search", getAccessibleAtlassianResources = false }
 ```
 
 **OpenCode server names must not overlap.** OpenCode names an MCP tool `<server>_<tool>`, so the permission key granting one server's tools also matches the tools of any server whose name extends it past an underscore. `agentspec validate` rejects two declared servers whose OpenCode names are equal, or where one is the other followed by `_` (`fx` beside `fx_extra`), and asks for a distinct `[mcp.<name>.opencode] server`. The same rule reserves the names of the two permissions agentspec writes into every restricted agent's map, `external_directory` and `doom_loop`, and of OpenCode's built-in `plan_enter` and `plan_exit`, so a server named `external` or `plan` is rejected too.
@@ -784,7 +784,7 @@ agentspec writes each grant into an agent's `tools` and a skill's `allowed-tools
 | `{ tools: [<tool>] }` | `mcp__<server>__<tool>` | `mcp__plugin_<plugin>_<server>__<tool>` |
 | `{ tools: all }` | `mcp__<server>__*` | `mcp__plugin_<plugin>_<server>__*` |
 
-`<server>` is `[mcp.<name>.claude] server`, or the logical name. `<tool>` is the `tool-names` entry for the tool, or the tool's name in the grant. Because Claude joins the parts of an id with `__`, and a plugin to its server with `_`, `agentspec validate` rejects a Claude server or plugin name that contains `__` or starts or ends with `_`, and two declarations whose prefixes compose to the same string, such as `[mcp.a.claude] server = "x"` beside `[mcp.x]`. The whole-server form is `__*` for both kinds of server, because a plugin-bundled server has no bare `mcp__plugin_<plugin>_<server>` spelling that agentspec has confirmed. On an agent the list restricts what the subagent is offered; on a skill it pre-approves the tools for the turn that runs the skill.
+`<server>` is `[mcp.<name>.claude] server`, or the logical name. `<tool>` is the tool's real name under `tool-names`, or its name in the grant; a tool set to `false` writes no entry, and a grant whose every tool is `false` writes none for that server. Because Claude joins the parts of an id with `__`, and a plugin to its server with `_`, `agentspec validate` rejects a Claude server or plugin name that contains `__` or starts or ends with `_`, and two declarations whose prefixes compose to the same string, such as `[mcp.a.claude] server = "x"` beside `[mcp.x]`. The whole-server form is `__*` for both kinds of server, because a plugin-bundled server has no bare `mcp__plugin_<plugin>_<server>` spelling that agentspec has confirmed. On an agent the list restricts what the subagent is offered; on a skill it pre-approves the tools for the turn that runs the skill.
 
 agentspec writes neither of Claude's MCP resource tools (`ListMcpResourcesTool`, `ReadMcpResourceTool`), so an agent that declares `capabilities.tools` reads no MCP resources.
 
@@ -797,7 +797,7 @@ agentspec writes each grant on an agent as an `allow` in its `permission` map, a
 | `{ tools: [<tool>] }` | `<server>_<tool>` |
 | `{ tools: all }`      | `<server>_*`      |
 
-`<server>` is `[mcp.<name>.opencode] server`, or the logical name. `<tool>` is the `tool-names` entry for the tool, or the tool's name in the grant.
+`<server>` is `[mcp.<name>.opencode] server`, or the logical name. `<tool>` is the tool's real name under `tool-names`, or its name in the grant; a tool set to `false` writes no entry, and a grant whose every tool is `false` writes none for that server.
 
 **A whole-server grant matches by name, not by server.** OpenCode names an MCP tool `<server>_<tool>` and matches `<server>_*` against every tool whose name begins `<server>_`, so it also allows the tools of an undeclared server named `<server>_...` (`experiments/opencode-agent-mcp-server-glob/`), and by the same name match, though unmeasured, a custom tool named that way. agentspec cannot detect this, because which servers and tools exist is decided where the output runs, so `agentspec inspect` warns whenever an agent grants a whole server. The [overlap rule](#mcp-servers) keeps two declared servers from matching each other's tools. As with a built-in tool's `allow`, a grant's `allow` also overrides your OpenCode config's rules for the tools it names, so `quip: { tools: all }` re-allows a `quip_` tool your config denies.
 
@@ -889,7 +889,7 @@ agentspec remove --dry-run             # preview every file/manifest deletion wi
 
 ## Inspect
 
-`agentspec inspect` reports every value you configured that reached no generated file, alongside the measured limitations of the providers it covers. It writes nothing.
+`agentspec inspect` reports every value you configured that reached no generated file, each tool a `tool-names` entry dropped, and the measured limitations of the providers it covers. It writes nothing.
 
 Unlike `sync`, it defaults to every provider agentspec supports rather than the ones configured under `[sync.<provider>]` — a value dropped by a provider you have not configured yet is still worth seeing before you configure it. Use `--provider` to narrow.
 
@@ -901,11 +901,13 @@ agentspec inspect --verbose          # list the specs behind each counted line
 
 `compile --verbose` and `sync --verbose` print the same report inline; a default `compile` or `sync` prints none of it. A loss is a permanent consequence of a configuration you chose on purpose, equally true on the first sync and the hundredth, so it is something to consult rather than something to be told repeatedly.
 
-### The two sections claim different things
+### The three sections claim different things
 
 **`not delivered`** is agentspec's own warranty about its own output, and it is certain. agentspec composed the bytes, so "no Cursor skills file carries `model`" is a fact about a file you can open. A per-spec line names the spec, the setting, and the file kind the value failed to reach; where every spec configuring a setting lost it, the group collapses to one counted line and `--verbose` lists the specs behind it. A lost spec body names no file kind, because the point is that no file was emitted.
 
 **`provider limitations`** are measured claims about how a provider's runtime treats bytes agentspec delivered successfully. These are probe-backed rather than inferred, and each cites [`docs/hooks-canonical.md`](docs/hooks-canonical.md) so you can check what was measured, against which version, and when.
+
+**`dropped by config`** names each granted tool your own `[mcp.<server>.<provider>] tool-names` entry sets to `false`, on a file kind where that provider writes the grant; elsewhere the grant was never written, so it stays under `not delivered`. Unlike a loss, the fix, if one is needed, is in that entry: a wrong `false` for a tool the server offers under another name strips the tool from every spec granting it. Each line counts the specs a tool was dropped from, and `--verbose` lists them.
 
 ### Nothing renders as delivered
 

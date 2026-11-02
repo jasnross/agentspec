@@ -519,11 +519,14 @@ pub trait Adapter: std::fmt::Debug + Send + Sync {
     /// apart. The composed id uses the real tool name from
     /// [`Adapter::mcp_tool_names`], which the adapter resolves before composing:
     /// a body reference through `real_tool_name`, a grant through
-    /// `resolve_named_tools`.
+    /// `resolve_named_tools`. `resolve_mcp_tool` rejects a tool set to `false`
+    /// before this runs, so an implementation may treat a `None` from
+    /// `real_tool_name` as a wiring bug.
     fn body_mcp_tool_name(&self, server: &McpServer, logical: &str, tool: &str) -> String;
 
-    /// The real tool names this provider's block declares for `server`, or
-    /// `None` when the block declares no `tool-names`.
+    /// The `tool-names` map this provider's block declares for `server` (real
+    /// names and `false` entries), or `None` when the block declares no
+    /// `tool-names`.
     ///
     /// Each adapter destructures `McpServer` and returns its own block's
     /// field, so a new provider block is a compile error here until each
