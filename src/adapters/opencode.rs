@@ -17,6 +17,7 @@ use crate::compile::{AdapterConfig, GeneratedFile};
 use crate::declarations::Declarations;
 use crate::mcp::{
     McpServer, McpServers, McpToolNames, OpenCodeMcpServer, is_mcp_name, real_tool_name,
+    resolve_named_tools,
 };
 use crate::plan::{FileKind, ForwardPatch, RemovePatchReport, ReversePatch};
 use crate::presets::{ProviderPresets, ProviderPresetsMap};
@@ -324,7 +325,7 @@ impl Adapter for OpenCodeAdapter {
     }
 
     fn body_mcp_tool_name(&self, server: &McpServer, logical: &str, tool: &str) -> String {
-        compose_mcp_tool(server, logical, tool)
+        compose_mcp_tool(server, logical, real_tool_name(tool_names(server), tool))
     }
 
     fn mcp_tool_names<'a>(&self, server: &'a McpServer) -> Option<&'a McpToolNames> {
@@ -815,9 +816,9 @@ fn build_permission_map(
         match granted {
             McpTools::All => mcp_keys.push(compose_mcp_server_glob(server, logical)),
             McpTools::Named(named) => mcp_keys.extend(
-                named
-                    .iter()
-                    .map(|tool| compose_mcp_tool(server, logical, tool)),
+                resolve_named_tools(tool_names(server), named)
+                    .into_iter()
+                    .map(|real| compose_mcp_tool(server, logical, real)),
             ),
         }
         carried.push(logical.clone());
@@ -856,7 +857,9 @@ fn build_permission_map(
     }))
     .collect();
     // Collecting a repeated key would overwrite an earlier rule in place.
-    // Validation keeps every key distinct (`mcp_name_overlaps`).
+    // Keys stay distinct because validation keeps server names from
+    // overlapping (`mcp_name_overlaps`) and `resolve_named_tools` resolves a
+    // real name several logical tools share once.
     debug_assert_eq!(
         map.len(),
         expected_len,
@@ -907,14 +910,10 @@ fn tool_names(server: &McpServer) -> Option<&McpToolNames> {
 }
 
 /// `OpenCode`'s id for one tool of a declared server, `<server>_<tool>`: the
-/// one place the named-tool spelling is composed. `tool` is the logical
-/// name; `<tool>` is its real name under `[mcp.<name>.opencode] tool-names`.
-fn compose_mcp_tool(server: &McpServer, logical: &str, tool: &str) -> String {
-    format!(
-        "{}_{}",
-        resolved_server(logical, server),
-        real_tool_name(tool_names(server), tool)
-    )
+/// one place the named-tool spelling is composed. `real` is the tool's real
+/// name under `[mcp.<name>.opencode] tool-names`, which the caller resolves.
+fn compose_mcp_tool(server: &McpServer, logical: &str, real: &str) -> String {
+    format!("{}_{real}", resolved_server(logical, server))
 }
 
 /// `OpenCode`'s key for every tool of a declared server, `<server>_*`. It
@@ -2848,6 +2847,43 @@ mod mcp_grant_tests {
             OpenCodeAdapter.body_mcp_tool_name(&server, "atlassian", "getJiraIssue"),
             "jira_get_issue"
         );
+    }
+
+    /// Two logical tools sharing a real tool write one key, and a body
+    /// reference to either names it.
+    #[test]
+    fn test_tool_names_shared_real_name_writes_one_key() {
+        let server = McpServer {
+            opencode: Some(OpenCodeMcpServer {
+                server: Some("jira".to_owned()),
+                tool_names: Some(McpToolNames::from([
+                    ("getJiraIssue".to_owned(), "get_jira_issue".to_owned()),
+                    (
+                        "listJiraIssueComments".to_owned(),
+                        "get_jira_issue".to_owned(),
+                    ),
+                ])),
+            }),
+            ..McpServer::default()
+        };
+        let servers = McpServers::from([("atlassian".to_owned(), server.clone())]);
+        let map = build_permission_map(
+            &[],
+            Some(&grants(&[(
+                "atlassian",
+                named(&["getJiraIssue", "listJiraIssueComments"]),
+            )])),
+            &servers,
+        )
+        .0;
+        let jira: Vec<&String> = map.keys().filter(|k| k.starts_with("jira_")).collect();
+        assert_eq!(jira, ["jira_get_jira_issue"], "{map:?}");
+        for logical in ["getJiraIssue", "listJiraIssueComments"] {
+            assert_eq!(
+                OpenCodeAdapter.body_mcp_tool_name(&server, "atlassian", logical),
+                "jira_get_jira_issue"
+            );
+        }
     }
 
     #[test]

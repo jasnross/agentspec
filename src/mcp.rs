@@ -5,7 +5,8 @@
 //! checking an override against a provider's naming rules, belong to the
 //! adapters. A provider block may also map logical tool names to the real
 //! tool names of the server that provider reaches; [`real_tool_name`] looks
-//! one up, and the adapter spells the result.
+//! one up, `resolve_named_tools` resolves a whole grant, and the adapter
+//! spells the result.
 
 use std::collections::BTreeMap;
 
@@ -102,9 +103,25 @@ pub fn real_tool_name<'a>(names: Option<&'a McpToolNames>, tool: &'a str) -> &'a
     real.unwrap_or(tool)
 }
 
+/// The real tools `tools` resolve to under `names`: deduplicated, in name
+/// order. Two logical tools mapped to one real tool resolve to it once, so
+/// a grant naming both emits one id.
+pub(crate) fn resolve_named_tools<'a>(
+    names: Option<&'a McpToolNames>,
+    tools: &'a [String],
+) -> Vec<&'a str> {
+    let mut real: Vec<&str> = tools
+        .iter()
+        .map(|tool| real_tool_name(names, tool))
+        .collect();
+    real.sort_unstable();
+    real.dedup();
+    real
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{McpToolNames, is_mcp_name, real_tool_name};
+    use super::{McpToolNames, is_mcp_name, real_tool_name, resolve_named_tools};
 
     #[test]
     fn test_is_mcp_name_accepts_provider_neutral_names() {
@@ -129,5 +146,22 @@ mod tests {
     fn test_tool_names_map_gives_real_name() {
         let map = McpToolNames::from([("t".to_owned(), "real_t".to_owned())]);
         assert_eq!(real_tool_name(Some(&map), "t"), "real_t");
+    }
+
+    #[test]
+    fn test_resolve_named_tools_dedups_shared_real_name() {
+        let map = McpToolNames::from([
+            ("a".to_owned(), "x".to_owned()),
+            ("b".to_owned(), "x".to_owned()),
+            ("c".to_owned(), "y".to_owned()),
+        ]);
+        let tools = ["b", "c", "a"].map(String::from);
+        assert_eq!(resolve_named_tools(Some(&map), &tools), ["x", "y"]);
+    }
+
+    #[test]
+    fn test_resolve_named_tools_without_map_sorts_logical_names() {
+        let tools = ["b", "a"].map(String::from);
+        assert_eq!(resolve_named_tools(None, &tools), ["a", "b"]);
     }
 }

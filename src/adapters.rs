@@ -517,7 +517,9 @@ pub trait Adapter: std::fmt::Debug + Send + Sync {
     /// adapter that writes grants composes this through the same function
     /// grant emission uses, so a body reference and a granted id cannot drift
     /// apart. The composed id uses the real tool name from
-    /// [`Adapter::mcp_tool_names`].
+    /// [`Adapter::mcp_tool_names`], which the adapter resolves before composing:
+    /// a body reference through `real_tool_name`, a grant through
+    /// `resolve_named_tools`.
     fn body_mcp_tool_name(&self, server: &McpServer, logical: &str, tool: &str) -> String;
 
     /// The real tool names this provider's block declares for `server`, or

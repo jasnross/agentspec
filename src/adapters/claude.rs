@@ -23,6 +23,7 @@ use crate::declarations::Declarations;
 use crate::hooks_merge::{merge_owned, remove_owned};
 use crate::mcp::{
     ClaudeMcpServer, McpServer, McpServers, McpToolNames, is_mcp_name, real_tool_name,
+    resolve_named_tools,
 };
 use crate::plan::{FileKind, ForwardPatch, ReversePatch};
 use crate::presets::{ClaudeEffort, ProviderPresets, ProviderPresetsMap};
@@ -349,7 +350,7 @@ impl Adapter for ClaudeAdapter {
     }
 
     fn body_mcp_tool_name(&self, server: &McpServer, logical: &str, tool: &str) -> String {
-        compose_mcp_tool(server, logical, tool)
+        compose_mcp_tool(server, logical, real_tool_name(tool_names(server), tool))
     }
 
     fn mcp_tool_names<'a>(&self, server: &'a McpServer) -> Option<&'a McpToolNames> {
@@ -871,14 +872,10 @@ fn mcp_id_ambiguities(mcp: &McpServers) -> Vec<String> {
 }
 
 /// Claude's id for one tool of a declared server: the one place the named-tool
-/// spelling is composed. `tool` is the logical name; the id's tool segment is
-/// its real name under `[mcp.<name>.claude] tool-names`.
-fn compose_mcp_tool(server: &McpServer, logical: &str, tool: &str) -> String {
-    format!(
-        "{}__{}",
-        mcp_server_prefix(server, logical),
-        real_tool_name(tool_names(server), tool)
-    )
+/// spelling is composed. `real` is the tool's real name under
+/// `[mcp.<name>.claude] tool-names`, which the caller resolves.
+fn compose_mcp_tool(server: &McpServer, logical: &str, real: &str) -> String {
+    format!("{}__{real}", mcp_server_prefix(server, logical))
 }
 
 /// Claude's spelling for every tool of a declared server. `__*` for both a
@@ -890,8 +887,9 @@ fn compose_mcp_server_glob(server: &McpServer, logical: &str) -> String {
     format!("{}__*", mcp_server_prefix(server, logical))
 }
 
-/// The MCP entries for `grants`, one per named tool or one glob per `all`
-/// grant, sorted by composed id so output does not depend on authored order.
+/// The MCP entries for `grants`, one per real tool the named tools resolve to
+/// or one glob per `all` grant, sorted by composed id so output does not
+/// depend on authored order.
 fn mcp_entries(grants: &BTreeMap<String, McpGrant>, servers: &McpServers) -> Vec<ClaudeToolEntry> {
     let mut tools: Vec<ClaudeMcpTool> = Vec::new();
     for (logical, McpGrant { tools: granted }) in grants {
@@ -904,9 +902,9 @@ fn mcp_entries(grants: &BTreeMap<String, McpGrant>, servers: &McpServers) -> Vec
         };
         let ids = match granted {
             McpTools::All => vec![compose_mcp_server_glob(server, logical)],
-            McpTools::Named(named) => named
-                .iter()
-                .map(|tool| compose_mcp_tool(server, logical, tool))
+            McpTools::Named(named) => resolve_named_tools(tool_names(server), named)
+                .into_iter()
+                .map(|real| compose_mcp_tool(server, logical, real))
                 .collect(),
         };
         tools.extend(ids.into_iter().map(|id| ClaudeMcpTool {
@@ -2652,9 +2650,51 @@ mod mcp_grant_tests {
     #[test]
     fn test_tool_names_compose_under_claude_plugin() {
         assert_eq!(
-            compose_mcp_tool(&mapped_server(Some("work")), "atlassian", "getJiraIssue"),
+            ClaudeAdapter.body_mcp_tool_name(
+                &mapped_server(Some("work")),
+                "atlassian",
+                "getJiraIssue"
+            ),
             "mcp__plugin_work_company_jira__get_issue"
         );
+    }
+
+    /// Two logical tools sharing a real tool grant it once, and a body
+    /// reference to either names it.
+    #[test]
+    fn test_tool_names_shared_real_name_grants_one_id() {
+        let server = McpServer {
+            claude: Some(ClaudeMcpServer {
+                server: Some("company_jira".to_owned()),
+                plugin: None,
+                tool_names: Some(McpToolNames::from([
+                    ("getJiraIssue".to_owned(), "get_jira_issue".to_owned()),
+                    (
+                        "listJiraIssueComments".to_owned(),
+                        "get_jira_issue".to_owned(),
+                    ),
+                ])),
+            }),
+            ..McpServer::default()
+        };
+        let servers = McpServers::from([("atlassian".to_owned(), server.clone())]);
+        let (tools, _) = compile_with(
+            agent(capabilities(
+                Some(vec![]),
+                &[(
+                    "atlassian",
+                    named(&["getJiraIssue", "listJiraIssueComments"]),
+                )],
+            )),
+            &servers,
+        );
+        assert_eq!(tools, strings(&["mcp__company_jira__get_jira_issue"]));
+        for logical in ["getJiraIssue", "listJiraIssueComments"] {
+            assert_eq!(
+                ClaudeAdapter.body_mcp_tool_name(&server, "atlassian", logical),
+                "mcp__company_jira__get_jira_issue"
+            );
+        }
     }
 
     #[test]

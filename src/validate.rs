@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -201,13 +201,13 @@ fn validate_config_declarations(
         .collect()
 }
 
-/// The provider-neutral rules on each provider block's `tool-names`: every
-/// key and value is an MCP name, and no two keys share a value.
+/// The provider-neutral rule on each provider block's `tool-names`: every
+/// key and value is an MCP name.
 ///
-/// A shared value would compose one id for two logical tools, so two grants
-/// would write one permission key and two body references would name one
-/// tool. Servers are visited in name order, providers in `Provider::VARIANTS`
-/// order, and entries in key order.
+/// Several keys may share a value, for a server whose one tool serves several
+/// logical tools; Claude and `OpenCode` grant that tool once. Servers are
+/// visited in name order, providers in `Provider::VARIANTS` order, and
+/// entries in key order.
 fn tool_names_errors(mcp: &McpServers) -> Vec<String> {
     let mut errors = Vec::new();
     for (name, server) in mcp {
@@ -216,9 +216,6 @@ fn tool_names_errors(mcp: &McpServers) -> Vec<String> {
                 continue;
             };
             let block = format!("[mcp.{name}.{provider}] `tool-names`");
-            let mut first_key_for: BTreeMap<&str, &str> = BTreeMap::new();
-            let mut reported: BTreeSet<&str> = BTreeSet::new();
-            let mut shared: Vec<String> = Vec::new();
             for (key, value) in names {
                 if !is_mcp_name(key) {
                     errors.push(format!("{block} key '{key}' must match [A-Za-z0-9_-]+"));
@@ -228,23 +225,7 @@ fn tool_names_errors(mcp: &McpServers) -> Vec<String> {
                         "{block} maps '{key}' to '{value}', which must match [A-Za-z0-9_-]+"
                     ));
                 }
-                match first_key_for.get(value.as_str()) {
-                    None => {
-                        first_key_for.insert(value, key);
-                    }
-                    // Only the second key sharing a value is reported; a
-                    // third would name the same pair's first key again.
-                    Some(first) if !reported.contains(value.as_str()) => {
-                        reported.insert(value);
-                        shared.push(format!(
-                            "{block} maps both '{first}' and '{key}' to '{value}'; each logical \
-                             tool needs its own real tool"
-                        ));
-                    }
-                    Some(_) => {}
-                }
             }
-            errors.extend(shared);
         }
     }
     errors
@@ -954,29 +935,22 @@ mod tests {
         );
     }
 
-    /// Reported once per shared value, naming the first two keys in map order.
     #[test]
-    fn test_tool_names_rejects_shared_value() {
+    fn test_tool_names_accepts_shared_value() {
         assert_eq!(
-            declaration_messages(cursor_mapped(&[("a", "x"), ("b", "x"), ("c", "x")])),
-            [
-                "[mcp.s.cursor] `tool-names` maps both 'a' and 'b' to 'x'; each logical tool \
-                 needs its own real tool"
-            ]
+            declaration_messages(cursor_mapped(&[("a", "x"), ("b", "x")])),
+            Vec::<String>::new()
         );
     }
 
-    /// A malformed value shared by two keys is wrong twice over, and both
-    /// faults are reported: each format error, then the shared value.
+    /// A malformed value shared by two keys is reported once per key.
     #[test]
-    fn test_tool_names_reports_shared_malformed_value_both_ways() {
+    fn test_tool_names_reports_each_malformed_shared_value() {
         assert_eq!(
             declaration_messages(claude_mapped(&[("a", "x.y"), ("b", "x.y")])),
             [
                 "[mcp.s.claude] `tool-names` maps 'a' to 'x.y', which must match [A-Za-z0-9_-]+",
                 "[mcp.s.claude] `tool-names` maps 'b' to 'x.y', which must match [A-Za-z0-9_-]+",
-                "[mcp.s.claude] `tool-names` maps both 'a' and 'b' to 'x.y'; each logical tool \
-                 needs its own real tool",
             ]
         );
     }

@@ -7209,6 +7209,46 @@ fn test_compile_mcp_tool_names_compose_real_ids() {
     }
 }
 
+/// Two logical tools one real tool serves: Claude grants its id once and
+/// `OpenCode` writes one permission key for it.
+#[test]
+fn test_compile_mcp_tool_names_shared_real_name_grants_once() {
+    let tmp = TempDir::new().expect("failed to create tmp dir");
+    let dir = setup(&tmp);
+    install_agentspec_toml_with(
+        &dir,
+        "[mcp.atlassian.claude]\n\
+         tool-names = { getJiraIssue = \"get_jira_issue\", listJiraIssueComments = \"get_jira_issue\" }\n\n\
+         [mcp.atlassian.opencode]\n\
+         tool-names = { getJiraIssue = \"get_jira_issue\", listJiraIssueComments = \"get_jira_issue\" }\n",
+    );
+    install_agent_with_capabilities(
+        &dir,
+        "  tools: [read]\n  mcp:\n    atlassian: { tools: [getJiraIssue, listJiraIssueComments] }\n",
+    );
+
+    let (ok, _, stderr) = run_in(&dir, &["compile"]);
+    assert!(ok, "compile failed:\n{stderr}");
+
+    let claude = generated_frontmatter(&dir.join("generated/claude/agents/test-agent.md"));
+    let tools: Vec<&str> = claude["tools"]
+        .as_sequence()
+        .map(|seq| seq.iter().filter_map(serde_yml::Value::as_str).collect())
+        .unwrap_or_default();
+    assert_eq!(tools, ["Read", "mcp__atlassian__get_jira_issue"]);
+
+    let opencode = generated_frontmatter(&dir.join("generated/opencode/agents/test-agent.md"));
+    let keys: Vec<&str> = opencode["permission"]
+        .as_mapping()
+        .map(|m| m.keys().filter_map(serde_yml::Value::as_str).collect())
+        .unwrap_or_default();
+    let atlassian: Vec<&&str> = keys
+        .iter()
+        .filter(|k| k.starts_with("atlassian_"))
+        .collect();
+    assert_eq!(atlassian, [&"atlassian_get_jira_issue"], "{keys:?}");
+}
+
 #[test]
 fn test_validate_mcp_tool_names_rejects_unmapped_grant() {
     let tmp = TempDir::new().expect("failed to create tmp dir");
