@@ -5,27 +5,27 @@
     "inline": {
       "requests": [
         {
-          "model": "",
+          "model": "claude-opus-4-8",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
                   "type": "tool_result",
-                  "tool_use_id": "",
+                  "tool_use_id": "toolu_01ECUFhckb7dUPN1Rh1b739x",
                   "content": ""
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": "AGENTSPEC-PROBE-MARKER-K2M9RT"
                 }
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null,
                   "cache_control": null
                 }
@@ -46,31 +46,31 @@
           "stream": null
         },
         {
-          "model": "",
+          "model": "claude-opus-4-8",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 }
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
-                  "text": ""
+                  "type": "text",
+                  "text": "The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded — calling them directly will fail with InputValidationError. Use ToolSearch with query \"select:<name>[,<name>...]\" to load tool schemas before calling them:"
                 },
                 {
                   "type": "",
@@ -91,7 +91,7 @@
           "system": [{}, {}, {}, {}],
           "tools": [
             {
-              "name": "",
+              "name": "Agent",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -103,7 +103,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
+              "name": "Bash",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -115,42 +115,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
+              "name": "Edit",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -208,7 +173,42 @@
               "eager_input_streaming": null
             },
             {
+              "name": "Skill",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "ToolSearch",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
               "name": "",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "DeferredToolPlaceholder",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -217,7 +217,7 @@
               "defer_loading": null
             },
             {
-              "name": "",
+              "name": "Write",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -230,7 +230,7 @@
             },
             {
               "type": null,
-              "name": "",
+              "name": "advisor",
               "model": null,
               "defer_loading": null
             }
@@ -256,13 +256,13 @@
           "role": null,
           "content": [
             {
-              "type": "",
+              "type": "text",
               "text": null
             },
             {
               "type": "tool_use",
-              "id": "",
-              "name": "",
+              "id": "toolu_01ECUFhckb7dUPN1Rh1b739x",
+              "name": "Skill",
               "input": null,
               "caller": null
             }
@@ -283,7 +283,7 @@
           "role": null,
           "content": [
             {
-              "type": "",
+              "type": "text",
               "text": null
             }
           ],
@@ -301,35 +301,35 @@
     "slash_entry": {
       "requests": [
         {
-          "model": "",
+          "model": "claude-opus-4-8",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": "AGENTSPEC-PROBE-MARKER-K2M9RT"
                 }
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
-                  "text": ""
+                  "type": "text",
+                  "text": "The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded — calling them directly will fail with InputValidationError. Use ToolSearch with query \"select:<name>[,<name>...]\" to load tool schemas before calling them:"
                 },
                 {
                   "type": "",
@@ -350,7 +350,7 @@
           "system": [{}, {}, {}, {}],
           "tools": [
             {
-              "name": "",
+              "name": "Agent",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -362,7 +362,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
+              "name": "Bash",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -374,42 +374,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
+              "name": "Edit",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -467,7 +432,42 @@
               "eager_input_streaming": null
             },
             {
+              "name": "Skill",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "ToolSearch",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
               "name": "",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "DeferredToolPlaceholder",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -476,7 +476,7 @@
               "defer_loading": null
             },
             {
-              "name": "",
+              "name": "Write",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -489,7 +489,7 @@
             },
             {
               "type": null,
-              "name": "",
+              "name": "advisor",
               "model": null,
               "defer_loading": null
             }
@@ -515,7 +515,7 @@
           "role": null,
           "content": [
             {
-              "type": "",
+              "type": "text",
               "text": null
             }
           ],
@@ -533,31 +533,31 @@
     "fork": {
       "requests": [
         {
-          "model": "",
+          "model": "claude-opus-4-8",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 }
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
-                  "text": ""
+                  "type": "text",
+                  "text": "The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded — calling them directly will fail with InputValidationError. Use ToolSearch with query \"select:<name>[,<name>...]\" to load tool schemas before calling them:"
                 },
                 {
                   "type": "",
@@ -578,7 +578,7 @@
           "system": [{}, {}, {}, {}],
           "tools": [
             {
-              "name": "",
+              "name": "Agent",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -590,7 +590,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
+              "name": "Bash",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -602,42 +602,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
+              "name": "Edit",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -695,7 +660,42 @@
               "eager_input_streaming": null
             },
             {
+              "name": "Skill",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "ToolSearch",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
               "name": "",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "DeferredToolPlaceholder",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -704,7 +704,7 @@
               "defer_loading": null
             },
             {
-              "name": "",
+              "name": "Write",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -717,7 +717,7 @@
             },
             {
               "type": null,
-              "name": "",
+              "name": "advisor",
               "model": null,
               "defer_loading": null
             }
@@ -735,248 +735,31 @@
           "stream": null
         },
         {
-          "model": "",
+          "model": "claude-opus-4-8",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": "AGENTSPEC-PROBE-MARKER-K2M9RT"
                 }
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
-                  "text": ""
-                },
-                {
-                  "type": "",
-                  "tool": null
-                },
-                {
-                  "type": "",
-                  "tool": null
-                },
-                {
-                  "type": "",
-                  "tool": null,
-                  "cache_control": null
-                }
-              ]
-            }
-          ],
-          "system": [{}, {}, {}],
-          "tools": [
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "type": null,
-                "properties": {}
-              },
-              "defer_loading": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "type": null,
-              "name": "",
-              "model": null,
-              "defer_loading": null
-            }
-          ],
-          "betas": null,
-          "metadata": null,
-          "max_tokens": null,
-          "thinking": null,
-          "context_management": null,
-          "output_config": {
-            "effort": "low"
-          },
-          "thread": null,
-          "diagnostics": null,
-          "stream": null
-        },
-        {
-          "model": "",
-          "messages": [
-            {
-              "role": "",
-              "content": [
-                {
-                  "type": "tool_result",
-                  "tool_use_id": "",
-                  "content": ""
-                }
-              ]
-            },
-            {
-              "role": "",
-              "content": [
-                {
-                  "type": "",
-                  "text": null,
-                  "cache_control": null
-                }
-              ]
-            }
-          ],
-          "system": [{}],
-          "betas": null,
-          "metadata": null,
-          "max_tokens": null,
-          "thinking": null,
-          "context_management": null,
-          "output_config": {
-            "effort": "medium"
-          },
-          "thread": null,
-          "diagnostics": null,
-          "stream": null
-        },
-        {
-          "model": "",
-          "messages": [
-            {
-              "role": "",
-              "content": [
-                {
-                  "type": "",
-                  "text": null
-                },
-                {
-                  "type": "",
-                  "text": null
-                },
-                {
-                  "type": "",
-                  "text": ""
-                }
-              ]
-            },
-            {
-              "role": "",
-              "content": [
-                {
-                  "type": "",
-                  "text": ""
+                  "type": "text",
+                  "text": "The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded — calling them directly will fail with InputValidationError. Use ToolSearch with query \"select:<name>[,<name>...]\" to load tool schemas before calling them:"
                 },
                 {
                   "type": "",
@@ -1003,7 +786,31 @@
           ],
           "tools": [
             {
-              "name": "",
+              "name": "Agent",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "Bash",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "Edit",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -1021,54 +828,6 @@
                 "$schema": null,
                 "type": null,
                 "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
                 "additionalProperties": null
               },
               "eager_input_streaming": null
@@ -1098,7 +857,31 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
+              "name": "Skill",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "ToolSearch",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "DeferredToolPlaceholder",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -1107,7 +890,7 @@
               "defer_loading": null
             },
             {
-              "name": "",
+              "name": "Write",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -1120,7 +903,7 @@
             },
             {
               "type": null,
-              "name": "",
+              "name": "advisor",
               "model": null,
               "defer_loading": null
             }
@@ -1131,7 +914,230 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
+          },
+          "thread": null,
+          "diagnostics": null,
+          "stream": null
+        },
+        {
+          "model": "claude-opus-4-8",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "tool_use_id": "toolu_01RQgrZBaAFDxn1csCzrX69S",
+                  "content": ""
+                }
+              ]
+            },
+            {
+              "role": "system",
+              "content": [
+                {
+                  "type": "text",
+                  "text": null,
+                  "cache_control": null
+                }
+              ]
+            }
+          ],
+          "system": [{}],
+          "betas": null,
+          "metadata": null,
+          "max_tokens": null,
+          "thinking": null,
+          "context_management": null,
+          "output_config": {
+            "effort": "medium"
+          },
+          "thread": null,
+          "diagnostics": null,
+          "stream": null
+        },
+        {
+          "model": "claude-opus-4-8",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": null
+                },
+                {
+                  "type": "text",
+                  "text": null
+                },
+                {
+                  "type": "text",
+                  "text": ""
+                }
+              ]
+            },
+            {
+              "role": "system",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded — calling them directly will fail with InputValidationError. Use ToolSearch with query \"select:<name>[,<name>...]\" to load tool schemas before calling them:"
+                },
+                {
+                  "type": "",
+                  "tool": null
+                },
+                {
+                  "type": "",
+                  "tool": null
+                },
+                {
+                  "type": "",
+                  "tool": null,
+                  "cache_control": null
+                }
+              ]
+            }
+          ],
+          "system": [
+            {
+              "text": "x-anthropic-billing-header: cc_version=2.1.287.56c; cc_entrypoint=sdk-cli; cch=00000; cc_is_subagent=true;"
+            },
+            {},
+            {}
+          ],
+          "tools": [
+            {
+              "name": "Agent",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "Bash",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "Edit",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "Skill",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "ToolSearch",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "DeferredToolPlaceholder",
+              "description": null,
+              "input_schema": {
+                "type": null,
+                "properties": {}
+              },
+              "defer_loading": null
+            },
+            {
+              "name": "Write",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "type": null,
+              "name": "advisor",
+              "model": null,
+              "defer_loading": null
+            }
+          ],
+          "betas": null,
+          "metadata": null,
+          "max_tokens": null,
+          "thinking": null,
+          "context_management": null,
+          "output_config": {
+            "effort": "max"
           },
           "thread": null,
           "diagnostics": null,
@@ -1146,14 +1152,14 @@
           "role": null,
           "content": [
             {
-              "type": "",
+              "type": "thinking",
               "thinking": null,
               "signature": null
             },
             {
               "type": "tool_use",
-              "id": "",
-              "name": "",
+              "id": "toolu_01RQgrZBaAFDxn1csCzrX69S",
+              "name": "Skill",
               "input": null,
               "caller": null
             }
@@ -1174,7 +1180,7 @@
           "role": null,
           "content": [
             {
-              "type": "",
+              "type": "text",
               "text": null
             }
           ],
@@ -1194,7 +1200,7 @@
           "role": null,
           "content": [
             {
-              "type": "",
+              "type": "text",
               "text": null
             }
           ],

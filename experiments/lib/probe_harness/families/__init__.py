@@ -27,6 +27,7 @@ from probe_harness.families.base import (
     JudgeResult,
     RunOptions,
     UsageError,
+    WrongVersion,
     kept_on_failure,
     observe,
     record_result,
@@ -320,6 +321,16 @@ class Expressions:
     # Whether the family polls a capture, and so takes a `wait_for`.
     manual: bool = False
     wait_for: Callable[..., Any] | None = None
+    wrong_versions: tuple[WrongVersion, ...] = ()
+
+    def names(self) -> list[str]:
+        """The name a wrong version may stand in for, for each expression carried."""
+        return [
+            *(["assertion"] if self.assertion is not None else []),
+            *(["wait_for"] if self.wait_for is not None else []),
+            *(["capture_version"] if self.capture_version is not None else []),
+            *(check.name for check in self.custom_checks),
+        ]
 
 
 def expressions(definition: ProbeDefinition) -> Expressions:
@@ -330,9 +341,14 @@ def expressions(definition: ProbeDefinition) -> Expressions:
                 capture_version=definition.capture_version,
                 manual=True,
                 wait_for=definition.wait_for,
+                wrong_versions=definition.wrong_versions,
             )
         case OpenCodeDebugProbe() | OpenCodeFakeProbe() | ClaudeOtelProbe() | ClaudeInitProbe():
-            return Expressions(definition.assertion, definition.custom_checks)
+            return Expressions(
+                definition.assertion,
+                definition.custom_checks,
+                wrong_versions=definition.wrong_versions,
+            )
         case CustomProbe():
             return Expressions(definition.assertion)
         case _:
@@ -346,7 +362,7 @@ def _definition_refusal(name: str, definition: ProbeDefinition, manifest: Manife
     every arm had spent a model call.
     """
     package = manifest.path.parent
-    agreement = _agreement(name, definition, manifest)
+    agreement = _agreement(name, definition, manifest) or _wrong_versions(name, definition)
     if agreement is not None:
         return agreement
     match definition:
@@ -420,6 +436,34 @@ def _agreement(name: str, definition: ProbeDefinition, manifest: Manifest) -> st
             f"{name}'s definition carries a capture_version, but its manifest's version "
             "source is not a capture"
         )
+    return None
+
+
+def _wrong_versions(name: str, definition: ProbeDefinition) -> str | None:
+    """A wrong version standing in for an expression the definition does not carry, or two
+    sharing a name."""
+    found = expressions(definition)
+    if not found.wrong_versions:
+        return None
+    clashing = sorted(
+        {check.name for check in found.custom_checks} & {"assertion", "wait_for", "capture_version"}
+    )
+    if clashing:
+        return (
+            f"{name}'s custom check {clashing[0]} shares its name with an expression, so a wrong "
+            "version cannot say which it stands in for"
+        )
+    carried = found.names()
+    names = [wrong.name for wrong in found.wrong_versions]
+    duplicates = sorted({wrong for wrong in names if names.count(wrong) > 1})
+    if duplicates:
+        return f"{name}'s definition declares wrong version {duplicates[0]} more than once"
+    for wrong in found.wrong_versions:
+        if wrong.stands_in_for not in carried:
+            return (
+                f"{name}'s wrong version {wrong.name} stands in for {wrong.stands_in_for}, "
+                "which its definition does not carry"
+            )
     return None
 
 

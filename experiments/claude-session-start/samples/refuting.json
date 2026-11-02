@@ -6,8 +6,8 @@
       "transcript_path": null,
       "cwd": null,
       "scratchpad_dir": null,
-      "hook_event_name": "",
-      "source": "",
+      "hook_event_name": "SessionStart",
+      "source": "startup",
       "model": null
     },
     {
@@ -15,8 +15,8 @@
       "transcript_path": null,
       "cwd": null,
       "scratchpad_dir": null,
-      "hook_event_name": "",
-      "source": "",
+      "hook_event_name": "SessionStart",
+      "source": "startup",
       "model": null
     },
     {
@@ -26,7 +26,7 @@
       "scratchpad_dir": null,
       "prompt_id": null,
       "permission_mode": null,
-      "hook_event_name": "",
+      "hook_event_name": "UserPromptSubmit",
       "prompt": null
     },
     {
@@ -60,7 +60,7 @@
       "scratchpad_dir": null,
       "prompt_id": null,
       "permission_mode": null,
-      "hook_event_name": "",
+      "hook_event_name": "UserPromptSubmit",
       "prompt": null
     }
   ],

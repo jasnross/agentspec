@@ -27,7 +27,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, assert_never
+from typing import Any, Literal, assert_never
 
 from pydantic import MISSING, BaseModel, RootModel
 
@@ -41,6 +41,7 @@ from probe_harness.contract import (
 )
 from probe_harness.families import ProbeDefinition, expressions, parse_sample, parse_workspace
 from probe_harness.families.base import (
+    CustomCheck,
     CustomProbe,
     call,
     holds,
@@ -224,8 +225,9 @@ def unaccounted(
     that `accounting` does not vouch for.
 
     A unit is a single-line string, or each line of a multi-line string unless the whole
-    string is a fixture file. A key the harness writes is exempt: an arm name at the top of
-    the input, the family's format keys under it, and each `results` key.
+    string is vouched for, as a fixture file or a literal is. A key the harness writes is
+    exempt: an arm name at the top of the input, the family's format keys under it, and
+    each `results` key.
     """
     found = accounting(package, () if sample.authored is MISSING else sample.authored)
     arms, format_keys = _format_keys(definition)
@@ -281,7 +283,11 @@ def anonymize_document(value: JsonValue, identity: Identity) -> JsonValue:
 
 
 def cut(
-    definition: ProbeDefinition, document: JsonValue, oracle: SampleResults, label: str
+    definition: ProbeDefinition,
+    document: JsonValue,
+    oracle: SampleResults,
+    label: str,
+    accounting: Accounting,
 ) -> JsonValue:
     """<document>, a sample input, cut to the text its expressions need to yield <oracle>.
 
@@ -289,22 +295,30 @@ def cut(
     modelled object does not declare; it is reachable only through `raw`. Three kinds of
     unit are tried for removal, a pass each, in this order and each in document order:
     every entry of an object inside raw content, key and value together; every string leaf,
-    emptied; and every line of a multi-line string. Passes repeat until one removes nothing,
-    so the result is a fixed point even for an expression whose result is not monotone in
-    its input. Each pass tries its units in halving batches: a rejected batch splits in two,
-    down to single units. A batch may remove units that one-at-a-time trials would keep,
-    when their removals compensate, but in the final round every single unit's removal is
-    rejected, which is what makes the result a fixed point.
+    emptied; and every line of a multi-line string. Only text <accounting> cannot vouch for
+    is tried, so a sample keeps the authored and provider text its case rests on even where
+    no expression's recorded result needs it: an entry is tried whole when its key is
+    unaccounted or nothing in it is accounted for, a string leaf when none of its text is
+    accounted for, and a line
+    when it is unaccounted and its string is not accounted for whole. Passes repeat until one
+    removes nothing, so the result is a fixed point even for an expression whose result is
+    not monotone in its input. Each pass tries its units in halving batches: a rejected
+    batch splits in two, down to single units. A batch may remove units that one-at-a-time
+    trials would keep, when their removals compensate, but in the final round every single
+    unit's removal is rejected, which is what makes the result a fixed point.
 
     A removal stands only when the document still parses through the family, the parse
     keeps the same class at every model position and the same `model_fields_set` on every
-    model, and every expression still yields <oracle>. Modelled structure is never touched:
+    model, every expression still yields <oracle>, and every wrong version the definition
+    names that catches on <document> (by a value other than <oracle>'s, or by raising) still
+    catches the same way. Modelled structure is never touched:
     its keys, list lengths and non-string scalars stay, and so do a model's undeclared
     keys, so `raw.keys()` is unchanged. Refuses when <document> itself does not yield
     <oracle>.
     """
     reference = parse_sample(definition, document, label)
-    if not _yields(definition, document, reference, oracle, label):
+    catches = _catches(definition, reference, oracle)
+    if not _yields(definition, document, reference, oracle, catches, label):
         raise SampleRefused(f"{label}: the uncut input does not yield the results it is cut to")
     roots = list(_raw_paths(reference, document, ()))
     current = document
@@ -314,8 +328,8 @@ def cut(
             current, changed = _cut_pass(
                 current,
                 kind,
-                list(_removals(current, kind, roots)),
-                lambda candidate: _yields(definition, candidate, reference, oracle, label),
+                list(_removals(current, kind, roots, accounting)),
+                lambda candidate: _yields(definition, candidate, reference, oracle, catches, label),
             )
             removed = removed or changed
         if not removed:
@@ -435,9 +449,8 @@ def write_sample(
             ),
         )
     origin = SampleOrigin.PREFIX if lines is not None else SampleOrigin.CAPTURE
-    sample = Sample(
-        origin=origin, input=cut(definition, anonymized, oracle, str(path)), results=oracle
-    )
+    cut_input = cut(definition, anonymized, oracle, str(path), accounting(manifest.path.parent))
+    sample = Sample(origin=origin, input=cut_input, results=oracle)
     refusal = _unaccounted_refusal(manifest.path.parent, definition, [(path, sample)])
     if refusal:
         raise SampleRefused(*refusal)
@@ -486,7 +499,10 @@ def regenerate(
             changed_results.append(f"{path.name}: {key}: {before} → {after}")
         if differing and not accept_results:
             continue
-        cut_input = cut(definition, sample.input, results, str(path))
+        authored = () if sample.authored is MISSING else sample.authored
+        cut_input = cut(
+            definition, sample.input, results, str(path), accounting(manifest.path.parent, authored)
+        )
         recut = not json_values.equal(cut_input, sample.input)
         if recut:
             strings, removed_lines = _cut_counts(sample.input, cut_input)
@@ -637,16 +653,71 @@ def _yields(
     candidate: JsonValue,
     reference: object,
     oracle: SampleResults,
+    catches: Mapping[str, _Catch],
     label: str,
 ) -> bool:
-    """Whether <candidate> parses to <reference>'s shape and yields <oracle>."""
+    """Whether <candidate> parses to <reference>'s shape, yields <oracle>, and keeps each of
+    <catches>."""
     try:
         value = parse_sample(definition, candidate, label)
         if not _same_shape(reference, value):
             return False
-        return not _differing(oracle, evaluate(definition, value))
+        if _differing(oracle, evaluate(definition, value)):
+            return False
     except GateFailure, ValueError:
         return False
+    if not catches:
+        return True
+    found = _catches(definition, value, oracle)
+    return all(found.get(name) == kind for name, kind in catches.items())
+
+
+type _Catch = Literal["value", "raise"]
+
+
+def _catches(definition: ProbeDefinition, value: Any, oracle: SampleResults) -> dict[str, _Catch]:
+    """How each wrong version of <definition> catches on <value>, a parsed input whose
+    expressions yield <oracle>: by a value other than the recorded one, or by raising. A
+    wrong version yielding the recorded value is absent. Each is run as `evaluate` runs the
+    expression it stands in for, so a value `evaluate` would refuse, such as a non-string
+    capture version, is a catch by raising."""
+    found = expressions(definition)
+    if not found.wrong_versions:
+        return {}
+    recorded = oracle.model_dump(mode="json")
+    expression_value = _expression_input(definition, value)
+    checks = {check.name: check for check in found.custom_checks}
+    carried = found.names()
+    catches: dict[str, _Catch] = {}
+    for wrong in found.wrong_versions:
+        if wrong.stands_in_for not in carried:
+            raise SampleRefused(
+                f"the wrong version {wrong.name} stands in for {wrong.stands_in_for}, which "
+                "the definition does not carry"
+            )
+        try:
+            match wrong.stands_in_for:
+                case "assertion":
+                    got: Any = observe(wrong.function, expression_value).value
+                    want = recorded["assertion"]
+                case "wait_for":
+                    got = run_wait_for(wrong.function, value)
+                    want = recorded["wait_for"]
+                case "capture_version":
+                    got = call("capture_version", wrong.function, expression_value)
+                    if got is not None and type(got) is not str:
+                        raise GateFailure("the capture_version yielded neither a string nor None")
+                    want = recorded["capture_version"]
+                case name:
+                    stood = checks[name]
+                    got = holds(CustomCheck(name, wrong.function, stood.failure), expression_value)
+                    want = recorded["custom_checks"][name]
+        except GateFailure:
+            catches[wrong.name] = "raise"
+            continue
+        if not json_values.equal(got, want):
+            catches[wrong.name] = "value"
+    return catches
 
 
 def _raw_paths(value: object, doc: JsonValue, path: _Path) -> Iterator[_Path]:
@@ -711,26 +782,64 @@ def _same_shape(a: object, b: object) -> bool:
             return True
 
 
-def _removals(doc: JsonValue, kind: _UnitKind, roots: Sequence[_Path]) -> Iterator[_Unit]:
-    """The units a pass of <kind> tries on <doc>, in document order."""
+def _removals(
+    doc: JsonValue, kind: _UnitKind, roots: Sequence[_Path], found: Accounting
+) -> Iterator[_Unit]:
+    """The units a pass of <kind> tries on <doc>, in document order: only those holding text
+    <found> cannot vouch for."""
     match kind:
         case _UnitKind.ENTRY:
             for root in roots:
                 yield from (
-                    _Unit(path) for path, _ in _nodes(_at(doc, root), root) if _is_entry(path, root)
+                    _Unit(path)
+                    for path, node in _nodes(_at(doc, root), root)
+                    if _is_entry(path, root)
+                    and (not found.vouches_key(str(path[-1])) or _nothing_accounted(node, found))
                 )
         case _UnitKind.STRING:
             yield from (
                 _Unit(path)
                 for path, node in _nodes(doc, ())
-                if node != "" and isinstance(node, str)
+                if isinstance(node, str) and node != "" and _none_accounted(node, found)
             )
         case _UnitKind.LINE:
             for path, node in _nodes(doc, ()):
-                if isinstance(node, str) and "\n" in node:
-                    yield from (_Unit(path, i) for i in range(node.count("\n") + 1))
+                if isinstance(node, str) and "\n" in node and not found.vouches(node):
+                    yield from (
+                        _Unit(path, i)
+                        for i, line in enumerate(node.split("\n"))
+                        if not found.vouches(line)
+                    )
         case _:
             assert_never(kind)
+
+
+def _nothing_accounted(value: JsonValue, found: Accounting) -> bool:
+    """Whether <found> vouches for no key, and no non-empty string or line, in <value>.
+    Removing an entry holding such a value removes no accounted text but the entry's key.
+    An entry holding accounted text is left to the passes that remove only the unaccounted
+    parts of it."""
+    match value:
+        case dict():
+            return all(
+                not found.vouches_key(key) and _nothing_accounted(item, found)
+                for key, item in value.items()
+            )
+        case list():
+            return all(_nothing_accounted(item, found) for item in value)
+        case str():
+            return value == "" or _none_accounted(value, found)
+        case _:
+            return True
+
+
+def _none_accounted(text: str, found: Accounting) -> bool:
+    """Whether <found> vouches for none of <text>: not for the whole, and, for a multi-line
+    string, for none of its non-empty lines. Emptying such a string removes no accounted
+    text."""
+    if found.vouches(text):
+        return False
+    return "\n" not in text or not any(found.vouches(line) for line in text.split("\n") if line)
 
 
 def _cut_pass(
@@ -1056,7 +1165,7 @@ def _unaccounted_units(
         case list():
             for i, item in enumerate(value):
                 yield from _unaccounted_units(item, (*path, i), found, exempt)
-        case str() if "\n" not in value or value in found.fixture_files:
+        case str() if "\n" not in value or found.vouches(value):
             if not found.vouches(value):
                 yield _path_text(path), value
         case str():

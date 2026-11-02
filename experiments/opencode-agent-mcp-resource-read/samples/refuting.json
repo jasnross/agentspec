@@ -8,15 +8,15 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
+              "role": "system",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -28,11 +28,11 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
-              "content": ""
+              "role": "system",
+              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -40,7 +40,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "list_mcp_resource_templates",
                 "description": null,
                 "parameters": null
               }
@@ -48,7 +48,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "list_mcp_resources",
                 "description": null,
                 "parameters": null
               }
@@ -56,7 +56,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "read",
                 "description": null,
                 "parameters": null
               }
@@ -64,7 +64,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "read_mcp_resource",
                 "description": null,
                 "parameters": null
               }
@@ -80,10 +80,10 @@
           "messages": [
             {
               "role": "system",
-              "content": "AGENTSPEC-PROBE-MARKER-OCRES3"
+              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
@@ -144,15 +144,15 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
+              "role": "system",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -164,11 +164,11 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
-              "content": ""
+              "role": "system",
+              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -176,7 +176,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "list_mcp_resource_templates",
                 "description": null,
                 "parameters": null
               }
@@ -184,7 +184,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "list_mcp_resources",
                 "description": null,
                 "parameters": null
               }
@@ -192,7 +192,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "read",
                 "description": null,
                 "parameters": null
               }
@@ -200,7 +200,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "read_mcp_resource",
                 "description": null,
                 "parameters": null
               }
@@ -216,10 +216,10 @@
           "messages": [
             {
               "role": "system",
-              "content": "AGENTSPEC-PROBE-MARKER-OCRES3"
+              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
@@ -230,7 +230,7 @@
             {
               "role": "tool",
               "tool_call_id": null,
-              "content": "      \"name\": \"probe-doc\","
+              "content": "{\n      \"name\": \"probe-doc\",\n    }\n}"
             }
           ],
           "tools": [
@@ -280,15 +280,15 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
+              "role": "system",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -300,11 +300,11 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
-              "content": ""
+              "role": "system",
+              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -312,7 +312,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "list_mcp_resource_templates",
                 "description": null,
                 "parameters": null
               }
@@ -320,7 +320,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "list_mcp_resources",
                 "description": null,
                 "parameters": null
               }
@@ -328,7 +328,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "read",
                 "description": null,
                 "parameters": null
               }
@@ -336,7 +336,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "read_mcp_resource",
                 "description": null,
                 "parameters": null
               }
@@ -352,10 +352,10 @@
           "messages": [
             {
               "role": "system",
-              "content": "AGENTSPEC-PROBE-MARKER-OCRES3"
+              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
@@ -366,7 +366,7 @@
             {
               "role": "tool",
               "tool_call_id": null,
-              "content": "      \"name\": \"probe-template\","
+              "content": "{\n      \"name\": \"probe-template\",\n    }\n}"
             }
           ],
           "tools": [
@@ -416,15 +416,15 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
+              "role": "system",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -436,11 +436,11 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
-              "content": ""
+              "role": "system",
+              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -448,7 +448,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "list_mcp_resource_templates",
                 "description": null,
                 "parameters": null
               }
@@ -456,7 +456,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "list_mcp_resources",
                 "description": null,
                 "parameters": null
               }
@@ -464,7 +464,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "read",
                 "description": null,
                 "parameters": null
               }
@@ -472,7 +472,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "read_mcp_resource",
                 "description": null,
                 "parameters": null
               }
@@ -488,10 +488,10 @@
           "messages": [
             {
               "role": "system",
-              "content": "AGENTSPEC-PROBE-MARKER-OCRES3"
+              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
@@ -502,7 +502,7 @@
             {
               "role": "tool",
               "tool_call_id": null,
-              "content": "1: AGENTSPEC-FILE-CONTENT-OCRES3"
+              "content": "1: AGENTSPEC-FILE-CONTENT-OCRES3\n"
             }
           ],
           "tools": [
@@ -552,15 +552,15 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
+              "role": "system",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -572,11 +572,11 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
-              "content": ""
+              "role": "system",
+              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -584,7 +584,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "list_mcp_resource_templates",
                 "description": null,
                 "parameters": null
               }
@@ -592,7 +592,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "list_mcp_resources",
                 "description": null,
                 "parameters": null
               }
@@ -600,7 +600,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "read",
                 "description": null,
                 "parameters": null
               }
@@ -608,7 +608,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "read_mcp_resource",
                 "description": null,
                 "parameters": null
               }
@@ -624,10 +624,10 @@
           "messages": [
             {
               "role": "system",
-              "content": "AGENTSPEC-PROBE-MARKER-OCRES3"
+              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
@@ -688,15 +688,15 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
+              "role": "system",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -708,11 +708,11 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
-              "content": ""
+              "role": "system",
+              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -720,7 +720,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "list_mcp_resource_templates",
                 "description": null,
                 "parameters": null
               }
@@ -728,7 +728,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "list_mcp_resources",
                 "description": null,
                 "parameters": null
               }
@@ -736,7 +736,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "read",
                 "description": null,
                 "parameters": null
               }
@@ -744,7 +744,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "read_mcp_resource",
                 "description": null,
                 "parameters": null
               }
@@ -760,10 +760,10 @@
           "messages": [
             {
               "role": "system",
-              "content": "AGENTSPEC-PROBE-MARKER-OCRES3"
+              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
@@ -774,7 +774,7 @@
             {
               "role": "tool",
               "tool_call_id": null,
-              "content": "      \"name\": \"probe-doc\","
+              "content": "{\n      \"name\": \"probe-doc\",\n    }\n}"
             }
           ],
           "tools": [
@@ -824,15 +824,15 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
+              "role": "system",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -844,11 +844,11 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
-              "content": ""
+              "role": "system",
+              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -856,7 +856,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "list_mcp_resource_templates",
                 "description": null,
                 "parameters": null
               }
@@ -864,7 +864,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "list_mcp_resources",
                 "description": null,
                 "parameters": null
               }
@@ -872,7 +872,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "read",
                 "description": null,
                 "parameters": null
               }
@@ -880,7 +880,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "read_mcp_resource",
                 "description": null,
                 "parameters": null
               }
@@ -896,10 +896,10 @@
           "messages": [
             {
               "role": "system",
-              "content": "AGENTSPEC-PROBE-MARKER-OCRES3"
+              "content": "Use the tool call you are given, then reply ok.\n\nAGENTSPEC-PROBE-MARKER-OCRES3"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
@@ -910,7 +910,7 @@
             {
               "role": "tool",
               "tool_call_id": null,
-              "content": "      \"name\": \"probe-template\","
+              "content": "{\n      \"name\": \"probe-template\",\n    }\n}"
             }
           ],
           "tools": [

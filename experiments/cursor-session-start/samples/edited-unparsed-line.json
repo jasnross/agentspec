@@ -6,7 +6,7 @@
       "unparsed": ""
     },
     {
-      "conversation_id": "",
+      "conversation_id": "e8ed806a-de39-413c-b479-b4d88fca5c50",
       "generation_id": null,
       "model": null,
       "model_id": null,
@@ -14,7 +14,7 @@
       "is_background_agent": null,
       "composer_mode": null,
       "session_id": null,
-      "hook_event_name": "",
+      "hook_event_name": "sessionStart",
       "cursor_version": "3.24.12",
       "workspace_roots": null,
       "user_email": null,
@@ -31,7 +31,7 @@
       "attachments": null,
       "session_id": null,
       "hook_event_name": "beforeSubmitPrompt",
-      "cursor_version": "",
+      "cursor_version": "3.24.12",
       "workspace_roots": null,
       "user_email": null,
       "transcript_path": null
@@ -46,7 +46,7 @@
       "composer_mode": null,
       "session_id": null,
       "hook_event_name": "sessionStart",
-      "cursor_version": "",
+      "cursor_version": "3.24.12",
       "workspace_roots": null,
       "user_email": null,
       "transcript_path": null
@@ -62,7 +62,7 @@
       "attachments": null,
       "session_id": null,
       "hook_event_name": "beforeSubmitPrompt",
-      "cursor_version": "",
+      "cursor_version": "3.24.12",
       "workspace_roots": null,
       "user_email": null,
       "transcript_path": null

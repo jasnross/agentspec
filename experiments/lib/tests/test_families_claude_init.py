@@ -279,7 +279,8 @@ def test_a_sample_keeps_only_the_server_sources_the_assertion_reads(
     assert sample["results"] == {"assertion": {"login": ["claudeai"], "relocated": ["user"]}}
     init = sample["input"]["login"]["init"]
     assert init["mcp_servers"] == [{"name": "", "status": "", "source": "claudeai"}]
-    assert init["tools"] == ["", ""]
+    # `Bash` is Claude Code's own tool name, which the catalog vouches for, so it stays.
+    assert init["tools"] == ["Bash", ""]
     assert sample["input"]["relocated"]["result"]["result"] == ""
 
 

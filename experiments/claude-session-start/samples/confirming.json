@@ -5,8 +5,8 @@
       "session_id": null,
       "transcript_path": null,
       "cwd": null,
-      "hook_event_name": "",
-      "source": "",
+      "hook_event_name": "SessionStart",
+      "source": "startup",
       "model": null
     },
     {
@@ -15,7 +15,7 @@
       "cwd": null,
       "prompt_id": null,
       "permission_mode": null,
-      "hook_event_name": "",
+      "hook_event_name": "UserPromptSubmit",
       "prompt": null
     },
     {

@@ -6,8 +6,8 @@
       "session_id": null,
       "transcript_path": null,
       "cwd": null,
-      "hook_event_name": "",
-      "source": "",
+      "hook_event_name": "SessionStart",
+      "source": "startup",
       "model": null
     },
     {

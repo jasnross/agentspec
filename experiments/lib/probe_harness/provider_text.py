@@ -232,6 +232,7 @@ CATALOG: tuple[Entry, ...] = (
         "view_mode",
     ),
     *_each("claude", "a content block type", "text", "tool_result", "tool_use"),
+    Entry("claude", "the source of a SessionStart hook payload on a fresh session", "startup"),
     *_each("claude", "a message role", "user"),
     *_each("claude", "a stream-json event type or subtype", "init", "result", "system"),
     *_each("claude", "an effort level Claude Code sends in output_config", "max", "medium"),

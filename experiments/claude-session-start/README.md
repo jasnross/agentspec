@@ -59,15 +59,16 @@ The value differed from `expected`. This discriminator is a perturbation rather 
 
 `confirming.json` is an `assertion`-variant capture: startup, prompt, resume. `refuting.json` is a `discriminator`-variant capture, in which both registered commands fire at startup and again on resume. `before-resume.json` is the confirming capture cut with `--lines 2`, before the awaited `resume` payload, which makes it `wait_for`'s false side. The version source is the `claude --version` command, so no sample carries a capture version.
 
-| Sample                      | Origin    | `assertion`           | `wait_for` |
-| --------------------------- | --------- | --------------------- | ---------- |
-| `before-resume.json`        | `prefix`  | `[]`                  | `false`    |
-| `confirming.json`           | `capture` | `["resume"]`          | `true`     |
-| `refuting.json`             | `capture` | `["resume","resume"]` | `true`     |
-| `edited-no-prompt.json`     | `edited`  | `["resume"]`          | `true`     |
-| `edited-unparsed-line.json` | `edited`  | `["resume"]`          | `true`     |
+| Sample | Origin | `assertion` | `wait_for` |
+| --- | --- | --- | --- |
+| `before-resume.json` | `prefix` | `[]` | `false` |
+| `confirming.json` | `capture` | `["resume"]` | `true` |
+| `refuting.json` | `capture` | `["resume","resume"]` | `true` |
+| `edited-no-prompt.json` | `edited` | `["resume"]` | `true` |
+| `edited-unparsed-line.json` | `edited` | `["resume"]` | `true` |
+| `edited-unparsed-no-prompt.json` | `edited` | `["startup","resume"]` | `true` |
 
-`edited-no-prompt.json` removes every `UserPromptSubmit`, so every line after the first counts and the startup `SessionStart` is still skipped. `edited-unparsed-line.json` puts an `{"unparsed": …}` line ahead of the capture, which must keep its position for the slice to start after the prompt.
+`edited-no-prompt.json` removes every `UserPromptSubmit`, so every line after the first counts and the startup `SessionStart` is still skipped. `edited-unparsed-line.json` puts an `{"unparsed": …}` line ahead of the capture, which must keep its position for the slice to start after the prompt. `edited-unparsed-no-prompt.json` is that sample with its `UserPromptSubmit` removed: with no prompt the unparsed line is the first line, the one skipped, so the startup `SessionStart` counts. It is the sample that catches the definition's wrong version, `_drops_unparsed_lines`, which drops unparsed lines before indexing and so skips the startup instead.
 
 The confirming sample equals `expected`, and the refuting sample differs from it. `just probe-test` re-proves every result on every run.
 

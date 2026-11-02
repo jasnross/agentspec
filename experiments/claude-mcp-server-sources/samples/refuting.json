@@ -30,7 +30,7 @@
             "source": "claudeai"
           }
         ],
-        "model": "",
+        "model": "agentspec-probe-unrecognized-model",
         "permissionMode": null,
         "slash_commands": null,
         "terminal_slash_commands": null,
@@ -86,7 +86,7 @@
         "session_id": null,
         "tools": null,
         "mcp_servers": [],
-        "model": "",
+        "model": "agentspec-probe-unrecognized-model",
         "permissionMode": null,
         "slash_commands": null,
         "terminal_slash_commands": null,
@@ -168,7 +168,7 @@
             "source": "claudeai"
           }
         ],
-        "model": "",
+        "model": "agentspec-probe-unrecognized-model",
         "permissionMode": null,
         "slash_commands": null,
         "terminal_slash_commands": null,
@@ -224,7 +224,7 @@
         "session_id": null,
         "tools": null,
         "mcp_servers": [],
-        "model": "",
+        "model": "agentspec-probe-unrecognized-model",
         "permissionMode": null,
         "slash_commands": null,
         "terminal_slash_commands": null,
@@ -291,7 +291,7 @@
             "source": "project"
           }
         ],
-        "model": "",
+        "model": "agentspec-probe-unrecognized-model",
         "permissionMode": null,
         "slash_commands": null,
         "terminal_slash_commands": null,
@@ -353,7 +353,7 @@
             "source": "project"
           }
         ],
-        "model": "",
+        "model": "agentspec-probe-unrecognized-model",
         "permissionMode": null,
         "slash_commands": null,
         "terminal_slash_commands": null,
@@ -408,7 +408,7 @@
         "session_id": null,
         "tools": null,
         "mcp_servers": [],
-        "model": "",
+        "model": "agentspec-probe-unrecognized-model",
         "permissionMode": null,
         "slash_commands": null,
         "terminal_slash_commands": null,
@@ -474,7 +474,7 @@
             "source": "project"
           }
         ],
-        "model": "",
+        "model": "agentspec-probe-unrecognized-model",
         "permissionMode": null,
         "slash_commands": null,
         "terminal_slash_commands": null,
@@ -529,7 +529,7 @@
         "session_id": null,
         "tools": null,
         "mcp_servers": [],
-        "model": "",
+        "model": "agentspec-probe-unrecognized-model",
         "permissionMode": null,
         "slash_commands": null,
         "terminal_slash_commands": null,
@@ -595,7 +595,7 @@
             "source": "project"
           }
         ],
-        "model": "",
+        "model": "agentspec-probe-unrecognized-model",
         "permissionMode": null,
         "slash_commands": null,
         "terminal_slash_commands": null,

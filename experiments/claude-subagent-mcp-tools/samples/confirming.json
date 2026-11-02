@@ -4,31 +4,31 @@
     "inherit": {
       "requests": [
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 }
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
-                  "text": "",
+                  "type": "text",
+                  "text": "The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded — calling them directly will fail with InputValidationError. Use ToolSearch with query \"select:<name>[,<name>...]\" to load tool schemas before calling them:\nmcp__fx__alpha\nmcp__fx__beta",
                   "cache_control": null
                 }
               ],
@@ -38,7 +38,7 @@
           "system": [{}, {}, {}, {}],
           "tools": [
             {
-              "name": "",
+              "name": "Agent",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -50,7 +50,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
+              "name": "Bash",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -62,42 +62,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
+              "name": "Edit",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -120,7 +85,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
+              "name": "Read",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -155,135 +120,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "type": null,
-                "properties": {}
-              },
-              "defer_loading": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "type": null,
-              "name": "",
-              "model": null,
-              "defer_loading": null
-            }
-          ],
-          "betas": null,
-          "metadata": null,
-          "max_tokens": null,
-          "thinking": null,
-          "context_management": null,
-          "output_config": {
-            "effort": ""
-          },
-          "thread": null,
-          "diagnostics": null,
-          "stream": null
-        },
-        {
-          "model": "",
-          "messages": [
-            {
-              "role": "",
-              "content": [
-                {
-                  "type": "",
-                  "text": null
-                },
-                {
-                  "type": "",
-                  "text": null
-                },
-                {
-                  "type": "",
-                  "text": null
-                }
-              ]
-            },
-            {
-              "role": "",
-              "content": [
-                {
-                  "type": "",
-                  "text": "The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded — calling them directly will fail with InputValidationError. Use ToolSearch with query \"select:<name>[,<name>...]\" to load tool schemas before calling them:\nmcp__fx__alpha\nmcp__fx__beta",
-                  "cache_control": null
-                }
-              ],
-              "output_config": null
-            }
-          ],
-          "system": [
-            {},
-            {},
-            {
-              "text": "AGENTSPEC-PROBE-MARKER-CCMCP4T"
-            }
-          ],
-          "tools": [
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
+              "name": "Skill",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -310,13 +147,24 @@
               "name": "",
               "description": null,
               "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "DeferredToolPlaceholder",
+              "description": null,
+              "input_schema": {
                 "type": null,
                 "properties": {}
               },
               "defer_loading": null
             },
             {
-              "name": "",
+              "name": "Write",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -329,7 +177,7 @@
             },
             {
               "type": null,
-              "name": "",
+              "name": "advisor",
               "model": null,
               "defer_loading": null
             }
@@ -340,24 +188,178 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": null
+                },
+                {
+                  "type": "text",
+                  "text": null
+                },
+                {
+                  "type": "text",
+                  "text": null
+                }
+              ]
+            },
+            {
+              "role": "system",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded — calling them directly will fail with InputValidationError. Use ToolSearch with query \"select:<name>[,<name>...]\" to load tool schemas before calling them:\nmcp__fx__alpha\nmcp__fx__beta",
+                  "cache_control": null
+                }
+              ],
+              "output_config": null
+            }
+          ],
+          "system": [
+            {
+              "text": "x-anthropic-billing-header: cc_version=2.1.287.ae6; cc_entrypoint=sdk-cli; cch=00000; cc_is_subagent=true; cc_prompt_id=ebdf25c0-ca26-4b21-a715-26fd64d5093c;"
+            },
+            {},
+            {
+              "text": "AGENTSPEC-PROBE-MARKER-CCMCP4T"
+            }
+          ],
+          "tools": [
+            {
+              "name": "Agent",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "Bash",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "Edit",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "Read",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "Skill",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "ToolSearch",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "DeferredToolPlaceholder",
+              "description": null,
+              "input_schema": {
+                "type": null,
+                "properties": {}
+              },
+              "defer_loading": null
+            },
+            {
+              "name": "Write",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "type": null,
+              "name": "advisor",
+              "model": null,
+              "defer_loading": null
+            }
+          ],
+          "betas": null,
+          "metadata": null,
+          "max_tokens": null,
+          "thinking": null,
+          "context_management": null,
+          "output_config": {
+            "effort": "low"
+          },
+          "thread": null,
+          "diagnostics": null,
+          "stream": null
+        },
+        {
+          "model": "claude-sonnet-5-5",
+          "messages": [
+            {
+              "role": "user",
               "content": ""
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null,
                   "cache_control": null
                 }
@@ -371,20 +373,20 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
-                  "tool_use_id": "",
+                  "tool_use_id": "toolu_01CAzbcq177FUQSAjhrTKVfz",
                   "type": "tool_result",
                   "content": [
                     {
@@ -396,10 +398,10 @@
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null,
                   "cache_control": null
                 }
@@ -413,7 +415,7 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
@@ -429,7 +431,7 @@
           "content": [
             {
               "type": "tool_use",
-              "id": "",
+              "id": "toolu_01CAzbcq177FUQSAjhrTKVfz",
               "name": "Agent",
               "input": {
                 "description": null,
@@ -455,12 +457,12 @@
           "role": null,
           "content": [
             {
-              "type": "",
+              "type": "thinking",
               "thinking": null,
               "signature": null
             },
             {
-              "type": "",
+              "type": "text",
               "text": null
             }
           ],
@@ -480,7 +482,7 @@
           "role": null,
           "content": [
             {
-              "type": "",
+              "type": "text",
               "text": null
             }
           ],
@@ -500,7 +502,7 @@
           "role": null,
           "content": [
             {
-              "type": "",
+              "type": "text",
               "text": null
             }
           ],
@@ -518,55 +520,59 @@
     "read": {
       "requests": [
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
                   "type": "tool_result",
                   "content": "",
                   "is_error": true,
-                  "tool_use_id": ""
+                  "tool_use_id": "toolu_01FMtUG1VV5zYDi3qFn9J2nr"
                 }
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null,
                   "cache_control": null
                 }
               ]
             }
           ],
-          "system": [{}],
+          "system": [
+            {
+              "text": "x-anthropic-billing-header: cc_version=2.1.287.ae6; cc_entrypoint=sdk-cli; cch=00000; cc_is_subagent=true; cc_prev_req=req_011CfwJsTWQLbEt4mQBazb8S; cc_prompt_id=8c7bb11e-014f-4621-9141-fdbf26f44097;"
+            }
+          ],
           "betas": null,
           "metadata": null,
           "max_tokens": null,
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null,
                   "cache_control": null
                 }
@@ -580,20 +586,20 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
-                  "tool_use_id": "",
+                  "tool_use_id": "toolu_019LJeEeJr9GzcBKYem2bBDL",
                   "type": "tool_result",
                   "content": [
                     {
@@ -605,10 +611,10 @@
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null,
                   "cache_control": null
                 }
@@ -622,38 +628,38 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 }
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
-                  "text": "",
+                  "type": "text",
+                  "text": "The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded — calling them directly will fail with InputValidationError. Use ToolSearch with query \"select:<name>[,<name>...]\" to load tool schemas before calling them:\nmcp__fx__alpha\nmcp__fx__beta",
                   "cache_control": null
                 }
               ],
@@ -663,7 +669,7 @@
           "system": [{}, {}, {}, {}],
           "tools": [
             {
-              "name": "",
+              "name": "Agent",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -675,7 +681,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
+              "name": "Bash",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -687,42 +693,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
+              "name": "Edit",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -745,7 +716,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
+              "name": "Read",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -780,7 +751,42 @@
               "eager_input_streaming": null
             },
             {
+              "name": "Skill",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "ToolSearch",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
               "name": "",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "DeferredToolPlaceholder",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -789,7 +795,7 @@
               "defer_loading": null
             },
             {
-              "name": "",
+              "name": "Write",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -802,7 +808,7 @@
             },
             {
               "type": null,
-              "name": "",
+              "name": "advisor",
               "model": null,
               "defer_loading": null
             }
@@ -813,33 +819,33 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 }
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null,
                   "cache_control": null
                 }
@@ -848,7 +854,9 @@
             }
           ],
           "system": [
-            {},
+            {
+              "text": "x-anthropic-billing-header: cc_version=2.1.287.ae6; cc_entrypoint=sdk-cli; cch=00000; cc_is_subagent=true; cc_prompt_id=8c7bb11e-014f-4621-9141-fdbf26f44097;"
+            },
             {},
             {
               "text": "AGENTSPEC-PROBE-MARKER-CCMCP4T"
@@ -856,7 +864,7 @@
           ],
           "tools": [
             {
-              "name": "",
+              "name": "Read",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -869,7 +877,7 @@
             },
             {
               "type": null,
-              "name": "",
+              "name": "advisor",
               "model": null,
               "defer_loading": null
             }
@@ -880,7 +888,7 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
@@ -896,7 +904,7 @@
           "content": [
             {
               "type": "tool_use",
-              "id": "",
+              "id": "toolu_019LJeEeJr9GzcBKYem2bBDL",
               "name": "Agent",
               "input": {
                 "description": null,
@@ -922,14 +930,14 @@
           "role": null,
           "content": [
             {
-              "type": "",
+              "type": "thinking",
               "thinking": null,
               "signature": null
             },
             {
               "type": "tool_use",
-              "id": "",
-              "name": "",
+              "id": "toolu_01FMtUG1VV5zYDi3qFn9J2nr",
+              "name": "Read",
               "input": null,
               "caller": null
             }
@@ -950,7 +958,7 @@
           "role": null,
           "content": [
             {
-              "type": "",
+              "type": "text",
               "text": null
             }
           ],
@@ -970,7 +978,7 @@
           "role": null,
           "content": [
             {
-              "type": "",
+              "type": "text",
               "text": null
             }
           ],
@@ -990,7 +998,7 @@
           "role": null,
           "content": [
             {
-              "type": "",
+              "type": "text",
               "text": null
             }
           ],
@@ -1008,26 +1016,26 @@
     "exact": {
       "requests": [
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 }
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null,
                   "cache_control": null
                 }
@@ -1036,7 +1044,9 @@
             }
           ],
           "system": [
-            {},
+            {
+              "text": "x-anthropic-billing-header: cc_version=2.1.287.d5f; cc_entrypoint=sdk-cli; cch=00000; cc_is_subagent=true; cc_prompt_id=94f3bdf1-9c36-4ad2-94e8-5d0094ea78f8;"
+            },
             {},
             {
               "text": "AGENTSPEC-PROBE-MARKER-CCMCP4T"
@@ -1044,7 +1054,7 @@
           ],
           "tools": [
             {
-              "name": "",
+              "name": "Read",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -1066,7 +1076,7 @@
             },
             {
               "type": null,
-              "name": "",
+              "name": "advisor",
               "model": null,
               "defer_loading": null
             }
@@ -1077,62 +1087,66 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
                   "type": "tool_result",
                   "content": "",
                   "is_error": true,
-                  "tool_use_id": ""
+                  "tool_use_id": "toolu_01PAqHBqnS5AYoWspUVEJZwR"
                 }
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null,
                   "cache_control": null
                 }
               ]
             }
           ],
-          "system": [{}],
+          "system": [
+            {
+              "text": "x-anthropic-billing-header: cc_version=2.1.287.d5f; cc_entrypoint=sdk-cli; cch=00000; cc_is_subagent=true; cc_prev_req=req_011CfwJt5R8sP84JBdeLao3k; cc_prompt_id=94f3bdf1-9c36-4ad2-94e8-5d0094ea78f8;"
+            }
+          ],
           "betas": null,
           "metadata": null,
           "max_tokens": null,
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null,
                   "cache_control": null
                 }
@@ -1146,38 +1160,38 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 }
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
-                  "text": "",
+                  "type": "text",
+                  "text": "The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded — calling them directly will fail with InputValidationError. Use ToolSearch with query \"select:<name>[,<name>...]\" to load tool schemas before calling them:\nmcp__fx__alpha\nmcp__fx__beta",
                   "cache_control": null
                 }
               ],
@@ -1187,7 +1201,7 @@
           "system": [{}, {}, {}, {}],
           "tools": [
             {
-              "name": "",
+              "name": "Agent",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -1199,7 +1213,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
+              "name": "Bash",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -1211,42 +1225,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
+              "name": "Edit",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -1269,7 +1248,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
+              "name": "Read",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -1304,7 +1283,42 @@
               "eager_input_streaming": null
             },
             {
+              "name": "Skill",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "ToolSearch",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
               "name": "",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "DeferredToolPlaceholder",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -1313,7 +1327,7 @@
               "defer_loading": null
             },
             {
-              "name": "",
+              "name": "Write",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -1326,7 +1340,7 @@
             },
             {
               "type": null,
-              "name": "",
+              "name": "advisor",
               "model": null,
               "defer_loading": null
             }
@@ -1337,20 +1351,20 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
-                  "tool_use_id": "",
+                  "tool_use_id": "toolu_01FvdLMqb5UMwGPrji2hof9d",
                   "type": "tool_result",
                   "content": [
                     {
@@ -1362,10 +1376,10 @@
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null,
                   "cache_control": null
                 }
@@ -1379,7 +1393,7 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
@@ -1395,7 +1409,7 @@
           "content": [
             {
               "type": "tool_use",
-              "id": "",
+              "id": "toolu_01FvdLMqb5UMwGPrji2hof9d",
               "name": "Agent",
               "input": {
                 "description": null,
@@ -1422,8 +1436,8 @@
           "content": [
             {
               "type": "tool_use",
-              "id": "",
-              "name": "",
+              "id": "toolu_01PAqHBqnS5AYoWspUVEJZwR",
+              "name": "mcp__fx__alpha",
               "input": null,
               "caller": null
             }
@@ -1444,7 +1458,7 @@
           "role": null,
           "content": [
             {
-              "type": "",
+              "type": "text",
               "text": null
             }
           ],
@@ -1464,7 +1478,7 @@
           "role": null,
           "content": [
             {
-              "type": "",
+              "type": "text",
               "text": null
             }
           ],
@@ -1484,7 +1498,7 @@
           "role": null,
           "content": [
             {
-              "type": "",
+              "type": "text",
               "text": null
             }
           ],
@@ -1502,13 +1516,13 @@
     "exact_search": {
       "requests": [
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
-                  "tool_use_id": "",
+                  "tool_use_id": "toolu_01DjQf8en8hk6TcvbMdZdRBo",
                   "type": "tool_result",
                   "content": [
                     {
@@ -1520,10 +1534,10 @@
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null,
                   "cache_control": null
                 }
@@ -1537,24 +1551,24 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null,
                   "cache_control": null
                 }
@@ -1568,21 +1582,21 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
                   "type": "tool_result",
-                  "tool_use_id": "",
+                  "tool_use_id": "toolu_01R9XJFzQR2fJk6aBh8sYZKC",
                   "content": [
                     {
                       "type": "",
@@ -1591,26 +1605,30 @@
                   ]
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 }
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null,
                   "cache_control": null
                 }
               ]
             }
           ],
-          "system": [{}],
+          "system": [
+            {
+              "text": "x-anthropic-billing-header: cc_version=2.1.287.062; cc_entrypoint=sdk-cli; cch=00000; cc_is_subagent=true; cc_prev_req=req_011CfwJten5royZjoCp6jZRJ; cc_prompt_id=9a10218a-6ccc-4350-baa3-505a859c7c32;"
+            }
+          ],
           "tools": [
             {
-              "name": "",
+              "name": "Read",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -1622,7 +1640,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
+              "name": "ToolSearch",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -1634,7 +1652,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
+              "name": "DeferredToolPlaceholder",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -1643,7 +1661,7 @@
               "defer_loading": null
             },
             {
-              "name": "",
+              "name": "mcp__fx__alpha",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -1654,7 +1672,7 @@
             },
             {
               "type": null,
-              "name": "",
+              "name": "advisor",
               "model": null,
               "defer_loading": null
             }
@@ -1665,38 +1683,38 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 }
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
-                  "text": "",
+                  "type": "text",
+                  "text": "The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded — calling them directly will fail with InputValidationError. Use ToolSearch with query \"select:<name>[,<name>...]\" to load tool schemas before calling them:\nmcp__fx__alpha\nmcp__fx__beta",
                   "cache_control": null
                 }
               ],
@@ -1706,7 +1724,7 @@
           "system": [{}, {}, {}, {}],
           "tools": [
             {
-              "name": "",
+              "name": "Agent",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -1718,7 +1736,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
+              "name": "Bash",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -1730,42 +1748,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
+              "name": "Edit",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -1788,7 +1771,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
+              "name": "Read",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -1823,7 +1806,42 @@
               "eager_input_streaming": null
             },
             {
+              "name": "Skill",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "ToolSearch",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
               "name": "",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "DeferredToolPlaceholder",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -1832,7 +1850,7 @@
               "defer_loading": null
             },
             {
-              "name": "",
+              "name": "Write",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -1845,7 +1863,7 @@
             },
             {
               "type": null,
-              "name": "",
+              "name": "advisor",
               "model": null,
               "defer_loading": null
             }
@@ -1856,71 +1874,75 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
                   "type": "tool_result",
                   "content": "",
                   "is_error": true,
-                  "tool_use_id": ""
+                  "tool_use_id": "toolu_01L7EjQm5UTLr3dX9KZjhQ9v"
                 }
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null,
                   "cache_control": null
                 }
               ]
             }
           ],
-          "system": [{}],
+          "system": [
+            {
+              "text": "x-anthropic-billing-header: cc_version=2.1.287.062; cc_entrypoint=sdk-cli; cch=00000; cc_is_subagent=true; cc_prev_req=req_011CfwJtv4Lu8HmtmVhV3Skj; cc_prompt_id=9a10218a-6ccc-4350-baa3-505a859c7c32;"
+            }
+          ],
           "betas": null,
           "metadata": null,
           "max_tokens": null,
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 }
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": "The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded — calling them directly will fail with InputValidationError. Use ToolSearch with query \"select:<name>[,<name>...]\" to load tool schemas before calling them:\nmcp__fx__alpha",
                   "cache_control": null
                 }
@@ -1929,7 +1951,9 @@
             }
           ],
           "system": [
-            {},
+            {
+              "text": "x-anthropic-billing-header: cc_version=2.1.287.062; cc_entrypoint=sdk-cli; cch=00000; cc_is_subagent=true; cc_prompt_id=9a10218a-6ccc-4350-baa3-505a859c7c32;"
+            },
             {},
             {
               "text": "AGENTSPEC-PROBE-MARKER-CCMCP4T"
@@ -1937,7 +1961,7 @@
           ],
           "tools": [
             {
-              "name": "",
+              "name": "Read",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -1949,7 +1973,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
+              "name": "DeferredToolPlaceholder",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -1971,7 +1995,7 @@
             },
             {
               "type": null,
-              "name": "",
+              "name": "advisor",
               "model": null,
               "defer_loading": null
             }
@@ -1982,7 +2006,7 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
@@ -1998,7 +2022,7 @@
           "content": [
             {
               "type": "tool_use",
-              "id": "",
+              "id": "toolu_01DjQf8en8hk6TcvbMdZdRBo",
               "name": "Agent",
               "input": {
                 "description": null,
@@ -2025,8 +2049,8 @@
           "content": [
             {
               "type": "tool_use",
-              "id": "",
-              "name": "",
+              "id": "toolu_01R9XJFzQR2fJk6aBh8sYZKC",
+              "name": "ToolSearch",
               "input": null,
               "caller": null
             }
@@ -2047,7 +2071,7 @@
           "role": null,
           "content": [
             {
-              "type": "",
+              "type": "text",
               "text": null
             }
           ],
@@ -2068,8 +2092,8 @@
           "content": [
             {
               "type": "tool_use",
-              "id": "",
-              "name": "",
+              "id": "toolu_01L7EjQm5UTLr3dX9KZjhQ9v",
+              "name": "mcp__fx__alpha",
               "input": null,
               "caller": null
             }
@@ -2090,7 +2114,7 @@
           "role": null,
           "content": [
             {
-              "type": "",
+              "type": "text",
               "text": null
             }
           ],
@@ -2110,7 +2134,7 @@
           "role": null,
           "content": [
             {
-              "type": "",
+              "type": "text",
               "text": null
             }
           ],
@@ -2128,31 +2152,31 @@
     "server": {
       "requests": [
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 }
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
-                  "text": "",
+                  "type": "text",
+                  "text": "The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded — calling them directly will fail with InputValidationError. Use ToolSearch with query \"select:<name>[,<name>...]\" to load tool schemas before calling them:\nmcp__fx__alpha\nmcp__fx__beta",
                   "cache_control": null
                 }
               ],
@@ -2162,7 +2186,7 @@
           "system": [{}, {}, {}, {}],
           "tools": [
             {
-              "name": "",
+              "name": "Agent",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -2174,7 +2198,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
+              "name": "Bash",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -2186,42 +2210,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
+              "name": "Edit",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -2244,7 +2233,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
+              "name": "Read",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -2279,7 +2268,42 @@
               "eager_input_streaming": null
             },
             {
+              "name": "Skill",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "ToolSearch",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
               "name": "",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "DeferredToolPlaceholder",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -2288,7 +2312,7 @@
               "defer_loading": null
             },
             {
-              "name": "",
+              "name": "Write",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -2301,7 +2325,7 @@
             },
             {
               "type": null,
-              "name": "",
+              "name": "advisor",
               "model": null,
               "defer_loading": null
             }
@@ -2312,24 +2336,24 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null,
                   "cache_control": null
                 }
@@ -2343,33 +2367,33 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 }
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null,
                   "cache_control": null
                 }
@@ -2378,7 +2402,9 @@
             }
           ],
           "system": [
-            {},
+            {
+              "text": "x-anthropic-billing-header: cc_version=2.1.287.ae6; cc_entrypoint=sdk-cli; cch=00000; cc_is_subagent=true; cc_prompt_id=6d0fa478-3af6-4f3e-af9c-71e69f7620ab;"
+            },
             {},
             {
               "text": "AGENTSPEC-PROBE-MARKER-CCMCP4T"
@@ -2386,7 +2412,7 @@
           ],
           "tools": [
             {
-              "name": "",
+              "name": "Read",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -2417,7 +2443,7 @@
             },
             {
               "type": null,
-              "name": "",
+              "name": "advisor",
               "model": null,
               "defer_loading": null
             }
@@ -2428,64 +2454,68 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
                   "type": "tool_result",
                   "content": "",
                   "is_error": true,
-                  "tool_use_id": ""
+                  "tool_use_id": "toolu_01WAXEmJKBwLa1ZEvr5LiFPm"
                 },
                 {
                   "type": "tool_result",
                   "content": "",
                   "is_error": true,
-                  "tool_use_id": ""
+                  "tool_use_id": "toolu_01KJAAbNMY6vahwGWfM8pa2G"
                 }
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null,
                   "cache_control": null
                 }
               ]
             }
           ],
-          "system": [{}],
+          "system": [
+            {
+              "text": "x-anthropic-billing-header: cc_version=2.1.287.ae6; cc_entrypoint=sdk-cli; cch=00000; cc_is_subagent=true; cc_prev_req=req_011CfwJuYMQkK7Qr4jbVzKec; cc_prompt_id=6d0fa478-3af6-4f3e-af9c-71e69f7620ab;"
+            }
+          ],
           "betas": null,
           "metadata": null,
           "max_tokens": null,
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
-                  "tool_use_id": "",
+                  "tool_use_id": "toolu_01PynPgjo3icpat46Sdanc6x",
                   "type": "tool_result",
                   "content": [
                     {
@@ -2497,10 +2527,10 @@
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null,
                   "cache_control": null
                 }
@@ -2514,7 +2544,7 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
@@ -2530,7 +2560,7 @@
           "content": [
             {
               "type": "tool_use",
-              "id": "",
+              "id": "toolu_01PynPgjo3icpat46Sdanc6x",
               "name": "Agent",
               "input": {
                 "description": null,
@@ -2557,15 +2587,15 @@
           "content": [
             {
               "type": "tool_use",
-              "id": "",
-              "name": "",
+              "id": "toolu_01WAXEmJKBwLa1ZEvr5LiFPm",
+              "name": "mcp__fx__alpha",
               "input": null,
               "caller": null
             },
             {
               "type": "tool_use",
-              "id": "",
-              "name": "",
+              "id": "toolu_01KJAAbNMY6vahwGWfM8pa2G",
+              "name": "mcp__fx__beta",
               "input": null,
               "caller": null
             }
@@ -2586,7 +2616,7 @@
           "role": null,
           "content": [
             {
-              "type": "",
+              "type": "text",
               "text": null
             }
           ],
@@ -2606,7 +2636,7 @@
           "role": null,
           "content": [
             {
-              "type": "",
+              "type": "text",
               "text": null
             }
           ],
@@ -2626,7 +2656,7 @@
           "role": null,
           "content": [
             {
-              "type": "",
+              "type": "text",
               "text": null
             }
           ],
@@ -2644,13 +2674,13 @@
     "server_glob": {
       "requests": [
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
-                  "tool_use_id": "",
+                  "tool_use_id": "toolu_01Vy17SoR2kE6cPUhRNcrBxC",
                   "type": "tool_result",
                   "content": [
                     {
@@ -2662,10 +2692,10 @@
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null,
                   "cache_control": null
                 }
@@ -2679,82 +2709,86 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
                   "type": "tool_result",
                   "content": "",
                   "is_error": true,
-                  "tool_use_id": ""
+                  "tool_use_id": "toolu_01Rm5gNHXoHKdBgLxyjDw1cD"
                 },
                 {
                   "type": "tool_result",
                   "content": "",
                   "is_error": true,
-                  "tool_use_id": ""
+                  "tool_use_id": "toolu_01GfZxUMoDKYbVbebCpaBM5P"
                 }
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null,
                   "cache_control": null
                 }
               ]
             }
           ],
-          "system": [{}],
+          "system": [
+            {
+              "text": "x-anthropic-billing-header: cc_version=2.1.287.6cd; cc_entrypoint=sdk-cli; cch=00000; cc_is_subagent=true; cc_prev_req=req_011CfwJvEi3TL33dkr2JG2GS; cc_prompt_id=c1ddf2e7-a49c-4745-8cd0-242a1457cf9d;"
+            }
+          ],
           "betas": null,
           "metadata": null,
           "max_tokens": null,
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 }
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
-                  "text": "",
+                  "type": "text",
+                  "text": "The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded — calling them directly will fail with InputValidationError. Use ToolSearch with query \"select:<name>[,<name>...]\" to load tool schemas before calling them:\nmcp__fx__alpha\nmcp__fx__beta",
                   "cache_control": null
                 }
               ],
@@ -2764,7 +2798,7 @@
           "system": [{}, {}, {}, {}],
           "tools": [
             {
-              "name": "",
+              "name": "Agent",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -2776,7 +2810,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
+              "name": "Bash",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -2788,42 +2822,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
-              "description": null,
-              "input_schema": {
-                "$schema": null,
-                "type": null,
-                "properties": {},
-                "required": null,
-                "additionalProperties": null
-              },
-              "eager_input_streaming": null
-            },
-            {
-              "name": "",
+              "name": "Edit",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -2846,7 +2845,7 @@
               "eager_input_streaming": null
             },
             {
-              "name": "",
+              "name": "Read",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -2881,7 +2880,42 @@
               "eager_input_streaming": null
             },
             {
+              "name": "Skill",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "ToolSearch",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "required": null,
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
               "name": "",
+              "description": null,
+              "input_schema": {
+                "$schema": null,
+                "type": null,
+                "properties": {},
+                "additionalProperties": null
+              },
+              "eager_input_streaming": null
+            },
+            {
+              "name": "DeferredToolPlaceholder",
               "description": null,
               "input_schema": {
                 "type": null,
@@ -2890,7 +2924,7 @@
               "defer_loading": null
             },
             {
-              "name": "",
+              "name": "Write",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -2903,7 +2937,7 @@
             },
             {
               "type": null,
-              "name": "",
+              "name": "advisor",
               "model": null,
               "defer_loading": null
             }
@@ -2914,24 +2948,24 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null,
                   "cache_control": null
                 }
@@ -2945,33 +2979,33 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
           "stream": null
         },
         {
-          "model": "",
+          "model": "claude-sonnet-5-5",
           "messages": [
             {
-              "role": "",
+              "role": "user",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 },
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null
                 }
               ]
             },
             {
-              "role": "",
+              "role": "system",
               "content": [
                 {
-                  "type": "",
+                  "type": "text",
                   "text": null,
                   "cache_control": null
                 }
@@ -2980,7 +3014,9 @@
             }
           ],
           "system": [
-            {},
+            {
+              "text": "x-anthropic-billing-header: cc_version=2.1.287.6cd; cc_entrypoint=sdk-cli; cch=00000; cc_is_subagent=true; cc_prompt_id=c1ddf2e7-a49c-4745-8cd0-242a1457cf9d;"
+            },
             {},
             {
               "text": "AGENTSPEC-PROBE-MARKER-CCMCP4T"
@@ -2988,7 +3024,7 @@
           ],
           "tools": [
             {
-              "name": "",
+              "name": "Read",
               "description": null,
               "input_schema": {
                 "$schema": null,
@@ -3019,7 +3055,7 @@
             },
             {
               "type": null,
-              "name": "",
+              "name": "advisor",
               "model": null,
               "defer_loading": null
             }
@@ -3030,7 +3066,7 @@
           "thinking": null,
           "context_management": null,
           "output_config": {
-            "effort": ""
+            "effort": "low"
           },
           "thread": null,
           "diagnostics": null,
@@ -3046,7 +3082,7 @@
           "content": [
             {
               "type": "tool_use",
-              "id": "",
+              "id": "toolu_01Vy17SoR2kE6cPUhRNcrBxC",
               "name": "Agent",
               "input": {
                 "description": null,
@@ -3073,15 +3109,15 @@
           "content": [
             {
               "type": "tool_use",
-              "id": "",
-              "name": "",
+              "id": "toolu_01Rm5gNHXoHKdBgLxyjDw1cD",
+              "name": "mcp__fx__alpha",
               "input": null,
               "caller": null
             },
             {
               "type": "tool_use",
-              "id": "",
-              "name": "",
+              "id": "toolu_01GfZxUMoDKYbVbebCpaBM5P",
+              "name": "mcp__fx__beta",
               "input": null,
               "caller": null
             }
@@ -3102,7 +3138,7 @@
           "role": null,
           "content": [
             {
-              "type": "",
+              "type": "text",
               "text": null
             }
           ],
@@ -3122,7 +3158,7 @@
           "role": null,
           "content": [
             {
-              "type": "",
+              "type": "text",
               "text": null
             }
           ],
@@ -3142,7 +3178,7 @@
           "role": null,
           "content": [
             {
-              "type": "",
+              "type": "text",
               "text": null
             }
           ],

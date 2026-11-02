@@ -6,6 +6,7 @@ values, so a person drives Claude but nobody has to interpret the answer.
 
 from collections.abc import Sequence
 
+from probe_harness.families.base import WrongVersion
 from probe_harness.families.manual import CaptureLine, ManualProbe, Unparsed
 from probe_harness.json_values import JsonValue
 from probe_harness.models.claude_hook import ClaudeHookPayload
@@ -41,6 +42,12 @@ def _assertion(lines: Sequence[_Line]) -> JsonValue:
     ]
 
 
+def _drops_unparsed_lines(lines: Sequence[_Line]) -> JsonValue:
+    """A wrong version of `_assertion`: it drops `Unparsed` lines before indexing, so with no
+    `UserPromptSubmit` an unparsed first line no longer takes the place of the line skipped."""
+    return _assertion([line for line in lines if isinstance(line, ClaudeHookPayload)])
+
+
 PROBE = ManualProbe(
     instructions="""
   1. cd into that directory and run: claude
@@ -54,4 +61,7 @@ This script is waiting and will record the result automatically.
     payload=ClaudeHookPayload,
     wait_for=_wait_for,
     assertion=_assertion,
+    wrong_versions=(
+        WrongVersion("drops unparsed lines before indexing", "assertion", _drops_unparsed_lines),
+    ),
 )

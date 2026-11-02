@@ -11,6 +11,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from probe_harness import console, json_values, record
 from probe_harness.arms import ArmCapture, Arms
@@ -69,6 +70,22 @@ class CustomCheck[V]:
     name: str
     holds: Callable[[V], bool]
     failure: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class WrongVersion:
+    """A deliberately wrong version of one of a definition's expressions.
+
+    Some committed sample must tell it apart from the expression it stands in for, by
+    yielding a value other than the recorded one or by raising, and the removal test keeps
+    every sample that does so. <stands_in_for> is `assertion`, `wait_for`,
+    `capture_version`, or a custom check's `name`; <function> takes what that expression
+    takes.
+    """
+
+    name: str
+    stands_in_for: str
+    function: Callable[..., Any]
 
 
 @dataclass(frozen=True)

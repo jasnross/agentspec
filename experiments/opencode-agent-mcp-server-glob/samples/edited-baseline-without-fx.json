@@ -9,15 +9,15 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
+              "role": "system",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -29,11 +29,11 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
-              "content": ""
+              "role": "system",
+              "content": "Reply with exactly one word: ok.\n\nAGENTSPEC-PROBE-MARKER-OCGLOB2"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -57,7 +57,23 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "fx_beta",
+                "description": null,
+                "parameters": null
+              }
+            },
+            {
+              "type": null,
+              "function": {
+                "name": "fx_extra_alpha",
+                "description": null,
+                "parameters": null
+              }
+            },
+            {
+              "type": null,
+              "function": {
+                "name": "fx_extra_beta",
                 "description": null,
                 "parameters": null
               }
@@ -97,23 +113,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
-                "description": null,
-                "parameters": null
-              }
-            },
-            {
-              "type": null,
-              "function": {
-                "name": "",
-                "description": null,
-                "parameters": null
-              }
-            },
-            {
-              "type": null,
-              "function": {
-                "name": "",
+                "name": "task",
                 "description": null,
                 "parameters": null
               }
@@ -156,15 +156,15 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
+              "role": "system",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -177,10 +177,10 @@
           "messages": [
             {
               "role": "system",
-              "content": "AGENTSPEC-PROBE-MARKER-OCGLOB2"
+              "content": "Reply with exactly one word: ok.\n\nAGENTSPEC-PROBE-MARKER-OCGLOB2"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],

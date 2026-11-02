@@ -256,12 +256,13 @@ def test_record_dry_run_judges_a_kept_claude_workspace(
     assert "probe record: arm a: the fx server never answered tools/list" in refused.stderr
 
 
-def test_a_claude_sample_keeps_no_text_block_its_expressions_do_not_read(
+def test_a_claude_sample_keeps_no_unaccounted_line_its_expressions_do_not_read(
     cli: Cli, package: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Claude Code sends the deferred-tools listing in one text block with its environment
     # details and its skill listing, which names the operator's own skills. The assertion
-    # only counts requests, so none of it is needed.
+    # only counts requests, so none of it is needed; the cut keeps only the lines the
+    # accounting check vouches for, here Claude Code's own tool name.
     listing = [DEFERRED_LISTING, "ToolSearch", "mcp__fx__alpha"]
     block = "\n".join(
         [
@@ -299,7 +300,7 @@ def test_a_claude_sample_keeps_no_text_block_its_expressions_do_not_read(
 
     sample = json.loads(path.read_text(encoding="utf-8"))
     (cut,) = sample["input"]["a"]["requests"]
-    assert cut["messages"][0]["content"][0]["text"] == ""
+    assert cut["messages"][0]["content"][0]["text"] == "\nToolSearch\n"
 
 
 def test_the_templated_server_runs_the_shared_stub_under_this_interpreter(

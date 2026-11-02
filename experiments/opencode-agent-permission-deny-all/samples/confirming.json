@@ -8,15 +8,15 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
+              "role": "system",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -29,10 +29,10 @@
           "messages": [
             {
               "role": "system",
-              "content": "AGENTSPEC-PROBE-MARKER-OCPERM5"
+              "content": "Reply with exactly one word: ok.\n\nAGENTSPEC-PROBE-MARKER-OCPERM5"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -40,7 +40,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "bash",
                 "description": null,
                 "parameters": null
               }
@@ -48,7 +48,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "edit",
                 "description": null,
                 "parameters": null
               }
@@ -88,7 +88,23 @@
             {
               "type": null,
               "function": {
+                "name": "read",
+                "description": null,
+                "parameters": null
+              }
+            },
+            {
+              "type": null,
+              "function": {
                 "name": "",
+                "description": null,
+                "parameters": null
+              }
+            },
+            {
+              "type": null,
+              "function": {
+                "name": "task",
                 "description": null,
                 "parameters": null
               }
@@ -112,23 +128,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
-                "description": null,
-                "parameters": null
-              }
-            },
-            {
-              "type": null,
-              "function": {
-                "name": "",
-                "description": null,
-                "parameters": null
-              }
-            },
-            {
-              "type": null,
-              "function": {
-                "name": "",
+                "name": "write",
                 "description": null,
                 "parameters": null
               }
@@ -147,15 +147,15 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
+              "role": "system",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -168,10 +168,10 @@
           "messages": [
             {
               "role": "system",
-              "content": "AGENTSPEC-PROBE-MARKER-OCPERM5"
+              "content": "Reply with exactly one word: ok.\n\nAGENTSPEC-PROBE-MARKER-OCPERM5"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -222,15 +222,15 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
+              "role": "system",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -243,10 +243,10 @@
           "messages": [
             {
               "role": "system",
-              "content": "AGENTSPEC-PROBE-MARKER-OCPERM5"
+              "content": "Reply with exactly one word: ok.\n\nAGENTSPEC-PROBE-MARKER-OCPERM5"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -281,15 +281,15 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
+              "role": "system",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -302,10 +302,10 @@
           "messages": [
             {
               "role": "system",
-              "content": "AGENTSPEC-PROBE-MARKER-OCPERM5"
+              "content": "Reply with exactly one word: ok.\n\nAGENTSPEC-PROBE-MARKER-OCPERM5"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -332,15 +332,15 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
+              "role": "system",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -353,10 +353,10 @@
           "messages": [
             {
               "role": "system",
-              "content": "AGENTSPEC-PROBE-MARKER-OCPERM5"
+              "content": "Reply with exactly one word: ok.\n\nAGENTSPEC-PROBE-MARKER-OCPERM5"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],

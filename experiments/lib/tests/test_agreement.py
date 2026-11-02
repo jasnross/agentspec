@@ -23,7 +23,7 @@ MANUAL = textwrap.dedent("""\
 """)
 
 DEBUG = textwrap.dedent("""\
-    from probe_harness.families.base import CustomCheck
+    from probe_harness.families.base import CustomCheck, WrongVersion
     from probe_harness.families.opencode_debug import OpenCodeDebugProbe
     from probe_harness.families.opencode_env import OpenCodeIsolation
     from probe_harness.models.raw import ProviderModel
@@ -92,6 +92,35 @@ CASES: list[tuple[str, str, list[str], dict[str, Any], str]] = [
         [ASSERTION, TWO_CHECKS],
         DEBUG_EXPECTED,
         "pkg's definition declares custom check c more than once",
+    ),
+    (
+        "a wrong version stands in for a carried expression",
+        DEBUG,
+        [ASSERTION, 'wrong_versions=(WrongVersion("w", "wait_for", lambda d: 2),)'],
+        DEBUG_EXPECTED,
+        "pkg's wrong version w stands in for wait_for, which its definition does not carry",
+    ),
+    (
+        "wrong version names are unique",
+        DEBUG,
+        [
+            ASSERTION,
+            'wrong_versions=(WrongVersion("w", "assertion", lambda d: 2), '
+            'WrongVersion("w", "assertion", lambda d: 3))',
+        ],
+        DEBUG_EXPECTED,
+        "pkg's definition declares wrong version w more than once",
+    ),
+    (
+        "a custom check a wrong version could stand in for has no expression's name",
+        DEBUG,
+        [
+            ASSERTION,
+            'custom_checks=(CustomCheck("assertion", lambda d: True, ("no",)),)',
+            'wrong_versions=(WrongVersion("w", "assertion", lambda d: 2),)',
+        ],
+        DEBUG_EXPECTED,
+        "pkg's custom check assertion shares its name with an expression",
     ),
 ]
 

@@ -8,15 +8,15 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
+              "role": "system",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -28,11 +28,11 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
-              "content": ""
+              "role": "system",
+              "content": "Read the file you are asked to read.\n\nAGENTSPEC-PROBE-MARKER-OCEXTR6"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -40,7 +40,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "read",
                 "description": null,
                 "parameters": null
               }
@@ -56,10 +56,10 @@
           "messages": [
             {
               "role": "system",
-              "content": "AGENTSPEC-PROBE-MARKER-OCEXTR6"
+              "content": "Read the file you are asked to read.\n\nAGENTSPEC-PROBE-MARKER-OCEXTR6"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
@@ -96,15 +96,15 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
+              "role": "system",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -116,11 +116,11 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
-              "content": ""
+              "role": "system",
+              "content": "Read the file you are asked to read.\n\nAGENTSPEC-PROBE-MARKER-OCEXTR6"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -128,7 +128,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "read",
                 "description": null,
                 "parameters": null
               }
@@ -144,10 +144,10 @@
           "messages": [
             {
               "role": "system",
-              "content": "AGENTSPEC-PROBE-MARKER-OCEXTR6"
+              "content": "Read the file you are asked to read.\n\nAGENTSPEC-PROBE-MARKER-OCEXTR6"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {

@@ -26,6 +26,7 @@ from probe_harness.families.base import (
     JudgeResult,
     ProbeFunctions,
     RunOptions,
+    WrongVersion,
     decide,
     file_lines,
     kept_on_failure,
@@ -56,6 +57,8 @@ class OpenCodeDebugProbe[D: ProviderModel | RootModel[Any]]:
     assertion: Callable[[D], JsonValue] | None = None
     custom_checks: tuple[CustomCheck[D], ...] = ()
     functions: ProbeFunctions[D] = field(default_factory=ProbeFunctions)
+    # Wrong versions of the expressions; see `WrongVersion`.
+    wrong_versions: tuple[WrongVersion, ...] = ()
 
 
 def run[D: ProviderModel | RootModel[Any]](

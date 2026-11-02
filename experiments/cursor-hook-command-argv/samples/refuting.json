@@ -3,12 +3,12 @@
   "input": [
     {
       "case": "squote",
-      "argv0": "",
+      "argv0": "/home/probe/.local/state/agentspec/probe-workspaces/cursor-hook-command-argv/2026-10-22T045300-discriminator/capture/dump-hook.sh",
       "argc": 2,
       "argv": ["squote", "two words"],
       "probe_env": "",
       "payload": {
-        "conversation_id": "",
+        "conversation_id": "1d146c72-a610-4e8b-bf0c-7bfb7013a916",
         "generation_id": null,
         "model": null,
         "model_id": null,
@@ -25,12 +25,12 @@
     },
     {
       "case": "subst",
-      "argv0": "",
+      "argv0": "/home/probe/.local/state/agentspec/probe-workspaces/cursor-hook-command-argv/2026-10-22T045300-discriminator/capture/dump-hook.sh",
       "argc": 2,
       "argv": ["subst", "SUBSTITUTED"],
       "probe_env": "",
       "payload": {
-        "conversation_id": "",
+        "conversation_id": "1d146c72-a610-4e8b-bf0c-7bfb7013a916",
         "generation_id": null,
         "model": null,
         "model_id": null,
@@ -39,7 +39,7 @@
         "composer_mode": null,
         "session_id": null,
         "hook_event_name": "",
-        "cursor_version": "",
+        "cursor_version": "3.26.16",
         "workspace_roots": null,
         "user_email": null,
         "transcript_path": null
@@ -47,12 +47,12 @@
     },
     {
       "case": null,
-      "argv0": "",
+      "argv0": "/home/probe/.local/state/agentspec/probe-workspaces/cursor-hook-command-argv/2026-10-22T045300-discriminator/capture/dump-hook.sh",
       "argc": 0,
       "argv": [],
       "probe_env": "",
       "payload": {
-        "conversation_id": "",
+        "conversation_id": "1d146c72-a610-4e8b-bf0c-7bfb7013a916",
         "generation_id": null,
         "model": null,
         "model_id": null,
@@ -61,7 +61,7 @@
         "composer_mode": null,
         "session_id": null,
         "hook_event_name": "",
-        "cursor_version": "",
+        "cursor_version": "3.26.16",
         "workspace_roots": null,
         "user_email": null,
         "transcript_path": null
@@ -69,7 +69,7 @@
     },
     {
       "case": "anchor",
-      "argv0": "",
+      "argv0": "/home/probe/.local/state/agentspec/probe-workspaces/cursor-hook-command-argv/2026-10-22T045300-discriminator/capture/dump-hook.sh",
       "argc": 4,
       "argv": [
         "anchor",
@@ -79,7 +79,7 @@
       ],
       "probe_env": "",
       "payload": {
-        "conversation_id": "",
+        "conversation_id": "1d146c72-a610-4e8b-bf0c-7bfb7013a916",
         "generation_id": null,
         "model": null,
         "model_id": null,
@@ -88,20 +88,20 @@
         "composer_mode": null,
         "session_id": null,
         "hook_event_name": "",
-        "cursor_version": "",
+        "cursor_version": "3.26.16",
         "workspace_roots": null,
         "user_email": null,
         "transcript_path": null
       }
     },
     {
-      "case": "",
-      "argv0": "",
+      "case": "envprefix",
+      "argv0": "/home/probe/.local/state/agentspec/probe-workspaces/cursor-hook-command-argv/2026-10-22T045300-discriminator/capture/dump-hook.sh",
       "argc": 1,
-      "argv": [""],
+      "argv": ["envprefix"],
       "probe_env": "",
       "payload": {
-        "conversation_id": "",
+        "conversation_id": "1d146c72-a610-4e8b-bf0c-7bfb7013a916",
         "generation_id": null,
         "model": null,
         "model_id": null,
@@ -110,7 +110,7 @@
         "composer_mode": null,
         "session_id": null,
         "hook_event_name": "",
-        "cursor_version": "",
+        "cursor_version": "3.26.16",
         "workspace_roots": null,
         "user_email": null,
         "transcript_path": null
@@ -118,12 +118,12 @@
     },
     {
       "case": "var",
-      "argv0": "",
+      "argv0": "/home/probe/.local/state/agentspec/probe-workspaces/cursor-hook-command-argv/2026-10-22T045300-discriminator/capture/dump-hook.sh",
       "argc": 2,
-      "argv": ["", "/home/probe"],
+      "argv": ["var", "/home/probe"],
       "probe_env": "",
       "payload": {
-        "conversation_id": "",
+        "conversation_id": "1d146c72-a610-4e8b-bf0c-7bfb7013a916",
         "generation_id": null,
         "model": null,
         "model_id": null,
@@ -132,7 +132,7 @@
         "composer_mode": null,
         "session_id": null,
         "hook_event_name": "",
-        "cursor_version": "",
+        "cursor_version": "3.26.16",
         "workspace_roots": null,
         "user_email": null,
         "transcript_path": null
@@ -140,12 +140,12 @@
     },
     {
       "case": "utf8",
-      "argv0": "",
+      "argv0": "/home/probe/.local/state/agentspec/probe-workspaces/cursor-hook-command-argv/2026-10-22T045300-discriminator/capture/dump-hook.sh",
       "argc": 2,
       "argv": ["utf8", "café-日本-ñ"],
       "probe_env": "",
       "payload": {
-        "conversation_id": "",
+        "conversation_id": "1d146c72-a610-4e8b-bf0c-7bfb7013a916",
         "generation_id": null,
         "model": null,
         "model_id": null,
@@ -154,7 +154,7 @@
         "composer_mode": null,
         "session_id": null,
         "hook_event_name": "",
-        "cursor_version": "",
+        "cursor_version": "3.26.16",
         "workspace_roots": null,
         "user_email": null,
         "transcript_path": null
@@ -162,12 +162,12 @@
     },
     {
       "case": "meta",
-      "argv0": "",
+      "argv0": "/home/probe/.local/state/agentspec/probe-workspaces/cursor-hook-command-argv/2026-10-22T045300-discriminator/capture/dump-hook.sh",
       "argc": 2,
       "argv": ["meta", "a;b|c&d"],
       "probe_env": "",
       "payload": {
-        "conversation_id": "",
+        "conversation_id": "1d146c72-a610-4e8b-bf0c-7bfb7013a916",
         "generation_id": null,
         "model": null,
         "model_id": null,
@@ -176,7 +176,7 @@
         "composer_mode": null,
         "session_id": null,
         "hook_event_name": "",
-        "cursor_version": "",
+        "cursor_version": "3.26.16",
         "workspace_roots": null,
         "user_email": null,
         "transcript_path": null
@@ -189,7 +189,7 @@
       "argv": ["split", "alpha", "beta"],
       "probe_env": "",
       "payload": {
-        "conversation_id": "",
+        "conversation_id": "1d146c72-a610-4e8b-bf0c-7bfb7013a916",
         "generation_id": null,
         "model": null,
         "model_id": null,
@@ -198,7 +198,7 @@
         "composer_mode": null,
         "session_id": null,
         "hook_event_name": "",
-        "cursor_version": "",
+        "cursor_version": "3.26.16",
         "workspace_roots": null,
         "user_email": null,
         "transcript_path": null
@@ -206,12 +206,12 @@
     },
     {
       "case": "dquote",
-      "argv0": "",
+      "argv0": "/home/probe/.local/state/agentspec/probe-workspaces/cursor-hook-command-argv/2026-10-22T045300-discriminator/capture/dump-hook.sh",
       "argc": 2,
       "argv": ["dquote", "two words"],
       "probe_env": "",
       "payload": {
-        "conversation_id": "",
+        "conversation_id": "1d146c72-a610-4e8b-bf0c-7bfb7013a916",
         "generation_id": null,
         "model": null,
         "model_id": null,
@@ -220,7 +220,7 @@
         "composer_mode": null,
         "session_id": null,
         "hook_event_name": "",
-        "cursor_version": "",
+        "cursor_version": "3.26.16",
         "workspace_roots": null,
         "user_email": null,
         "transcript_path": null
@@ -228,12 +228,12 @@
     },
     {
       "case": null,
-      "argv0": "",
+      "argv0": "/home/probe/.local/state/agentspec/probe-workspaces/cursor-hook-command-argv/2026-10-22T045300-discriminator/capture/dump-hook.sh",
       "argc": 0,
       "argv": [],
       "probe_env": "",
       "payload": {
-        "conversation_id": "",
+        "conversation_id": "1d146c72-a610-4e8b-bf0c-7bfb7013a916",
         "generation_id": null,
         "model": null,
         "model_id": null,
@@ -242,7 +242,7 @@
         "composer_mode": null,
         "session_id": null,
         "hook_event_name": "",
-        "cursor_version": "",
+        "cursor_version": "3.26.16",
         "workspace_roots": null,
         "user_email": null,
         "transcript_path": null

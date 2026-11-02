@@ -1,0 +1,33 @@
+{
+  "origin": "edited",
+  "note": "edited-unparsed-line with its UserPromptSubmit removed: an unparsed line ahead of a startup and a resume SessionStart, with no prompt, so the unparsed line must keep its position for it, not the startup, to be the first line skipped",
+  "authored": ["not json"],
+  "input": [
+    {
+      "unparsed": "not json"
+    },
+    {
+      "session_id": null,
+      "transcript_path": null,
+      "cwd": null,
+      "hook_event_name": "SessionStart",
+      "source": "startup",
+      "model": null
+    },
+    {
+      "session_id": null,
+      "transcript_path": null,
+      "cwd": null,
+      "hook_event_name": "SessionStart",
+      "source": "resume",
+      "seconds_since_last_response": null,
+      "context_tokens": null,
+      "prompt_cache_likely_expired": null,
+      "estimated_cache_write_usd": null
+    }
+  ],
+  "results": {
+    "assertion": ["startup", "resume"],
+    "wait_for": true
+  }
+}

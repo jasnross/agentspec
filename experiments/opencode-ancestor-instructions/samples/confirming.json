@@ -8,15 +8,15 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
+              "role": "system",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -29,10 +29,10 @@
           "messages": [
             {
               "role": "system",
-              "content": "AGENTSPEC-PROBE-MARKER-OCANC1\nInstruction canary: AGENTSPEC-ANCESTOR-AGENTS-OCANC1"
+              "content": "Reply with exactly one word: ok.\n\nAGENTSPEC-PROBE-MARKER-OCANC1\nInstruction canary: AGENTSPEC-ANCESTOR-AGENTS-OCANC1\n"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -88,7 +88,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "task",
                 "description": null,
                 "parameters": null
               }
@@ -131,15 +131,15 @@
           "max_tokens": null,
           "messages": [
             {
-              "role": "",
+              "role": "system",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -152,10 +152,10 @@
           "messages": [
             {
               "role": "system",
-              "content": "AGENTSPEC-PROBE-MARKER-OCANC1\nInstruction canary: AGENTSPEC-ANCESTOR-CLAUDE-OCANC1"
+              "content": "Reply with exactly one word: ok.\n\nAGENTSPEC-PROBE-MARKER-OCANC1\nInstruction canary: AGENTSPEC-ANCESTOR-CLAUDE-OCANC1\n"
             },
             {
-              "role": "",
+              "role": "user",
               "content": ""
             }
           ],
@@ -211,7 +211,7 @@
             {
               "type": null,
               "function": {
-                "name": "",
+                "name": "task",
                 "description": null,
                 "parameters": null
               }

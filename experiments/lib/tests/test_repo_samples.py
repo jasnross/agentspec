@@ -5,9 +5,10 @@ declared result must be what the current evaluator yields over the sample's inpu
 across a package's samples every expression must take both outcomes. So an assertion,
 `wait_for` or custom check made constant by a later edit, to its own code or to a model it
 reads, fails here. Every sample must also be minimal, keeping no text the removal test could
-still cut, and every string it keeps must be accounted for: authored by the package, listed in
-the catalog of provider text, or typed by an author into an edited sample. No test here reads
-the machine it runs on.
+still cut, and every string it keeps must be accounted for: authored by the package, listed
+in the catalog of provider text, or typed by an author into an edited sample. Every wrong
+version a definition names must fail on some sample. No test here reads the machine it runs
+on.
 """
 
 from collections.abc import Iterator
@@ -21,8 +22,10 @@ from probe_harness.contract import (
     Sample,
     parse_sample_file,
 )
-from probe_harness.families import ProbeDefinition, load_package, parse_sample
+from probe_harness.families import ProbeDefinition, expressions, load_package, parse_sample
 from probe_harness.samples import (
+    _catches,
+    accounting,
     authored_text_leaks,
     cut,
     evaluate,
@@ -30,6 +33,7 @@ from probe_harness.samples import (
     sample_paths,
     unaccounted,
 )
+from pydantic import MISSING
 
 from tests.conftest import EXPERIMENTS_DIR
 
@@ -78,12 +82,27 @@ def test_each_declared_result_is_reproduced_by_the_current_evaluator(package: Pa
 def test_each_sample_is_minimal(package: Path) -> None:
     definition, _, samples = _loaded(package)
     for path, sample in samples:
+        authored = () if sample.authored is MISSING else sample.authored
+        found = accounting(package, authored)
         assert json_values.equal(
-            cut(definition, sample.input, sample.results, str(path)), sample.input
+            cut(definition, sample.input, sample.results, str(path), found), sample.input
         ), (
             f"{path.name} keeps text no expression needs; run experiments/probe sample "
             f"{package.name} --regenerate"
         )
+
+
+@pytest.mark.parametrize("package", SAMPLED, ids=lambda p: p.name)
+def test_each_wrong_version_fails_on_some_sample(package: Path) -> None:
+    definition, _, samples = _loaded(package)
+    if not expressions(definition).wrong_versions:
+        pytest.skip("names no wrong version")
+    caught: set[str] = set()
+    for path, sample in samples:
+        value = parse_sample(definition, sample.input, str(path))
+        caught |= _catches(definition, value, sample.results).keys()
+    missed = [w.name for w in expressions(definition).wrong_versions if w.name not in caught]
+    assert not missed, f"no committed sample tells these wrong versions apart: {missed}"
 
 
 @pytest.mark.parametrize("package", SAMPLED, ids=lambda p: p.name)

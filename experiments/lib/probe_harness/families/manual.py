@@ -39,6 +39,7 @@ from probe_harness.families.base import (
     RunOptions,
     Selected,
     UsageError,
+    WrongVersion,
     call,
     decide,
     kept_on_failure,
@@ -113,6 +114,8 @@ class ManualProbe[P: ProviderModel = ProviderModel]:
     # capture version source, and refused by any other.
     capture_version: Callable[[Sequence[P | Unparsed]], str | None] | None = None
     functions: ProbeFunctions[tuple[CaptureLine[P], ...]] = field(default_factory=ProbeFunctions)
+    # Wrong versions of the expressions; see `WrongVersion`.
+    wrong_versions: tuple[WrongVersion, ...] = ()
 
 
 def parse_lines[P: ProviderModel](text: str, payload: type[P]) -> tuple[CaptureLine[P], ...]:

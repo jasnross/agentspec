@@ -45,6 +45,7 @@ from probe_harness.families.base import (
     JudgeResult,
     ProbeFunctions,
     RunOptions,
+    WrongVersion,
     decide,
     file_lines,
     kept_on_failure,
@@ -179,6 +180,8 @@ class ClaudeOtelProbe:
     variants: tuple[str, ...] = ("assertion",)
     arrange_arm: ArmArrange | None = None
     functions: ProbeFunctions[ClaudeArms] = field(default_factory=ProbeFunctions)
+    # Wrong versions of the expressions; see `WrongVersion`.
+    wrong_versions: tuple[WrongVersion, ...] = ()
 
 
 def run(manifest: Manifest, name: str, options: RunOptions, probe: ClaudeOtelProbe) -> int:

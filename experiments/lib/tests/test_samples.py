@@ -29,6 +29,7 @@ CUT_PROBE_PY = textwrap.dedent("""\
     from typing import Annotated
 
     from pydantic import Field
+    from probe_harness.families.base import WrongVersion
     from probe_harness.families.opencode_debug import OpenCodeDebugProbe
     from probe_harness.families.opencode_env import OpenCodeIsolation
     from probe_harness.models.raw import ProviderModel, RawJson, tag, type_is
@@ -56,12 +57,18 @@ CUT_PROBE_PY = textwrap.dedent("""\
 
 
     PROBE = OpenCodeDebugProbe(
-        argv=("x",), output=Doc, isolation=OpenCodeIsolation(), assertion={assertion}
+        argv=("x",),
+        output=Doc,
+        isolation=OpenCodeIsolation(),
+        assertion={assertion},
+        wrong_versions={wrong_versions},
     )
 """)
 
 
-def _cut_definition(tree: Path, assertion: str = "lambda d: d.variant") -> ProbeDefinition:
+def _cut_definition(
+    tree: Path, assertion: str = "lambda d: d.variant", wrong_versions: str = "()"
+) -> ProbeDefinition:
     package = tree / "cut-pkg"
     (package / "fixtures" / "assertion").mkdir(parents=True)
     manifest: dict[str, Any] = {
@@ -71,43 +78,51 @@ def _cut_definition(tree: Path, assertion: str = "lambda d: d.variant") -> Probe
         "depth": "resolved-config",
         "question": "q",
         "version_source": {"kind": "none"},
-        "assertion": {"expected": "high"},
+        # No input below holds this, so the restricted cut may try every string it holds.
+        "assertion": {"expected": "a variant no input holds"},
     }
     (package / "probe.json").write_text(json.dumps(manifest), encoding="utf-8")
-    (package / "probe.py").write_text(CUT_PROBE_PY.format(assertion=assertion), encoding="utf-8")
+    (package / "probe.py").write_text(
+        CUT_PROBE_PY.format(assertion=assertion, wrong_versions=wrong_versions), encoding="utf-8"
+    )
     definition, _ = load_package(package)
     return definition
+
+
+def _cut_accounting(tree: Path) -> samples.Accounting:
+    """The accounting of the package `_cut_definition` builds."""
+    return samples.accounting(tree / "cut-pkg")
 
 
 def _doc(**fields: Any) -> dict[str, Any]:
     return {"variant": "high", "note": "", "body": {}, "blocks": [], **fields}
 
 
-def _cut(definition: ProbeDefinition, document: dict[str, Any]) -> JsonValue:
+def _cut(tree: Path, definition: ProbeDefinition, document: dict[str, Any]) -> JsonValue:
     """<document> cut against what the definition's expressions yield on it."""
     oracle = samples.evaluate(definition, parse_sample(definition, document, "t"))
-    return samples.cut(definition, document, oracle, "t")
+    return samples.cut(definition, document, oracle, "t", _cut_accounting(tree))
 
 
 def test_cut_empties_a_modelled_string_no_expression_reads(tree: Path) -> None:
     definition = _cut_definition(tree)
 
-    assert _cut(definition, _doc(note="unread")) == _doc()
+    assert _cut(tree, definition, _doc(note="unread")) == _doc()
 
 
 def test_cut_keeps_only_the_line_of_a_string_an_expression_needs(tree: Path) -> None:
     definition = _cut_definition(tree, 'lambda d: "needle" in d.note')
 
-    cut = _cut(definition, _doc(note="first\nhas needle\nlast"))
+    cut = _cut(tree, definition, _doc(note="first\nhas needle\nlast"))
 
     assert cut == _doc(variant="", note="has needle")
 
 
 def test_cut_removes_raw_entries_and_keeps_the_undeclared_key(tree: Path) -> None:
     definition = _cut_definition(tree)
-    document = _doc(body={"k": "v", "n": {"deep": 1}}, extra={"a": 1, "b": {"c": "x"}})
+    document = _doc(body={"k": "v", "n": {"deep": 1}}, extra={"unread": 1, "unused": {"c": "x"}})
 
-    cut = _cut(definition, document)
+    cut = _cut(tree, definition, document)
 
     assert cut == _doc(body={}, extra={})
 
@@ -117,7 +132,7 @@ def test_cut_never_empties_a_type_tag_that_selects_a_model(tree: Path) -> None:
     # class change rejects the removal, so the block keeps its tag and `text` field.
     definition = _cut_definition(tree)
 
-    cut = _cut(definition, _doc(blocks=[{"type": "text", "text": "body"}, {"type": "image"}]))
+    cut = _cut(tree, definition, _doc(blocks=[{"type": "text", "text": "body"}, {"type": "image"}]))
 
     assert cut == _doc(blocks=[{"type": "text", "text": ""}, {"type": ""}])
 
@@ -132,9 +147,9 @@ def test_cut_is_a_fixed_point(tree: Path) -> None:
     )
     oracle = samples.evaluate(definition, parse_sample(definition, document, "t"))
 
-    once = samples.cut(definition, document, oracle, "t")
+    once = samples.cut(definition, document, oracle, "t", _cut_accounting(tree))
 
-    assert samples.cut(definition, once, oracle, "t") == once
+    assert samples.cut(definition, once, oracle, "t", _cut_accounting(tree)) == once
     assert once == _doc(
         variant="",
         blocks=[{"type": "text", "text": "kept\nalso kept"}, {"type": "text", "text": "x"}],
@@ -144,17 +159,90 @@ def test_cut_is_a_fixed_point(tree: Path) -> None:
 
 def test_cut_holds_a_non_monotone_expression_to_its_oracle(tree: Path) -> None:
     # Removing the `Y` line or the `Z` line alone flips the result, but removing both
-    # restores it; the `X` line is needed throughout, so `note` is never emptied whole.
+    # restores it; the `X` line is needed throughout, so `note` is never emptied whole. No
+    # line equals a literal of the definition, so the restricted cut tries each one.
     definition = _cut_definition(
         tree, 'lambda d: ("Y" in d.note) == ("Z" in d.note) and "X" in d.note'
     )
-    document = _doc(note="X\nY\nZ")
+    document = _doc(note="line X\nline Y\nline Z")
     oracle = samples.evaluate(definition, parse_sample(definition, document, "t"))
 
-    cut = samples.cut(definition, document, oracle, "t")
+    cut = samples.cut(definition, document, oracle, "t", _cut_accounting(tree))
 
     assert samples.evaluate(definition, parse_sample(definition, cut, "t")) == oracle
-    assert cut == _doc(variant="", note="X")
+    assert cut == _doc(variant="", note="line X")
+
+
+def test_cut_keeps_accounted_text_no_result_needs(tree: Path) -> None:
+    # `other` is a literal of the definition's probe.py, so the cut never tries it.
+    definition = _cut_definition(tree)
+    blocks = [{"type": "text", "text": "other"}, {"type": "text", "text": "unvouched"}]
+
+    cut = _cut(tree, definition, _doc(blocks=blocks))
+
+    assert cut == _doc(blocks=[{"type": "text", "text": "other"}, {"type": "text", "text": ""}])
+
+
+def test_cut_leaves_a_raw_entry_holding_accounted_text_to_the_narrower_passes(
+    tree: Path,
+) -> None:
+    # `text` and `other` are literals of the definition's probe.py, so the entry is not
+    # removed whole: only its unaccounted line goes, and the unaccounted entry beside it.
+    definition = _cut_definition(tree)
+
+    cut = _cut(tree, definition, _doc(body={"text": "other\nunvouched", "unread": "other"}))
+
+    assert cut == _doc(body={"text": "other"})
+
+
+def test_cut_keeps_the_text_a_wrong_version_catches_by(tree: Path) -> None:
+    # On the uncut note the wrong version yields `high0`, a catch by value; emptied, it
+    # would raise instead, which is a catch of another kind, so the note is kept.
+    definition = _cut_definition(
+        tree,
+        wrong_versions=(
+            '(WrongVersion("w", "assertion", lambda d: d.variant + str(1 // len(d.note))),)'
+        ),
+    )
+
+    assert _cut(tree, definition, _doc(note="unvouched")) == _doc(note="unvouched")
+
+
+def test_cut_may_cut_text_a_catch_by_value_survives_without(tree: Path) -> None:
+    # Any non-empty note keeps the catch, so one line goes and the other stays.
+    definition = _cut_definition(
+        tree, wrong_versions='(WrongVersion("w", "assertion", lambda d: d.variant + d.note),)'
+    )
+
+    assert _cut(tree, definition, _doc(note="first\nsecond")) == _doc(note="second")
+
+
+def test_a_wrong_version_that_does_not_catch_places_no_demand(tree: Path) -> None:
+    definition = _cut_definition(
+        tree, wrong_versions='(WrongVersion("w", "assertion", lambda d: d.variant),)'
+    )
+
+    assert _cut(tree, definition, _doc(note="unvouched")) == _doc()
+
+
+def test_a_wrong_custom_check_catches_as_the_check_it_stands_in_for(tree: Path) -> None:
+    # The definition's fields after `assertion=`, spliced in where the template takes it.
+    package = _debug_package(
+        tree,
+        assertion=(
+            'lambda d: d.variant, custom_checks=(CustomCheck("set", lambda d: d.variant != "", '
+            '("no variant",)),), wrong_versions=(WrongVersion("w", "set", lambda d: False),)'
+        ),
+    )
+    probe = package / "probe.py"
+    imports = "from probe_harness.families.base import CustomCheck, WrongVersion\n"
+    probe.write_text(imports + probe.read_text(), encoding="utf-8")
+    definition, _ = load_package(package)
+    value = parse_sample(definition, {"variant": "high"}, "t")
+
+    assert samples._catches(definition, value, samples.evaluate(definition, value)) == {
+        "w": "value"
+    }
 
 
 def test_cut_refuses_an_input_that_does_not_yield_its_oracle(tree: Path) -> None:
@@ -162,7 +250,7 @@ def test_cut_refuses_an_input_that_does_not_yield_its_oracle(tree: Path) -> None
     oracle = samples.evaluate(definition, parse_sample(definition, _doc(variant="low"), "t"))
 
     with pytest.raises(SampleRefused, match="does not yield the results it is cut to"):
-        samples.cut(definition, _doc(), oracle, "t")
+        samples.cut(definition, _doc(), oracle, "t", _cut_accounting(tree))
 
 
 def test_anonymize_rewrites_a_workspace_root_outside_the_home_directory(
@@ -439,8 +527,9 @@ def test_a_fake_opencode_sample_keeps_the_marker_its_assertion_searches(
         "one": {
             "requests": [
                 {"messages": [{"role": "system", "content": f"you are {MARK}"}], "stream": ""},
-                # Ungoverned either way, so nothing in it is needed.
-                {"messages": [{"role": "", "content": ""}]},
+                # Ungoverned either way, so nothing in it is needed but the role, which the
+                # catalog vouches for as OpenCode's text.
+                {"messages": [{"role": "system", "content": ""}]},
             ]
         }
     }
@@ -548,7 +637,7 @@ def test_regenerate_re_cuts_an_uncut_input(tree: Path) -> None:
     package = _debug_package(tree)
     uncut = {
         "origin": "capture",
-        "input": {"variant": "high", "mode": "first\nsecond", "prompt": "x"},
+        "input": {"variant": "high", "mode": "first\nsecond", "prompt": "operator prompt"},
         "results": {"assertion": "high"},
     }
     path = _put_sample(package, "confirming", uncut)
@@ -607,8 +696,8 @@ def test_regenerate_refuses_an_authored_text_leak(tree: Path) -> None:
 
 
 def test_regenerate_refuses_a_cut_that_removes_an_authored_entry(tree: Path) -> None:
-    # The assertion reads only `variant`, so the cut empties `mode`, whose text is the only
-    # place the authored entry occurs.
+    # The assertion reads only `variant`. `extra` is raw content, and its entry's key is
+    # unaccounted, so the cut removes the entry, the only place the authored entry occurs.
     package = _debug_package(tree)
     path = _put_sample(
         package,
@@ -616,7 +705,7 @@ def test_regenerate_refuses_a_cut_that_removes_an_authored_entry(tree: Path) -> 
         {
             **EDITED,
             "authored": ["typed"],
-            "input": {"variant": "high", "mode": "typed"},
+            "input": {"variant": "high", "extra": {"unread": "typed"}},
             "results": {"assertion": "high"},
         },
     )

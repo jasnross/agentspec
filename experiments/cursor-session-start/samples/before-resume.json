@@ -27,7 +27,7 @@
       "attachments": null,
       "session_id": null,
       "hook_event_name": "beforeSubmitPrompt",
-      "cursor_version": "",
+      "cursor_version": "3.24.12",
       "workspace_roots": null,
       "user_email": null,
       "transcript_path": null
