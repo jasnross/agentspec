@@ -1,6 +1,7 @@
 {
   "origin": "edited",
   "note": "confirming capture with bare's tool result replaced by text no outcome class names, so the read classifies as unrecognized",
+  "authored": ["Error: File not found: /tmp/outside/target.txt"],
   "input": {
     "restated": {
       "requests": [

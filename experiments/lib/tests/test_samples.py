@@ -1,5 +1,5 @@
-"""`samples.py` and `probe sample`: the removal test, anonymization, the leak scan, writing
-and regenerating samples, over stand-in packages built in the test's own tree."""
+"""`samples.py` and `probe sample`: the removal test, anonymization, the accounting check,
+writing and regenerating samples, over stand-in packages built in the test's own tree."""
 
 import json
 import os
@@ -17,12 +17,11 @@ from probe_harness.samples import (
     Identity,
     SampleRefused,
     anonymize,
-    leaks,
 )
 
 from tests.conftest import Cli
 
-IDENTITY = Identity(home="/Users/tester", user="tester", email="tester@example.org", name="Tess")
+IDENTITY = Identity(home="/Users/tester", user="tester")
 
 MARK = "AGENTSPEC-PROBE-MARKER-SAMPLE"
 
@@ -199,61 +198,14 @@ def test_anonymize_rewrites_each_personal_path_form(text: str, want: str) -> Non
     assert anonymize(text, IDENTITY) == want
 
 
-def test_leaks_finds_each_pattern() -> None:
-    text = json.dumps(
-        {
-            "a": "/Users/someone/x",
-            "b": "/var/folders/zz",
-            "c": "-private-var-folders-zz",
-            "d": "mail me: x.y@example.com",
-            "e": 'name "Tess" quoted',
-            "f": "mcp__claude_ai_Docs__guide",
-        }
-    )
-    found = leaks(text, IDENTITY)
-    assert "path: /Users/" in found
-    assert "path: /var/folders/" in found
-    assert "path: var-folders" in found
-    assert "email: x.y@example.com" in found
-    assert "identity: Tess" in found
-    assert "connector: mcp__claude_ai_" in found
-
-
-def test_identity_current_reads_instruction_lines_and_skill_names_from_home(
+def test_identity_current_reads_home_and_user(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    home = tmp_path / "home"
-    (home / ".claude" / "skills" / "my-own-skill" / "nested-dir").mkdir(parents=True)
-    (home / ".claude" / "skills" / "pdf").mkdir()
-    commands = home / ".claude" / "commands"
-    (commands / "ns").mkdir(parents=True)
-    (commands / "review-pr.md").write_text("x", encoding="utf-8")
-    (commands / "ns" / "do-thing.md").write_text("x", encoding="utf-8")
-    (home / ".claude" / "CLAUDE.md").write_text(
-        "short\nThis line of my personal instructions is long enough.\n", encoding="utf-8"
-    )
-    monkeypatch.setenv("HOME", str(home))
-    gitconfig = tmp_path / "gitconfig"
-    gitconfig.write_text("[user]\n\temail = me@example.net\n", encoding="utf-8")
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(gitconfig))
-    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USER", "someone")
+    monkeypatch.setenv("LOGNAME", "someone")
 
-    identity = Identity.current()
-
-    assert identity.home == str(home)
-    assert identity.email == "me@example.net"
-    assert identity.instruction_lines == ("This line of my personal instructions is long enough.",)
-    assert identity.skill_names == (
-        "do-thing",
-        "my-own-skill",
-        "nested-dir",
-        "ns:do-thing",
-        "review-pr",
-    )
-    text = "x This line of my personal instructions is long enough. y my-own-skill"
-    found = leaks(text, identity)
-    assert "identity: This line of my personal instructions is long enough." in found
-    assert "identity: my-own-skill" in found
+    assert Identity.current() == Identity(home=str(tmp_path / "home"), user="someone")
 
 
 DEBUG_PROBE_PY = textwrap.dedent("""\
@@ -274,9 +226,14 @@ DEBUG_PROBE_PY = textwrap.dedent("""\
 """)
 
 
-def _debug_package(tree: Path, *, assertion: str = "lambda d: d.variant") -> Path:
+def _debug_package(
+    tree: Path, *, assertion: str = "lambda d: d.variant", expected: JsonValue = "high"
+) -> Path:
     package = tree / "debug-pkg"
-    (package / "fixtures" / "assertion").mkdir(parents=True)
+    agent = package / "fixtures" / "assertion" / ".opencode" / "agent" / "probe.md"
+    agent.parent.mkdir(parents=True)
+    # The fields of the document OpenCode prints for this agent, which a sample keeps as keys.
+    agent.write_text("---\nmode: primary\nvariant: high\n---\nprompt\n", encoding="utf-8")
     manifest: dict[str, Any] = {
         "schema_version": 2,
         "provider": "opencode",
@@ -284,7 +241,7 @@ def _debug_package(tree: Path, *, assertion: str = "lambda d: d.variant") -> Pat
         "depth": "resolved-config",
         "question": "q",
         "version_source": {"kind": "none"},
-        "assertion": {"expected": "high"},
+        "assertion": {"expected": expected},
     }
     (package / "probe.json").write_text(json.dumps(manifest), encoding="utf-8")
     (package / "probe.py").write_text(DEBUG_PROBE_PY.format(assertion=assertion))
@@ -335,16 +292,16 @@ def test_write_sample_refuses_a_result_anonymizing_changed(tree: Path, tmp_path:
     assert not (package / "samples").exists()
 
 
-def test_write_sample_refuses_a_leak(tree: Path, tmp_path: Path) -> None:
-    # The assertion reads `mode`, so the cut keeps it. A name is not one of the forms
-    # anonymization rewrites, so only the scan catches it.
+def test_write_sample_refuses_an_unaccounted_string(tree: Path, tmp_path: Path) -> None:
+    # The assertion reads `mode`, so the cut keeps it, and no authored file, catalog entry
+    # or authored list accounts for its text.
     package = _debug_package(tree, assertion="lambda d: d.mode")
     ws = _debug_ws(tmp_path, {"variant": "high", "mode": "written by Tess"})
     definition, manifest = load_package(package)
 
     with pytest.raises(SampleRefused) as exc:
         samples.write_sample(definition, manifest, ws, "confirming", identity=IDENTITY)
-    assert "  identity: Tess" in exc.value.lines
+    assert '  confirming.json: .input.mode: "written by Tess"' in exc.value.lines
     assert not (package / "samples").exists()
 
 
@@ -462,9 +419,12 @@ def test_a_fake_opencode_sample_keeps_the_marker_its_assertion_searches(
     }
     (package / "probe.json").write_text(json.dumps(manifest), encoding="utf-8")
     (package / "probe.py").write_text(FAKE_PROBE_PY)
+    agent = package / "fixtures" / "assertion" / ".opencode" / "agent" / "agent.md"
+    agent.parent.mkdir(parents=True)
+    agent.write_text(f"you are {MARK}\n", encoding="utf-8")
     sink = tmp_path / "ws" / "one" / "sink"
     sink.mkdir(parents=True)
-    governed = {"messages": [{"role": "system", "content": f"you are {MARK}"}], "x": "y"}
+    governed = {"messages": [{"role": "system", "content": f"you are {MARK}"}], "stream": "y"}
     title = {"messages": [{"role": "system", "content": "make a title"}]}
     (sink / "0000.request.json").write_text(json.dumps(governed))
     (sink / "0001.request.json").write_text(json.dumps(title))
@@ -478,7 +438,7 @@ def test_a_fake_opencode_sample_keeps_the_marker_its_assertion_searches(
     assert sample.input == {
         "one": {
             "requests": [
-                {"messages": [{"role": "system", "content": f"you are {MARK}"}], "x": ""},
+                {"messages": [{"role": "system", "content": f"you are {MARK}"}], "stream": ""},
                 # Ungoverned either way, so nothing in it is needed.
                 {"messages": [{"role": "", "content": ""}]},
             ]
@@ -528,6 +488,7 @@ def _put_sample(package: Path, name: str, document: dict[str, Any]) -> Path:
 EDITED: dict[str, Any] = {
     "origin": "edited",
     "note": "variant changed by hand",
+    "authored": ["low"],
     "input": {"variant": "low"},
     "results": {"assertion": "high"},
 }
@@ -600,6 +561,73 @@ def test_regenerate_re_cuts_an_uncut_input(tree: Path) -> None:
     assert samples.regenerate(definition, manifest, accept_results=False) == []
 
 
+def test_regenerate_refuses_an_unaccounted_string(tree: Path) -> None:
+    # The assertion reads `mode`, so no cut can remove the operator's text from it.
+    package = _debug_package(tree, assertion="lambda d: d.mode")
+    uncut = _put_sample(
+        package,
+        "a-uncut",
+        {
+            "origin": "capture",
+            "input": {"variant": "high", "mode": "m", "prompt": "x"},
+            "results": {"assertion": "m"},
+        },
+    )
+    _put_sample(
+        package,
+        "b-operator",
+        {
+            "origin": "capture",
+            "input": {"variant": "", "mode": "my own notes"},
+            "results": {"assertion": "my own notes"},
+        },
+    )
+    before = uncut.read_bytes()
+    definition, manifest = load_package(package)
+
+    with pytest.raises(SampleRefused) as exc:
+        samples.regenerate(definition, manifest, accept_results=False)
+    assert '  b-operator.json: .input.mode: "my own notes"' in exc.value.lines
+    assert '  b-operator.json: .results.assertion: "my own notes"' in exc.value.lines
+    assert uncut.read_bytes() == before
+
+
+def test_regenerate_refuses_an_authored_text_leak(tree: Path) -> None:
+    package = _debug_package(tree)
+    path = _put_sample(
+        package, "edited-x", {**EDITED, "note": "variant changed by hand, ask me@example.net"}
+    )
+    before = path.read_bytes()
+    definition, manifest = load_package(package)
+
+    with pytest.raises(SampleRefused) as exc:
+        samples.regenerate(definition, manifest, accept_results=True)
+    assert "  edited-x.json: note: email: me@example.net" in exc.value.lines
+    assert path.read_bytes() == before
+
+
+def test_regenerate_refuses_a_cut_that_removes_an_authored_entry(tree: Path) -> None:
+    # The assertion reads only `variant`, so the cut empties `mode`, whose text is the only
+    # place the authored entry occurs.
+    package = _debug_package(tree)
+    path = _put_sample(
+        package,
+        "edited-x",
+        {
+            **EDITED,
+            "authored": ["typed"],
+            "input": {"variant": "high", "mode": "typed"},
+            "results": {"assertion": "high"},
+        },
+    )
+    before = path.read_bytes()
+    definition, manifest = load_package(package)
+
+    with pytest.raises(SampleRefused, match="would no longer be a sample once re-cut"):
+        samples.regenerate(definition, manifest, accept_results=False)
+    assert path.read_bytes() == before
+
+
 def test_regenerate_leaves_every_sample_when_one_refuses(cli: Cli, tree: Path) -> None:
     package = _debug_package(tree)
     first = _put_sample(package, "a-edited", EDITED)
@@ -659,7 +687,7 @@ def test_a_sample_name_must_be_a_plain_slug(tree: Path, tmp_path: Path, name: st
 def test_a_lone_surrogate_survives_sampling_ascii_escaped(tree: Path, tmp_path: Path) -> None:
     # A body cut between the halves of an emoji carries an escaped lone surrogate, which
     # has no UTF-8 encoding. The assertion reads `mode`, so the cut keeps it.
-    package = _debug_package(tree, assertion="lambda d: d.mode")
+    package = _debug_package(tree, assertion="lambda d: d.mode", expected="cut \ud83d")
     ws = tmp_path / "ws"
     ws.mkdir()
     (ws / "view.json").write_text('{"variant": "low", "mode": "cut \\ud83d"}', encoding="utf-8")

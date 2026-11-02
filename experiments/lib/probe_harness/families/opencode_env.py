@@ -10,16 +10,20 @@ which would discard the fixture's own config and fail the run with no obvious ca
 Neither redirect stops OpenCode's external skill scan, which walks up from the project
 directory for `.claude/skills` and `.agents/skills`. A workspace under the operator's home
 reaches `~/.claude/skills` that way, so the scan is switched off: every skill a probe
-arranges sits in the project's `.opencode/`, outside the scan. Not blocked: OpenCode's
-skills documentation says the same walk reads an `.opencode/` directory above the project
-too, so an operator's `~/.opencode/skills/` would reach a workspace under their home.
+arranges sits in the project's `.opencode/`, outside the scan. OpenCode's skills
+documentation says the same walk reads an `.opencode/` directory above the project too, and
+switching the scan off does not stop that, so an operator's `~/.opencode/skills/` would reach
+a workspace under their home. Each OpenCode family therefore refuses to run while
+`ancestor_config_paths` finds an `.opencode/` directory above the workspace root. An operator
+who keeps one can move it, or set `XDG_STATE_HOME` to a directory outside their home;
+agentspec TODO #68 tracks keeping it out without refusing the run.
 
 Nor does either redirect stop OpenCode's instruction-file search. OpenCode 1.18.34 walks up
 from the project to its git worktree, which is `/` for a non-git workspace, for
 `INSTRUCTION_FILES`, and loads every match of the first name it finds (measured by
 `opencode-ancestor-instructions`). An instruction file anywhere above the workspace would
 therefore load into every run, so each OpenCode family refuses to run while
-`ancestor_instruction_files` finds one. The list is OpenCode 1.18.34's, read from the
+`ancestor_config_paths` finds one. The list is OpenCode 1.18.34's, read from the
 filesystem rather than from OpenCode's own view, so a name a later OpenCode adds is missed
 until the list changes.
 """
@@ -80,32 +84,36 @@ class OpenCodeIsolation:
         return env
 
 
-def ancestor_instruction_files(root: Path) -> list[Path]:
-    """Each of `INSTRUCTION_FILES` present in <root> or any of its ancestors, up to `/`.
+def ancestor_config_paths(root: Path) -> list[Path]:
+    """Each of `INSTRUCTION_FILES`, and each `.opencode` directory, present in <root> or any
+    of its ancestors, up to `/`.
 
     <root> need not exist yet, so the check can run before a workspace is made under it. A
     relative <root> is made absolute first, so its real ancestors are searched.
     """
     root = root.absolute()
-    return [
-        directory / name
-        for directory in (root, *root.parents)
-        for name in INSTRUCTION_FILES
-        if (directory / name).is_file()
-    ]
+    found: list[Path] = []
+    for directory in (root, *root.parents):
+        found += [directory / name for name in INSTRUCTION_FILES if (directory / name).is_file()]
+        if (directory / _CONFIG_DIR).is_dir():
+            found.append(directory / _CONFIG_DIR)
+    return found
 
 
-def ancestor_instructions_refusal(root: Path) -> GateFailure | None:
-    """The refusal a run under <root> gets when `ancestor_instruction_files` finds any."""
-    found = ancestor_instruction_files(root)
+def ancestor_config_refusal(root: Path) -> GateFailure | None:
+    """The refusal a run under <root> gets when `ancestor_config_paths` finds any."""
+    found = ancestor_config_paths(root)
     if not found:
         return None
     return GateFailure(
-        "an instruction file sits above the workspace root, and OpenCode would load it into "
-        "the run:",
+        "an instruction file or .opencode directory sits above the workspace root, and "
+        "OpenCode would load it into the run:",
         *(f"  {path}" for path in found),
         "move it, or set XDG_STATE_HOME to a directory with none above it. No workspace made.",
     )
 
 
 _XDG_KINDS = ("config", "cache", "data", "state")
+
+# The config directory OpenCode reads in the project and, for skills, above it.
+_CONFIG_DIR = ".opencode"

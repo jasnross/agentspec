@@ -290,11 +290,7 @@ def test_a_claude_sample_keeps_no_text_block_its_expressions_do_not_read(
         messages=[{"role": "user", "content": [{"type": "text", "text": block}]}],
     )
     (ws / "a" / "sink" / "0000.request.json").write_text(json.dumps(request), encoding="utf-8")
-    home = tmp_path / "home"
-    (home / ".claude" / "skills" / "my-own-skill").mkdir(parents=True)
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
-    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     definition, manifest = load_package(package)
 
     path = samples.write_sample(

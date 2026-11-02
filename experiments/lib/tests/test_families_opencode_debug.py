@@ -286,6 +286,23 @@ def test_an_instruction_file_above_the_workspace_root_refuses_before_any_workspa
     assert workspaces("opencode-agent-variant") == []
 
 
+def test_an_opencode_directory_above_the_workspace_root_refuses_before_any_workspace(
+    cli: Cli, tree: Path, experiments_dir: Path, opencode_debug_stub: Path, tmp_path: Path
+) -> None:
+    copy_package(experiments_dir, tree, "opencode-agent-variant")
+    # The suite's `XDG_STATE_HOME` is `<tmp>/state`; this sits two levels above the root.
+    (tmp_path / "state" / ".opencode").mkdir(parents=True)
+    result = cli(
+        "run",
+        "opencode-agent-variant",
+        env={"STUB_ORACLE": oracle_file(tmp_path, json.dumps(AGENT_VIEW))},
+    )
+    assert result.returncode == 1
+    assert "OpenCode would load it into the run:" in result.stderr
+    assert f"probe run:   {tmp_path / 'state' / '.opencode'}" in result.stderr
+    assert workspaces("opencode-agent-variant") == []
+
+
 def test_the_discriminator_dry_run_arranges_the_discriminator_fixture(
     cli: Cli,
     tree: Path,

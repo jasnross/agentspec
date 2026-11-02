@@ -35,7 +35,7 @@ from probe_harness.families.base import (
     refused,
     run_checks,
 )
-from probe_harness.families.opencode_env import OpenCodeIsolation, ancestor_instructions_refusal
+from probe_harness.families.opencode_env import OpenCodeIsolation, ancestor_config_refusal
 from probe_harness.json_values import JsonValue
 from probe_harness.models.raw import ProviderModel, field_path
 from probe_harness.source import write_source
@@ -62,7 +62,7 @@ def run[D: ProviderModel | RootModel[Any]](
     manifest: Manifest, name: str, options: RunOptions, probe: OpenCodeDebugProbe[D]
 ) -> int:
     package = manifest.path.parent
-    if (refusal := ancestor_instructions_refusal(workspace_root())) is not None:
+    if (refusal := ancestor_config_refusal(workspace_root())) is not None:
         console.say_refusal(refusal)
         return 1
     ws = create_workspace(name, options.variant)

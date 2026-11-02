@@ -34,7 +34,7 @@ from probe_harness.families.base import (
     refused,
     run_checks,
 )
-from probe_harness.families.opencode_env import OpenCodeIsolation, ancestor_instructions_refusal
+from probe_harness.families.opencode_env import OpenCodeIsolation, ancestor_config_refusal
 from probe_harness.gates import bodies
 from probe_harness.gates import opencode as gates
 from probe_harness.gates.bodies import OpenCodeArms as OpenCodeArms
@@ -92,7 +92,7 @@ class OpenCodeFakeProbe:
 
 def run(manifest: Manifest, name: str, options: RunOptions, probe: OpenCodeFakeProbe) -> int:
     package = manifest.path.parent
-    if (refusal := ancestor_instructions_refusal(workspace_root())) is not None:
+    if (refusal := ancestor_config_refusal(workspace_root())) is not None:
         console.say_refusal(refusal)
         return 1
     ws = create_workspace(name, options.variant)

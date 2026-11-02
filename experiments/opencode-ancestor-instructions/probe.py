@@ -19,21 +19,21 @@ from probe_harness.workspace import require_tools
 
 _MARKER = "AGENTSPEC-PROBE-MARKER-OCANC1"
 
-# Each arm's instruction file, written in the arm directory, the project's parent, with a
-# token no other file carries.
+# Each arm's instruction file, written in the arm directory, the project's parent, and its
+# one line, whose token no other file carries.
 _ANCESTORS = {
-    "agents_md": ("AGENTS.md", "AGENTSPEC-ANCESTOR-AGENTS-OCANC1"),
-    "claude_md": ("CLAUDE.md", "AGENTSPEC-ANCESTOR-CLAUDE-OCANC1"),
+    "agents_md": ("AGENTS.md", "Instruction canary: AGENTSPEC-ANCESTOR-AGENTS-OCANC1"),
+    "claude_md": ("CLAUDE.md", "Instruction canary: AGENTSPEC-ANCESTOR-CLAUDE-OCANC1"),
 }
 
 
 def _assertion(arms: OpenCodeArms) -> JsonValue:
-    """Whether each arm's governed requests carry its ancestor file's token in a system
+    """Whether each arm's governed requests carry its ancestor file's line in a system
     message: one bool when they agree."""
     value: dict[str, JsonValue] = {}
-    for arm, (_, token) in _ANCESTORS.items():
+    for arm, (_, canary) in _ANCESTORS.items():
         carried: list[JsonValue] = [
-            any(m.role == "system" and token in m.content for m in r.messages)
+            any(m.role == "system" and canary in m.content for m in r.messages)
             for r in governed_requests(arms[arm].requests, _MARKER)
         ]
         value[arm] = consistent(unique(carried))
@@ -64,8 +64,8 @@ def _arrange_arm(fixtures: Path, arm_dir: Path, arm: OpenCodeArm) -> None:
             "OpenCode would stop its search at that worktree instead; set XDG_STATE_HOME so "
             "the probe workspace root lies outside any repository.",
         )
-    name, token = _ANCESTORS[arm.name]
-    (arm_dir / name).write_text(f"Instruction canary: {token}\n", encoding="utf-8")
+    name, canary = _ANCESTORS[arm.name]
+    (arm_dir / name).write_text(f"{canary}\n", encoding="utf-8")
 
 
 PROBE = OpenCodeFakeProbe(

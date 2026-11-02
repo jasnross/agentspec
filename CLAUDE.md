@@ -192,6 +192,8 @@ When adding a rendering agentspec will emit, check whether a probe already answe
 
 **Probe first when the outcome could change the design; defer when it can only confirm.** agentspec's tests compare emitted bytes against agentspec's own belief about what each provider reads, and that belief has been wrong — a design revision once asserted an OpenCode `provider/model#variant` suffix no parser would have accepted.
 
+**Text authors write under `experiments/` carries nothing personal.** Edited-sample notes and `authored` lists, package READMEs, `probe.py` comments and fixtures hold no operator identity, user-level instructions or memory, connectors, or other personal configuration. The accounting check vouches for authored text as written, so a committed sample can carry nothing that review of the authored files did not pass.
+
 All three providers degrade silently on a rendering they do not understand, so a probe asserts on a positive signal in the provider's own resolved view, never on absence of an error. The full contract is `experiments/README.md`.
 
 Probes are explicitly invoked and **never run in CI** — what goes stale is the third-party tool, not any file in this repository.

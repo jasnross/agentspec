@@ -1,6 +1,7 @@
 {
   "origin": "edited",
   "note": "confirming capture with the exact arm's mcp__fx__alpha result replaced by an MCP server error, flagged is_error, which is neither the fixture reply nor a permission denial",
+  "authored": ["MCP error -32603: the fx server is unavailable"],
   "input": {
     "none": {
       "requests": [

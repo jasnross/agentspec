@@ -18,6 +18,7 @@ from probe_harness.contract import (
     RecordAssertionV2,
     RecordV1,
     RecordV2,
+    Sample,
     parse_manifest,
     parse_record,
 )
@@ -402,3 +403,42 @@ def test_an_options_manifest_parses_into_typed_options(tmp_path: Path) -> None:
 )
 def test_every_committed_manifest_parses(path: Path) -> None:
     parse_manifest(path)
+
+
+EDITED_SAMPLE: dict[str, Any] = {
+    "origin": "edited",
+    "note": "the reply replaced by an error",
+    "authored": ["MCP error: the fx server is unavailable"],
+    "input": {"reply": "MCP error: the fx server is unavailable"},
+    "results": {"assertion": "error"},
+}
+
+
+def test_an_edited_sample_carries_an_authored_list() -> None:
+    assert Sample.model_validate(EDITED_SAMPLE).authored == (
+        "MCP error: the fx server is unavailable",
+    )
+
+
+def test_an_authored_list_is_refused_on_a_capture_sample() -> None:
+    document = {k: v for k, v in EDITED_SAMPLE.items() if k != "note"}
+    with pytest.raises(ValidationError, match="an authored list belongs only on an edited"):
+        Sample.model_validate({**document, "origin": "capture"})
+
+
+def test_an_authored_entry_absent_from_the_input_is_refused() -> None:
+    with pytest.raises(ValidationError, match="'not typed anywhere'"):
+        Sample.model_validate({**EDITED_SAMPLE, "authored": ["not typed anywhere"]})
+
+
+def test_an_authored_entry_inside_a_longer_line_is_refused() -> None:
+    with pytest.raises(ValidationError, match="'the fx server is unavailable'"):
+        Sample.model_validate({**EDITED_SAMPLE, "authored": ["the fx server is unavailable"]})
+
+
+def test_an_authored_entry_may_be_one_line_of_a_multi_line_string() -> None:
+    document = {
+        **EDITED_SAMPLE,
+        "input": {"reply": "first\nMCP error: the fx server is unavailable"},
+    }
+    assert Sample.model_validate(document).authored == ("MCP error: the fx server is unavailable",)

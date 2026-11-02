@@ -5,7 +5,9 @@ declared result must be what the current evaluator yields over the sample's inpu
 across a package's samples every expression must take both outcomes. So an assertion,
 `wait_for` or custom check made constant by a later edit, to its own code or to a model it
 reads, fails here. Every sample must also be minimal, keeping no text the removal test could
-still cut, and pass the leak scan.
+still cut, and every string it keeps must be accounted for: authored by the package, listed in
+the catalog of provider text, or typed by an author into an edited sample. No test here reads
+the machine it runs on.
 """
 
 from collections.abc import Iterator
@@ -21,12 +23,12 @@ from probe_harness.contract import (
 )
 from probe_harness.families import ProbeDefinition, load_package, parse_sample
 from probe_harness.samples import (
-    Identity,
+    authored_text_leaks,
     cut,
     evaluate,
     expression_names,
-    leaks,
     sample_paths,
+    unaccounted,
 )
 
 from tests.conftest import EXPERIMENTS_DIR
@@ -115,5 +117,12 @@ def test_every_package_has_samples(package: Path) -> None:
 
 
 @pytest.mark.parametrize("path", SAMPLE_FILES, ids=lambda p: f"{p.parent.parent.name}/{p.name}")
-def test_no_sample_carries_personal_data(path: Path) -> None:
-    assert leaks(path.read_text(encoding="utf-8"), Identity.current()) == []
+def test_every_sample_string_is_accounted_for(path: Path) -> None:
+    package = path.parent.parent
+    definition, _ = load_package(package)
+    sample = parse_sample_file(path)
+    assert unaccounted(package, definition, sample) == [], (
+        "add provider text to lib/probe_harness/provider_text.py, list text an author typed "
+        "in the sample's authored list, and re-cut or replace anything else"
+    )
+    assert authored_text_leaks(sample) == []

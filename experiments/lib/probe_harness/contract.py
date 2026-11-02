@@ -25,6 +25,7 @@ keep that strictness honest, each measured against pydantic 2.14:
   pydantic's JSON mode accepts `NaN` and `1e400` into a `JsonValue`.
 """
 
+from collections.abc import Iterator
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self
@@ -348,16 +349,33 @@ class Sample(HarnessModel):
     origin: Annotated[SampleOrigin, Field(strict=False)]
     # Why an edited sample was edited; required for `edited`, and refused otherwise.
     note: NonEmpty | MISSING = MISSING
+    # Text an author typed into an edited sample's input, which the accounting check vouches
+    # for on review alone; each entry must equal a whole single-line string of `input`, or a
+    # whole line of a multi-line one, since the check vouches for nothing smaller.
+    authored: Annotated[tuple[NonEmpty, ...] | MISSING, Field(strict=False)] = MISSING
     input: JsonValue
     results: SampleResults
 
     @model_validator(mode="after")
-    def _note_iff_edited(self) -> Self:
+    def _authored_text_iff_edited(self) -> Self:
         edited = self.origin == SampleOrigin.EDITED
         if edited and self.note is MISSING:
             raise ValueError("an edited sample needs a note saying what was edited and why")
         if not edited and self.note is not MISSING:
             raise ValueError(f"a note belongs only on an edited sample, not a {self.origin} one")
+        if self.authored is MISSING:
+            return self
+        if not edited:
+            raise ValueError(
+                f"an authored list belongs only on an edited sample, not a {self.origin} one"
+            )
+        units = {line for text in _texts(self.input) for line in text.split("\n")}
+        absent = [entry for entry in self.authored if entry not in units]
+        if absent:
+            raise ValueError(
+                "each authored entry must equal a whole string of input, or a whole line of "
+                "one; these do not: " + ", ".join(map(repr, absent))
+            )
         return self
 
 
@@ -461,3 +479,19 @@ def _error_line(error: ErrorDetails) -> str:
     if not loc:
         return message
     return f"{'.'.join(map(str, loc))}: {message}"
+
+
+def _texts(value: JsonValue) -> Iterator[str]:
+    """Every string in <value>, keys included."""
+    match value:
+        case str():
+            yield value
+        case list():
+            for item in value:
+                yield from _texts(item)
+        case dict():
+            for key, item in value.items():
+                yield key
+                yield from _texts(item)
+        case _:
+            pass

@@ -28,9 +28,9 @@ The arrange step refuses a workspace inside a git repository. OpenCode bounds a 
 
 ## The oracle
 
-`experiments/lib/stubs/fake_provider.py` writes every request body OpenCode sends to the arm's `sink/`. The assertion reads only requests whose `role: "system"` message carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-OCANC1`, which keeps OpenCode's title-generation request out. For each arm it yields whether those requests carry the arm's token in a system message: one bool when every governed request agrees, `{"inconsistent": [...]}` when they differ, and `"arm-had-no-governed-request"` when there is none.
+`experiments/lib/stubs/fake_provider.py` writes every request body OpenCode sends to the arm's `sink/`. The assertion reads only requests whose `role: "system"` message carries the agent body's marker, `AGENTSPEC-PROBE-MARKER-OCANC1`, which keeps OpenCode's title-generation request out. For each arm it yields whether those requests carry the arm's file line, `Instruction canary: <token>`, in a system message: one bool when every governed request agrees, `{"inconsistent": [...]}` when they differ, and `"arm-had-no-governed-request"` when there is none.
 
-OpenCode introduces each file it loads with `Instructions from: <path>`, but the assertion matches the token rather than that header, so a reworded header cannot turn a loaded file into a `false`.
+OpenCode introduces each file it loads with `Instructions from: <path>`, but the assertion matches the file's own line rather than that header, so a reworded header cannot turn a loaded file into a `false`.
 
 ## Isolation
 

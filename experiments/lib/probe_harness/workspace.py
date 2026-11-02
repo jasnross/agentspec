@@ -20,7 +20,13 @@ from probe_harness.contract import HarnessModel, NonEmpty, Option
 DEFAULT_TIMEOUT_SECONDS = 3600
 
 POLL_INTERVAL_SECONDS = 2
+
 PROGRESS_INTERVAL_SECONDS = 10
+
+# Where a committed sample spells the operator's home directory and the workspace root,
+# wherever they are on the machine that took the capture.
+SAMPLE_HOME = "/home/probe"
+SAMPLE_WORKSPACE_ROOT = f"{SAMPLE_HOME}/.local/state/agentspec/probe-workspaces"
 
 _TEMPLATE_KEY = re.compile(r"[A-Za-z0-9_]+")
 _PLACEHOLDER = re.compile(r"\{\{[^}]*\}\}")

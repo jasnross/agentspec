@@ -1,6 +1,9 @@
 {
   "origin": "edited",
   "note": "confirming capture with plain_read_resource's tool result replaced by OpenCode's error for a failed MCP read, which repeats the resource URI, so the call classifies as unrecognized rather than succeeded",
+  "authored": [
+    "Error: Failed to read MCP resource: fx/fx://AGENTSPEC-RESOURCE-OCRES3"
+  ],
   "input": {
     "map_read_resource": {
       "requests": [

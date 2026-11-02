@@ -65,6 +65,9 @@ FAMILY_TOOLS = ("jq",)
 # The directory under `fixtures/` holding the capture apparatus every variant shares.
 CAPTURE_DIR = "capture"
 
+# The one key of `dump-hook.sh`'s fallback line for a payload that was not JSON.
+UNPARSED_KEY = "unparsed"
+
 
 @dataclass(frozen=True)
 class Unparsed:
@@ -125,10 +128,10 @@ def parse_lines[P: ProviderModel](text: str, payload: type[P]) -> tuple[CaptureL
             continue
         if (
             isinstance(value, dict)
-            and list(value) == ["unparsed"]
-            and isinstance(value["unparsed"], str)
+            and list(value) == [UNPARSED_KEY]
+            and isinstance(raw := value[UNPARSED_KEY], str)
         ):
-            lines.append(Unparsed(value["unparsed"]))
+            lines.append(Unparsed(raw))
             continue
         try:
             lines.append(payload.model_validate(value))
@@ -172,7 +175,7 @@ def parse_sample[P: ProviderModel](
 def line_document(line: CaptureLine[Any]) -> JsonValue:
     """A parsed line as the JSON value it was parsed from."""
     if isinstance(line, Unparsed):
-        return {"unparsed": line.raw}
+        return {UNPARSED_KEY: line.raw}
     if isinstance(line, Unrecognized):
         return line.raw if isinstance(line.raw, str) else sample_source(line.raw)
     return sample_source(line)
