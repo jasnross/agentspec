@@ -224,11 +224,13 @@ def isolated(arms: Arms, ws: Path) -> None:
     path, so a carried token shows instruction files were loaded.
 
     An MCP server from outside the fixture, such as a claude.ai connector, shows as an
-    `mcp__<server>__` prefix. A tool a request offers, in `tools[]` or the deferred listing,
-    must come from a server the arm arranged (`_arranged_prefixes`). Any other request text
-    may also name a prefix the arm's own files name (`_fixture_named_prefixes`): an agent
-    granting a tool of a server the arm does not arrange is a measured condition, and Claude
-    Code repeats the grant in the Agent tool's description.
+    `mcp__<server>__` prefix. A tool a request offers, in `tools[]` or a ready-to-use or
+    deferred listing, must come from a server the arm arranged (`_arranged_prefixes`). Any
+    other request text may also name a prefix the arm's own files name
+    (`_fixture_named_prefixes`): an agent granting a tool of a server the arm does not
+    arrange is a measured condition, and Claude Code repeats the grant in the Agent tool's
+    list of agent types, which shares a text block with the deferred listing but is not part
+    of it.
     """
     found: list[str] = []
     for name, arm in arms.items():
