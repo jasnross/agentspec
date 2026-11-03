@@ -1,6 +1,6 @@
 {
   "origin": "edited",
-  "note": "confirming capture with a subagent follow-up added to fork: the governed subagent request with its marker lines removed, at max, which the control set must exclude",
+  "note": "the 2.1.287 assertion capture in inline-inert.json with a subagent follow-up added to fork: the governed subagent request with its marker lines removed, at max, which the control set must exclude",
   "input": {
     "inline": {
       "requests": [

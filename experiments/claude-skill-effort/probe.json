@@ -10,7 +10,7 @@
   },
   "assertion": {
     "expected": {
-      "inline": "same-as-ungoverned",
+      "inline": ["low"],
       "slash_entry": ["low"],
       "fork": ["low"]
     }

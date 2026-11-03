@@ -8,9 +8,9 @@
 
 ## Why it matters
 
-agentspec emits `effort:` into Claude skill files. Whether that field reaches the model decides whether the emission is load-bearing or decorative — and the answer turns out to depend on _how the skill is invoked_, which is not something agentspec's own tests can see.
+agentspec emits `effort:` into Claude skill files. Whether that field reaches the model decides whether the emission is load-bearing or decorative — and the answer has depended on _how the skill is invoked_, and on the Claude Code version, neither of which agentspec's own tests can see.
 
-The question is not academic for this repository. A large share of agentspec-emitted skills are invoked **by name** rather than chosen by the model, and that path is measured honored here — so the decision the effort design inherits is "keep emitting `effort:` into skill files", not "consider dropping it".
+The question is not academic for this repository. A large share of agentspec-emitted skills are invoked **by name** rather than chosen by the model, and that path has measured honored on every version recorded here — so the decision the effort design inherits is "keep emitting `effort:` into skill files", not "consider dropping it". On 2.1.306 the model-invoked path is honored too.
 
 ## The three arms
 
@@ -32,7 +32,7 @@ The prompts above are the ones that actually activated the skill, not idealized 
 | `/name` as the `-p` prompt | non-interactive session entry | `slash_entry` — measured |
 | `/name` typed mid-session | interactive, the common case | **unmeasured** — see `TODO.md` |
 
-The arm is named `slash_entry` rather than `slash` for exactly this reason. It measures a slash command supplied as the **session entry**, not one typed into a running session. Claude Code's own harness text instructs the model to invoke a typed `/<skill-name>` **through the Skill tool**, which would make it mechanically the `inline` path — and therefore inert. That is instruction text rather than a measurement, which is precisely the kind of belief this repository exists to stop people designing against.
+The arm is named `slash_entry` rather than `slash` for exactly this reason. It measures a slash command supplied as the **session entry**, not one typed into a running session. Claude Code's own harness text instructs the model to invoke a typed `/<skill-name>` **through the Skill tool**, which would make it mechanically the `inline` path — inert on 2.1.287, honored on 2.1.306. That is instruction text rather than a measurement, which is precisely the kind of belief this repository exists to stop people designing against.
 
 The third cell cannot become a fourth arm here: reaching it needs a multi-turn interactive session, and `claude -p` is one turn. It is a `manual` driver and a separate apparatus.
 
@@ -61,13 +61,13 @@ An agent file **becomes the system prompt** of the request it governs, so that p
 
 | Arm | Where the skill body lands |
 | --- | --- |
-| `inline` | a `user` message, in a `tool_result` block, on the ongoing main thread |
+| `inline` | the `user` message answering the Skill call, on the ongoing main thread |
 | `slash_entry` | `messages[0]`, as a text block |
 | `fork` | the forked subagent's `messages[0]`, as a text block |
 
 So this package passes `.messages` to both gates and the assertion selects on `.messages` in both directions. The gates take the field as a parameter for this reason — see `experiments/lib/probe_harness/gates/claude_otel.py`. Widening the shared default to "`.system` or `.messages`" would reintroduce the echo `claude-agent-effort` measured and excluded, and inlining a second copy of the gates here would put the safety-critical part of a billed apparatus in two files that can drift.
 
-The `inline` row is itself the mechanism behind that arm's finding: a model-invoked skill does not get a request of its own. Its body is injected into the ongoing main-thread conversation as a tool result, on a request whose effort was already settled — so there is no request for `effort:` to govern.
+The `inline` row is the mechanism behind that arm's value: a model-invoked skill does not get a request of its own. Its body is injected into the ongoing main-thread conversation in the user turn that answers the Skill call — on 2.1.287 and 2.1.306 as a `text` block beside a `tool_result` holding only `Launching skill: probe-effort` — and the governed request is the main-thread turn that carries it. On Claude Code 2.1.287 that turn ran at the session's ungoverned level. On 2.1.306 it runs at the skill's `effort:` — see History below.
 
 **The echo hazard is reduced here but not eliminated.** `claude-agent-effort` narrowed to `.system` because a subagent's reply carried the marker back to the main thread. This package's `fork` arm has the same shape, and its main-thread requests were measured carrying no marker — but that holds only because the skill body instructs a one-word reply. A future fixture whose skill made Claude quote its own body back would drag an ungoverned level into the `fork` arm's value. The one-word reply is load-bearing, not cosmetic.
 
@@ -102,23 +102,24 @@ Each fixture's own `.claude/settings.json` pin (`effortLevel: medium`) is **not*
 
 ## Discriminate evidence
 
-`samples/confirming.json` and `samples/refuting.json` come from kept workspaces of the `assertion` and `discriminator` fixture variants, both taken on Claude Code **2.1.287**; the refuting one, `…T233548-discriminator`, on 2026-10-21. The two fixture pairs differ only in the skill's `effort:` value. The edited samples are the confirming sample with one condition changed by hand, each named in the sample's `note`.
+`samples/confirming.json` comes from a kept workspace of the `assertion` fixture variant taken on Claude Code **2.1.306** on 2026-11-02, `…T161827-assertion`. `samples/inline-inert.json` and `samples/refuting.json` come from the `assertion` and `discriminator` variants on Claude Code **2.1.287**; the refuting one, `…T233548-discriminator`, on 2026-10-21. The two fixture pairs differ only in the skill's `effort:` value. The edited samples are `inline-inert.json` with one condition changed by hand, each named in the sample's `note`.
 
 | Sample | Assertion |
 | --- | --- |
-| `confirming.json` | `{"inline":"same-as-ungoverned","slash_entry":["low"],"fork":["low"]}` |
+| `confirming.json` | `{"inline":["low"],"slash_entry":["low"],"fork":["low"]}` |
+| `inline-inert.json` | `{"inline":"same-as-ungoverned","slash_entry":["low"],"fork":["low"]}` |
 | `refuting.json` | `{"inline":"same-as-ungoverned","slash_entry":["max"],"fork":["max"]}` |
 | `edited-no-control-set.json` | `{"inline":"no-usable-control-set","slash_entry":"no-usable-control-set","fork":"no-usable-control-set"}` |
 | `edited-arm-without-governed-request.json` | `{"inline":"arm-had-no-governed-request","slash_entry":["low"],"fork":["low"]}` |
 | `edited-subagent-follow-up.json` | `{"inline":"same-as-ungoverned","slash_entry":["low"],"fork":["low"]}` |
 
-The confirming sample equals `expected`. The refuting sample **differs in `slash_entry` and `fork` while agreeing in `inline`**. That pairing is the discrimination: it shows the assertion reads each arm independently, and that the inert arm is inert rather than merely unread.
+The confirming sample equals `expected`. `inline-inert.json` **differs in `inline` alone**, and the refuting sample differs in all three arms. Together they show the assertion reads each arm independently: a change in one arm moves only that arm's value.
 
 The edited samples pin what the assertion yields where the gates would normally decide:
 
 - `edited-no-control-set.json` removes every ungoverned request. With no control level, every arm reads `"no-usable-control-set"`, so no arm can confirm.
 - `edited-arm-without-governed-request.json` removes `inline`'s governed requests while the control level stands, so that arm reads `"arm-had-no-governed-request"` rather than an empty set of efforts.
-- `edited-subagent-follow-up.json` adds an unmarked subagent request at `max` to `fork`, the shape `claude-agent-effort` measured. The assertion excludes it from the control set, as gate 3 does, so the value stays the confirming sample's. No real capture of this package holds one.
+- `edited-subagent-follow-up.json` adds an unmarked subagent request at `max` to `fork`, the shape `claude-agent-effort` measured. The assertion excludes it from the control set, as gate 3 does, so the value stays `inline-inert.json`'s. No real capture of this package holds one.
 
 `just probe-test` re-proves every result on every run.
 
@@ -128,11 +129,19 @@ At `outbound-request`, this is evidence about what reached the model, not about 
 
 - **The session-entry path honors `effort:`.** A skill supplied as the `-p` prompt governs a request carrying the fixture's own level.
 - **The forked path honors `effort:`.** A `context: fork` skill's subagent requests carry the fixture's own level.
-- **The model-invoked path does not.** A skill Claude selects itself mid-session has its body injected into the ongoing conversation as a tool result, on a request already sitting at the ungoverned level.
+- **The model-invoked path honors `effort:` on 2.1.306.** A skill Claude selects itself mid-session has its body injected into the ongoing conversation in the user turn that answers the Skill call, and the main-thread turn carrying it runs at the fixture's own level: `low` under the `assertion` variant, `max` under the `discriminator`. On 2.1.287 that turn stayed at the ungoverned level.
 
-**Do not read this as "Claude ignores skill effort."** Two of the three measured paths honor it. For a model-invoked skill, `effort:` reaches the file and not the model — that is the whole of what the `inline` result licenses.
+All three measured paths honor `effort:` on the current version. The `inline` arm captures one governed turn, so the record says nothing about whether later main-thread turns stay at the skill's level or return to the session's.
 
 Nor is the finding exhaustive over the skill surface: a slash command typed into a running interactive session is unmeasured, and the three-path table above says so.
+
+## History
+
+- **2.1.232 to 2.1.287:** `inline` measured `same-as-ungoverned`. A model-invoked skill's `effort:` reached the file and not the model; `slash_entry` and `fork` were honored.
+- **2.1.306 (2026-11-02):** `inline` measured `["low"]`, the fixture's level, and `expected` moved to match. The first run under the harness's isolation recorded the change, so two more 2.1.306 runs were taken as dry runs, which write no record:
+  - `…T171604-assertion`, with isolation removed from the family code, also ran the `inline` turn at `low`, so the change is Claude Code's, not isolation's;
+  - `…T065551-discriminator`, on 2026-11-03, ran all three arms at `max`, so the `inline` turn follows the skill's value rather than settling at a fixed level.
+- **Not determined:** which release between 2.1.287 and 2.1.306 made the change; no version between them was measured.
 
 ## Residual gaps
 

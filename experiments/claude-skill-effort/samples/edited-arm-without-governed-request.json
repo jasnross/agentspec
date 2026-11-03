@@ -1,6 +1,6 @@
 {
   "origin": "edited",
-  "note": "confirming capture with the inline arm's governed requests removed, so that arm holds only ungoverned requests",
+  "note": "the 2.1.287 assertion capture in inline-inert.json with the inline arm's governed requests removed, so that arm holds only ungoverned requests",
   "input": {
     "inline": {
       "requests": [
