@@ -28,6 +28,7 @@ from probe_harness.models.raw import field_path
 from probe_harness.views import SinkEntry, SinkValues, read_sink
 
 DEFERRED_LISTING = "The following deferred tools are now available via ToolSearch"
+READY_LISTING = "The following tools just became available and are ready to use"
 SUBAGENT_FLAG = "cc_is_subagent=true"
 
 
@@ -130,13 +131,29 @@ def subagent(request: ClaudeRequest) -> bool:
 
 
 def deferred_tools(request: ClaudeRequest) -> list[str]:
-    """The lines of every string in the body that carries the deferred-tools listing."""
-    return [line for s in request.raw.strings() if DEFERRED_LISTING in s for line in s.split("\n")]
+    """The lines of each deferred-tools listing in the body, one tool name per line.
+
+    A listing runs from the line after its header to the first blank line. The string that
+    carries it also carries other request text, such as the environment section and the
+    Agent tool's list of agent types, whose lines name tools without offering them.
+    """
+    return [line for s in request.raw.strings() for line in _listing(s, DEFERRED_LISTING)]
+
+
+def ready_tools(request: ClaudeRequest) -> list[str]:
+    """The lines of each listing of tools announced ready to use, one tool name per line.
+
+    Claude Code announces a tool loaded mid-session this way, in the block that carries the
+    deferred listing; the request offers it without listing it in `tools[]` or as deferred.
+    """
+    return [line for s in request.raw.strings() for line in _listing(s, READY_LISTING)]
 
 
 def listed_tools(request: ClaudeRequest) -> list[str]:
-    """The request's direct tool names, then its deferred-listing lines."""
-    return [tool.name for tool in request.tool_list] + deferred_tools(request)
+    """The request's direct tool names, then its ready-to-use and deferred-listing lines."""
+    return (
+        [tool.name for tool in request.tool_list] + ready_tools(request) + deferred_tools(request)
+    )
 
 
 def offered(requests: Sequence[ClaudeRequest], keep: Callable[[str], bool]) -> list[JsonValue]:
@@ -154,6 +171,19 @@ def _content_strings(message: ClaudeMessage) -> Iterator[str]:
         return
     for block in message.content:
         yield from block.raw.strings()
+
+
+def _listing(text: str, header: str) -> list[str]:
+    """The lines of each listing under <header> in <text>, up to its first blank line."""
+    lines = text.split("\n")
+    starts = [i + 1 for i, line in enumerate(lines) if header in line]
+    listed: list[str] = []
+    for start in starts:
+        for line in lines[start:]:
+            if not line:
+                break
+            listed.append(line)
+    return listed
 
 
 def _labelled(entries: Sequence[SinkEntry]) -> list[tuple[str, JsonValue]]:

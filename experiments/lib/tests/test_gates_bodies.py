@@ -12,6 +12,7 @@ from probe_harness.gates import GateFailure
 from probe_harness.gates.bodies import (
     MarkerField,
     claude_arms,
+    deferred_tools,
     governed,
     governed_requests,
     listed_tools,
@@ -302,11 +303,49 @@ def test_listed_tools_names_direct_tools_then_the_deferred_listing() -> None:
         tools=[{"name": "Read"}],
         messages=[{"role": "user", "content": [{"type": "text", "text": listing}]}],
     )
-    assert listed_tools(request) == [
-        "Read",
+    assert listed_tools(request) == ["Read", "mcp__fx__alpha"]
+
+
+def test_the_deferred_listing_ends_at_the_first_blank_line() -> None:
+    # Claude Code writes its environment section and list of agent types into the block
+    # that carries the listing; their lines name tools the request does not offer.
+    block = (
+        "# Environment\n - Platform: darwin\n\n"
+        "The following deferred tools are now available via ToolSearch:\n"
+        "WebFetch\nmcp__plugin_fxp_fx__alpha\n\n"
+        "Available agent types for the Agent tool:\n- probe: x (Tools: Read, mcp__fx__alpha)"
+    )
+    request = _request(messages=[{"role": "user", "content": [{"type": "text", "text": block}]}])
+
+    assert deferred_tools(request) == ["WebFetch", "mcp__plugin_fxp_fx__alpha"]
+
+
+def test_listed_tools_reads_tools_announced_ready_to_use_apart_from_the_deferred_listing() -> None:
+    block = (
+        "The following tools just became available and are ready to use:\nmcp__fx__beta\n\n"
+        "The following deferred tools are now available via ToolSearch:\nmcp__fx__alpha\n\n"
+        "Available agent types for the Agent tool:\n- probe: x (Tools: mcp__fx__gamma)"
+    )
+    request = _request(
+        tools=[{"name": "Read"}],
+        messages=[{"role": "user", "content": [{"type": "text", "text": block}]}],
+    )
+
+    assert listed_tools(request) == ["Read", "mcp__fx__beta", "mcp__fx__alpha"]
+    assert deferred_tools(request) == ["mcp__fx__alpha"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "The following deferred tools are now available via ToolSearch:\n\nAGENTSPEC-X",
         "The following deferred tools are now available via ToolSearch:",
-        "mcp__fx__alpha",
-    ]
+    ],
+)
+def test_a_header_with_no_names_before_a_blank_line_lists_nothing(text: str) -> None:
+    request = _request(messages=[{"role": "user", "content": [{"type": "text", "text": text}]}])
+
+    assert deferred_tools(request) == []
 
 
 def test_governed_requests_keeps_the_marked_requests_in_order_under_the_field_given() -> None:

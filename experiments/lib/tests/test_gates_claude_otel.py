@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 from probe_harness.gates import APPARATUS_FAILURE, GateFailure, bodies, claude_otel
-from probe_harness.gates.bodies import ClaudeArms, MarkerField
+from probe_harness.gates.bodies import DEFERRED_LISTING, ClaudeArms, MarkerField
 from probe_harness.views import SinkEntry, SinkValues
 
 from tests.conftest import (
@@ -687,8 +687,8 @@ def test_gate_isolated_fails_on_an_unprefixed_server_in_a_plugin_only_arm(tmp_pa
 
 
 def test_gate_isolated_accepts_a_server_the_arms_own_fixture_names(tmp_path: Path) -> None:
-    # An agent naming `mcp__fx__alpha` on purpose: Claude Code repeats its tools line in the
-    # Agent tool's description although only the plugin's server is arranged.
+    # An agent naming `mcp__fx__alpha` on purpose, repeated in request text other than an
+    # offered tool, here a tool's description, although only the plugin's server is arranged.
     ws = tmp_path / "ws"
     agent = "---\nname: probe\ntools: Read, mcp__fx__alpha\n---\nbody\n"
     isolated_arm(ws, "a", plugin=True, project_files={".claude/agents/probe.md": agent})
@@ -698,6 +698,72 @@ def test_gate_isolated_accepts_a_server_the_arms_own_fixture_names(tmp_path: Pat
     )
 
     claude_otel.isolated(arms_from_view({"a": [described]}), ws)
+
+
+def test_gate_isolated_accepts_a_fixture_named_server_in_the_agent_list_beside_a_listing(
+    tmp_path: Path,
+) -> None:
+    # Claude Code writes the deferred listing and its list of agent types into one text
+    # block; the agent's tools line there is not a tool the request offers.
+    ws = tmp_path / "ws"
+    agent = "---\nname: probe\ntools: Read, mcp__fx__alpha\n---\nbody\n"
+    isolated_arm(ws, "a", plugin=True, project_files={".claude/agents/probe.md": agent})
+    block = (
+        f"{DEFERRED_LISTING}:\nmcp__plugin_fxp_fx__alpha\n\n"
+        "Available agent types for the Agent tool:\n- probe: x (Tools: Read, mcp__fx__alpha)"
+    )
+    request = claude_request(
+        system="main thread",
+        tools=[{"name": "ToolSearch"}],
+        messages=[{"role": "user", "content": [{"type": "text", "text": block}]}],
+    )
+
+    claude_otel.isolated(arms_from_view({"a": [request]}), ws)
+
+
+def test_gate_isolated_refuses_an_unnamed_server_in_the_agent_list_beside_a_listing(
+    tmp_path: Path,
+) -> None:
+    ws = tmp_path / "ws"
+    isolated_arm(ws, "a", plugin=True)
+    block = (
+        f"{DEFERRED_LISTING}:\nmcp__plugin_fxp_fx__alpha\n\n"
+        "Available agent types for the Agent tool:\n- probe: x (Tools: Read, mcp__fx__alpha)"
+    )
+    request = claude_request(
+        system="main thread",
+        tools=[{"name": "ToolSearch"}],
+        messages=[{"role": "user", "content": [{"type": "text", "text": block}]}],
+    )
+
+    with pytest.raises(GateFailure) as exc:
+        claude_otel.isolated(arms_from_view({"a": [request]}), ws)
+    assert "arm a: a request named mcp__fx__, a server the arm did not arrange" in (
+        failure_output(exc)
+    )
+
+
+def test_gate_isolated_refuses_a_fixture_named_server_whose_tool_is_announced_ready(
+    tmp_path: Path,
+) -> None:
+    ws = tmp_path / "ws"
+    agent = "---\nname: probe\ntools: Read, mcp__fx__alpha\n---\nbody\n"
+    isolated_arm(ws, "a", plugin=True, project_files={".claude/agents/probe.md": agent})
+    block = (
+        f"{bodies.READY_LISTING}:\nmcp__fx__alpha\n\n"
+        f"{DEFERRED_LISTING}:\nmcp__plugin_fxp_fx__alpha\n"
+    )
+    request = claude_request(
+        system="main thread",
+        tools=[{"name": "ToolSearch"}],
+        messages=[{"role": "user", "content": [{"type": "text", "text": block}]}],
+    )
+
+    with pytest.raises(GateFailure) as exc:
+        claude_otel.isolated(arms_from_view({"a": [request]}), ws)
+    assert "arm a: a request offered a tool of mcp__fx__, a server the arm did not arrange" in (
+        failure_output(exc)
+    )
 
 
 def test_gate_isolated_refuses_an_offered_tool_the_fixture_names_but_no_server_arranged(
