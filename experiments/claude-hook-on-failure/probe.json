@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "provider": "claude",
+  "driver": "billed",
+  "depth": null,
+  "question": "Does `onFailure: block` stop a tool call when its PreToolUse hook exits 1, where the same hook without the field lets the call run?",
+  "version_source": {
+    "kind": "command",
+    "command": "claude --version"
+  },
+  "assertion": {
+    "expected": {
+      "block": "blocked",
+      "unset": "ran"
+    }
+  }
+}
