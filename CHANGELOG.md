@@ -1,5 +1,125 @@
 # Changelog
 
+## [0.8.0](https://github.com/jasnross/agentspec/compare/v0.7.0...v0.8.0) (2026-11-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* **mcp:** `McpToolNames` maps to the new `McpToolName` enum instead of `String`; wrap existing values in `McpToolName::Real`. `real_tool_name` returns `Option<&str>`, `None` for a `false` entry. `CompileDiagnostics` gains `config_drops()`, and `ConfigDrop` is a new public type.
+* **mcp:** the `Adapter` trait gains the required method `mcp_tool_names`, and `ClaudeMcpServer`, `CursorMcpServer`, and `OpenCodeMcpServer` gain a public `tool_names` field. Code implementing `Adapter` or building these structs with struct literals must add them.
+
+### Features
+
+* **hooks:** let a hook fail closed on Claude Code ([8ddb788](https://github.com/jasnross/agentspec/commit/8ddb788233982e338aa84f32ca9126fa90995eba))
+* **mcp:** let several logical tools share one real tool ([4c384df](https://github.com/jasnross/agentspec/commit/4c384dff43696245bc99dcb83e8a78fff1fe8467))
+* **mcp:** map MCP tool names per provider block ([05ebea5](https://github.com/jasnross/agentspec/commit/05ebea5b395fb824a1a1c2e51c7320a5ce553a2e))
+* **mcp:** mark a tool with no equivalent as `false` in tool-names ([09aa8de](https://github.com/jasnross/agentspec/commit/09aa8de258ce36a78f11de37c6a64b85751fc1c8))
+
+
+### Refactoring
+
+* **probes:** accept schema 2 manifests and record the source that judged them ([498bbcf](https://github.com/jasnross/agentspec/commit/498bbcf489f5e4d13c4f7cd6a856112e0a48b268))
+* **probes:** arrange every family from fixtures/&lt;variant&gt;/ ([2b887ee](https://github.com/jasnross/agentspec/commit/2b887ee30636dfd38e4db16e6a75bfb457d56843))
+* **probes:** declare the manifest and record formats as pydantic models ([29f6ccc](https://github.com/jasnross/agentspec/commit/29f6ccce86b4e133282c977081970a2bacd6c84c))
+* **probes:** declare the request and response bodies as pydantic models ([93e1187](https://github.com/jasnross/agentspec/commit/93e11872d435e8e61246388b11d7188b9097dfab))
+* **probes:** give every family typed callables and prove them with samples ([c5d2513](https://github.com/jasnross/agentspec/commit/c5d2513e9227a133f20a6f578aefb690a9707c41))
+* **probes:** judge every workspace through one path ([1be530b](https://github.com/jasnross/agentspec/commit/1be530b871c940459a1ad1deb1734d348726f64d))
+* **probes:** keep jq for the expressions probe authors write ([847187b](https://github.com/jasnross/agentspec/commit/847187b1d16faf99b9165898a5d33646c585f68f))
+* **probes:** make the recorder return a record and leave printing to its callers ([956deab](https://github.com/jasnross/agentspec/commit/956deabda9e7060cf73155349f104a9de0bafb7c))
+* **probes:** read every manifest through the typed contract ([933ba68](https://github.com/jasnross/agentspec/commit/933ba68ea07f90b1c3e6b7d7f9effe5233f59a42))
+* **probes:** read request bodies through a typed model in the gates ([e09c7be](https://github.com/jasnross/agentspec/commit/e09c7be9f7252793ccc2f568fb3bfcc1e5c02e99))
+* **probes:** remove the jq evaluator and the schema 1 manifest path ([720ac28](https://github.com/jasnross/agentspec/commit/720ac28064ef0e6af25071a6666849557de169e2))
+
+
+### Documentation
+
+* add probe-harness follow-ups to TODO ([#52](https://github.com/jasnross/agentspec/issues/52)–[#56](https://github.com/jasnross/agentspec/issues/56)) ([fb9af86](https://github.com/jasnross/agentspec/commit/fb9af86804728131fe821db6ba3e5b3886ec67e2))
+* correct remove's host-file deletion and hooks_merge's location ([069149e](https://github.com/jasnross/agentspec/commit/069149ebc7933e53ab51c3cfe8e11c63aa2eff2b))
+* note that model-invoked skills apply effort on Claude Code 2.1.306 ([3e255ef](https://github.com/jasnross/agentspec/commit/3e255efb5f5f8f533716b337bbc2360b714e2e6c))
+* **probes:** say where Claude Code repeats an agent's tool grant ([5c66640](https://github.com/jasnross/agentspec/commit/5c666409ba9f706f4ea8f223de47f43391a26377))
+* track fitting CustomProbe to per-variant fixture trees ([#57](https://github.com/jasnross/agentspec/issues/57)) ([5448dec](https://github.com/jasnross/agentspec/commit/5448dec6cd239185e52efb6d8bb2bf126330def3))
+
+
+### Tests
+
+* **probes:** account for every string a committed sample keeps ([d524612](https://github.com/jasnross/agentspec/commit/d524612ba23012a30aee7c110bae6242ca8c2296))
+* **probes:** add a Claude family that reads the stream-json init event ([397aa4c](https://github.com/jasnross/agentspec/commit/397aa4c11eac56b3abc3c1d0209e2d19cc7274dc))
+* **probes:** add discriminator fixtures for the billed Claude probes ([b50a7de](https://github.com/jasnross/agentspec/commit/b50a7decb982b8c629b2ca982b90001595b420b9))
+* **probes:** add discriminator fixtures for the manual projection probes ([690154e](https://github.com/jasnross/agentspec/commit/690154e9f08af069a36851625231dbcdd2bd54ba))
+* **probes:** add discriminator fixtures for the unattended OpenCode probes ([f9f11c8](https://github.com/jasnross/agentspec/commit/f9f11c85562d4d45c4866f00578e25af5766790d))
+* **probes:** adopt claude-agent-effort's refuting capture ([de779be](https://github.com/jasnross/agentspec/commit/de779bec51ffd11bd825daf99b37842b7077aaa3))
+* **probes:** build schema 2 packages throughout the harness tests ([923a19b](https://github.com/jasnross/agentspec/commit/923a19be88db98e0541530a08fce8f32c4cd0fd3))
+* **probes:** confirm claude-skill-effort under its moved expectation ([b88ca3a](https://github.com/jasnross/agentspec/commit/b88ca3a263630417b3babac39a11af738b9dfd85))
+* **probes:** cut samples to the text their expressions need ([58a8faf](https://github.com/jasnross/agentspec/commit/58a8faf163efa4a7890791ea9015ce5731f0f756))
+* **probes:** exclude subagent requests from the effort control set ([7f3c6cc](https://github.com/jasnross/agentspec/commit/7f3c6cc9c21c496e423d773aa05a0da818e92675))
+* **probes:** expect claude-skill-effort's inline arm to apply the skill's effort ([cfa870b](https://github.com/jasnross/agentspec/commit/cfa870ba290d231700e8c92d513136da8bd542ec))
+* **probes:** group the harness tests by the module they exercise ([6bd4ce3](https://github.com/jasnross/agentspec/commit/6bd4ce339b67e99721a1f239a2e7d37493b8246d))
+* **probes:** isolate every harness-launched run from the operator's configuration ([8a0bd1c](https://github.com/jasnross/agentspec/commit/8a0bd1ce6e309cc4d8845a916381facea6fb1679))
+* **probes:** keep each sample's case through the cut ([0d280c7](https://github.com/jasnross/agentspec/commit/0d280c75932242afc380a3354e4cb057bee8ec87))
+* **probes:** measure whether onFailure block stops a tool call when its hook fails ([31ed1c3](https://github.com/jasnross/agentspec/commit/31ed1c308b6658de33d68a4251115321e07f7c59))
+* **probes:** measure whether OpenCode loads instruction files above the project ([1886a58](https://github.com/jasnross/agentspec/commit/1886a5859d2062f4aa6a0f3f8a5d607a7b080235))
+* **probes:** measure which MCP sources a Claude run loads under each flag ([04ff5b5](https://github.com/jasnross/agentspec/commit/04ff5b5afed306ae24ab7e3a60952bdae1082644))
+* **probes:** migrate claude-agent-effort to a Python assertion ([8612990](https://github.com/jasnross/agentspec/commit/8612990d8379294b39d6ee098cdd3b72c7d486a0))
+* **probes:** migrate claude-background-subagent-mcp-tools to a Python assertion ([6d85720](https://github.com/jasnross/agentspec/commit/6d857201c4fe776cc04222320f665c6a35ccd396))
+* **probes:** migrate claude-fork-subagent-mcp-tools to a Python assertion ([aad152e](https://github.com/jasnross/agentspec/commit/aad152e7906cdd3d3ca2c8247f3abfae069ec572))
+* **probes:** migrate claude-session-start to a Python assertion ([f9f168e](https://github.com/jasnross/agentspec/commit/f9f168e3f66db9c822b9e11c271f8907f2d33605))
+* **probes:** migrate claude-skill-effort to a Python assertion ([9522a5f](https://github.com/jasnross/agentspec/commit/9522a5fe623136a428d82d69eccca3da523091ab))
+* **probes:** migrate claude-skill-mcp-allowed-tools to a Python assertion ([582fe5c](https://github.com/jasnross/agentspec/commit/582fe5cea4ddbc46fd589c310a27ba982c27e44b))
+* **probes:** migrate claude-skill-plugin-mcp-named-tool to a Python assertion ([a27ab50](https://github.com/jasnross/agentspec/commit/a27ab50a1a69ac246c019db59b4545f66f443bf5))
+* **probes:** migrate claude-subagent-mcp-resource-tools to a Python assertion ([d9c32a6](https://github.com/jasnross/agentspec/commit/d9c32a68f23fbdfe21cdb44899c01c69972f2b6a))
+* **probes:** migrate claude-subagent-mcp-tools to a Python assertion ([784ca3a](https://github.com/jasnross/agentspec/commit/784ca3a61ae07cd7d1c916f4cb2fdc7d197bea31))
+* **probes:** migrate claude-subagent-plugin-mcp-tools to a Python assertion ([760ab27](https://github.com/jasnross/agentspec/commit/760ab274a2cb3eecb2096b8d330bc23bc6f717f9))
+* **probes:** migrate claude-subagent-tools-empty to a Python assertion ([f532fcc](https://github.com/jasnross/agentspec/commit/f532fcc2b8c734c922babdc68c723ebf21eed4b5))
+* **probes:** migrate cursor-gate-19-output-json to Python callables ([7af26d1](https://github.com/jasnross/agentspec/commit/7af26d1239468885e94eba00e34b13b9bfabf475))
+* **probes:** migrate cursor-gate-21-plain-stdout to Python callables ([5882816](https://github.com/jasnross/agentspec/commit/58828164b9246dea9dbdc263c9894decf98974c8))
+* **probes:** migrate cursor-hook-command-argv to a Python assertion ([575f503](https://github.com/jasnross/agentspec/commit/575f5037e8ce06a1f02a47cef2260c0eb2c57fcb))
+* **probes:** migrate cursor-session-start to a Python assertion ([f8708f1](https://github.com/jasnross/agentspec/commit/f8708f1a3c17fd3622d517bceff6399c78447478))
+* **probes:** migrate cursor-subagent-bracket-tolerance to a Python assertion ([600ce71](https://github.com/jasnross/agentspec/commit/600ce71e075222ec0f11734891168db350153f55))
+* **probes:** migrate cursor-subagent-effort to a Python assertion ([0c21737](https://github.com/jasnross/agentspec/commit/0c2173760991430e856819960778b69f5ecf30ec))
+* **probes:** migrate cursor-subagent-model-options to a Python assertion ([b5f2d9a](https://github.com/jasnross/agentspec/commit/b5f2d9a9d61d1bc1a729a8037c827efc71e66af0))
+* **probes:** migrate opencode-agent-mcp-resource-read to a Python assertion ([cdec35e](https://github.com/jasnross/agentspec/commit/cdec35e03980c8aa002591591a3cc50bbd621d27))
+* **probes:** migrate opencode-agent-mcp-server-glob to a Python assertion ([b05d187](https://github.com/jasnross/agentspec/commit/b05d187d121113053e766751e164e7587652fd6a))
+* **probes:** migrate opencode-agent-mcp-unrestricted to a Python assertion ([3228366](https://github.com/jasnross/agentspec/commit/322836698b45e72224619bf9401b47518220045f))
+* **probes:** migrate opencode-agent-permission-deny-all to a Python assertion ([a3e392b](https://github.com/jasnross/agentspec/commit/a3e392bb4241dfe18131616380d251b7da30e868))
+* **probes:** migrate opencode-agent-permission-external-read to a Python assertion ([43cf1c4](https://github.com/jasnross/agentspec/commit/43cf1c4ae00663124096d54b0efaa37cb3986b7a))
+* **probes:** migrate opencode-agent-tools-deny-all to a Python assertion ([459f304](https://github.com/jasnross/agentspec/commit/459f304c3038ed9c99461d19a1846f62ee3e53b4))
+* **probes:** migrate opencode-agent-variant to a Python assertion ([115f81a](https://github.com/jasnross/agentspec/commit/115f81a8de303d2e32dcc2224cbe74a478018738))
+* **probes:** migrate opencode-command-variant to a Python assertion ([1d57e7c](https://github.com/jasnross/agentspec/commit/1d57e7caa1dadb6f3a1335ca82525108bf6d6ef6))
+* **probes:** migrate opencode-skill-frontmatter-discard to a Python assertion ([71552e6](https://github.com/jasnross/agentspec/commit/71552e60c521d30ada0baeafcbdd2021ff944ab4))
+* **probes:** port the Claude OTEL probes and require probe.py in every package ([4dc8b82](https://github.com/jasnross/agentspec/commit/4dc8b82e3fdfa03cca9f0d6025e7a0921b62f6a3))
+* **probes:** port the manual probes to Python definitions ([40636c3](https://github.com/jasnross/agentspec/commit/40636c3e45465b1f764d10141c8dddbda2706b12))
+* **probes:** port the OpenCode debug probes and settle their fixture variants ([e2c3d3f](https://github.com/jasnross/agentspec/commit/e2c3d3fd3de46f05f5944322cffd6301fcae310f))
+* **probes:** port the OpenCode fake-provider probes and share the stub servers ([3fa1108](https://github.com/jasnross/agentspec/commit/3fa11086659730f98dee74639a8344ceb68cac4d))
+* **probes:** port the probe harness core to Python ([f301719](https://github.com/jasnross/agentspec/commit/f3017195a7f1933393ff69db349309cf86d9bb6a))
+* **probes:** prove resource-tools' all-three branch and tidy the Claude migrations ([c780e8a](https://github.com/jasnross/agentspec/commit/c780e8afeafbd36022b6e696dd8dba93cfd2ebcb))
+* **probes:** re-judge the records naming a blob no ref reaches ([d8ab1f7](https://github.com/jasnross/agentspec/commit/d8ab1f7821afe3725cc2ec1e8050f7435ece2956))
+* **probes:** read only the listing lines as tools a request offers ([143ca03](https://github.com/jasnross/agentspec/commit/143ca03a97acef06c1900191645ae73e839fc2ad))
+* **probes:** record claude-subagent-plugin-mcp-tools under isolation ([1eb0646](https://github.com/jasnross/agentspec/commit/1eb0646483a30921fceedff1f1d00aed78c6710a))
+* **probes:** record opencode-agent-variant under schema 2 ([44f11c3](https://github.com/jasnross/agentspec/commit/44f11c342ac6002009dae2507dca83557f064939))
+* **probes:** record that onFailure block stops a tool call on Claude Code 2.1.306 ([8b3806e](https://github.com/jasnross/agentspec/commit/8b3806e6b336c8a4881a11c4aeb355e2bd9d937d))
+* **probes:** record the Claude probes under isolation ([01c0011](https://github.com/jasnross/agentspec/commit/01c00110b13490bc42853605efe1f2a2370fe187))
+* **probes:** record the measurements from the Python port's parity runs ([43ca49b](https://github.com/jasnross/agentspec/commit/43ca49b6f11b7ce192c79d0de6a42c695796e155))
+* **probes:** require a committed sample for every provider model ([4e72839](https://github.com/jasnross/agentspec/commit/4e72839474bfb6bf1f216dcc776c9bd3749fe517))
+
+
+### Miscellaneous Chores
+
+* **probes:** document the Python probe harness ([67f7751](https://github.com/jasnross/agentspec/commit/67f775140a629616b97976fa201cf9e652af43ba))
+* **probes:** give each probe subcommand one message prefix and exit 2 on usage errors ([f9dcffd](https://github.com/jasnross/agentspec/commit/f9dcffd6037c32acb029cd31e227dd0419eabd6a))
+* **probes:** keep every run's workspace with the version and code behind it ([23dfe14](https://github.com/jasnross/agentspec/commit/23dfe1491eb66a5b7eda50b27a6c7b3a760404cd))
+* **probes:** keep only the lines a search reads when reducing a sample ([261071f](https://github.com/jasnross/agentspec/commit/261071fab827d7359a7a93b73e30ff7bc07fcd66))
+* **probes:** let probe sample --regenerate rewrite schema 2 results ([90cd017](https://github.com/jasnross/agentspec/commit/90cd017f64d6227e835b649f863fb15c61312024))
+* **probes:** model Claude and Cursor hook payloads ([f16a5fb](https://github.com/jasnross/agentspec/commit/f16a5fbe6c5ed24cbddeddb560fc4a0e38facf26))
+* **probes:** model Claude tool-result errors and add the offered-tools helper ([900843f](https://github.com/jasnross/agentspec/commit/900843f40bce410a056fce63322f15b6a1e741c9))
+* **probes:** model OpenCode request tools and string message content ([617c4f3](https://github.com/jasnross/agentspec/commit/617c4f31f296ec014bbbabe52b006237af55471d))
+* **probes:** pin jq to 1.8.2 for probe parity ([2e51723](https://github.com/jasnross/agentspec/commit/2e51723d3665d19a0409e49f0ec47d3bf01586ed))
+* **probes:** run the harness inside a uv-locked environment ([f006acd](https://github.com/jasnross/agentspec/commit/f006acd54fb11caf64f4d46327483ae58c6f9bf1))
+* **probes:** turn off OpenCode's external skill scan under isolation ([37ee507](https://github.com/jasnross/agentspec/commit/37ee507ccae69b10b5dcfa13889add53ed1f4da4))
+* **todos:** add [#48](https://github.com/jasnross/agentspec/issues/48) for measuring OpenCode's automatic external_directory allows ([49d47f2](https://github.com/jasnross/agentspec/commit/49d47f238af87e720540d562405010c031ffa759))
+* **todos:** add [#49](https://github.com/jasnross/agentspec/issues/49) for removing the probe harness's jq dependency ([3216350](https://github.com/jasnross/agentspec/commit/32163504bc9a34fc8350d21d7a48f2709273507a))
+* **todos:** add [#51](https://github.com/jasnross/agentspec/issues/51) for the fate of jq-projection probe records ([38ab6ea](https://github.com/jasnross/agentspec/commit/38ab6ea94d164a3f779682b5bfd6a2a95e415fb5))
+* **todos:** restate cited reasoning in place and drop finished entries ([2af94ed](https://github.com/jasnross/agentspec/commit/2af94edc94cd37e45df4462336fa5ddd3ae5c1c6))
+
 ## [0.7.0](https://github.com/jasnross/agentspec/compare/v0.6.0...v0.7.0) (2026-10-04)
 
 
