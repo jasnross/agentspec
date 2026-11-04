@@ -212,6 +212,11 @@ pub struct HookFrontmatter {
     pub matcher: Option<String>,
     /// Optional timeout in seconds.
     pub timeout: Option<u32>,
+    /// Block the triggering action when this hook itself fails, rather than
+    /// letting the action through. Only valid on events where
+    /// [`HookEvent::can_fail_closed`] holds.
+    #[serde(default)]
+    pub fail_closed: bool,
     /// Free-form description (informational; not consumed by either provider in v1).
     pub description: Option<String>,
     /// Free-form tags.
@@ -254,6 +259,15 @@ impl HookEvent {
                 | Self::SubagentStart
                 | Self::SubagentStop
         )
+    }
+
+    /// Whether `fail_closed` is accepted on this event.
+    ///
+    /// `PreCompact` is excluded though a failure can block compaction: the
+    /// shim's Claude output has no documented `PreCompact` form, so a working
+    /// hook that prints anything may count as failed.
+    pub fn can_fail_closed(self) -> bool {
+        matches!(self, Self::PreToolUse | Self::UserPromptSubmit)
     }
 
     /// Whether this event targets subagent lifecycle (`SubagentStart` / `SubagentStop`).
@@ -571,6 +585,7 @@ mod tests {
                 script: PathBuf::from("scripts/init.sh"),
                 matcher: None,
                 timeout: None,
+                fail_closed: false,
                 description: description.map(str::to_string),
                 tags: None,
                 args: None,

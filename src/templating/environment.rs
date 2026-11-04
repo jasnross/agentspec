@@ -415,6 +415,7 @@ mod tests {
                 script: PathBuf::from("scripts/init.sh"),
                 matcher: None,
                 timeout: None,
+                fail_closed: false,
                 description: None,
                 tags: None,
                 args: None,

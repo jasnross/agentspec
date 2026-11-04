@@ -383,7 +383,7 @@ impl Adapter for ClaudeAdapter {
                 SettingKind::Mcp,
             ],
             FileKind::Rules => &[SettingKind::Body, SettingKind::Paths],
-            FileKind::Hooks => &[SettingKind::Body],
+            FileKind::Hooks => &[SettingKind::Body, SettingKind::FailClosed],
             FileKind::Commands | FileKind::PluginManifest => &[],
         }
     }
@@ -485,6 +485,9 @@ impl ClaudeAdapter {
         obj.insert("command".to_string(), json!(e.command));
         if let Some(t) = e.timeout {
             obj.insert("timeout".to_string(), json!(t));
+        }
+        if e.fail_closed {
+            obj.insert("onFailure".to_string(), json!("block"));
         }
         obj.insert("_agentspec_id".to_string(), json!(e.agentspec_id));
         serde_json::Value::Object(obj)
@@ -1656,6 +1659,7 @@ mod tests {
                 script: format!("scripts/{id}.sh").into(),
                 matcher: matcher.map(str::to_string),
                 timeout: None,
+                fail_closed: false,
                 description: None,
                 tags: None,
                 args: None,
@@ -2078,6 +2082,7 @@ mod tests {
             matcher: None,
             command: "/path/to/script.sh".to_string(),
             timeout: None,
+            fail_closed: false,
             agentspec_id: "init".to_string(),
         };
         let v = ClaudeAdapter::entry_to_json(&e);
@@ -2087,6 +2092,41 @@ mod tests {
         assert!(
             v.get("matcher").is_none(),
             "claude entry: matcher is on the wrapper, not the entry"
+        );
+    }
+
+    /// Through `compile`, because the entry's `fail_closed` is what Claude's
+    /// `carriable` table decides.
+    #[test]
+    fn test_fail_closed_spec_reaches_hooks_json() {
+        let mut spec = make_hook_spec("guard", HookEvent::PreToolUse, None);
+        spec.frontmatter.fail_closed = true;
+
+        let files = compile_one(Spec::Hook(spec), None);
+        let hooks_json = files
+            .iter()
+            .find(|f| f.path == Path::new("hooks/hooks.json"))
+            .expect("hooks.json emitted");
+        let content = String::from_utf8(hooks_json.content.clone()).expect("utf8");
+        assert!(content.contains("\"onFailure\": \"block\""), "{content}");
+    }
+
+    #[test]
+    fn test_entry_to_claude_json_renders_fail_closed_as_on_failure() {
+        let mut e = EmittedHookEntry {
+            event: HookEvent::PreToolUse,
+            matcher: None,
+            command: "/path/to/script.sh".to_string(),
+            timeout: None,
+            fail_closed: true,
+            agentspec_id: "guard".to_string(),
+        };
+        assert_eq!(ClaudeAdapter::entry_to_json(&e)["onFailure"], "block");
+
+        e.fail_closed = false;
+        assert!(
+            ClaudeAdapter::entry_to_json(&e).get("onFailure").is_none(),
+            "an entry that does not fail closed leaves the key to Claude's default"
         );
     }
 

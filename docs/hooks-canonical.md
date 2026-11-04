@@ -197,11 +197,19 @@ if [ "$SOURCE" = "resume" ]; then
 fi
 ```
 
+### Hooks that fail closed
+
+`fail_closed = true` on a `[hooks.<id>]` entry renders as `"onFailure": "block"` on Claude Code v2.1.295 or later. Older versions ignore the key, so a failing hook is expected to let the action through there.
+
+`agentspec validate` accepts the option on `pre_tool_use` and `user_prompt_submit`. A failure on `stop`, `subagent_stop`, and the other events cannot stop anything. A failure on `pre_compact` can block compaction, and that event is refused anyway: the shim wraps all non-empty output in `hookSpecificOutput`, which the Claude Code hooks reference does not list for `PreCompact`, so a working hook that prints anything may count as failed.
+
+Cursor has a per-script `failClosed` setting, and agentspec does not render it. Cursor counts a hook's empty output as a failure, while a canonical hook allows an action by printing nothing (see the empty-output semantics above), so rendering it could block every allowed action. `agentspec inspect` reports `fail_closed` as not delivered on Cursor.
+
 ### Unreachable provider-specific outputs
 
 These output fields are not bridgeable from canonical:
 
-- **Cursor-only**: `followup_message`, `loop_limit`, `failClosed`, `env`, `updated_mcp_tool_output`. Use the provider discriminator + Cursor's native output schema if needed; the shim does not block extra fields written to stdout, but the canonical-output translation does NOT route them.
+- **Cursor-only**: `followup_message`, `loop_limit`, `env`, `updated_mcp_tool_output`. Use the provider discriminator + Cursor's native output schema if needed; the shim does not block extra fields written to stdout, but the canonical-output translation does NOT route them.
 - **Claude-only**: `defer`, `continue: false`/`stopReason`, `suppressOutput`, `systemMessage`, `sessionTitle`, `WorktreeCreate` plain-stdout, `$CLAUDE_ENV_FILE`, `retry`. Same caveat.
 
 Cross-provider hooks should avoid these fields; provider-specific hooks can author them via direct emission, but lose the portability the canonical schema provides.

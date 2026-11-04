@@ -198,6 +198,7 @@ mod tests {
             matcher: None,
             command: command.to_string(),
             timeout: None,
+            fail_closed: false,
             agentspec_id: id.to_string(),
         }
     }
@@ -213,6 +214,7 @@ mod tests {
             matcher: Some(matcher.to_string()),
             command: command.to_string(),
             timeout: None,
+            fail_closed: false,
             agentspec_id: id.to_string(),
         }
     }

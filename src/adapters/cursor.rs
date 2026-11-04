@@ -327,7 +327,9 @@ impl Adapter for CursorAdapter {
             FileKind::Rules => &[SettingKind::Body, SettingKind::Paths],
             // Distinct facts that happen to coincide: a Cursor skill file's
             // schema has no field a preset can reach, and a hook registration
-            // carries only the hook itself.
+            // carries only the hook itself. `FailClosed` is absent because
+            // Cursor's `failClosed` counts a hook's empty output as a failure,
+            // and a canonical hook allows an action by printing nothing.
             FileKind::Skills | FileKind::Hooks => &[SettingKind::Body],
             FileKind::Commands | FileKind::PluginManifest => &[],
         }
@@ -1396,6 +1398,7 @@ mod tests {
                 script: format!("scripts/{id}.sh").into(),
                 matcher: matcher.map(str::to_string),
                 timeout: None,
+                fail_closed: false,
                 description: None,
                 tags: None,
                 args: None,
@@ -1907,11 +1910,31 @@ mod tests {
             matcher: Some("Bash".to_string()),
             command: "/path/to/script.sh".to_string(),
             timeout: None,
+            fail_closed: false,
             agentspec_id: "audit".to_string(),
         };
         let v = CursorAdapter::entry_to_json(&e);
         assert_eq!(v["matcher"], "Bash");
         assert_eq!(v["_agentspec_id"], "audit");
+    }
+
+    /// Runs the spec through `compile` rather than building an entry by hand,
+    /// because the entry's `fail_closed` is what Cursor's `carriable` table
+    /// decides.
+    #[test]
+    fn test_fail_closed_spec_renders_nothing_on_cursor() {
+        let mut spec = make_hook_spec("guard", HookEvent::PreToolUse, None);
+        spec.frontmatter.fail_closed = true;
+
+        let files = compile_one(Spec::Hook(spec), None);
+        let hooks_json = files
+            .iter()
+            .find(|f| f.path == Path::new("hooks/hooks.json"))
+            .expect("hooks.json emitted");
+        let content = String::from_utf8(hooks_json.content.clone()).expect("utf8");
+        assert!(content.contains("guard"), "{content}");
+        assert!(!content.contains("onFailure"), "{content}");
+        assert!(!content.contains("failClosed"), "{content}");
     }
 
     #[test]

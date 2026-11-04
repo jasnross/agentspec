@@ -2639,6 +2639,41 @@ Agent body.
     }
 
     #[test]
+    fn test_load_hook_specs_reads_fail_closed_and_defaults_it_off() {
+        let tmp = tempfile::tempdir().expect("expected value");
+        let hooks_dir = tmp.path().join("hooks");
+        fs::create_dir_all(hooks_dir.join("scripts")).expect("expected value");
+        let toml = "
+[hooks.guarded]
+events = [\"pre_tool_use\"]
+script = \"scripts/check.sh\"
+fail_closed = true
+
+[hooks.plain]
+events = [\"pre_tool_use\"]
+script = \"scripts/check.sh\"
+";
+        fs::write(hooks_dir.join("hooks.toml"), toml).expect("expected value");
+        fs::write(
+            hooks_dir.join("scripts").join("check.sh"),
+            "#!/bin/sh\necho hi\n",
+        )
+        .expect("expected value");
+
+        let specs = load_hooks_no_ignore(&hooks_dir).expect("expected value");
+        let flags: Vec<(&str, bool)> = specs
+            .iter()
+            .map(|s| match s {
+                Spec::Hook(h) => (h.frontmatter.id.as_str(), h.frontmatter.fail_closed),
+                Spec::Agent(_) | Spec::Skill(_) | Spec::Rule(_) => {
+                    panic!("expected Hook variant")
+                }
+            })
+            .collect();
+        assert_eq!(flags, [("guarded", true), ("plain", false)]);
+    }
+
+    #[test]
     fn test_load_hook_specs_preserves_authoring_order() {
         let tmp = tempfile::tempdir().expect("expected value");
         let hooks_dir = tmp.path().join("hooks");

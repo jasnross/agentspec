@@ -100,6 +100,11 @@ pub struct EmittedHookEntry {
     pub matcher: Option<String>,
     pub command: String,
     pub timeout: Option<u32>,
+    /// True only when the spec sets `fail_closed` and this provider's
+    /// `carriable(FileKind::Hooks)` holds it. The provider's `entry_to_json`
+    /// renders it, and a delivery is recorded from it, so adding the setting
+    /// to a provider's table needs a rendering there too.
+    pub fail_closed: bool,
     /// Stable identifier emitted as `_agentspec_id` in the JSON output —
     /// the sentinel the merged-mode merge layer uses to identify owned entries.
     pub agentspec_id: String,
@@ -291,8 +296,9 @@ pub struct Loss {
     /// The file kind the setting failed to reach, and `None` for a `Body`
     /// loss.
     ///
-    /// A non-`Body` intent is raised per kind the adapter actually emitted, so
-    /// every such loss names one. A `Body` loss means the adapter emitted
+    /// A non-`Body` intent is raised per kind the adapter actually emitted, or
+    /// against `Hooks` for a hook's `fail_closed`, so every such loss names
+    /// one. A `Body` loss means the adapter emitted
     /// nothing for this spec, so there is no kind to name — the renderer reads
     /// `spec_type` instead.
     kind: Option<FileKind>,
@@ -541,6 +547,9 @@ type Intent = (String, SettingKey, Option<FileKind>);
 /// Reporting a lost `model` beside "no file at all" is noise, and a per-kind
 /// rule over an empty set would make the total drop unreportable.
 ///
+/// A hook's `fail_closed` is the exception to both: a hook owns no file, so
+/// its intent is raised against `Hooks` on any provider that emits hooks.
+///
 /// An MCP grant raises one `mcp.<server>` intent per emitted kind. On a kind
 /// whose `carriable` table carries MCP grants, each named tool the provider's
 /// `tool-names` sets to `false` becomes a [`ConfigDrop`] rather than part of
@@ -570,6 +579,17 @@ fn intents(
                 emitted.push(file.kind);
             }
         }
+
+        // A hook owns no file, so `emitted` is always empty for one and this
+        // intent has to be raised ahead of the check below. A provider that
+        // emits no hooks reports only the lost `Body`.
+        if let Spec::Hook(hook) = spec
+            && hook.frontmatter.fail_closed
+            && !adapter.carriable(FileKind::Hooks).is_empty()
+        {
+            out.push((id.to_owned(), SettingKey::FailClosed, Some(FileKind::Hooks)));
+        }
+
         if emitted.is_empty() {
             continue;
         }
@@ -715,7 +735,10 @@ fn derive_losses(
             // rejecting an agent that declares `mcp` without `tools`, and both
             // adapters `debug_assert!` it. A grant whose every named tool is set
             // to `false` raises no `Mcp` intent on a carriable kind, so it
-            // cannot reach this check either.
+            // cannot reach this check either. `FailClosed` is raised on the
+            // spec alone, and holds because every hook spec reaches
+            // `build_emitted_hook_entries`: loading rejects empty `events`, and
+            // nothing drops a spec on a hook-emitting provider.
             // `test_carriable_agrees_with_carried` checks the weaker
             // existential claim (some spec delivered each declared setting),
             // so it narrows this rather than proving it; a future adapter that
@@ -962,19 +985,21 @@ pub(crate) fn compile_specs(
 #[cfg(test)]
 mod loss_tests {
     use std::collections::BTreeMap;
+    use std::path::Path;
 
     use indexmap::IndexMap;
 
     use super::{ConfigDrop, GeneratedFile, Loss, derive_losses};
-    use crate::adapters::Delivery;
+    use crate::adapters::{CompileCtx, Delivery, SyncDestinationMode};
     use crate::mcp::{McpServer, McpServers, McpToolName, McpToolNames, OpenCodeMcpServer};
     use crate::plan::FileKind;
     use crate::presets::{OpenCodePreset, ProviderPresets, ProviderPresetsMap};
     use crate::provider::Provider;
     use crate::setting::SettingKey;
     use crate::spec::{
-        AgentFrontmatter, AgentSpec, CapabilitiesFrontmatter, ExecutionFrontmatter, McpGrant,
-        McpTools, SkillFrontmatter, SkillSpec, Spec, ToolFrontmatter,
+        AgentFrontmatter, AgentSpec, CapabilitiesFrontmatter, ExecutionFrontmatter, HookEvent,
+        HookFrontmatter, HookSpec, McpGrant, McpTools, SkillFrontmatter, SkillSpec, Spec,
+        ToolFrontmatter,
     };
 
     const PROVIDER: Provider = Provider::OpenCode;
@@ -1314,6 +1339,77 @@ mod loss_tests {
             .collect();
         assert_eq!(lost, ["mcp.s"]);
         assert!(drops.is_empty(), "{drops:#?}");
+    }
+
+    /// What one provider loses of a `fail_closed` hook, through its real
+    /// adapter: whether the setting is lost depends on what the adapter
+    /// records, so hand-written deliveries would prove nothing here.
+    fn fail_closed_losses(provider: Provider) -> Vec<(SettingKey, Option<FileKind>)> {
+        let specs = [Spec::Hook(HookSpec {
+            path: "/tmp/hooks.toml".into(),
+            frontmatter: HookFrontmatter {
+                id: "guard".to_owned(),
+                events: vec![HookEvent::PreToolUse],
+                script: "scripts/guard.sh".into(),
+                matcher: None,
+                timeout: None,
+                fail_closed: true,
+                description: None,
+                tags: None,
+                args: None,
+            },
+            body: String::new(),
+            supporting_files: IndexMap::new(),
+        })];
+        let presets = presets();
+        let servers = McpServers::new();
+        let ctx = CompileCtx {
+            mode: SyncDestinationMode::Compile,
+            home: Path::new("/tmp/home"),
+            cwd: Path::new("/tmp/cwd"),
+            target_dir: None,
+            presets: &presets,
+            mcp_servers: &servers,
+            adapter_config: None,
+            overwrite: false,
+        };
+        let output = provider.adapter().compile(&specs, &ctx).expect("compile");
+        let deliveries = std::collections::HashMap::from([(provider, output.deliveries)]);
+        let (losses, _) = derive_losses(
+            &specs,
+            &presets,
+            &servers,
+            &[provider],
+            &output.files,
+            &deliveries,
+        );
+        losses
+            .iter()
+            .map(|l| (l.setting().clone(), l.kind()))
+            .collect()
+    }
+
+    #[test]
+    fn test_fail_closed_is_delivered_on_claude() {
+        assert_eq!(fail_closed_losses(Provider::Claude), []);
+    }
+
+    #[test]
+    fn test_fail_closed_is_lost_on_cursor() {
+        assert_eq!(
+            fail_closed_losses(Provider::Cursor),
+            [(SettingKey::FailClosed, Some(FileKind::Hooks))]
+        );
+    }
+
+    /// `OpenCode` emits no hooks, so the whole spec is the loss, and naming
+    /// the setting beside it would be noise.
+    #[test]
+    fn test_fail_closed_on_a_provider_with_no_hooks_loses_only_body() {
+        assert_eq!(
+            fail_closed_losses(Provider::OpenCode),
+            [(SettingKey::Body, None)]
+        );
     }
 }
 

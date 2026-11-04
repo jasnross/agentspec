@@ -174,6 +174,8 @@ Ignoring a script that a `hooks.toml` entry declares fails the load, naming the 
 
 `args` is an optional list of literal strings passed to the script as positional arguments (`$1`, `$2`, …), alongside the canonical payload on stdin — the same script can back several entries with different parameters, as `audit-bash` and `audit-bash-strict` do above. agentspec quotes every value unconditionally; `hooks.toml` resolves no templating inside `args`, so values are literal text, never shell syntax. Argument values are copied verbatim into the user's `settings.json` or `hooks.json` by `sync`, so they are not a place for secrets. See [`docs/hooks-canonical.md`](docs/hooks-canonical.md#script-invocation-and-argv) for the full argv contract.
 
+`fail_closed = true` blocks the action when the hook itself fails — it cannot start, exits with an unexpected code, times out, or prints invalid JSON — rather than letting the action through. `agentspec validate` accepts it only on `pre_tool_use` and `user_prompt_submit`. It renders as `"onFailure": "block"` on Claude Code, which needs v2.1.295 or later, and is not delivered on Cursor, where `agentspec inspect` reports it. See [`docs/hooks-canonical.md`](docs/hooks-canonical.md#hooks-that-fail-closed).
+
 `tags` is an optional list of strings, accepted on `[hooks.<id>]` entries the same way it is on agent, skill, and rule frontmatter. It is used for categorization and exposed in the `specs` template variable.
 
 #### Canonical payload format

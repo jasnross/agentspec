@@ -89,6 +89,12 @@ pub fn validate_semantics(
             validate_hook_args(hook_spec, &mut errors);
         }
 
+        if let Spec::Hook(hook_spec) = spec
+            && hook_spec.frontmatter.fail_closed
+        {
+            validate_hook_fail_closed(hook_spec, &mut errors);
+        }
+
         if let Spec::Rule(rule_spec) = spec
             && let Some(paths) = &rule_spec.frontmatter.paths
         {
@@ -427,6 +433,30 @@ fn validate_hook_matcher(hook_spec: &crate::spec::HookSpec, errors: &mut Vec<Val
     }
 }
 
+fn validate_hook_fail_closed(hook_spec: &crate::spec::HookSpec, errors: &mut Vec<ValidationError>) {
+    let bad_events: Vec<_> = hook_spec
+        .frontmatter
+        .events
+        .iter()
+        .filter(|e| !e.can_fail_closed())
+        .collect();
+    if !bad_events.is_empty() {
+        errors.push(ValidationError {
+            path: hook_spec.path.clone(),
+            message: format!(
+                "hook '{}' sets `fail_closed` but targets event(s) that do not accept it: {}; \
+                 only pre_tool_use and user_prompt_submit may use `fail_closed`",
+                hook_spec.frontmatter.id,
+                bad_events
+                    .iter()
+                    .map(|e| e.snake_case())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ),
+        });
+    }
+}
+
 /// Reject a NUL byte in any `args` entry.
 ///
 /// `sh_quote`'s single-quote escaping is otherwise unconditional — every
@@ -566,6 +596,7 @@ mod tests {
                 script: PathBuf::from(format!("scripts/{id}.sh")),
                 matcher: matcher.map(str::to_string),
                 timeout: None,
+                fail_closed: false,
                 description: None,
                 tags: None,
                 args,
@@ -1321,6 +1352,60 @@ mod tests {
         assert!(
             errors.is_empty(),
             "expected no errors for matcher on subagent_stop, got: {errors:?}"
+        );
+    }
+
+    fn make_fail_closed_hook(id: &str, events: Vec<HookEvent>) -> Spec {
+        let mut spec = make_hook(id, events, None);
+        let Spec::Hook(ref mut h) = spec else {
+            panic!("expected Hook variant")
+        };
+        h.frontmatter.fail_closed = true;
+        spec
+    }
+
+    #[test]
+    fn test_hook_fail_closed_on_blocking_events_passes() {
+        let specs = vec![make_fail_closed_hook(
+            "guard",
+            vec![HookEvent::PreToolUse, HookEvent::UserPromptSubmit],
+        )];
+        let errors = validate_semantics(&specs, &Declarations::default(), test_config_path());
+        assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
+    }
+
+    #[test]
+    fn test_hook_fail_closed_on_stop_errors() {
+        let specs = vec![make_fail_closed_hook("guard", vec![HookEvent::Stop])];
+        let errors = validate_semantics(&specs, &Declarations::default(), test_config_path());
+        assert_eq!(errors.len(), 1, "expected one error, got: {errors:?}");
+        assert!(errors[0].message.contains("'guard'"));
+        assert!(errors[0].message.contains(": stop;"));
+    }
+
+    #[test]
+    fn test_hook_fail_closed_on_pre_compact_errors() {
+        let specs = vec![make_fail_closed_hook("guard", vec![HookEvent::PreCompact])];
+        let errors = validate_semantics(&specs, &Declarations::default(), test_config_path());
+        assert_eq!(errors.len(), 1, "expected one error, got: {errors:?}");
+        assert!(errors[0].message.contains(": pre_compact;"));
+    }
+
+    #[test]
+    fn test_hook_fail_closed_on_mixed_events_names_only_the_bad_event() {
+        let specs = vec![make_fail_closed_hook(
+            "guard",
+            vec![HookEvent::PreToolUse, HookEvent::SessionStart],
+        )];
+        let errors = validate_semantics(&specs, &Declarations::default(), test_config_path());
+        assert_eq!(errors.len(), 1, "expected one error, got: {errors:?}");
+        assert!(
+            errors[0].message.starts_with(
+                "hook 'guard' sets `fail_closed` but targets event(s) that do not accept it: \
+                 session_start;"
+            ),
+            "error should list only the offending event, got: {}",
+            errors[0].message
         );
     }
 

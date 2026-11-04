@@ -16,6 +16,7 @@ use crate::compile::{EmittedHookEntry, GeneratedFile, HookEmitMode};
 use crate::hooks_canonical::{ProviderName, shim_template};
 use crate::plan::FileKind;
 use crate::provider::Provider;
+use crate::setting::{SettingKey, SettingKind};
 use crate::spec::{HookEvent, HookSpec, ToolFrontmatter};
 
 /// Per-provider hook synthesis result — entries (always populated when there
@@ -25,7 +26,8 @@ use crate::spec::{HookEvent, HookSpec, ToolFrontmatter};
 pub(super) struct HookSynthesis {
     pub entries: Vec<EmittedHookEntry>,
     pub files: Vec<GeneratedFile>,
-    /// One `Body` delivery per hook spec that reached a registration entry.
+    /// One `Body` delivery per hook spec that reached a registration entry,
+    /// plus a `FailClosed` delivery for each entry carrying it.
     pub deliveries: Vec<Delivery>,
 }
 
@@ -85,6 +87,14 @@ where
             FileKind::Hooks,
             hooks_json.clone(),
         ));
+        if entry.fail_closed {
+            deliveries.push(Delivery::hook_setting(
+                &entry.agentspec_id,
+                SettingKey::FailClosed,
+                FileKind::Hooks,
+                hooks_json.clone(),
+            ));
+        }
     }
 
     let mut files = build_hook_script_files(provider, specs);
@@ -274,6 +284,10 @@ fn build_emitted_hook_entries(
                         args,
                     ),
                     timeout: s.frontmatter.timeout,
+                    fail_closed: s.frontmatter.fail_closed
+                        && adapter
+                            .carriable(FileKind::Hooks)
+                            .contains(&SettingKind::FailClosed),
                     agentspec_id: s.frontmatter.id.clone(),
                 })
         })
@@ -348,7 +362,6 @@ mod tests {
 
     use super::*;
     use crate::adapters::{ClaudeAdapter, CursorAdapter};
-    use crate::setting::SettingKey;
     use crate::spec::HookFrontmatter;
 
     fn hook_spec(id: &str, events: Vec<HookEvent>) -> HookSpec {
@@ -360,6 +373,7 @@ mod tests {
                 script: format!("scripts/{id}.sh").into(),
                 matcher: None,
                 timeout: None,
+                fail_closed: false,
                 description: None,
                 tags: None,
                 args: None,
@@ -489,6 +503,35 @@ mod tests {
             "every hook delivery is a Body registration anchored on hooks/hooks.json: {:?}",
             synthesis.deliveries
         );
+    }
+
+    /// A multi-event spec's entries all carry the setting, so the dedup
+    /// collapses them to one delivery, as it does for `Body`.
+    #[test]
+    fn synthesize_hooks_records_one_fail_closed_delivery_per_spec() {
+        let mut multi = hook_spec(
+            "multi",
+            vec![HookEvent::PreToolUse, HookEvent::UserPromptSubmit],
+        );
+        multi.frontmatter.fail_closed = true;
+        let specs: Vec<&HookSpec> = vec![&multi];
+
+        let synthesis = synthesize_hooks(
+            Provider::Claude,
+            ".claude",
+            "CLAUDE_PLUGIN_ROOT",
+            &specs,
+            HookEmitMode::Bundled,
+            |_| Ok(String::from("{}")),
+        )
+        .expect("synthesize");
+
+        let settings: Vec<&SettingKey> = synthesis
+            .deliveries
+            .iter()
+            .map(super::Delivery::setting)
+            .collect();
+        assert_eq!(settings, [&SettingKey::Body, &SettingKey::FailClosed]);
     }
 
     /// The anchor is the same in every emit mode. Merged mode writes no

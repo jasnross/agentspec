@@ -250,6 +250,17 @@ impl Delivery {
         }
     }
 
+    /// A setting on a hook spec's registration reached `file`. Used only by
+    /// `synthesize_hooks`, for the same reason as [`Delivery::registration`].
+    fn hook_setting(spec_id: &str, setting: SettingKey, kind: FileKind, file: PathBuf) -> Self {
+        Self {
+            spec_id: spec_id.to_owned(),
+            setting,
+            kind,
+            file,
+        }
+    }
+
     /// Build one delivery directly, for tests that exercise the subtraction
     /// without running an adapter.
     ///
@@ -854,11 +865,12 @@ mod tests {
             Spec::Hook(HookSpec {
                 path: PathBuf::from("/tmp/hooks.toml"),
                 frontmatter: HookFrontmatter {
-                    id: "startup".to_owned(),
-                    events: vec![HookEvent::SessionStart],
-                    script: PathBuf::from("scripts/startup.sh"),
+                    id: "guard".to_owned(),
+                    events: vec![HookEvent::PreToolUse],
+                    script: PathBuf::from("scripts/guard.sh"),
                     matcher: None,
                     timeout: None,
+                    fail_closed: true,
                     description: None,
                     tags: None,
                     args: None,
